@@ -14,12 +14,12 @@
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.1.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Anthropic.SDK" Version="5.10.0" />
-    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.12" />
 
     <!-- Microsoft Agent Framework (MAF) + Microsoft.Extensions.AI -->
-    <PackageVersion Include="Microsoft.Agents.AI" Version="1.19.0" />
-    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.19.0" />
-    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.19.0" />
+    <PackageVersion Include="Microsoft.Agents.AI" Version="1.22.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.22.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.22.0" />
 
     <!-- JSON schema validation. JsonSchema.Net 9 reworked the evaluation API: Evaluate runs on
          JsonElement (not JsonNode), EvaluationResults.HasErrors/HasDetails were removed, and
@@ -27,47 +27,47 @@
     <PackageVersion Include="JsonSchema.Net" Version="9.*" />
 
     <!-- Microsoft.Extensions (.NET 10) -->
-    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
 
     <!-- Persistence: EF Core + Npgsql. Pin the EF runtime to 10.0.8 explicitly so transitive
          consumers (Microsoft.Agents.AI* pulls 10.0.4) unify against the version Npgsql 10.0.2
          + EFCore.Relational 10.0.8 actually deploy. Without the explicit pin, MSBuild warns
          MSB3277 and the test host fails to load Microsoft.EntityFrameworkCore.Relational 10.0.8. -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- Raw Npgsql (pinned to the version the EF provider 10.0.2 resolves) + Dapper for the read-side:
          hot projections/aggregations/pagination run as hand-tuned SQL; EF still owns writes, migrations,
          change-tracking, and entity-graph loads. See INpgsqlConnectionFactory (SharedKernel). -->
     <PackageVersion Include="Npgsql" Version="10.0.3" />
-    <PackageVersion Include="Dapper" Version="2.1.79" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.11" />
+    <PackageVersion Include="Dapper" Version="2.1.89" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
 
     <!-- Phase 8.4b — encrypt app_config values at rest -->
     <PackageVersion Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="10.0.8" />
     <!-- Durable, shared DataProtection key ring (persisted to Postgres) so encrypted tenant secrets +
          auth/OIDC cookies survive restart/scale and decrypt across the Api + Web hosts. -->
-    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.12" />
 
     <!-- API host: OpenAPI + Scalar + App Insights -->
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <!-- Pin the transitive Microsoft.OpenApi past GHSA-v5pm-xwqc-g5wc (CVE-2026-49451, published
          2026-06-30): circular schema refs can stack-overflow the OpenAPI reader below 2.7.5. Microsoft.
          AspNetCore.OpenApi 10.0.9 floors it at 2.0.0 (no upper bound), so an explicit direct reference
          here + in AgentOs.Api.csproj is enough to raise the resolved version. -->
     <PackageVersion Include="Microsoft.OpenApi" Version="2.12.2" />
-    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.2" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.10" />
     <PackageVersion Include="Microsoft.ApplicationInsights.AspNetCore" Version="3.1.2" />
 
     <!-- Phase 8 — JWT bearer auth (API host) + OpenID Connect cookie/code flow (Web host) -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.11" />
-    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.12" />
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
 
     <!-- Web host: Blazor diagram editor -->
     <PackageVersion Include="Z.Blazor.Diagrams" Version="3.0.4.1" />
@@ -77,7 +77,7 @@
 
     <!-- Email — MailKit SMTP for app-sent mail (invite links, notifications).
          Dev → MailHog (localhost:1025, no auth/TLS); prod → a real provider via the Email config. -->
-    <PackageVersion Include="MailKit" Version="4.17.0" />
+    <PackageVersion Include="MailKit" Version="4.18.1" />
 
     <!-- Model Context Protocol — official C# SDK. Used by AgentOs.Modules.Mcp to consume tools
          exposed by external MCP servers (GitHub MCP, filesystem MCP, ...) and to expose AgentOs
@@ -102,39 +102,39 @@
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
 
     <!-- Test stack -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <!-- xunit.v3 4.0.0 is Microsoft.Testing.Platform (MTP)-native — it drops the legacy VSTest
          bridge, so `dotnet test` runs in MTP mode (opted in via global.json `test.runner`). Code
          coverage + trx reporting come from MTP extensions instead of the VSTest data collectors:
          Microsoft.Testing.Extensions.CodeCoverage (cobertura) replaces coverlet.collector, and
          Microsoft.Testing.Extensions.TrxReport replaces the trx logger. -->
-    <PackageVersion Include="xunit.v3" Version="4.0.0" />
+    <PackageVersion Include="xunit.v3" Version="4.0.1" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
     <PackageVersion Include="NSubstitute" Version="6.2.0" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.10.0" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.3.3" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.4.1" />
 
     <!-- Aspire orchestration + service defaults (.NET 10). Stable 13.3.3 for the core stack; the
          Keycloak integration ships preview-only on the 13.3.x line, so it stays on the matching
          preview tag (its >=13.3.3 floor is satisfied by the stable 13.3.3 above). -->
-    <PackageVersion Include="Aspire.Hosting" Version="13.5.3" />
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.5.3" />
-    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.5.3" />
-    <PackageVersion Include="Aspire.Hosting.Azure.PostgreSQL" Version="13.5.3" />
+    <PackageVersion Include="Aspire.Hosting" Version="13.5.4" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.5.4" />
+    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.5.4" />
+    <PackageVersion Include="Aspire.Hosting.Azure.PostgreSQL" Version="13.5.4" />
     <PackageVersion Include="Aspire.Hosting.Keycloak" Version="13.3.5-preview.1.26270.6" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.5.3" />
-    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.9.0" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.5.4" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
     <!-- Transitive of Aspire.Hosting — its default 2.5.192 carries GHSA-hv8m-jj95-wg3x (NU1903).
          Promoted to a direct reference in AppHost + E2E.Tests to force the patched version. -->
-    <PackageVersion Include="MessagePack" Version="3.1.8" />
+    <PackageVersion Include="MessagePack" Version="3.1.10" />
 
     <!-- OpenTelemetry (instrumentation pinned to 1.15.x line) -->
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.18.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.18.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.19.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.19.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.19.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
 
     <!-- E2E (browser) -->
     <PackageVersion Include="Microsoft.Playwright" Version="1.62.0" />
