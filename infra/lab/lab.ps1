@@ -159,7 +159,16 @@ switch ($Command) {
         Start-Sleep -Seconds 4
         Get-Content (Join-Path $StateDir 'runner.log') -Tail 3
     }
-    'unpair' { Stop-Runner; Write-Host 'Runner stopped. (Revoke it in Board → Runners to retire its token.)' }
+    'unpair' {
+        Stop-Runner
+        if (Test-Web) {
+            $pwDir = Join-Path $LabDir 'tests/AgentOs.E2E.Tests/bin/Release/net10.0/.playwright'
+            $env:PW_PACKAGE = Join-Path $pwDir 'package'; $env:LAB_URL = $WebUrl; $env:UNPAIR = '1'
+            & (Join-Path $pwDir 'node/win32_x64/node.exe') (Join-Path $PSScriptRoot 'pair-runner.js')
+            Remove-Item Env:UNPAIR
+        }
+        Write-Host 'Runner stopped. (Revoke it in Board → Runners to retire its token.)'
+    }
     'status' { Show-Status }
     'logs' { Get-Content $LogFile -Tail 80 -Wait }
     'test' {

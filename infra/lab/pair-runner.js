@@ -9,7 +9,7 @@
 // The runner runs in prompt→answer mode (no --dangerously-skip-permissions): agents get model output; any
 // server-driven shell command outside the allowlist is denied (no console to approve).
 //
-// Env: PW_PACKAGE (Playwright package dir), LAB_URL, RUNNER_EXE, STATE_DIR.
+// Env: PW_PACKAGE (Playwright package dir), LAB_URL, RUNNER_EXE, STATE_DIR; UNPAIR=1 only resets Force provider.
 
 const fs = require('fs');
 const path = require('path');
@@ -20,17 +20,37 @@ const labUrl = process.env.LAB_URL || 'https://lab.dev.localhost:6180';
 const runnerExe = process.env.RUNNER_EXE;
 const stateDir = process.env.STATE_DIR;
 
+async function signIn(page) {
+  await page.goto(labUrl + '/');
+  await page.locator('#username').fill('operator');
+  await page.locator('#password').fill('operator');
+  await page.locator('#kc-login, button[type=submit]').first().click();
+  await page.locator('.dock').waitFor({ timeout: 30000 });
+}
+
+// Settings → LLM & providers → Providers → Force provider (empty = per-agent configuration).
+async function setForceProvider(page, value) {
+  await page.locator('.dock-item[title="Settings"]').first().click();
+  const win = page.locator('.appwin.focused');
+  await win.locator('.prefs-cat', { hasText: 'LLM & providers' }).first().click();
+  await win.locator('.prefs-cat', { hasText: 'Providers' }).last().click();
+  await win.locator('select.prefs-select').first().selectOption(value);
+  await win.getByRole('button', { name: 'Save', exact: true }).first().click();
+  await page.waitForTimeout(1500);
+}
+
 (async () => {
-  if (!runnerExe || !fs.existsSync(runnerExe)) { throw new Error(`runner not found: ${runnerExe}`); }
   const browser = await pw.chromium.launch();
   const page = await (await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1400, height: 900 } })).newPage();
+  if (process.env.UNPAIR === '1') {
+    try { await signIn(page); await setForceProvider(page, ''); } finally { await browser.close(); }
+    console.log('Force provider reset — lab agents use their per-agent configuration again.');
+    return;
+  }
+  if (!runnerExe || !fs.existsSync(runnerExe)) { await browser.close(); throw new Error(`runner not found: ${runnerExe}`); }
   let id, token;
   try {
-    await page.goto(labUrl + '/');
-    await page.locator('#username').fill('operator');
-    await page.locator('#password').fill('operator');
-    await page.locator('#kc-login, button[type=submit]').first().click();
-    await page.locator('.dock').waitFor({ timeout: 30000 });
+    await signIn(page);
 
     // Register a runner.
     await page.locator('.dock-item[title="Board"]').first().click();
@@ -44,13 +64,7 @@ const stateDir = process.env.STATE_DIR;
     if (!id || !token) { throw new Error('could not read the pairing readout'); }
 
     // Route every agent of the operator's tenant to the paired runner.
-    await page.locator('.dock-item[title="Settings"]').first().click();
-    win = page.locator('.appwin.focused');
-    await win.locator('.prefs-cat', { hasText: 'LLM & providers' }).first().click();
-    await win.locator('.prefs-cat', { hasText: 'Providers' }).last().click();
-    await win.locator('select.prefs-select').first().selectOption('RemoteAgent');
-    await win.getByRole('button', { name: 'Save', exact: true }).first().click();
-    await page.waitForTimeout(1500);
+    await setForceProvider(page, 'RemoteAgent');
   } finally {
     await browser.close();
   }
