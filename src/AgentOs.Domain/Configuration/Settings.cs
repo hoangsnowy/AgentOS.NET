@@ -168,6 +168,23 @@ public interface ISettings
 /// <summary>Typed reads over <see cref="ISettings"/> (invariant culture; unparsable → fallback).</summary>
 public static class SettingsExtensions
 {
+    /// <summary>
+    /// Synchronous read for sync seams (policy checks, client factories). Reads ride the store's per-process
+    /// cache, so the ValueTask is usually already complete — the fast path never blocks; only a cold cache
+    /// miss waits on the store.
+    /// </summary>
+    public static string? Read(this ISettings settings, string key, string? tenantId)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var pending = settings.GetAsync(key, tenantId);
+        var value = pending.IsCompletedSuccessfully ? pending.Result : pending.AsTask().GetAwaiter().GetResult();
+        return value.HasValue ? value.Value : null;
+    }
+
+    /// <summary>Synchronous boolean read, or <paramref name="fallback"/> when unset/unparsable.</summary>
+    public static bool ReadBool(this ISettings settings, string key, string? tenantId, bool fallback) =>
+        bool.TryParse(settings.Read(key, tenantId), out var b) ? b : fallback;
+
     /// <summary>String value, or <paramref name="fallback"/> when unset.</summary>
     public static async ValueTask<string?> GetStringAsync(
         this ISettings settings, string key, string? tenantId, string? fallback = null, CancellationToken ct = default)

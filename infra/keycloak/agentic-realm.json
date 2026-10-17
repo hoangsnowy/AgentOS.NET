@@ -41,7 +41,8 @@
   "roles": {
     "realm": [
       { "name": "admin", "description": "Tenant administrator" },
-      { "name": "member", "description": "Tenant member" }
+      { "name": "member", "description": "Tenant member" },
+      { "name": "platform-admin", "description": "Platform administrator - platform-wide settings for every tenant" }
     ]
   },
   "clientScopes": [
@@ -154,7 +155,7 @@
       "credentials": [
         { "type": "password", "value": "operator", "temporary": false }
       ],
-      "realmRoles": ["admin"]
+      "realmRoles": ["admin", "platform-admin"]
     },
     {
       "username": "member",

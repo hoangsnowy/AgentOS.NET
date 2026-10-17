@@ -54,11 +54,12 @@ public sealed class DevAutoAuthHandler : AuthenticationHandler<AuthenticationSch
         return Task.FromResult(AuthenticateResult.Success(ticket));
     }
 
-    /// <summary>Map the view-as selection to the role set the dev principal carries. Default = both.</summary>
+    /// <summary>Map the view-as selection to the role set the dev principal carries. Default = everything,
+    /// including platform-admin (the standalone dev box is its own platform).</summary>
     private static string[] RolesFor(string? viewAs) => viewAs switch
     {
         "admin" => ["admin"],
         "member" => ["member"],
-        _ => ["admin", "member"],
+        _ => ["admin", "member", "platform-admin"],
     };
 }

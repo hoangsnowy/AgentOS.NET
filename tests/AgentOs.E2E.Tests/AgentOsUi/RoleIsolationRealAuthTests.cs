@@ -39,7 +39,8 @@ public sealed class RoleIsolationRealAuthTests : IClassFixture<AgentOsRealAuthFi
         var settings = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(settings.Locator(".prefs-cat", new() { HasTextString = "System" })).ToBeVisibleAsync();
 
-        foreach (var adminCat in new[] { "Users", "Evidence", "LLM & providers", "Prompts", "Tool policy", "MCP servers" })
+        // Platform (platform-admin only) and Agent profiles (tenant admin) must be hidden too.
+        foreach (var adminCat in new[] { "Users", "Evidence", "LLM & providers", "Agent profiles", "Prompts", "Tool policy", "MCP servers", "Platform" })
         {
             await Assertions.Expect(settings.Locator(".prefs-cat", new() { HasTextString = adminCat })).ToHaveCountAsync(0);
         }

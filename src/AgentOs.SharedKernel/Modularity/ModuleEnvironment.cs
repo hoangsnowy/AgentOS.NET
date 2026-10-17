@@ -24,4 +24,7 @@ public static class ModuleEnvironment
     /// <summary><c>true</c> when the host environment is Production.</summary>
     public static bool IsProduction(IConfiguration configuration)
         => string.Equals(Name(configuration), "Production", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsDevelopment(IConfiguration configuration)
+        => string.Equals(Name(configuration), "Development", StringComparison.OrdinalIgnoreCase);
 }

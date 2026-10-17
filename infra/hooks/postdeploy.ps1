@@ -62,6 +62,18 @@ try {
     Write-Host "Realm verifyEmail=false"
 } catch { Write-Warning "Failed to set verifyEmail=false: $_" }
 
+# 2b. Realm role platform-admin (ADR-0011 platform-wide settings). Realm import is skipped once the realm
+#     exists, so ensure the role here — idempotent (409 = already there). Assign it to the platform owner by
+#     hand; it is never auto-granted in the cloud.
+try {
+    Invoke-RestMethod -Method Post -Headers $headers -Uri "$kcUrl/admin/realms/$realm/roles" -ContentType 'application/json' `
+        -Body (@{ name = 'platform-admin'; description = 'Platform administrator - platform-wide settings for every tenant' } | ConvertTo-Json) | Out-Null
+    Write-Host "Realm role platform-admin created."
+} catch {
+    if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 409) { Write-Host "Realm role platform-admin already present." }
+    else { Write-Warning "Could not ensure realm role platform-admin: $($_.Exception.Message)" }
+}
+
 # 3. Seed users: rotate imported placeholder passwords
 function Rotate-SeedUser([string]$username, [string]$newPass) {
     if (-not $newPass) {

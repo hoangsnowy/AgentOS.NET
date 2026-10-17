@@ -29,7 +29,11 @@
             {
                 <br /><span class="prefs-hint">@d.Help</span>
             }
-            @if (readOnly && f.View.Source != SettingSource.Locked)
+            @if (readOnly && f.View.Source == SettingSource.Locked)
+            {
+                <br /><span class="prefs-hint">Pinned by the operator (Settings:Locks) — change it in deployment config.</span>
+            }
+            else if (readOnly)
             {
                 <br /><span class="prefs-hint">Platform-wide — set by a platform admin.</span>
             }
@@ -71,7 +75,7 @@
                     break;
             }
             <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@(readOnly || _saving)" OnClick="() => Save(f)">Save</Btn>
-            <Btn Size="Btn.ButtonSize.Sm" Disabled="@(readOnly || _saving || f.View.Source != SettingSource.Tenant)" OnClick="() => Reset(f)">Reset</Btn>
+            <Btn Size="Btn.ButtonSize.Sm" Disabled="@(readOnly || _saving || !HasOwnValue(f))" OnClick="() => Reset(f)">Reset</Btn>
         </div>
     </div>
 }
@@ -88,6 +92,10 @@
 
     /// <summary>Toast title.</summary>
     [Parameter] public string Area { get; set; } = "Settings";
+
+    /// <summary>The viewer is a platform admin: platform-scope settings become editable and are written at
+    /// platform scope (every tenant). Tenant-scope settings still write to <see cref="TenantId"/>.</summary>
+    [Parameter] public bool CanEditPlatform { get; set; }
 
     private sealed class FieldState(SettingView view)
     {
@@ -116,9 +124,16 @@
         _fields = fields;
     }
 
-    // A tenant admin edits tenant-scope settings only; platform-scope + operator-locked are read-only here.
-    private static bool IsReadOnly(FieldState f) =>
-        f.View.Source == SettingSource.Locked || f.View.Descriptor.Scope == SettingScope.Platform;
+    // Operator-locked is always read-only. Platform-scope is read-only unless the viewer is a platform admin.
+    private bool IsReadOnly(FieldState f) =>
+        f.View.Source == SettingSource.Locked || (f.View.Descriptor.Scope == SettingScope.Platform && !CanEditPlatform);
+
+    private SettingScope WriteScope(FieldState f) =>
+        f.View.Descriptor.Scope == SettingScope.Platform ? SettingScope.Platform : SettingScope.Tenant;
+
+    // Reset clears the row at the scope the field writes to.
+    private static bool HasOwnValue(FieldState f) =>
+        f.View.Source == (f.View.Descriptor.Scope == SettingScope.Platform ? SettingSource.Platform : SettingSource.Tenant);
 
     private Task Save(FieldState f) => WriteAsync(f, f.Draft, f.View.Descriptor.IsSecret && string.IsNullOrEmpty(f.Draft) ? null : $"{f.View.Descriptor.Label} saved — applies to the next call.");
 
@@ -134,7 +149,8 @@
         _saving = true;
         try
         {
-            var result = await Settings.SetAsync(f.View.Descriptor.Key, value, SettingScope.Tenant, TenantId, Actor);
+            var scope = WriteScope(f);
+            var result = await Settings.SetAsync(f.View.Descriptor.Key, value, scope, scope == SettingScope.Tenant ? TenantId : null, Actor);
             Toasts.Show(Area, result.Ok ? okMessage : result.Error ?? "Save failed.",
                 result.Ok ? AgentOs.Web.Shell.Services.ToastKind.Ok : AgentOs.Web.Shell.Services.ToastKind.Err);
         }

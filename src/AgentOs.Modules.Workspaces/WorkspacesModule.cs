@@ -32,6 +32,7 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
         // Workspaces:AllowedHosts.
         services.Configure<Security.WorkspaceHostOptions>(configuration.GetSection("Workspaces"));
         services.AddSingleton<Security.IWorkspaceHostPolicy, Security.WorkspaceHostPolicy>();
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, WorkspacesSettings>();
 
         // The connect flow is shared by the HTTP endpoint and the desktop Board app (tenant-explicit).
         services.AddScoped<IWorkspaceConnector, WorkspaceConnector>();
