@@ -75,7 +75,7 @@ pwsh infra/lab/lab.ps1 update
 ```
 
 The key is seeded into the **lab** stack only (the dev stack ignores `Lab:*`). Then sign in to
-https://localhost:6180 → **Insights → Budget**: set a monthly cap (e.g. `5`) and turn **Enforce** on, so
+https://lab.dev.localhost:6180 → **Insights → Budget**: set a monthly cap (e.g. `5`) and turn **Enforce** on, so
 the lab can never overspend.
 
 ## Run the lab tests
@@ -91,6 +91,8 @@ cleans up what it creates (labels deleted, created issues closed). What they cov
 |---|---|
 | GitHub | token + repo validation, repo listing, README grounding for the Requirement agent, live ticket body, idempotent label sync, Projects board read + ticket creation |
 | Azure DevOps | PAT + repo validation, repo listing |
+| Multi-tenant (real-auth UI) | a second tenant created through `/signup` sees none of tenant `default`'s boards, runners, evidence or runs, and Users lists only its own member; the tenant, its rows and its Keycloak user are removed afterwards |
+| Real-auth UI | sign-in, Users/invitation email (MailHog), budget gate, Board runners, System → About (every service healthy) |
 
 ## Lab findings (gaps the lab exposed)
 

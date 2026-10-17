@@ -144,6 +144,7 @@ switch ($Command) {
         $env:RUN_AGENTOS_E2E_REAL = 'true'
         $env:AGENTOS_REAL_URL = $WebUrl
         $env:MAILHOG_URL = 'http://localhost:9025'
+        $env:AGENTOS_KC_URL = 'https://localhost:9080'   # Keycloak admin API, for tests that clean up users they create
         if ($pgPort) { $env:AGENTOS_PG_CONN = "Host=localhost;Port=$pgPort;Database=agentos;Username=postgres;Password=postgres" }
         Write-Host '== Lab integration tests (real GitHub / Azure DevOps)'
         # Tests run from the lab worktree: same code as the running lab, own build output (no dev-checkout locks).
