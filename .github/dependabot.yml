@@ -15,6 +15,11 @@ updates:
     groups:
       nuget-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # Aspire 13.6+ breaks AppHost startup until the CLI-bundle (DCP) migration lands — see the note in
+      # Directory.Packages.props. Patch bumps on the held line still flow.
+      - dependency-name: "Aspire.*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # GitHub Actions used by the workflows in .github/workflows/.
   - package-ecosystem: "github-actions"

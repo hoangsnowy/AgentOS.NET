@@ -62,6 +62,10 @@ public sealed class AgentOsRealAuthFixture : IAsyncLifetime
     /// On success the OIDC callback lands back on the desktop; we wait for the dock to render.</summary>
     public async Task LoginAsync(string username = "operator", string password = "operator")
     {
+        // Tests in a class share this browser context: without a reset, the second test's navigation rides the
+        // first test's Keycloak session straight into the desktop and never shows #username (and a test that
+        // wants a different user would silently stay signed in as the previous one). Start every login clean.
+        await Context.ClearCookiesAsync();
         await Page.GotoAsync("/", new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
         await Page.Locator("#username").WaitForAsync(new() { Timeout = 30000 });
         await Page.Locator("#username").FillAsync(username);
