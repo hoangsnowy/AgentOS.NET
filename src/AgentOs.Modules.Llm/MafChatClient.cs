@@ -110,15 +110,16 @@ public sealed class MafChatClient : ILlmClient
         catch (InvalidOperationException ex) { LlmTelemetry.RecordError(activity, ex.Message); throw; }
         stopwatch.Stop();
 
-        var inputTokens = (int)(response.Usage?.InputTokenCount ?? 0);
-        var outputTokens = (int)(response.Usage?.OutputTokenCount ?? 0);
+        var usage = UsageReader.Read(response);
+        var inputTokens = usage.Input;
+        var outputTokens = usage.Output;
 
         // ONE authoritative model id for telemetry/log/LlmResponse: `deployment` (the alias actually called).
         // Pricing is a SEPARATE id: deployment names are arbitrary aliases (e.g. "gpt41-prod") that aren't
         // priced prefixes, so PricingModel maps the alias to a canonical price-table prefix; fall back to the
         // deployment when unset. Cost AND the UNPRICED warning both read this same id — no four-way disagreement.
         var pricingModel = ResolvePricingModel(configuredPricingModel, deployment);
-        var cost = CostCalculator.Calculate(pricingModel, inputTokens, outputTokens);
+        var cost = CostCalculator.Calculate(pricingModel, usage);
         if (!CostCalculator.IsKnown(pricingModel))
         {
             // Unpriced model = cost is a pessimistic ceiling estimate until the model is added to the table.
@@ -140,7 +141,12 @@ public sealed class MafChatClient : ILlmClient
             CostUsd: cost,
             Latency: stopwatch.Elapsed,
             Model: deployment,
-            Provider: Provider);
+            Provider: Provider)
+        {
+            CacheReadTokens = usage.CacheRead,
+            CacheWriteTokens = usage.CacheWrite,
+            ReasoningTokens = usage.Reasoning,
+        };
     }
 
     // Maps a deployment alias to the canonical id fed to CostCalculator. Deployment names are arbitrary

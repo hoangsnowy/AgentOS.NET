@@ -73,19 +73,23 @@ public sealed class ChatClientLlmClient : ILlmClient
         }
         stopwatch.Stop();
 
-        var inputTokens = (int)(response.Usage?.InputTokenCount ?? 0);
-        var outputTokens = (int)(response.Usage?.OutputTokenCount ?? 0);
-        var cost = CostCalculator.Calculate(request.Model, inputTokens, outputTokens);
+        var usage = UsageReader.Read(response);
+        var cost = CostCalculator.Calculate(request.Model, usage);
         LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, response.ModelId ?? request.Model,
-            inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds);
+            usage.Input, usage.Output, cost, stopwatch.Elapsed.TotalSeconds);
 
         return new LlmResponse(
             Content: response.Text ?? string.Empty,
-            InputTokens: inputTokens,
-            OutputTokens: outputTokens,
+            InputTokens: usage.Input,
+            OutputTokens: usage.Output,
             CostUsd: cost,
             Latency: stopwatch.Elapsed,
             Model: request.Model,
-            Provider: Provider);
+            Provider: Provider)
+        {
+            CacheReadTokens = usage.CacheRead,
+            CacheWriteTokens = usage.CacheWrite,
+            ReasoningTokens = usage.Reasoning,
+        };
     }
 }

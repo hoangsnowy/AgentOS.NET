@@ -80,8 +80,9 @@ public sealed record GraphRunResult(bool Completed, string? FailureMessage, bool
 
 /// <summary>One agent's share of a run: how many calls it made and the tokens/cost they used.
 /// <paramref name="Estimated"/> = some of the calls were answered offline, so their tokens are an estimate
-/// (text length ÷ 4), not provider-reported usage.</summary>
-public sealed record AgentTokenUsage(string Agent, int Calls, int TokensIn, int TokensOut, decimal CostUsd, bool Estimated)
+/// (text length ÷ 4), not provider-reported usage. Cache reads/writes are subsets of <paramref name="TokensIn"/>.</summary>
+public sealed record AgentTokenUsage(string Agent, int Calls, int TokensIn, int TokensOut, decimal CostUsd, bool Estimated,
+    int CacheReadTokens = 0, int CacheWriteTokens = 0)
 {
     /// <summary>Input + output tokens.</summary>
     public int TotalTokens => TokensIn + TokensOut;

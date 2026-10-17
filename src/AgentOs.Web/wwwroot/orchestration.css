@@ -509,3 +509,5 @@ body.panel-resizing, body.panel-resizing * { cursor: row-resize !important; user
 .syn-usage-key { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 8px; }
 .syn-usage-key.in { background: var(--syn-blue); }
 .syn-usage-key.out { background: var(--syn-green-border); }
+.syn-usage-bar .cr, .syn-usage-key.cr { background: var(--syn-eval); }
+.syn-usage-bar .cw, .syn-usage-key.cw { background: var(--warn, #c98a0a); }

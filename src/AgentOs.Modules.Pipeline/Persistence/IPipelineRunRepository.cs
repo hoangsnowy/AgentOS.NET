@@ -88,15 +88,27 @@ public sealed record CostSummary(
 {
     /// <summary>The zero summary — no metrics recorded (or no database wired).</summary>
     public static CostSummary Empty { get; } = new(0m, 0, 0, 0, 0, [], [], [], []);
+
+    /// <summary>Prompt-cache reads across all calls (subset of <see cref="TotalTokensIn"/>).</summary>
+    public long TotalCacheReadTokens { get; init; }
+
+    /// <summary>Prompt-cache writes across all calls (subset of <see cref="TotalTokensIn"/>).</summary>
+    public long TotalCacheWriteTokens { get; init; }
+
+    /// <summary>Share of prompt tokens served from cache, 0..1.</summary>
+    public double CacheHitRatio => TotalTokensIn <= 0 ? 0d : (double)TotalCacheReadTokens / TotalTokensIn;
 }
 
-/// <summary>One row of a cost breakdown grouped by agent, provider, model or day.</summary>
+/// <summary>One row of a cost breakdown grouped by agent, provider, model or day. Cache counts are subsets
+/// of <paramref name="TokensIn"/>.</summary>
 public sealed record CostBucket(
     string Key,
     decimal CostUsd,
     int TokensIn,
     int TokensOut,
-    int Calls);
+    int Calls,
+    long CacheReadTokens = 0,
+    long CacheWriteTokens = 0);
 
 /// <summary>Extra aggregates for the Insights dashboard that the cost summary doesn't compute: per-agent
 /// average latency, the QA-iteration distribution, and pipeline runs per day.</summary>

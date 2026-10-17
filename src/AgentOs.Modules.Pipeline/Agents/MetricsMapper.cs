@@ -18,6 +18,11 @@ internal static class MetricsMapper
             InputTokens: response.InputTokens,
             OutputTokens: response.OutputTokens,
             CostUsd: response.CostUsd,
-            Latency: response.Latency);
+            Latency: response.Latency)
+        {
+            CacheReadTokens = response.CacheReadTokens,
+            CacheWriteTokens = response.CacheWriteTokens,
+            ReasoningTokens = response.ReasoningTokens,
+        };
     }
 }

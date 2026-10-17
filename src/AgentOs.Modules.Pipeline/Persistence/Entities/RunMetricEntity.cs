@@ -26,6 +26,15 @@ internal sealed class RunMetricEntity
 
     public int TokensOut { get; set; }
 
+    /// <summary>Prompt-cache reads (subset of <see cref="TokensIn"/>).</summary>
+    public int CacheReadTokens { get; set; }
+
+    /// <summary>Prompt-cache writes (subset of <see cref="TokensIn"/>).</summary>
+    public int CacheWriteTokens { get; set; }
+
+    /// <summary>Reasoning / thinking tokens (subset of <see cref="TokensOut"/>).</summary>
+    public int ReasoningTokens { get; set; }
+
     public double LatencyMs { get; set; }
 
     public decimal CostUsd { get; set; }

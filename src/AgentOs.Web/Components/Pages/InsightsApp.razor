@@ -58,6 +58,22 @@
             <div class="metric-sub" title="What the same tokens would have cost on a metered API — this ran on the $0 paired-agent path, so nothing was billed.">≈ $@_estApiCost.ToString("0.0000") API</div>
         }
     </div>
+    <div class="metric">
+        <div class="v">@(_summary is null ? "—" : (_summary.CacheHitRatio * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%")</div>
+        <div class="k">Prompt cache hit</div>
+        @if (_summary is not null)
+        {
+            <div class="metric-sub" title="Prompt tokens read from / written to the provider cache. Reads bill at a fraction of the input rate.">@Num((int)Math.Min(int.MaxValue, _summary.TotalCacheReadTokens)) read · @Num((int)Math.Min(int.MaxValue, _summary.TotalCacheWriteTokens)) written</div>
+        }
+    </div>
+    <div class="metric">
+        <div class="v">@(_summary is null ? "—" : Num(_summary.TotalTokensIn + _summary.TotalTokensOut))</div>
+        <div class="k">Tokens</div>
+        @if (_summary is not null)
+        {
+            <div class="metric-sub">@Num(_summary.TotalTokensIn) input · @Num(_summary.TotalTokensOut) output</div>
+        }
+    </div>
 </div>
 
 @if (_loading && _summary is null)
@@ -144,7 +160,7 @@ else
                         <div class="ins-bar-row">
                             <div class="ins-bar-label ins-bar-agent"><AgentMascot Role="@AgentShort(a.Key)" Size="22" /><span>@AgentShort(a.Key)</span></div>
                             <div class="ins-bar-track" title="@($"{Num(a.TokensIn)} in · {Num(a.TokensOut)} out")"><div class="ins-bar-fill" style="width:@(Pct(a.TokensIn + a.TokensOut, maxAgent))%"></div></div>
-                            <div class="ins-bar-val">@Num(a.TokensIn + a.TokensOut) tok · @Num(a.Calls) calls · @Money(a.CostUsd)</div>
+                            <div class="ins-bar-val" title="@($"{Num(a.TokensIn)} input (of which {Num((int)a.CacheReadTokens)} cache read, {Num((int)a.CacheWriteTokens)} cache write) · {Num(a.TokensOut)} output")">@Num(a.TokensIn + a.TokensOut) tok · @Num(a.Calls) calls · @Money(a.CostUsd)</div>
                         </div>
                     }
                 </div>

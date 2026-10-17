@@ -18,7 +18,7 @@ namespace AgentOs.Modules.Pipeline.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("pipeline")
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -119,6 +119,12 @@ namespace AgentOs.Modules.Pipeline.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<int>("CacheReadTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("CacheWriteTokens")
+                        .HasColumnType("integer");
+
                     b.Property<decimal>("CostUsd")
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)");
@@ -146,6 +152,9 @@ namespace AgentOs.Modules.Pipeline.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<int>("ReasoningTokens")
+                        .HasColumnType("integer");
 
                     b.Property<Guid>("RunId")
                         .HasColumnType("uuid");

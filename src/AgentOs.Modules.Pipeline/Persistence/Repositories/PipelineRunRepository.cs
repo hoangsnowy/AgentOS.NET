@@ -62,6 +62,9 @@ internal sealed class PipelineRunRepository(
                 Provider = m.Provider,
                 TokensIn = m.TokensIn,
                 TokensOut = m.TokensOut,
+                CacheReadTokens = m.CacheReadTokens,
+                CacheWriteTokens = m.CacheWriteTokens,
+                ReasoningTokens = m.ReasoningTokens,
                 LatencyMs = m.LatencyMs,
                 CostUsd = m.CostUsd,
                 Success = m.Success,
@@ -106,7 +109,10 @@ internal sealed class PipelineRunRepository(
                 m.CostUsd,
                 m.Success,
                 m.ErrorMessage,
-                m.TimestampUtc))
+                m.TimestampUtc,
+                m.CacheReadTokens,
+                m.CacheWriteTokens,
+                m.ReasoningTokens))
             .ToList();
 
         return new PipelineRunRecord(
@@ -241,6 +247,8 @@ internal sealed class PipelineRunRepository(
                 m.Model,
                 m.TokensIn,
                 m.TokensOut,
+                m.CacheReadTokens,
+                m.CacheWriteTokens,
                 m.CostUsd,
                 m.TimestampUtc,
             })
@@ -248,13 +256,13 @@ internal sealed class PipelineRunRepository(
 
         await foreach (var m in stream.WithCancellation(ct).ConfigureAwait(false))
         {
-            total.Add(m.CostUsd, m.TokensIn, m.TokensOut);
+            total.Add(m.CostUsd, m.TokensIn, m.TokensOut, m.CacheReadTokens, m.CacheWriteTokens);
             runIds.Add(m.RunId);
-            Bump(byAgent, m.AgentName, m.CostUsd, m.TokensIn, m.TokensOut);
-            Bump(byProvider, m.Provider, m.CostUsd, m.TokensIn, m.TokensOut);
-            Bump(byModel, m.Model, m.CostUsd, m.TokensIn, m.TokensOut);
+            Bump(byAgent, m.AgentName, m.CostUsd, m.TokensIn, m.TokensOut, m.CacheReadTokens, m.CacheWriteTokens);
+            Bump(byProvider, m.Provider, m.CostUsd, m.TokensIn, m.TokensOut, m.CacheReadTokens, m.CacheWriteTokens);
+            Bump(byModel, m.Model, m.CostUsd, m.TokensIn, m.TokensOut, m.CacheReadTokens, m.CacheWriteTokens);
             var day = m.TimestampUtc.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            Bump(byDay, day, m.CostUsd, m.TokensIn, m.TokensOut);
+            Bump(byDay, day, m.CostUsd, m.TokensIn, m.TokensOut, m.CacheReadTokens, m.CacheWriteTokens);
         }
 
         if (total.Calls == 0)
@@ -265,7 +273,11 @@ internal sealed class PipelineRunRepository(
         return new CostSummary(
             total.CostUsd, total.TokensIn, total.TokensOut, total.Calls, runIds.Count,
             ByCostDesc(byAgent), ByCostDesc(byProvider), ByCostDesc(byModel),
-            [.. byDay.Select(kv => kv.Value.ToBucket(kv.Key)).OrderBy(b => b.Key, StringComparer.Ordinal)]);
+            [.. byDay.Select(kv => kv.Value.ToBucket(kv.Key)).OrderBy(b => b.Key, StringComparer.Ordinal)])
+        {
+            TotalCacheReadTokens = total.CacheReadTokens,
+            TotalCacheWriteTokens = total.CacheWriteTokens,
+        };
     }
 
     public async Task<decimal> GetSpendForTenantAsync(
@@ -358,12 +370,12 @@ internal sealed class PipelineRunRepository(
                 .OrderBy(b => b.Day, StringComparer.Ordinal)]);
     }
 
-    private static void Bump(Dictionary<string, Acc> map, string key, decimal cost, int tokensIn, int tokensOut)
+    private static void Bump(Dictionary<string, Acc> map, string key, decimal cost, int tokensIn, int tokensOut, int cacheRead, int cacheWrite)
     {
         // CollectionsMarshal would avoid the double lookup, but a plain get/set keeps it simple; the
         // map is keyed by a bounded set (agent / provider / model names, or days).
         map.TryGetValue(key, out var acc);
-        acc.Add(cost, tokensIn, tokensOut);
+        acc.Add(cost, tokensIn, tokensOut, cacheRead, cacheWrite);
         map[key] = acc;
     }
 
@@ -376,17 +388,21 @@ internal sealed class PipelineRunRepository(
         public decimal CostUsd;
         public int TokensIn;
         public int TokensOut;
+        public long CacheReadTokens;
+        public long CacheWriteTokens;
         public int Calls;
 
-        public void Add(decimal cost, int tokensIn, int tokensOut)
+        public void Add(decimal cost, int tokensIn, int tokensOut, int cacheRead, int cacheWrite)
         {
             CostUsd += cost;
             TokensIn += tokensIn;
             TokensOut += tokensOut;
+            CacheReadTokens += cacheRead;
+            CacheWriteTokens += cacheWrite;
             Calls++;
         }
 
-        public readonly CostBucket ToBucket(string key) => new(key, CostUsd, TokensIn, TokensOut, Calls);
+        public readonly CostBucket ToBucket(string key) => new(key, CostUsd, TokensIn, TokensOut, Calls, CacheReadTokens, CacheWriteTokens);
     }
 
     // ---- Dapper fast-path (server-side aggregation) ----
@@ -410,6 +426,8 @@ internal sealed class PipelineRunRepository(
                 COALESCE(SUM("CostUsd"), 0)   AS CostUsd,
                 COALESCE(SUM("TokensIn"), 0)::int  AS TokensIn,
                 COALESCE(SUM("TokensOut"), 0)::int AS TokensOut,
+                COALESCE(SUM("CacheReadTokens"), 0)::bigint  AS CacheReadTokens,
+                COALESCE(SUM("CacheWriteTokens"), 0)::bigint AS CacheWriteTokens,
                 COUNT(*)::int                 AS Calls,
                 COUNT(DISTINCT "RunId")::int  AS RunCount
             FROM pipeline.run_metrics
@@ -429,7 +447,11 @@ internal sealed class PipelineRunRepository(
 
         return new CostSummary(
             totals.CostUsd, totals.TokensIn, totals.TokensOut, totals.Calls, totals.RunCount,
-            byAgent, byProvider, byModel, byDay);
+            byAgent, byProvider, byModel, byDay)
+        {
+            TotalCacheReadTokens = totals.CacheReadTokens,
+            TotalCacheWriteTokens = totals.CacheWriteTokens,
+        };
     }
 
     private static async Task<List<CostBucket>> GroupByColumnAsync(
@@ -443,6 +465,8 @@ internal sealed class PipelineRunRepository(
                 SUM("CostUsd")      AS CostUsd,
                 SUM("TokensIn")::int  AS TokensIn,
                 SUM("TokensOut")::int AS TokensOut,
+                SUM("CacheReadTokens")::bigint  AS CacheReadTokens,
+                SUM("CacheWriteTokens")::bigint AS CacheWriteTokens,
                 COUNT(*)::int       AS Calls
             FROM pipeline.run_metrics
             {CostWhere}
@@ -464,6 +488,8 @@ internal sealed class PipelineRunRepository(
                 SUM("CostUsd")      AS CostUsd,
                 SUM("TokensIn")::int  AS TokensIn,
                 SUM("TokensOut")::int AS TokensOut,
+                SUM("CacheReadTokens")::bigint  AS CacheReadTokens,
+                SUM("CacheWriteTokens")::bigint AS CacheWriteTokens,
                 COUNT(*)::int       AS Calls
             FROM pipeline.run_metrics
             {CostWhere}
@@ -480,6 +506,8 @@ internal sealed class PipelineRunRepository(
         public decimal CostUsd { get; init; }
         public int TokensIn { get; init; }
         public int TokensOut { get; init; }
+        public long CacheReadTokens { get; init; }
+        public long CacheWriteTokens { get; init; }
         public int Calls { get; init; }
         public int RunCount { get; init; }
     }
@@ -490,9 +518,11 @@ internal sealed class PipelineRunRepository(
         public decimal CostUsd { get; init; }
         public int TokensIn { get; init; }
         public int TokensOut { get; init; }
+        public long CacheReadTokens { get; init; }
+        public long CacheWriteTokens { get; init; }
         public int Calls { get; init; }
 
-        public CostBucket ToBucket() => new(Key, CostUsd, TokensIn, TokensOut, Calls);
+        public CostBucket ToBucket() => new(Key, CostUsd, TokensIn, TokensOut, Calls, CacheReadTokens, CacheWriteTokens);
     }
 
     // Dapper row for ListForTenantViaDapperAsync — column names match the SELECT aliases.

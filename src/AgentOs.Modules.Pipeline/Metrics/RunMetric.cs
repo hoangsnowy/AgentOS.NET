@@ -19,6 +19,9 @@ namespace AgentOs.Modules.Pipeline.Metrics;
 /// <param name="Success">True if the call succeeded (parse + validate OK), false if it failed.</param>
 /// <param name="ErrorMessage">Error (if failed).</param>
 /// <param name="Timestamp">UTC timestamp when the call finished.</param>
+/// <param name="CacheReadTokens">Prompt-cache reads — a subset of <paramref name="TokensIn"/>, billed at the cache-read rate.</param>
+/// <param name="CacheWriteTokens">Prompt-cache writes — a subset of <paramref name="TokensIn"/>, billed at the cache-write rate.</param>
+/// <param name="ReasoningTokens">Reasoning / thinking tokens — a subset of <paramref name="TokensOut"/>.</param>
 public sealed record RunMetric(
     string RunId,
     string KcId,
@@ -32,4 +35,7 @@ public sealed record RunMetric(
     decimal CostUsd,
     bool Success,
     string? ErrorMessage,
-    DateTimeOffset Timestamp);
+    DateTimeOffset Timestamp,
+    int CacheReadTokens = 0,
+    int CacheWriteTokens = 0,
+    int ReasoningTokens = 0);
