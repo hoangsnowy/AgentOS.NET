@@ -1,0 +1,140 @@
+#!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+    AgentOS lab server — a long-running, isolated full stack for real GitHub / Azure DevOps / LLM testing.
+
+.DESCRIPTION
+    Runs the Aspire AppHost with the "lab" profile from its OWN git worktree (default ..\AgentOs-lab), so the
+    lab keeps running while you rebuild the dev checkout. Lab ports never collide with the dev stack:
+
+        Desktop  https://localhost:6180   (login operator / operator)
+        Api      https://localhost:6080
+        Keycloak http://localhost:9080    MailHog http://localhost:9025
+        Aspire   https://localhost:18050
+
+    Commands:
+        up       create the worktree if needed, build, start in the background, wait until healthy
+        update   stop, move the worktree to the latest origin/main (or -Ref), rebuild, start
+        down     stop the lab
+        status   show health + URLs
+        reset    stop and DELETE the lab's data volumes (Postgres + Keycloak) — asks unless -Force
+        logs     tail the AppHost log
+        test     run the lab integration tests (real GitHub / Azure DevOps) + the real-auth UI E2E against the lab
+
+.EXAMPLE
+    pwsh infra/lab/lab.ps1 up
+    pwsh infra/lab/lab.ps1 update -Ref origin/feat/my-branch
+#>
+param(
+    [Parameter(Position = 0)][ValidateSet('up', 'update', 'down', 'status', 'reset', 'logs', 'test')][string]$Command = 'status',
+    [string]$Ref = 'origin/main',
+    [string]$LabDir = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) '..\AgentOs-lab'),
+    [switch]$Force
+)
+$ErrorActionPreference = 'Stop'
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$LabDir = [System.IO.Path]::GetFullPath($LabDir)
+$StateDir = Join-Path $LabDir '.lab'
+$PidFile = Join-Path $StateDir 'apphost.pid'
+$LogFile = Join-Path $StateDir 'apphost.log'
+$WebUrl = 'https://localhost:6180'
+
+function Test-Web {
+    # Healthy = the login endpoint answers 302 to Keycloak. curl.exe (ships with Windows 10+) because
+    # Invoke-WebRequest reports a non-followed redirect as an error.
+    $code = & curl.exe -k -s -o NUL -w '%{http_code}' --max-time 5 "$WebUrl/account/login" 2>$null
+    return $code -eq '302'
+}
+
+function Get-LabProcess {
+    if (-not (Test-Path $PidFile)) { return $null }
+    $id = [int](Get-Content $PidFile)
+    return Get-Process -Id $id -ErrorAction SilentlyContinue
+}
+
+function Stop-Lab {
+    $p = Get-LabProcess
+    if ($p) {
+        Write-Host "Stopping lab (pid $($p.Id))…"
+        # The AppHost owns DCP + child processes; kill the whole tree.
+        & taskkill /T /F /PID $p.Id | Out-Null
+    }
+    Remove-Item $PidFile -ErrorAction SilentlyContinue
+}
+
+function Ensure-Worktree {
+    if (-not (Test-Path (Join-Path $LabDir '.git'))) {
+        Write-Host "Creating lab worktree at $LabDir ($Ref)…"
+        git -C $RepoRoot fetch --quiet origin
+        git -C $RepoRoot worktree add --detach $LabDir $Ref
+    }
+    New-Item -ItemType Directory -Force $StateDir | Out-Null
+}
+
+function Start-Lab {
+    if (Get-LabProcess) { Write-Host 'Lab already running.'; return }
+    Write-Host 'Building lab…'
+    dotnet build (Join-Path $LabDir 'infra/AgentOs.AppHost') -c Debug --nologo -v q
+    if ($LASTEXITCODE -ne 0) { throw 'Lab build failed.' }
+    $p = Start-Process dotnet -PassThru -WindowStyle Hidden -WorkingDirectory $LabDir `
+        -ArgumentList @('run', '--project', 'infra/AgentOs.AppHost', '--launch-profile', 'lab', '--no-build') `
+        -RedirectStandardOutput $LogFile -RedirectStandardError "$LogFile.err"
+    $p.Id | Set-Content $PidFile
+    Write-Host -NoNewline 'Waiting for the lab to be healthy'
+    for ($i = 0; $i -lt 90; $i++) {
+        if (Test-Web) { Write-Host ''; Show-Status; return }
+        Write-Host -NoNewline '.'
+        Start-Sleep -Seconds 5
+    }
+    throw "Lab did not become healthy — see $LogFile"
+}
+
+function Show-Status {
+    $p = Get-LabProcess
+    $commit = if (Test-Path (Join-Path $LabDir '.git')) { git -C $LabDir log -1 --format='%h %s' } else { '(no worktree)' }
+    Write-Host "Lab worktree : $LabDir"
+    Write-Host "Lab commit   : $commit"
+    Write-Host "Process      : $(if ($p) { "running (pid $($p.Id))" } else { 'stopped' })"
+    Write-Host "Desktop      : $WebUrl  ($(if (Test-Web) { 'healthy' } else { 'down' }))  login operator / operator"
+    Write-Host 'Aspire       : https://localhost:18050    Api: https://localhost:6080    MailHog: http://localhost:9025'
+}
+
+switch ($Command) {
+    'up' { Ensure-Worktree; Start-Lab }
+    'update' {
+        Ensure-Worktree; Stop-Lab
+        git -C $LabDir fetch --quiet origin
+        git -C $LabDir checkout --quiet --detach $Ref
+        Start-Lab
+    }
+    'down' { Stop-Lab; Write-Host 'Lab stopped.' }
+    'status' { Show-Status }
+    'logs' { Get-Content $LogFile -Tail 80 -Wait }
+    'test' {
+        if (-not (Test-Web)) { throw "Lab is not running — start it with: pwsh infra/lab/lab.ps1 up" }
+        # The lab Postgres is the container mounting the lab volume; its host port is dynamic.
+        $pg = docker ps --format '{{.Names}}' | Where-Object { $_ -like 'postgres-*' } |
+            Where-Object { (docker inspect $_ --format '{{range .Mounts}}{{.Name}} {{end}}') -match 'agentos-lab-postgres-data' } |
+            Select-Object -First 1
+        $pgPort = if ($pg) { ((docker port $pg 5432) | Select-Object -First 1).Split(':')[-1] } else { $null }
+        $env:RUN_AGENTOS_LAB = 'true'
+        $env:RUN_AGENTOS_E2E_REAL = 'true'
+        $env:AGENTOS_REAL_URL = $WebUrl
+        $env:MAILHOG_URL = 'http://localhost:9025'
+        if ($pgPort) { $env:AGENTOS_PG_CONN = "Host=localhost;Port=$pgPort;Database=agentos;Username=postgres;Password=postgres" }
+        Write-Host '== Lab integration tests (real GitHub / Azure DevOps)'
+        # Tests run from the lab worktree: same code as the running lab, own build output (no dev-checkout locks).
+        dotnet test --project (Join-Path $LabDir 'tests/AgentOs.Lab.Tests') -c Release
+        Write-Host '== Real-auth UI E2E against the lab'
+        dotnet test --project (Join-Path $LabDir 'tests/AgentOs.E2E.Tests') -c Release
+    }
+    'reset' {
+        if (-not $Force) {
+            $answer = Read-Host 'This deletes the lab Postgres + Keycloak volumes (all lab data). Type "reset" to continue'
+            if ($answer -ne 'reset') { Write-Host 'Cancelled.'; return }
+        }
+        Stop-Lab
+        docker volume rm agentos-lab-postgres-data agentos-lab-keycloak-data 2>$null
+        Write-Host 'Lab data removed. Run "up" to start fresh.'
+    }
+}

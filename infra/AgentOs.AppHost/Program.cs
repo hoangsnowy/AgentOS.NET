@@ -39,6 +39,12 @@ var builder = DistributedApplication.CreateBuilder(args);
 // cloud. Dev-only affordances (theme bind-mount, MailHog, Web Development pin) are gated to run mode.
 var isPublish = builder.ExecutionContext.IsPublishMode;
 
+// Stack profile (run mode only). "dev" (default) is the everyday stack; "lab" is a long-running test
+// server for real GitHub / Azure DevOps / LLM integrations that runs SIDE BY SIDE with dev — every host
+// port and every data volume is distinct, so neither stack can clobber the other. Launch profile "lab"
+// (`dotnet run --project infra/AgentOs.AppHost --launch-profile lab`) sets AgentOs__Stack=lab.
+var stack = new StackProfile(builder.Configuration["AgentOs:Stack"]);
+
 // --- Auth parameters ---
 var kcAdminUsername   = builder.AddParameter("KeycloakAdminUsername");
 var kcAdminPassword   = builder.AddParameter("KeycloakAdminPassword", secret: true);
@@ -56,7 +62,7 @@ var pgUsername = builder.AddParameter("PostgresUsername");
 var pgPassword = builder.AddParameter("PostgresPassword", secret: true);
 var postgres = builder.AddAzurePostgresFlexibleServer("postgres")
     .WithPasswordAuthentication(pgUsername, pgPassword)
-    .RunAsContainer(c => c.WithDataVolume());
+    .RunAsContainer(c => c.WithDataVolume(stack.Volume("postgres-data")));
 var db = postgres.AddDatabase("DefaultConnection", databaseName: "agentos");
 // Keycloak's durable store — created by the same bicep so KC is Postgres-backed from the first
 // `azd up` (no manual "create the keycloak database" step).
@@ -67,12 +73,12 @@ IResourceBuilder<ContainerResource>? mailhog = null;
 if (!isPublish)
 {
     mailhog = builder.AddContainer("mailhog", "mailhog/mailhog")
-        .WithHttpEndpoint(port: 8025, targetPort: 8025, name: "ui")
-        .WithEndpoint(port: 1025, targetPort: 1025, name: "smtp", scheme: "tcp");
+        .WithHttpEndpoint(port: stack.Port(8025), targetPort: 8025, name: "ui")
+        .WithEndpoint(port: stack.Port(1025), targetPort: 1025, name: "smtp", scheme: "tcp");
 }
 
 // --- Keycloak ---
-var keycloak = builder.AddKeycloak("keycloak", port: 8080)
+var keycloak = builder.AddKeycloak("keycloak", port: stack.Port(8080))
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_USERNAME", kcAdminUsername)
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_PASSWORD", kcAdminPassword);
 
@@ -85,7 +91,7 @@ if (!isPublish)
     // 512K matches Kestrel's MaxRequestHeadersTotalSize (ServiceDefaults) — 128K wasn't enough on a
     // heavy dev box, so the whole OIDC round-trip survives without clearing cookies / incognito.
     keycloak
-        .WithDataVolume()
+        .WithDataVolume(stack.Volume("keycloak-data"))
         .WithRealmImport("../../infra/keycloak")
         .WaitFor(mailhog!)
         .WithBindMount("../../infra/keycloak/themes/agentos", "/opt/keycloak/themes/agentos")
@@ -119,7 +125,13 @@ else
 }
 
 // --- API ---
-var api = builder.AddProject<Projects.AgentOs_Api>("api")
+var api = (stack.IsLab && !isPublish
+        // Lab: its own https port, not the launch profile's 5080 (which the dev stack owns).
+        ? builder.AddProject<Projects.AgentOs_Api>("api", launchProfileName: null)
+            .WithHttpsEndpoint(port: stack.Port(5080), name: "https")
+            // No launch profile → set what it provided (otherwise the Api boots as Production and exits).
+            .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
+        : builder.AddProject<Projects.AgentOs_Api>("api"))
     .WithReference(db).WaitFor(db)
     .WithReference(keycloak).WaitFor(keycloak)
     .WithEnvironment("Auth__Keycloak__Authority", RealmAuthority(keycloak.GetEndpoint("http")))
@@ -137,7 +149,7 @@ var api = builder.AddProject<Projects.AgentOs_Api>("api")
 if (!isPublish) { api.WaitFor(mailhog!); }
 else { api.WithExternalHttpEndpoints(); }   // cloud: health smoke + Scalar need a public FQDN
 
-// The Web must be reachable at EXACTLY https://localhost:5180 in run mode — that string is hard-wired
+// The Web must be reachable at EXACTLY https://localhost:5180 (lab: 6180) in run mode — both are hard-wired
 // into the Keycloak realm's redirectUris, so any other scheme/port/origin breaks OIDC login. Make that
 // binding the single source of truth, with no possibility of a port clash:
 //   • launchProfileName: null     — ignore launchSettings (its "http" profile pins http://localhost:5180,
@@ -151,8 +163,8 @@ else { api.WithExternalHttpEndpoints(); }   // cloud: health smoke + Scalar need
 var web = builder.AddProject<Projects.AgentOs_Web>("web", launchProfileName: null);
 if (!isPublish)
 {
-    // Run mode: pin EXACTLY https://localhost:5180 (see comment above).
-    web.WithHttpsEndpoint(port: 5180, targetPort: 5180, name: "https", isProxied: false);
+    // Run mode: pin EXACTLY https://localhost:5180 — lab 6180 (see comment above).
+    web.WithHttpsEndpoint(port: stack.Port(5180), targetPort: stack.Port(5180), name: "https", isProxied: false);
 }
 else
 {
@@ -183,6 +195,26 @@ web
 
 if (!isPublish) { web.WaitFor(mailhog!); }
 
+// Lab only: optional real LLM keys for live agent runs, seeded from the AppHost's user-secrets
+// (Lab:Claude:ApiKey, Lab:AzureOpenAi:ApiKey / :Endpoint — see docs/LAB.md). They become the platform seed
+// tier (env vars); a per-tenant key set in Settings still wins. Never set for the dev stack.
+if (stack.IsLab && !isPublish)
+{
+    foreach (var (secret, env) in new[]
+    {
+        ("Lab:Claude:ApiKey", "Llm__Claude__ApiKey"),
+        ("Lab:AzureOpenAi:ApiKey", "Llm__AzureOpenAi__ApiKey"),
+        ("Lab:AzureOpenAi:Endpoint", "Llm__AzureOpenAi__Endpoint"),
+    })
+    {
+        if (builder.Configuration[secret] is { Length: > 0 } value)
+        {
+            api.WithEnvironment(env, value);
+            web.WithEnvironment(env, value);
+        }
+    }
+}
+
 builder.Build().Run();
 
 // Build the Keycloak realm authority (<kc-url>/realms/agentic) as a deferred ReferenceExpression.
@@ -205,4 +237,18 @@ static ReferenceExpression KeycloakJdbcUrl(IResourceBuilder<AzurePostgresFlexibl
     b.AppendFormatted(postgres.GetOutput("hostName"));
     b.AppendLiteral(":5432/keycloak?sslmode=require");
     return b.Build();
+}
+
+// Host ports + volume names per stack. dev keeps the historic ports and Aspire's default volume names (no
+// migration for existing dev data); lab shifts every host port by +1000 and uses its own named volumes.
+internal sealed class StackProfile(string? name)
+{
+    private const int LabPortOffset = 1000;
+
+    public bool IsLab { get; } = string.Equals(name, "lab", StringComparison.OrdinalIgnoreCase);
+
+    public int Port(int devPort) => IsLab ? devPort + LabPortOffset : devPort;
+
+    /// <summary>null = Aspire's default (dev); "agentos-lab-&lt;suffix&gt;" for the lab stack.</summary>
+    public string? Volume(string suffix) => IsLab ? $"agentos-lab-{suffix}" : null;
 }

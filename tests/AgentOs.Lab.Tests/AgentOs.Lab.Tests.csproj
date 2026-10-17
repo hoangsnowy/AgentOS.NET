@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Integration tests against REAL GitHub / Azure DevOps sandboxes (the lab). Never run in CI: every test
+       skips unless RUN_AGENTOS_LAB=true and the lab secrets are configured (docs/LAB.md). Secrets live in a
+       dedicated user-secrets store, separate from the app's. -->
+  <PropertyGroup>
+    <RootNamespace>AgentOs.Lab.Tests</RootNamespace>
+    <AssemblyName>AgentOs.Lab.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentOs.Domain\AgentOs.Domain.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.SharedKernel\AgentOs.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.Modules.Integration\AgentOs.Modules.Integration.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+  </ItemGroup>
+
+</Project>
