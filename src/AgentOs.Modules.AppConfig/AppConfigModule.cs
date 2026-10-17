@@ -45,11 +45,14 @@ public sealed class AppConfigModule : IModule, IEndpointModule, IInitializableMo
             services.AddDbContext<AppConfigDbContext>(opt =>
                 opt.UseNpgsql(connectionString, npg =>
                     npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "config")));
-            services.AddSingleton<IAppConfigStore, EfAppConfigStore>();
+            services.AddSingleton<EfAppConfigStore>();
+            services.AddSingleton<IAppConfigStore>(sp => new AuditingAppConfigStore(sp.GetRequiredService<EfAppConfigStore>(), sp, sp.GetService<TimeProvider>()));
             return;
         }
 
-        services.TryAddSingleton<IAppConfigStore, InMemoryAppConfigStore>();
+        // Plan C.3: every direct store write (keys, prompts, policy, budget, credentials) is audited, redacted.
+        services.TryAddSingleton<InMemoryAppConfigStore>();
+        services.TryAddSingleton<IAppConfigStore>(sp => new AuditingAppConfigStore(sp.GetRequiredService<InMemoryAppConfigStore>(), sp, sp.GetService<TimeProvider>()));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder endpoints)

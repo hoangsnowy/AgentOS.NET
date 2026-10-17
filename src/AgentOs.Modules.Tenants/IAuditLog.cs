@@ -41,4 +41,12 @@ public static class AuditActions
     public const string MemberPasswordReset = "member.password_reset";
     public const string InvitationMinted = "invitation.minted";
     public const string LoginFailed = "login.failed";
+    public const string SettingChanged = "setting.changed";
+}
+
+/// <summary>Audit "tenant" ids that are not tenants.</summary>
+public static class AuditScopes
+{
+    /// <summary>Platform-wide events (platform settings). Tenant slugs never contain '_', so no tenant can own it.</summary>
+    public const string Platform = "_platform";
 }

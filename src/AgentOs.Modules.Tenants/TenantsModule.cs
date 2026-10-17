@@ -74,6 +74,10 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
             services.AddSingleton<IEmailSender, NullEmailSender>();
         }
 
+        // Plan C.3: settings writes are audited into this module's trail. Add (not TryAdd) so it replaces the
+        // AppConfig module's no-op default whichever module loads first (last registration wins on resolve).
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsAuditSink, Settings.AuditLogSettingsSink>();
+
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
         {

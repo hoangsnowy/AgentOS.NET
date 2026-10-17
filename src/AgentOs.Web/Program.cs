@@ -382,6 +382,21 @@ app.MapGet("/cost/export", async (HttpContext http, AgentOs.Modules.Pipeline.Per
     return Results.File(bytes, "text/csv", "agentos-cost.csv");
 }).RequireAuthorization();
 
+// Audit CSV export (Settings → Audit log). Same-origin cookie-authed download like /cost/export. A tenant admin
+// exports their own tenant; scope=platform (platform settings changes) needs platform-admin.
+app.MapGet("/audit/export", async (HttpContext http, AgentOs.Modules.Tenants.IAuditLog audit, string? scope) =>
+{
+    var platform = string.Equals(scope, "platform", StringComparison.Ordinal);
+    if (!http.User.IsAdmin() || (platform && !http.User.IsPlatformAdmin()))
+    {
+        return Results.Forbid();
+    }
+    var tenant = platform ? AgentOs.Modules.Tenants.AuditScopes.Platform : http.User.GetTenantId() ?? "default";
+    var rows = await audit.ListAsync(tenant, 10_000);
+    var bytes = System.Text.Encoding.UTF8.GetBytes(AgentOs.Modules.Tenants.AuditCsv.ToCsv(rows));
+    return Results.File(bytes, "text/csv", platform ? "agentos-audit-platform.csv" : $"agentos-audit-{tenant}.csv");
+}).RequireAuthorization();
+
 // VS Code browser-pairing: the approve page (/pair/vscode, OIDC-cookie authed) + the one-time code
 // exchange (/runner/pair/exchange). Mapped here on the Web — the extension and browser both target the
 // Web origin, and the approve step uses the browser session, not a Bearer token.
