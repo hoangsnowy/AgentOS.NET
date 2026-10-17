@@ -34,6 +34,11 @@ window.agenticTheme = {
         var blurPx = Math.round((p / 100) * 32);
         document.documentElement.style.setProperty('--glass-blur', blurPx + 'px');
         document.documentElement.style.setProperty('--glass-saturate', (100 + p) + '%');
+        // 0% = NO backdrop filter at all. Even blur(0px) makes the browser build a backdrop layer and re-run
+        // it whenever anything inside the window repaints — measured as a 60 → 20 fps drop with a few
+        // windows open. Only a real glass setting pays that cost.
+        document.documentElement.style.setProperty('--glass-filter',
+            p > 0 ? 'blur(' + blurPx + 'px) saturate(' + (100 + p) + '%)' : 'none');
         localStorage.setItem(this.GLASS_KEY, p);
         return p;
     },

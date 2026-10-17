@@ -121,6 +121,30 @@ public sealed partial class AgentMascotTests
         css.ShouldContain(":root[data-agent-motion=\"off\"] .mascot");
     }
 
+    // Performance guard (measured: idle infinite loops inside windows with a backdrop filter took the desktop
+    // from 60 to 20 fps). Only a RUNNING agent may loop; every other state plays a finite number of times.
+    [Fact]
+    public async Task Stylesheet_OnlyRunningMascotsLoop()
+    {
+        var css = await File.ReadAllTextAsync(AppCss());
+        var block = css[css.IndexOf("/* ===== Agent mascots", StringComparison.Ordinal)..css.IndexOf("/* ===== Living icons", StringComparison.Ordinal)];
+        var offenders = block.Split('\n')
+            .Where(l => l.Contains("infinite", StringComparison.Ordinal) && l.TrimStart().StartsWith(".mascot", StringComparison.Ordinal))
+            .Where(l => !l.Contains("is-running", StringComparison.Ordinal))
+            .ToArray();
+        offenders.ShouldBeEmpty($"mascot rules that loop outside the running state: {string.Join(" | ", offenders)}");
+    }
+
+    // Performance guard: window/shell glass must come from --glass-filter (which is `none` at 0%), never an
+    // unconditional blur — even blur(0px) builds a backdrop layer that re-runs on every repaint.
+    [Fact]
+    public async Task Stylesheet_WindowGlass_IsOffUnlessEnabled()
+    {
+        var css = await File.ReadAllTextAsync(AppCss());
+        Regex.IsMatch(css, @"\.appwin\s*\{[^}]*backdrop-filter:\s*var\(--glass-filter,\s*none\)").ShouldBeTrue();
+        css.ShouldNotContain("backdrop-filter: blur(var(--glass-blur))");
+    }
+
     private static string AppCss()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
