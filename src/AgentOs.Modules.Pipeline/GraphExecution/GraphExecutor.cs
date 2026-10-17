@@ -247,7 +247,43 @@ public sealed class GraphExecutor : IGraphExecutor
         // stamping the explicit tenant so the budget gate sees it on the NEXT run — see PersistRunAsync.
         await PersistRunAsync(runGuid, state, budgetTenant, failure, startedAtUtc, ct).ConfigureAwait(false);
 
-        return new GraphRunResult(failure is null, failure, state.AnyOffline);
+        return new GraphRunResult(failure is null, failure, state.AnyOffline) { Usage = UsageByAgent(state.Spend) };
+    }
+
+    /// <summary>Per-agent tokens/cost for the run, in the order each agent first ran. One pass over the
+    /// metrics (sorted once by time) with a dictionary index — O(n log n) for n calls, no per-agent rescans.</summary>
+    internal static IReadOnlyList<AgentTokenUsage> UsageByAgent(IEnumerable<RunMetric> metrics)
+    {
+        var ordered = metrics.OrderBy(m => m.Timestamp).ToArray();
+        if (ordered.Length == 0)
+        {
+            return [];
+        }
+
+        var index = new Dictionary<string, int>(StringComparer.Ordinal);
+        var rows = new List<AgentTokenUsage>();
+        foreach (var m in ordered)
+        {
+            var estimated = LlmProviders.IsOffline(m.Provider);
+            if (index.TryGetValue(m.AgentName, out var i))
+            {
+                var r = rows[i];
+                rows[i] = r with
+                {
+                    Calls = r.Calls + 1,
+                    TokensIn = r.TokensIn + m.TokensIn,
+                    TokensOut = r.TokensOut + m.TokensOut,
+                    CostUsd = r.CostUsd + m.CostUsd,
+                    Estimated = r.Estimated || estimated,
+                };
+            }
+            else
+            {
+                index[m.AgentName] = rows.Count;
+                rows.Add(new AgentTokenUsage(m.AgentName, 1, m.TokensIn, m.TokensOut, m.CostUsd, estimated));
+            }
+        }
+        return rows;
     }
 
     // Persist the per-node spend collected during the run as a PipelineRunRecord (one pipeline_runs row +

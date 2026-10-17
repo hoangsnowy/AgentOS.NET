@@ -156,7 +156,11 @@
 
                 @if (_bottomOpen)
                 {
-                    <div class="syn-bottom">
+                    @* Drag (or arrow keys) to resize; double-click / Enter restores the default height. Pure JS so the
+                       drag never round-trips the circuit — see wwwroot/panel-resize.js. *@
+                    <div class="syn-splitter" role="separator" aria-orientation="horizontal" tabindex="0"
+                         aria-label="Resize the run panel" title="Drag to resize · double-click to reset" @ref="_splitter"></div>
+                    <div class="syn-bottom" @ref="_bottomPanel">
                         <TabStrip Tabs="BottomTabs"
                                   Active="@_bottomTab.ToString(System.Globalization.CultureInfo.InvariantCulture)"
                                   ActiveChanged="key => _bottomTab = int.Parse(key, System.Globalization.CultureInfo.InvariantCulture)"
@@ -193,6 +197,50 @@
                                 else
                                 {
                                     <div class="syn-log">@foreach (var l in _runLog){<div class="ln">@l</div>}</div>
+                                }
+                            }
+                            else if (_bottomTab == 4)
+                            {
+                                @if (_lastUsage.Count == 0)
+                                {
+                                    <p class="muted">Run the workflow to see how many tokens each agent used.</p>
+                                }
+                                else
+                                {
+                                    var maxTok = Math.Max(1, _lastUsage.Max(u => u.TotalTokens));
+                                    var inv = System.Globalization.CultureInfo.InvariantCulture;
+                                    <table class="syn-usage" aria-label="Tokens by agent for the last run">
+                                        <thead><tr><th>Agent</th><th>Tokens</th><th class="num">In</th><th class="num">Out</th><th class="num">Calls</th><th class="num">Cost</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var u in _lastUsage)
+                                            {
+                                                <tr>
+                                                    <td><span class="syn-usage-who"><AgentMascot Role="@UsageRole(u.Agent)" State="@(u.Estimated ? AgentMascot.MascotState.Canned : AgentMascot.MascotState.Done)" Size="22" /> @u.Agent</span></td>
+                                                    <td>
+                                                        <div class="syn-usage-bar" title="@($"{u.TokensIn.ToString("N0", inv)} in · {u.TokensOut.ToString("N0", inv)} out")" style="width:@((u.TotalTokens * 100.0 / maxTok).ToString("0.#", inv))%">
+                                                            <span class="in" style="flex:@u.TokensIn"></span><span class="out" style="flex:@u.TokensOut"></span>
+                                                        </div>
+                                                        <span class="syn-usage-total">@(u.Estimated ? "≈" : "")@u.TotalTokens.ToString("N0", inv)</span>
+                                                    </td>
+                                                    <td class="num">@u.TokensIn.ToString("N0", inv)</td>
+                                                    <td class="num">@u.TokensOut.ToString("N0", inv)</td>
+                                                    <td class="num">@u.Calls</td>
+                                                    <td class="num">@(u.Estimated && u.CostUsd == 0m ? "not billed" : "$" + u.CostUsd.ToString("0.0000", inv))</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                        <tfoot>
+                                            <tr>
+                                                <td>Total</td>
+                                                <td><span class="syn-usage-total">@(_lastUsage.Any(u => u.Estimated) ? "≈" : "")@_lastUsage.Sum(u => u.TotalTokens).ToString("N0", inv)</span></td>
+                                                <td class="num">@_lastUsage.Sum(u => u.TokensIn).ToString("N0", inv)</td>
+                                                <td class="num">@_lastUsage.Sum(u => u.TokensOut).ToString("N0", inv)</td>
+                                                <td class="num">@_lastUsage.Sum(u => u.Calls)</td>
+                                                <td class="num">$@_lastUsage.Sum(u => u.CostUsd).ToString("0.0000", inv)</td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                    <p class="muted"><span class="syn-usage-key in"></span> input <span class="syn-usage-key out"></span> output@(_lastUsage.Any(u => u.Estimated) ? " · ≈ = estimate (offline answers have no provider-reported usage and are not billed)" : "")</p>
                                 }
                             }
                             else
@@ -348,8 +396,21 @@
         new("1", "Guardrails"),
         new("2", "Run Log"),
         new("3", "Recent Runs", _recent.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+        new("4", "Tokens", _lastUsage.Count == 0 ? null : CompactTokens(_lastUsage.Sum(u => u.TotalTokens))),
     ];
+
+    private static string CompactTokens(int n) => n >= 1000
+        ? (n / 1000.0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "k"
+        : n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    // Agent names in run metrics: typed agents use their role ("RequirementAgent", "QaAgent"...); raw LLM
+    // nodes use the node title (→ the generic character).
+    private static string UsageRole(string agent) => agent.EndsWith("Agent", StringComparison.Ordinal) ? agent[..^5] : agent;
     private bool _bottomOpen;          // collapsed by default — gives canvas full height
+    private ElementReference _splitter;
+    private ElementReference _bottomPanel;
+    private bool _splitterAttached;
+    private IReadOnlyList<AgentTokenUsage> _lastUsage = [];
     private string _runInput = string.Empty;
     private readonly List<string> _runLog = [];
     private bool _running;
@@ -813,11 +874,12 @@
                                 GraphNodePhase.Skipped => NodeRunState.Skipped,
                                 _ => NodeRunState.Idle,
                             };
-                            // Canned token counts/cost are fabricated by the offline client — never show them.
-                            SetNode(node, state, ev.Offline ? "canned · no model called" : ev.Meta, ev.Message);
+                            // Canned output has no provider-reported usage: its token count is an estimate (text ÷ 4)
+                            // and it is never billed — so it is only ever shown marked "≈ … est.", never as real usage.
+                            SetNode(node, state, ev.Offline ? CannedMeta(ev.Meta) : ev.Meta, ev.Message);
                         }
                         if (ev.Phase == GraphNodePhase.Running) { Log($"▷ {NodeTitle(ev.NodeId)}…"); }
-                        else if (ev.Phase == GraphNodePhase.Done && ev.Offline) { Log($"◌ {NodeTitle(ev.NodeId)}  ·  canned (offline — no model called)"); }
+                        else if (ev.Phase == GraphNodePhase.Done && ev.Offline) { Log($"◌ {NodeTitle(ev.NodeId)}  ·  {CannedMeta(ev.Meta)} (offline — no model called)"); }
                         else if (ev.Phase == GraphNodePhase.Done) { Log($"✓ {NodeTitle(ev.NodeId)}{(string.IsNullOrEmpty(ev.Meta) ? "" : "  ·  " + ev.Meta)}"); }
                         else if (ev.Phase == GraphNodePhase.Failed) { Log($"✖ {NodeTitle(ev.NodeId)}: {ev.Message}"); }
                         StateHasChanged();
@@ -829,6 +891,8 @@
                     Log(!result.Completed ? $"✖ Stopped: {result.FailureMessage}"
                         : result.Offline ? "■ Dry run complete — OFFLINE: canned output, nothing reached a model. Add an API key in Settings → LLM for a live run."
                         : "■ Workflow complete.");
+                    _lastUsage = result.Usage;
+                    LogUsage(result.Usage);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1073,9 +1137,50 @@
 
     private void Log(string line) => _runLog.Add($"[{DateTime.Now:HH:mm:ss}] {line}");
 
+    // "in→out tok · $cost" from the executor → "canned · ≈in→out tok est." (the estimate, never the $0 cost).
+    private static string CannedMeta(string? meta)
+    {
+        var tokens = meta is null ? null : meta.Split(" · ", 2)[0];
+        return tokens is { Length: > 0 } && tokens.EndsWith(" tok", StringComparison.Ordinal)
+            ? $"canned · ≈{tokens} est."
+            : "canned · no model called";
+    }
+
+    // The run's per-agent token table, appended to the Run Log after every run.
+    private void LogUsage(IReadOnlyList<AgentTokenUsage> usage)
+    {
+        if (usage.Count == 0) { return; }
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var width = Math.Max(5, usage.Max(u => u.Agent.Length));
+        Log("Σ Tokens by agent");
+        foreach (var u in usage)
+        {
+            var est = u.Estimated ? "≈" : " ";
+            var cost = u.Estimated && u.CostUsd == 0m ? "not billed" : "$" + u.CostUsd.ToString("0.0000", inv);
+            Log($"   {u.Agent.PadRight(width)}  {est}{u.TotalTokens.ToString("N0", inv),8} tok  ({u.TokensIn.ToString("N0", inv)} in · {u.TokensOut.ToString("N0", inv)} out)  ·  {u.Calls} call{(u.Calls == 1 ? "" : "s")}  ·  {cost}");
+        }
+        var anyEst = usage.Any(u => u.Estimated);
+        var total = usage.Sum(u => u.TotalTokens);
+        var totalCost = usage.Sum(u => u.CostUsd);
+        Log($"   {"Total".PadRight(width)}  {(anyEst ? "≈" : " ")}{total.ToString("N0", inv),8} tok  ·  ${totalCost.ToString("0.0000", inv)}{(anyEst ? "  (≈ = estimate: offline answers have no provider usage)" : "")}");
+    }
+
     // Register the document-level ⌘K listener once (workflow-keys.js routes it back to OnQuickAddKey).
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        // The run panel is re-created each time it opens, so attach the splitter to the new element once.
+        if (_bottomOpen && !_splitterAttached)
+        {
+            _splitterAttached = true;
+            await CircuitSafe.RunAsync(
+                async () => await JS.InvokeVoidAsync("agentosPanelResize.attach", _splitter, _bottomPanel, "workflow-run", 220, 96),
+                _ => { });   // resizing is a convenience — a missing script must not break the studio
+        }
+        else if (!_bottomOpen)
+        {
+            _splitterAttached = false;
+        }
+
         if (!firstRender) { return; }
         _selfRef = DotNetObjectReference.Create(this);
         await CircuitSafe.RunAsync(

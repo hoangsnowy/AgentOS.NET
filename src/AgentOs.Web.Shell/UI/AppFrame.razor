@@ -98,7 +98,7 @@
 
     private string PositionStyle => _maximized
         ? "left:0; top:30px; right:0; bottom:80px; width:auto; height:auto;"
-        : $"left:{W.X}px; top:{W.Y}px; width:{W.W}px; height:{W.H}px;";
+        : $"left:{W.X}px; top:{W.Y}px; width:{W.W}px; height:{W.H}px; --win-x:{W.X}px; --win-y:{W.Y}px;";
 
     private void ToggleMax()
     {

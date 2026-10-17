@@ -98,6 +98,23 @@ public sealed class WorkflowAppTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(win.Locator(".step-node svg.mascot.is-canned")).ToHaveCountAsync(4);
         await Assertions.Expect(win.Locator(".step-node svg.mascot.is-done")).ToHaveCountAsync(0);
         await Assertions.Expect(win.Locator(".syn-log")).Not.ToContainTextAsync("Workflow complete.");
+
+        // Tokens per agent: the Run Log closes with the table, and the Tokens tab shows one row per agent —
+        // offline answers are marked "≈" (estimate) and "not billed", never presented as real usage.
+        await Assertions.Expect(win.Locator(".syn-log")).ToContainTextAsync("Σ Tokens by agent");
+        await win.Locator(".syn-tab", new() { HasTextString = "Tokens" }).ClickAsync();
+        await Assertions.Expect(win.Locator(".syn-usage tbody tr")).ToHaveCountAsync(4);
+        await Assertions.Expect(win.Locator(".syn-usage tbody")).ToContainTextAsync("≈");
+        await Assertions.Expect(win.Locator(".syn-usage tbody")).ToContainTextAsync("not billed");
+
+        // The run panel resizes from the keyboard (the splitter is a focusable separator).
+        var splitter = win.Locator(".syn-splitter[role=separator]");
+        var before = await win.Locator(".syn-bottom").EvaluateAsync<double>("el => el.getBoundingClientRect().height");
+        await splitter.FocusAsync();
+        await splitter.PressAsync("Shift+ArrowUp");
+        var after = await win.Locator(".syn-bottom").EvaluateAsync<double>("el => el.getBoundingClientRect().height");
+        Assert.True(after > before, $"run panel should grow from the keyboard ({before} → {after})");
+        await splitter.PressAsync("Enter");   // back to the default height — leaves the shared profile clean
     }
 
     // NOTE: a second E2E that drove the "Control-Flow Demo" (Parallel + Merge + If/Else + Human checkpoint)
