@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>AgentOS</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4a95ea"/>
+      <stop offset=".5" stop-color="#3584e4"/>
+      <stop offset="1" stop-color="#7c5ce6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="18" fill="url(#bg)"/>
+  <line x1="32" y1="18" x2="32" y2="10" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="32" cy="8.5" r="3.6" fill="#fbbf24" stroke="#b45309" stroke-width="1.2"/>
+  <rect x="12.5" y="17.5" width="39" height="31" rx="13" fill="#ffffff"/>
+  <ellipse cx="25" cy="31.5" rx="3.7" ry="4.5" fill="#1f1d2b"/>
+  <ellipse cx="39" cy="31.5" rx="3.7" ry="4.5" fill="#1f1d2b"/>
+  <circle cx="26.3" cy="29.7" r="1.25" fill="#ffffff"/>
+  <circle cx="40.3" cy="29.7" r="1.25" fill="#ffffff"/>
+  <circle cx="19" cy="38.5" r="2.7" fill="#ff8fa3" fill-opacity=".75"/>
+  <circle cx="45" cy="38.5" r="2.7" fill="#ff8fa3" fill-opacity=".75"/>
+  <path d="M27.2 39.4 Q32 43.6 36.8 39.4" fill="none" stroke="#1f1d2b" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

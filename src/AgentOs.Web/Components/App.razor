@@ -15,7 +15,9 @@
     <link rel="stylesheet" href="@Assets["_content/Z.Blazor.Diagrams/style.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="stylesheet" href="@Assets["orchestration.css"]" />
-    <link rel="icon" href="data:," />
+    <link rel="icon" type="image/svg+xml" href="@Assets["favicon.svg"]" />
+    <link rel="icon" type="image/png" sizes="32x32" href="@Assets["favicon-32.png"]" />
+    <link rel="apple-touch-icon" href="@Assets["apple-touch-icon.png"]" />
     <HeadOutlet @rendermode="@(new Microsoft.AspNetCore.Components.Web.InteractiveServerRenderMode(prerender: false))" />
 </head>
 
@@ -26,7 +28,7 @@
        components-reconnect-{show,failed,rejected} classes on this element. *@
     <div id="components-reconnect-modal">
         <div class="reconnect-card">
-            <div class="reconnect-spinner reconnect-when-show"></div>
+            <div class="reconnect-agent reconnect-when-show"><BrandMark Size="52" Decorative="true" Busy="true" /></div>
             <div class="reconnect-title reconnect-when-show">Reconnecting…</div>
             <div class="reconnect-sub reconnect-when-show">Restoring your session.</div>
 

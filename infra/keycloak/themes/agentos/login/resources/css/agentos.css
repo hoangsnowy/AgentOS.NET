@@ -154,15 +154,15 @@ body, .login-pf body, .login-pf-page {
     align-items: center;
 }
 
-/* Lit-app-icon brand tile — accent gradient + the AgentOS window/squares glyph (data-URI SVG),
-   matching the system-design mark (not a bare "A" letter). */
+/* Lit-app-icon brand tile — accent gradient + the AgentOS agent face (data-URI twin of the desktop BrandMark /
+   wwwroot/favicon.svg), the same mark on every surface. */
 #kc-header-wrapper::before {
     content: "";
     width: 46px;
     height: 46px;
     border-radius: 11px;
     background:
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='14' height='14' rx='2'/%3E%3Crect x='7' y='7' width='14' height='14' rx='2'/%3E%3C/svg%3E") center / 24px 24px no-repeat,
+        url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2064%2064%27%3E%3Cline%20x1%3D%2732%27%20y1%3D%2718%27%20x2%3D%2732%27%20y2%3D%2710%27%20stroke%3D%27%23fff%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%2F%3E%3Ccircle%20cx%3D%2732%27%20cy%3D%278.5%27%20r%3D%273.6%27%20fill%3D%27%23fbbf24%27%20stroke%3D%27%23b45309%27%20stroke-width%3D%271.2%27%2F%3E%3Crect%20x%3D%2712.5%27%20y%3D%2717.5%27%20width%3D%2739%27%20height%3D%2731%27%20rx%3D%2713%27%20fill%3D%27%23fff%27%2F%3E%3Cellipse%20cx%3D%2725%27%20cy%3D%2731.5%27%20rx%3D%273.7%27%20ry%3D%274.5%27%20fill%3D%27%231f1d2b%27%2F%3E%3Cellipse%20cx%3D%2739%27%20cy%3D%2731.5%27%20rx%3D%273.7%27%20ry%3D%274.5%27%20fill%3D%27%231f1d2b%27%2F%3E%3Ccircle%20cx%3D%2726.3%27%20cy%3D%2729.7%27%20r%3D%271.25%27%20fill%3D%27%23fff%27%2F%3E%3Ccircle%20cx%3D%2740.3%27%20cy%3D%2729.7%27%20r%3D%271.25%27%20fill%3D%27%23fff%27%2F%3E%3Ccircle%20cx%3D%2719%27%20cy%3D%2738.5%27%20r%3D%272.7%27%20fill%3D%27%23ff8fa3%27%20fill-opacity%3D%27.75%27%2F%3E%3Ccircle%20cx%3D%2745%27%20cy%3D%2738.5%27%20r%3D%272.7%27%20fill%3D%27%23ff8fa3%27%20fill-opacity%3D%27.75%27%2F%3E%3Cpath%20d%3D%27M27.2%2039.4%20Q32%2043.6%2036.8%2039.4%27%20fill%3D%27none%27%20stroke%3D%27%231f1d2b%27%20stroke-width%3D%272.4%27%20stroke-linecap%3D%27round%27%2F%3E%3C%2Fsvg%3E") center / 100% 100% no-repeat,
         linear-gradient(160deg, #5b9bf0, var(--accent) 60%, var(--accent-active));
     box-shadow: 0 6px 16px -4px rgba(53,132,228,.55), inset 0 1px 0 rgba(255,255,255,.25);
     flex-shrink: 0;

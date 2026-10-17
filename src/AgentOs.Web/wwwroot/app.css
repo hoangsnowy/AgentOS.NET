@@ -1009,12 +1009,7 @@ select {
 .reconnect-sub { font-size: var(--fs-sm); color: var(--text-tertiary); }
 .reconnect-icon { font-size: 26px; line-height: 1; }
 .components-reconnect-failed .reconnect-icon { color: var(--warn-text); }
-.reconnect-spinner {
-    width: 28px; height: 28px; border-radius: 50%;
-    border: 3px solid var(--border-strong); border-top-color: var(--accent);
-    animation: spin .8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+.reconnect-agent { display: grid; place-items: center; padding: var(--space-1) 0; }
 .reconnect-actions { margin-top: var(--space-2); display: flex; gap: var(--space-2); }
 .reconnect-btn {
     padding: 7px 16px; font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium);
@@ -1809,19 +1804,18 @@ select {
 /* =================================================================
    Spinner
    ================================================================= */
-.spinner {
-    display: inline-block;
-    width: 18px; height: 18px;
-    border: 2px solid var(--line-strong);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: sp-spin .8s linear infinite;
-    vertical-align: middle;
-}
-.spinner-small { width: 12px; height: 12px; border-width: 2px; }
-.spinner-medium { width: 18px; height: 18px; border-width: 2px; } /* default size — matches base .spinner */
-.spinner-large { width: 28px; height: 28px; border-width: 3px; }
-@keyframes sp-spin { to { transform: rotate(360deg); } }
+/* The AgentOS agent at work + three "thinking" dots (Spinner.razor). Busy is the brand mark's only looping state. */
+.spinner { display: inline-flex; align-items: flex-end; gap: 5px; vertical-align: middle; padding: 2px 0; }
+.spinner-dots { display: inline-flex; gap: 3px; padding-bottom: 2px; }
+.spinner-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); opacity: .35; animation: sp-dot 1.2s ease-in-out infinite; }
+.spinner-dots i:nth-child(2) { animation-delay: .15s; }
+.spinner-dots i:nth-child(3) { animation-delay: .3s; }
+.spinner-small .spinner-dots i { width: 3px; height: 3px; }
+.spinner-large .spinner-dots i { width: 6px; height: 6px; }
+.spinner-large { gap: 8px; }
+@keyframes sp-dot { 0%, 100% { opacity: .35; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .spinner-dots i { animation: none; opacity: .7; } }
+:root[data-agent-motion="off"] .spinner-dots i { animation: none; opacity: .7; }
 
 /* =================================================================
    Progress bar
@@ -2648,6 +2642,40 @@ input[type=range] { accent-color: var(--accent); }
 .board-ticket-title { width: 100%; }
 .board-runall { margin-bottom: var(--space-3); }
 .board-ai-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-tertiary); white-space: nowrap; }
+
+/* ===== Brand mark (BrandMark.razor) — the AgentOS product icon =====
+   An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once
+   on hover (of the mark or the brand row around it). favicon.svg / the Keycloak tile are its static twins. */
+.brand-logo {
+    display: inline-grid; place-items: center; flex: none; overflow: hidden;
+    border-radius: 28%;
+    background: linear-gradient(150deg, #4a95ea 0%, var(--accent) 48%, #7c5ce6 100%);
+    box-shadow: 0 6px 16px -6px rgba(53,132,228,.55), inset 0 1px 0 rgba(255,255,255,.28);
+}
+.brand-logo svg { display: block; width: 100%; height: 100%; }
+.bl-stalk { stroke: #fff; stroke-width: 3; stroke-linecap: round; }
+.bl-bulb { fill: var(--mascot-gold); stroke: var(--mascot-gold-dark); stroke-width: 1.2; }
+.bl-head { fill: var(--mascot-eye); }
+.bl-eye { fill: var(--mascot-ink); }
+.bl-glint { fill: #fff; }
+.bl-cheek { fill: var(--mascot-cheek); opacity: .75; }
+.bl-smile { fill: none; stroke: var(--mascot-ink); stroke-width: 2.4; stroke-linecap: round; }
+.bl-antenna, .bl-eyes { transform-box: fill-box; }
+.bl-antenna { transform-origin: 50% 100%; }
+.bl-eyes { transform-origin: 50% 50%; }
+:is(.brand-logo, .login-brand, .about-hero):hover .bl-antenna { animation: bl-wave .9s ease-in-out 1; }
+:is(.brand-logo, .login-brand, .about-hero):hover .bl-eyes { animation: bl-blink .45s ease-in-out .2s 1; }
+/* Busy (loading): bob, glance left/right, antenna light pulses. */
+.brand-logo.is-busy { animation: bl-bob 1.2s ease-in-out infinite; }
+.brand-logo.is-busy .bl-eyes { animation: bl-look 2.4s ease-in-out infinite; }
+.brand-logo.is-busy .bl-bulb { animation: bl-glow 1.2s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+@keyframes bl-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10%); } }
+@keyframes bl-look { 0%, 30%, 100% { transform: translateX(0); } 40%, 55% { transform: translateX(-12%); } 65%, 80% { transform: translateX(12%); } }
+@keyframes bl-glow { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: .7; } }
+@keyframes bl-wave { 0%, 100% { transform: rotate(0); } 30% { transform: rotate(-14deg); } 65% { transform: rotate(10deg); } }
+@keyframes bl-blink { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.1); } }
+@media (prefers-reduced-motion: reduce) { .brand-logo * { animation: none !important; } }
+:root[data-agent-motion="off"] .brand-logo * { animation: none !important; }
 
 /* ===== Agent mascots (AgentMascot.razor) =====
    A cartoon character per agent role that acts out its run state. Only transform/opacity are animated

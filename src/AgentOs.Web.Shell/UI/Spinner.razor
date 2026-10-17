@@ -1,9 +1,21 @@
-@* Spinner — rotating indicator. Size = small | medium | large. *@
+@* Spinner — the loading indicator: the AgentOS agent at work (bobbing, glancing around, antenna light pulsing)
+   with three "thinking" dots. Size = small | medium | large. Loops only while it is on screen — i.e. while
+   something loads; still under reduced motion or the Animations setting. Announced as a status with Label. *@
 
-<span class="spinner spinner-@Size.ToLowerInvariant() @(ExtraClass ?? "")" role="status" aria-label="@Label"></span>
+<span class="spinner spinner-@Size.ToLowerInvariant() @(ExtraClass ?? "")" role="status" aria-label="@Label">
+    <BrandMark Size="@FaceSize" Decorative="true" Busy="true" />
+    <span class="spinner-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+</span>
 
 @code {
     [Parameter] public string Size { get; set; } = "Medium";
     [Parameter] public string Label { get; set; } = "Loading…";
     [Parameter] public string? ExtraClass { get; set; }
+
+    private int FaceSize => Size.ToLowerInvariant() switch
+    {
+        "small" => 16,
+        "large" => 44,
+        _ => 26,
+    };
 }

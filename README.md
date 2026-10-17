@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/agentos-logo-512.png" alt="AgentOS" width="128" height="128" />
+</p>
+
 # AgentOS
 
 > A **modular .NET agentic platform** for software delivery. A central orchestrator coordinates

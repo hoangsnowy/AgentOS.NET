@@ -95,6 +95,28 @@ state. Rules: declare a new icon's motion as `--ic-anim` (+ `--ic-origin`) in th
 on hover and squish on press. Same opt-outs as the mascots (`prefers-reduced-motion`, System → Appearance
 → *Animations*).
 
+### Brand mark + loading
+
+`BrandMark` (Shell UI kit) is the AgentOS product icon: a friendly agent face (antenna with a gold light, big
+eyes, cheeks, smile) on the accent squircle, in the mascot palette (`--mascot-*`). It is inline SVG with no
+ids; the gradient is the wrapper's CSS background. The same mark appears everywhere:
+
+- `wwwroot/favicon.svg`, plus `favicon-32.png` and `apple-touch-icon.png` rendered from it;
+- the Keycloak login tile (data-URI twin);
+- the sign-in, sign-up and verify pages;
+- the About hero;
+- the README and the GitHub social preview (`docs/assets/`).
+
+- **States:**
+  - **Still at rest:** on hover it blinks and waves its antenna once.
+  - **`Busy="true"` (loading):** bobs, glances left and right, and the antenna light pulses. This is its only
+    looping state.
+- **Loading = the agent at work:** `<Spinner>` renders the busy mark plus three "thinking" dots (small 16 /
+  medium 26 / large 44 px). The reconnect screen uses the same character. It loops only while something is
+  loading, and is still under reduced motion or Animations off.
+- `Decorative="true"` when a visible "AgentOS" label sits next to it (hidden from assistive tech); otherwise it is
+  `role="img"` named "AgentOS".
+
 ### Agent mascots
 
 One cartoon character per role, defined once in `Components/UI/AgentMascot.razor` + the `.mascot` block
