@@ -35,8 +35,10 @@ public sealed class ToolsModule : IModule, IInitializableModule
         // optional, so this still degrades to permissive when no config store is wired (no-DB standalone),
         // regardless of the default — there is nothing to enforce against.
         var enforceByDefault = configuration.GetValue("Tools:EnforceByDefault", ModuleEnvironment.IsProduction(configuration));
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor>(new ToolsSettings(enforceByDefault));
         services.TryAddSingleton<IToolPolicy>(sp => new Policy.AppConfigToolPolicy(
-            sp.GetService<AgentOs.Modules.AppConfig.IAppConfigStore>(), enforceByDefault));
+            sp.GetService<AgentOs.Modules.AppConfig.IAppConfigStore>(), enforceByDefault,
+            sp.GetService<AgentOs.Domain.Configuration.ISettings>()));
         services.TryAddSingleton<IToolPolicyService, Policy.ToolPolicyService>();
 
         // Evidence sink: durable EF-backed when a DB is configured, else the in-memory ring buffer

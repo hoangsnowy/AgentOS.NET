@@ -39,18 +39,59 @@ internal sealed class WorkspaceHostPolicy : IWorkspaceHostPolicy
     // *.visualstudio.com (legacy ADO) likewise.
     private static readonly string[] DefaultHosts = ["github.com", "dev.azure.com", "visualstudio.com"];
 
-    private readonly string[] _allowed;
+    /// <summary>Setting key (UI-first registry, platform scope): extra hosts, comma/space/newline separated.</summary>
+    public const string SettingKey = "Workspaces:AllowedHosts";
 
-    public WorkspaceHostPolicy(IOptions<WorkspaceHostOptions> options)
+    private readonly string[] _baseline;
+    private readonly AgentOs.Domain.Configuration.ISettings? _settings;
+
+    // Memo of the last settings value → merged list. Re-parsed only when the raw string changes, so a check
+    // stays O(hosts) with no allocation on the hot path. Immutable snapshot swapped atomically.
+    private sealed record Snapshot(string? Raw, string[] Hosts);
+    private volatile Snapshot? _snapshot;
+
+    public WorkspaceHostPolicy(IOptions<WorkspaceHostOptions> options, AgentOs.Domain.Configuration.ISettings? settings = null)
     {
         ArgumentNullException.ThrowIfNull(options);
-        _allowed = DefaultHosts
-            .Concat(options.Value.AllowedHosts ?? [])
-            .Select(NormalizeHost)
-            .Where(h => h.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        _baseline = Merge(DefaultHosts.Concat(options.Value.AllowedHosts ?? []));
+        _settings = settings;
     }
+
+    private string[] Allowed()
+    {
+        if (_settings is null)
+        {
+            return _baseline;
+        }
+        var raw = AgentOs.Domain.Configuration.SettingsExtensions.Read(_settings, SettingKey, null);
+        var snap = _snapshot;
+        if (snap is not null && string.Equals(snap.Raw, raw, StringComparison.Ordinal))
+        {
+            return snap.Hosts;
+        }
+        var merged = string.IsNullOrWhiteSpace(raw) ? _baseline : Merge(_baseline.Concat(Split(raw)));
+        _snapshot = new Snapshot(raw, merged);
+        return merged;
+    }
+
+    private static string[] Merge(IEnumerable<string> entries) =>
+        entries.Select(NormalizeHost).Where(h => h.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    /// <summary>Split a settings value into host entries (comma, whitespace or newline separated).</summary>
+    internal static string[] Split(string raw) =>
+        raw.Split(Separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static readonly char[] Separators = [',', ';', ' ', '\n', '\r', '\t'];
+
+    /// <summary>Validates a settings value: every entry must parse to a fully-qualified DNS host name
+    /// (e.g. github.mycorp.com) — no bare words, IPs or malformed URLs on an SSRF-relevant allowlist.</summary>
+    internal static string? Validate(string raw) =>
+        Split(raw).FirstOrDefault(e => !IsValidEntry(e)) is { } bad ? $"'{bad}' is not a host name (e.g. github.mycorp.com)." : null;
+
+    private static bool IsValidEntry(string entry) =>
+        TryExtractHost(entry, out var h)
+        && h.Contains('.', StringComparison.Ordinal)
+        && Uri.CheckHostName(h) == UriHostNameType.Dns;
 
     public bool IsAllowed(string? host)
     {
@@ -62,7 +103,7 @@ internal sealed class WorkspaceHostPolicy : IWorkspaceHostPolicy
         {
             return false; // unparseable => reject rather than guess.
         }
-        return _allowed.Any(allowed =>
+        return Allowed().Any(allowed =>
             h.Equals(allowed, StringComparison.OrdinalIgnoreCase)
             || h.EndsWith("." + allowed, StringComparison.OrdinalIgnoreCase));
     }

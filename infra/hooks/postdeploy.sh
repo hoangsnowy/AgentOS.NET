@@ -57,6 +57,16 @@ curl -sf -X PUT "${auth[@]}" "$KC_URL/admin/realms/$REALM/clients/$CLIENT_UUID" 
 curl -sf -X PUT "${auth[@]}" "$KC_URL/admin/realms/$REALM" -d '{"realm":"agentic","verifyEmail":false}' \
   && echo "Realm verifyEmail=false" || echo "WARN: Failed to set verifyEmail=false."
 
+# 2b. Realm role platform-admin (ADR-0011 platform-wide settings). Realm import is skipped once the realm
+#     exists, so ensure the role here — idempotent (409 = already there). Assign it to the platform owner by
+#     hand; it is never auto-granted in the cloud.
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${auth[@]}" "$KC_URL/admin/realms/$REALM/roles"   -d '{"name":"platform-admin","description":"Platform administrator - platform-wide settings for every tenant"}')
+case "$code" in
+  201) echo "Realm role platform-admin created." ;;
+  409) echo "Realm role platform-admin already present." ;;
+  *)   echo "WARN: Could not ensure realm role platform-admin (HTTP $code)." ;;
+esac
+
 # 3. Seed users: rotate imported placeholder passwords
 rotate_user() {
   local username="$1" newpass="$2"

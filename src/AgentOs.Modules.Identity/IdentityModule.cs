@@ -22,6 +22,7 @@ public sealed class IdentityModule : IModule
         {
             options.AddPolicy("Admin", policy => policy.RequireRole("admin"));
             options.AddPolicy("Member", policy => policy.RequireRole("admin", "member"));
+            options.AddPolicy("PlatformAdmin", policy => policy.RequireRole(ClaimNames.PlatformAdminRole));
         });
     }
 }

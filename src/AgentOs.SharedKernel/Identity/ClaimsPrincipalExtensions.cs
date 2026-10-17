@@ -21,6 +21,9 @@ public static class ClaimNames
     /// <summary>Realm role granting tenant-admin rights.</summary>
     public const string AdminRole = "admin";
 
+    /// <summary>Realm role for platform-wide settings (applies to every tenant).</summary>
+    public const string PlatformAdminRole = "platform-admin";
+
     /// <summary>Realm role for an ordinary tenant member.</summary>
     public const string MemberRole = "member";
 }
@@ -43,4 +46,10 @@ public static class ClaimsPrincipalExtensions
     /// <summary>True when the user holds the <c>admin</c> realm role.</summary>
     public static bool IsAdmin(this ClaimsPrincipal user)
         => user.IsInRole(ClaimNames.AdminRole);
+
+    /// <summary>True when the user holds the <c>platform-admin</c> realm role — may change platform-wide
+    /// settings that apply to every tenant (safety switches, sandbox, offline fallback). Distinct from a
+    /// tenant <c>admin</c>, who only governs their own tenant.</summary>
+    public static bool IsPlatformAdmin(this ClaimsPrincipal user)
+        => user.IsInRole(ClaimNames.PlatformAdminRole);
 }

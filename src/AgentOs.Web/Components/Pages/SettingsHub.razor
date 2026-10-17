@@ -22,6 +22,7 @@
         {
             case "llm":      <Settings />;    break;
             case "agents":   <AgentProfilesApp />; break;
+            case "platform": <PlatformSettingsApp />; break;
             case "prompts":  <PromptsApp />;  break;
             case "policy":   <PolicyApp />;   break;
             case "evidence": <EvidenceApp />; break;
@@ -38,9 +39,10 @@
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private bool _isAdmin;
+    private bool _isPlatformAdmin;
     private string _tab = "system";
 
-    private sealed record Cat(string Key, string Label, string Icon, bool AdminOnly = false, bool Full = false);
+    private sealed record Cat(string Key, string Label, string Icon, bool AdminOnly = false, bool Full = false, bool PlatformOnly = false);
 
     // Order = rail order. "Full" categories host a component that owns its own prefs rail.
     private static readonly Cat[] Cats =
@@ -53,6 +55,7 @@
         new("users",    "Users",           "user",           AdminOnly: true),
         new("mcp",      "MCP servers",     "arrow-square-out", AdminOnly: true),
         new("plugins",  "Plugins",         "squares-stack"),
+        new("platform", "Platform",        "lock",           PlatformOnly: true),
         new("system",   "System",          "wrench",         Full: true),
     ];
 
@@ -62,13 +65,15 @@
         {
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
+            _isPlatformAdmin = state.User.IsPlatformAdmin();
         }
         // Land on a sensible default per role (admins → LLM config, members → System prefs) —
         // explicit so it doesn't silently depend on the Cats array order.
         _tab = _isAdmin ? "llm" : "system";
     }
 
-    private IEnumerable<Cat> VisibleCats() => Cats.Where(c => _isAdmin || !c.AdminOnly);
+    private IEnumerable<Cat> VisibleCats() =>
+        Cats.Where(c => (_isAdmin || !c.AdminOnly) && (_isPlatformAdmin || !c.PlatformOnly));
 
     private Cat? ActiveCat() => Cats.FirstOrDefault(c => c.Key == _tab);
 

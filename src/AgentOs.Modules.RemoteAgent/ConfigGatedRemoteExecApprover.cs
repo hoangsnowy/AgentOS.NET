@@ -26,12 +26,15 @@ public sealed class ConfigGatedRemoteExecApprover : IRemoteExecApprover
     public const string AutoApproveKey = "RemoteAgent:AutoApprove";
 
     private readonly bool _allow;
+    private readonly AgentOs.Domain.Configuration.ISettings? _settings;
 
     public ConfigGatedRemoteExecApprover(
         IHostEnvironment environment,
         IConfiguration configuration,
-        ILogger<ConfigGatedRemoteExecApprover> logger)
+        ILogger<ConfigGatedRemoteExecApprover> logger,
+        AgentOs.Domain.Configuration.ISettings? settings = null)
     {
+        _settings = settings;
         System.ArgumentNullException.ThrowIfNull(environment);
         System.ArgumentNullException.ThrowIfNull(configuration);
         System.ArgumentNullException.ThrowIfNull(logger);
@@ -56,8 +59,13 @@ public sealed class ConfigGatedRemoteExecApprover : IRemoteExecApprover
     }
 
     /// <inheritdoc />
-    public Task<bool> ApproveAsync(RemoteExecRequest request, CancellationToken cancellationToken = default)
-        => Task.FromResult(_allow);
+    public async Task<bool> ApproveAsync(RemoteExecRequest request, CancellationToken cancellationToken = default)
+        // Live from Settings (platform admin; production pins it via Settings:Locks) when the registry is
+        // wired — same key, so an explicit RemoteAgent:AutoApprove in config still seeds it.
+        => _settings is null
+            ? _allow
+            : await AgentOs.Domain.Configuration.SettingsExtensions.GetBoolAsync(
+                _settings, AutoApproveKey, null, _allow, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public Task<bool> ApproveToolCallAsync(RunnerToolCall toolCall, CancellationToken cancellationToken = default)

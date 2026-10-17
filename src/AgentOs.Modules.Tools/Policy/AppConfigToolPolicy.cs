@@ -22,13 +22,22 @@ internal sealed class AppConfigToolPolicy : IToolPolicy
     internal const string AllowlistKey = "tools/allowlist";
 
     private readonly IAppConfigStore? _config;
-    private readonly bool _enforceByDefault;
+    private readonly bool _enforceByDefaultFallback;
+    private readonly AgentOs.Domain.Configuration.ISettings? _settings;
 
-    public AppConfigToolPolicy(IAppConfigStore? config, bool enforceByDefault = false)
+    public AppConfigToolPolicy(IAppConfigStore? config, bool enforceByDefault = false, AgentOs.Domain.Configuration.ISettings? settings = null)
     {
         _config = config;
-        _enforceByDefault = enforceByDefault;
+        _enforceByDefaultFallback = enforceByDefault;
+        _settings = settings;
     }
+
+    // The platform fail-closed default, live from Settings (platform admin) when the registry is wired.
+    private async ValueTask<bool> EnforceByDefaultAsync(CancellationToken ct) =>
+        _settings is null
+            ? _enforceByDefaultFallback
+            : await AgentOs.Domain.Configuration.SettingsExtensions.GetBoolAsync(
+                _settings, ToolsSettings.EnforceByDefault, null, _enforceByDefaultFallback, ct).ConfigureAwait(false);
 
     public async Task<ToolPolicyDecision> EvaluateAsync(
         ToolInvocationRequest request,
@@ -44,9 +53,11 @@ internal sealed class AppConfigToolPolicy : IToolPolicy
         // Fail closed on a blank tenant: never resolve the shared `default` tenant's allowlist for a
         // request that carries no tenant (a malformed token / off-box call). When enforcement is the
         // platform default, deny; otherwise stay permissive for the dev / no-DB path.
+        var enforceByDefault = await EnforceByDefaultAsync(cancellationToken).ConfigureAwait(false);
+
         if (string.IsNullOrWhiteSpace(request.TenantId))
         {
-            return _enforceByDefault
+            return enforceByDefault
                 ? ToolPolicyDecision.Deny("Tool call carries no tenant; refusing under fail-closed policy.")
                 : ToolPolicyDecision.Allow;
         }
@@ -57,7 +68,7 @@ internal sealed class AppConfigToolPolicy : IToolPolicy
         // per-tenant allowlist ⇒ deny (fail-closed).
         var enforce = await _config.GetForTenantAsync(tenant, EnforceKey, cancellationToken).ConfigureAwait(false);
         var enforcing = string.IsNullOrWhiteSpace(enforce)
-            ? _enforceByDefault
+            ? enforceByDefault
             : string.Equals(enforce, "true", StringComparison.OrdinalIgnoreCase);
         if (!enforcing)
         {

@@ -1,0 +1,62 @@
+@* PlatformSettingsApp — platform admins only: settings that apply to EVERY tenant (ADR-0011, Phase C.5b) —
+   the remote-execution and tool-policy safety switches, the self-hosted Git host allowlist, and the offline
+   LLM fallback. A tenant admin never sees this category; production pins the riskiest switches with
+   Settings:Locks, which render read-only here with the reason. Rendered from setting descriptors. *@
+
+@using Microsoft.AspNetCore.Components.Authorization
+
+@if (!_resolved)
+{
+    <Spinner />
+}
+else if (!_isPlatformAdmin)
+{
+    <div class="login-error">Platform admin role required. These settings apply to every tenant.</div>
+}
+else
+{
+    <header class="page-head">
+        <div>
+            <h1 class="page-title">Platform</h1>
+            <p class="page-sub">Settings that apply to every tenant. Changes take effect on the next request — no restart. Values pinned by the operator are read-only.</p>
+        </div>
+    </header>
+
+    <Panel Title="Safety">
+        <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@SafetyKeys" />
+    </Panel>
+
+    <Panel Title="LLM">
+        <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@LlmKeys" />
+    </Panel>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private static readonly string[] SafetyKeys =
+    [
+        AgentOs.Modules.RemoteAgent.ConfigGatedRemoteExecApprover.AutoApproveKey,
+        AgentOs.Modules.Tools.ToolsSettings.EnforceByDefault,
+        "Workspaces:AllowedHosts",
+    ];
+
+    private static readonly string[] LlmKeys = [AgentOs.Modules.Llm.LlmSettings.OfflineFallback];
+
+    private bool _resolved;
+    private bool _isPlatformAdmin;
+    private string _tenantId = string.Empty;
+    private string _actor = "platform-admin";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _isPlatformAdmin = state.User.IsPlatformAdmin();
+            _tenantId = state.User.GetTenantId() ?? string.Empty;
+            _actor = state.User.Identity?.Name ?? _actor;
+        }
+        _resolved = true;
+    }
+}

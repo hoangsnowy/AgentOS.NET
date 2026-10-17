@@ -14,16 +14,11 @@ namespace AgentOs.Modules.Llm;
 public static class LiveSettings
 {
     /// <summary>The effective non-empty value of <paramref name="key"/>, or null.</summary>
-    public static string? Read(ISettings settings, string key, string? tenantId)
-    {
-        var pending = settings.GetAsync(key, tenantId);
-        var value = pending.IsCompletedSuccessfully ? pending.Result : pending.AsTask().GetAwaiter().GetResult();
-        return value.HasValue ? value.Value : null;
-    }
+    public static string? Read(ISettings settings, string key, string? tenantId) => settings.Read(key, tenantId);
 
     /// <summary>Boolean setting, or <paramref name="fallback"/> when unset/unparsable.</summary>
     public static bool ReadBool(ISettings settings, string key, string? tenantId, bool fallback) =>
-        bool.TryParse(Read(settings, key, tenantId), out var b) ? b : fallback;
+        settings.ReadBool(key, tenantId, fallback);
 
     /// <summary>The tenant a gateway call runs for: the ambient identity (circuits, background runs), else the
     /// request's tenant context, else the default tenant — the shared <see cref="AmbientIdentity.Resolve"/> order.</summary>
