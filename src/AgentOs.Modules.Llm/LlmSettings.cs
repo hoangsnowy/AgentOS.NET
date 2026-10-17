@@ -82,6 +82,20 @@ public sealed class LlmSettings(bool offlineFallbackDefault = false) : ISettings
             Help = "Canonical model id for cost when the deployment name is an alias (e.g. gpt41-prod → gpt-4.1).",
         };
 
+        // BYOK vendors (fixed endpoints in VendorProviders): each tenant brings its own key.
+        foreach (var v in VendorProviders.All)
+        {
+            yield return new(v.KeySetting, SettingKind.Secret, Category, $"{v.Name} API key")
+            {
+                Help = $"Your {v.Name} key — used when an agent's provider is {v.Name}. Endpoint {v.Endpoint}.",
+            };
+            yield return new(v.ModelSetting, SettingKind.Model, Category, $"{v.Name} default model")
+            {
+                DefaultValue = v.DefaultModel,
+                Help = $"Used when an agent profile names a model {v.Name} doesn't serve.",
+            };
+        }
+
         // OpenAI-compatible (self-hosted / air-gapped). Platform scope: AgentOS calls this URL server-side, so a
         // tenant must never be able to point it at an internal address (SSRF).
         yield return new(CompatEndpoint, SettingKind.Text, Category, "OpenAI-compatible endpoint")

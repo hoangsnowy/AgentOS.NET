@@ -65,6 +65,9 @@ else
                         <option value="">— per-agent config —</option>
                         <option value="Claude">Claude (Anthropic)</option>
                         <option value="AzureOpenAI">Azure OpenAI</option>
+                        <option value="OpenAI">OpenAI (your key)</option>
+                        <option value="Gemini">Google Gemini (your key)</option>
+                        <option value="xAI">xAI Grok (your key)</option>
                         <option value="MAF">MAF (Azure OpenAI via SDK)</option>
                         <option value="OpenAICompatible">OpenAI-compatible (self-hosted: vLLM, Ollama, Foundry)</option>
                         @* The paired dev machine's CLI. Listed because it is a first-class keyed
@@ -106,6 +109,13 @@ else
                         @_testResult
                     </div>
                 }
+
+                <div class="prefs-section" style="margin-top:var(--space-5)">
+                    <h2 class="prefs-h">OpenAI · Gemini · xAI</h2>
+                    <p class="prefs-sub">Bring your own key. Pick the provider per agent in <strong>Agent profiles</strong>, or force it under Providers. Costs use each vendor's published rates.</p>
+                </div>
+                <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
+                                Keys="@(AgentOs.Modules.Llm.VendorProviders.All.SelectMany(v => new[] { v.KeySetting, v.ModelSetting }).ToArray())" />
 
                 <div class="prefs-section" style="margin-top:var(--space-5)">
                     <h2 class="prefs-h">Routing &amp; deployment</h2>

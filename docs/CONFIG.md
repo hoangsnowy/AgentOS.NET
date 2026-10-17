@@ -83,6 +83,9 @@ Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant
 | `Llm:AzureOpenAi:Endpoint` / `ApiKey` / `ApiKeys` | empty | Tenant | Endpoint must be absolute `https://`. |
 | `Llm:AzureOpenAi:Model` | `gpt-4.1` | Tenant | Default deployment. |
 | `Llm:AzureOpenAi:PricingModel` | empty | Tenant | Canonical price-table id for an aliased deployment (`gpt41-prod` → `gpt-4.1`). |
+| `Llm:OpenAi:ApiKey` / `Llm:OpenAi:Model` | empty / `gpt-5.4` | Tenant | Bring-your-own-key **OpenAI** (`https://api.openai.com/v1`, fixed). Provider name `OpenAI` — **no longer an alias of `AzureOpenAI`** (use `Azure`/`AzureOpenAI` for Azure). |
+| `Llm:Gemini:ApiKey` / `Llm:Gemini:Model` | empty / `gemini-3.8-flash` | Tenant | **Google Gemini** via its OpenAI-compatible endpoint (fixed). Provider `Gemini` (alias `Google`). |
+| `Llm:Xai:ApiKey` / `Llm:Xai:Model` | empty / `grok-4.7` | Tenant | **xAI Grok** (`https://api.x.ai/v1`, fixed). Provider `xAI` (alias `Grok`). Grok bills the whole request at the long-context rate above 200k prompt tokens; the price table models it. |
 | `Llm:OpenAiCompatible:Endpoint` | empty | Platform | Any `/v1/chat/completions` server — vLLM, Ollama (`http://host:11434/v1`), LM Studio, Azure AI Foundry, a gateway. Platform-only because the server calls it (no tenant-set SSRF). Provider name `OpenAICompatible` (aliases `Ollama`, `vLLM`, `Local`). |
 | `Llm:OpenAiCompatible:ApiKey` | empty | Platform | Secret; leave empty for keyless servers. |
 | `Llm:OpenAiCompatible:Model` | `llama3.1` | Platform | Served when an agent profile names a vendor model (Claude/GPT) the server doesn't host; any other model id in a profile is sent as-is. |

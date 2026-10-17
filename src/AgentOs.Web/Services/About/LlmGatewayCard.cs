@@ -37,6 +37,7 @@ public static class LlmGatewayCard
             }),
             new("Anthropic key", cfg.AnthropicKeySet ? "Configured" : "Not set"),
             new("Azure OpenAI", cfg.HasKeyFor("AzureOpenAI") ? "Configured" : cfg.AzureKeySet ? "Key set, endpoint missing" : "Not set"),
+            new("OpenAI / Gemini / xAI", cfg.VendorKeys.Count == 0 ? "No keys" : string.Join(", ", cfg.VendorKeys.Order(StringComparer.Ordinal))),
             new("OpenAI-compatible", string.IsNullOrWhiteSpace(cfg.CompatEndpoint) ? "Not set" : "Configured (platform)"),
             new("Offline fallback", cfg.OfflineFallback ? "On" : "Off"),
             new("SDK", $"Microsoft.Extensions.AI {SdkVersion}"),
