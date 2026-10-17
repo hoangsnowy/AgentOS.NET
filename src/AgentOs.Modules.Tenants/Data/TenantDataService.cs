@@ -191,7 +191,8 @@ internal sealed partial class TenantDataService(
             order.Add(next);
             foreach (var parent in parentsOf[next.Oid])
             {
-                if (--pendingChildren[parent] == 0) { ready.Add(byOid[parent].Name); }
+                pendingChildren[parent]--;
+                if (pendingChildren[parent] == 0) { ready.Add(byOid[parent].Name); }
             }
         }
         // Anything left is in a cycle: append in name order (the transaction rolls back if the FK still bites).
