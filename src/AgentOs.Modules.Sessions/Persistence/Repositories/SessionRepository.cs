@@ -227,6 +227,7 @@ internal sealed class SessionRepository : ISessionRepository
         }
 
         session.Status = repos.Any(r => r.Status == "Failed") ? "Failed"
+            : repos.Any(r => r.Status == "Blocked") ? "Blocked"   // QA gate refused the PR (plan 0.5)
             : repos.All(r => r.Status == "Done") ? "Done"
             : "Running";
 

@@ -1875,6 +1875,17 @@ else if (_tab == Tab.Sessions)
             return;
         }
 
+        // QA gate (plan 0.5): only a result QA PASSED on real model output becomes a PR. Anything else is
+        // Blocked with the reason — visible on the session, never silently shipped.
+        var gate = PrGate.Evaluate(result);
+        if (!gate.Allowed)
+        {
+            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Blocked", null, null, gate.Reason).ConfigureAwait(false);
+            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
+            Publish(SessionRunEventKind.Failed, $"{repoLabel} — {gate.Reason}", repoLabel, "Blocked");
+            return;
+        }
+
         // Commit the generated code + tests to the primary repo and open a PR (server-side via Octokit).
         var descriptor = RepoDescriptor(board, tenantId, primary.Owner, primary.Repo, primary.DefaultBranch, pat);
         var title = $"feat: #{session.IssueNumber} {session.Title}";

@@ -54,7 +54,19 @@ public sealed class GitHubPrService : IGitHubPrService
         }
 
         ArgumentNullException.ThrowIfNull(result);
+        EnsureGate(result);
         return OpenPrCoreAsync(owner!, name!, baseBranch, pat!, baseUrl, result, title, body, ct);
+    }
+
+    // The QA gate (plan 0.5) at the single PR seam: no caller can open a PR for a result QA didn't pass.
+    private void EnsureGate(PipelineResult result)
+    {
+        var gate = PrGate.Evaluate(result);
+        if (!gate.Allowed)
+        {
+            _logger.LogWarning("PR blocked by the QA gate: {Reason}", gate.Reason);
+            throw new PrGateBlockedException(gate.Reason!);
+        }
     }
 
     /// <inheritdoc />
@@ -70,6 +82,7 @@ public sealed class GitHubPrService : IGitHubPrService
                 $"Opening a PR from a pipeline result is GitHub-only; the selected workspace is '{workspace.Kind}'.");
         }
 
+        EnsureGate(result);
         var baseBranch = string.IsNullOrWhiteSpace(workspace.DefaultBranch) ? "main" : workspace.DefaultBranch;
         return OpenPrCoreAsync(workspace.Owner, workspace.Repo, baseBranch, workspace.AccessToken, workspace.Host, result, title, body, ct);
     }

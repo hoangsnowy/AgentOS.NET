@@ -40,9 +40,11 @@ internal static class TenantEndpoints
             return Results.Ok(list);
         })
         .WithName("TenantsList")
-        .WithSummary("List every tenant (admin only)")
+        .WithSummary("List every tenant (platform admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        // Cross-tenant by nature: the tenant 'admin' role is per tenant, so a tenant admin must never see
+        // the platform's tenant list.
+        .RequireAuthorization("PlatformAdmin");
 
         app.MapPost("/tenants", async (
             CreateTenantRequest body,
@@ -86,9 +88,10 @@ internal static class TenantEndpoints
             return Results.Created($"/tenants/{body.Id}", new CreatedTenantResponse(record, keycloakUserId));
         })
         .WithName("TenantsCreate")
-        .WithSummary("Provision a tenant + admin user (admin only)")
+        .WithSummary("Provision a tenant + admin user (platform admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        // Creating tenants (and their admin users) is a platform operation, not a tenant one.
+        .RequireAuthorization("PlatformAdmin");
 
         // Self-service sign-up: dispatches to ITenantSignupService which picks one of three modes
         // (invite / slug / auto-create) by request shape. Open by design for OSS dev; production
