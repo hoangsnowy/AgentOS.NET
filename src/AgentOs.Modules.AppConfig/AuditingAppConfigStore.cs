@@ -73,7 +73,9 @@ internal sealed class AuditingAppConfigStore(IAppConfigStore inner, IServiceProv
         {
             return;
         }
-        var actor = AmbientIdentity.Current?.UserId is { Length: > 0 } user ? user : CurrentUser() ?? "system";
+        var actor = AmbientIdentity.Current is { } ambient && (ambient.UserName ?? ambient.UserId) is { Length: > 0 } user
+            ? user
+            : CurrentUser() ?? "system";
         await sink.RecordAsync(new SettingChange(
             key, SettingScope.Tenant, string.IsNullOrWhiteSpace(tenantId) ? null : tenantId, actor,
             OldValue: null, NewValue: Describe(key, value), _clock.GetUtcNow()), ct).ConfigureAwait(false);

@@ -257,6 +257,8 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.ProbeHttpClient>();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.CircuitCounter>();
 builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, AgentOs.Web.Services.About.CircuitCounterHandler>();
+// Every circuit event runs under the signed-in tenant (AmbientIdentity) — feeds row-level security (ADR-0012).
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, AgentOs.Web.Services.CircuitIdentityHandler>();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.WebHostProbe>();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.ApiProbe>();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.KeycloakProbe>();
@@ -267,6 +269,19 @@ builder.Services.AddSingleton<AgentOs.Web.Services.About.SystemStatusService>();
 var app = builder.Build();
 
 await app.Services.InitializeModulesAsync();
+
+// E0.1 / ADR-0012: Postgres row-level security (stage 1), after every module migrated. Each tenant-table
+// connection then switches to the restricted role with the caller's tenant — an authenticated request's
+// claim, or the ambient identity a run / desktop circuit pushed. Escape hatch: Persistence:RowLevelSecurity=false.
+{
+    var httpAccessor = app.Services.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>();
+    AgentOs.SharedKernel.Persistence.RowLevelSecurity.HttpTenant = () =>
+        httpAccessor.HttpContext?.User is { Identity.IsAuthenticated: true } user ? user.GetTenantId() : null;
+    if (app.Configuration.GetValue("Persistence:RowLevelSecurity", true))
+    {
+        await AgentOs.SharedKernel.Persistence.RowLevelSecurity.EnsureAsync(app.Configuration.GetConnectionString("DefaultConnection"), app.Logger);
+    }
+}
 
 // Surface plugin-contributed desktop windows: collect every PluginAppDescriptor a plugin registered and
 // add it to the shell catalog (the WindowHost renders these via DynamicComponent).

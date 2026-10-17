@@ -35,8 +35,10 @@ When reporting, include: affected component, reproduction steps, and impact.
   tokens, prompts, tool policy, budget — recorded as *set / cleared*, never the value), member lifecycle,
   invitations and sign-in land in an append-only audit log, viewable in **Settings → Audit log** and
   exportable as formula-safe CSV. Platform-scope changes are visible to platform admins only.
-- **Tenant isolation** — row-level EF query filters; per-tenant keys are never mixed with another
-  tenant's or the platform's. Cross-tenant endpoints (list / provision tenants) require `platform-admin`,
+- **Tenant isolation** — row-level EF query filters **and Postgres row-level security** on the tenant tables
+  ([ADR-0012](docs/adr/0012-postgres-row-level-security.md)): every connection runs as a restricted role bound to
+  the caller's tenant, so a forgotten filter returns only the caller's rows and a write for another tenant is
+  refused. Per-tenant keys are never mixed with another tenant's or the platform's. Cross-tenant endpoints (list / provision tenants) require `platform-admin`,
   never the per-tenant `admin` role; a real-auth E2E proves a second tenant sees none of the first's data.
 - **QA gate before every PR** — a pipeline result becomes a pull request only when QA passed on real model
   output (`PrGate`, enforced inside the PR service itself): failed runs, the iteration cap with QA still

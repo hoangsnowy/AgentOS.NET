@@ -11,6 +11,7 @@ Format: Status · Context · Decision · Consequences. Keep them terse.
 | [0005](0005-build-verifier-sandbox.md) | `build_verifier` execution sandbox | Accepted |
 | [0008](0008-memory-and-knowledge-graph.md) | Shared memory and knowledge graph (layers, bi-temporal graph in Postgres, retrieval, visualisation) | Proposed |
 | [0011](0011-ui-first-configuration.md) | UI-first configuration: settings registry, scopes, precedence | Accepted |
+| [0012](0012-postgres-row-level-security.md) | Postgres row-level security for tenant tables (stage 1) | Accepted |
 
 > ADRs 0001–0004 (modular monolith, LLM gateway, multi-tenant isolation,
 > one-engine-three-surfaces) are scheduled as a back-fill in [ROADMAP.md](../../ROADMAP.md) Q2;

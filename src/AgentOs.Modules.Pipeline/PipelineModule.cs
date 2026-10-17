@@ -64,7 +64,8 @@ public sealed class PipelineModule : IModule, IEndpointModule, IInitializableMod
         {
             services.AddDbContext<PipelineDbContext>(opt =>
                 opt.UseNpgsql(connectionString, npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "pipeline")));
+                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "pipeline"))
+                   .AddInterceptors(AgentOs.SharedKernel.Persistence.RowLevelSecurityInterceptor.Instance));
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<IPipelineRunRepository, PipelineRunRepository>();
             services.AddScoped<IOrchestrationRepository, OrchestrationRepository>();

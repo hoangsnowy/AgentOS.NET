@@ -195,8 +195,7 @@ internal sealed class PipelineRunRepository(
             OFFSET @offset LIMIT @limit
             """;
 
-        await using var conn = connectionFactory!.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await connectionFactory!.OpenWithTenantAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<RunSummaryRow>(
             new CommandDefinition(sql, new { tenantId, limit, offset }, cancellationToken: ct)).ConfigureAwait(false);
         return [.. rows.Select(r => new PipelineRunSummary(
@@ -290,8 +289,7 @@ internal sealed class PipelineRunRepository(
         if (connectionFactory is not null)
         {
             var sql = $"""SELECT COALESCE(SUM("CostUsd"), 0) FROM pipeline.run_metrics {CostWhere}""";
-            await using var conn = connectionFactory.Create();
-            await conn.OpenAsync(ct).ConfigureAwait(false);
+            await using var conn = await connectionFactory.OpenWithTenantAsync(ct).ConfigureAwait(false);
             return await conn.ExecuteScalarAsync<decimal>(
                 new CommandDefinition(sql, new { tenantId, since }, cancellationToken: ct)).ConfigureAwait(false);
         }
@@ -418,8 +416,7 @@ internal sealed class PipelineRunRepository(
     {
         var parms = new { tenantId, since };
 
-        await using var conn = connectionFactory!.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await connectionFactory!.OpenWithTenantAsync(ct).ConfigureAwait(false);
 
         var totalsSql = $"""
             SELECT
@@ -543,8 +540,7 @@ internal sealed class PipelineRunRepository(
         string tenantId, DateTimeOffset? since, CancellationToken ct)
     {
         var parms = new { tenantId, since };
-        await using var conn = connectionFactory!.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await connectionFactory!.OpenWithTenantAsync(ct).ConfigureAwait(false);
 
         var latencySql = $"""
             SELECT "AgentName" AS Agent, AVG("LatencyMs") AS AvgLatencyMs, COUNT(*)::int AS Calls

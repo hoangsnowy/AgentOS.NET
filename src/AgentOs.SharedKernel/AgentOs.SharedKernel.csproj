@@ -17,6 +17,7 @@
     <!-- Raw Npgsql connection factory + Dapper type config for the read-side (INpgsqlConnectionFactory). -->
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
   </ItemGroup>
 
   <ItemGroup>
