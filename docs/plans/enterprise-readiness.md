@@ -32,6 +32,33 @@ Fixed in the last 48 h (this review's first findings): cross-tenant `GET/POST /t
 when QA never passed or on offline canned output (#193), settings audit that SECURITY.md claimed but didn't
 exist (#194), two-tenant isolation proven end-to-end on the full stack (#192), live service status (#191).
 
+### Progress (2026-10-18)
+
+**E0 Pilot-safe is complete**, and two E1 items have shipped. Each one was verified on the full stack or against
+real services:
+
+| Item | Shipped | Proof |
+|---|---|---|
+| E0.1 Postgres RLS (stage 1) | #205, [ADR-0012](../adr/0012-postgres-row-level-security.md) | Real-DB test: predicate-less query sees only its tenant, cross-tenant write → 42501; two-tenant UI test green with RLS on |
+| E0.2 key-ring wrapping | #203 | Real certificate: key file holds `encryptedSecret`, round-trip OK; About shows protection |
+| E0.3 evidence never dropped silently | #199 | Flood test: 10/10 persisted (6 inline), lost counter + metric |
+| E0.4 Human node fails closed | #196 | Headless run stops at the checkpoint |
+| E0.5 runner allowlist + approval + kill + token in header | #201 | Policy tests; real pairing over headers on the lab (#204) |
+| E0.6 per-tenant run admission | #200 | Concurrency + burst tests; Settings → Platform → Run limits |
+| E0.7 repo instruction files | #197 | Real GitHub: the sandbox's `AGENTS.md` read back on the lab |
+| E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
+| E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
+| E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
+| (pre-E0) QA gate before PR, platform-only tenant endpoints, settings audit, isolation E2E, About | #191–#194 | Real-auth suite |
+
+Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machine's `claude -p` (#204). The full
+5-agent pipeline completed live.
+
+**Next:**
+- E1.1 SSO brokering, E1.2 RBAC v2, E1.3 API tokens + `/v1`, E1.5 approval policies;
+- E1.7 skills, E1.8 ADO boards + Jira, E1.9 Helm + compose;
+- E1.10–E1.13 ops, supply chain, docs.
+
 ## 2. Scorecard
 
 Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the code that proves the status.
