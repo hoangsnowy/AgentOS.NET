@@ -96,7 +96,7 @@ else
                     <span class="badge @BadgeClass(s.Health)">@AboutReport.Label(s.Health)</span>
                     @if (s.Version is { Length: > 0 })
                     {
-                        <span class="about-ver">v@(s.Version)</span>
+                        <span class="about-ver">@VersionLabel(s.Version)</span>
                     }
                     @if (s.LatencyMs is { } ms)
                     {
@@ -213,6 +213,9 @@ else
             Toasts.Show("About", "The browser blocked clipboard access", ToastKind.Warn);
         }
     }
+
+    /// <summary>"v18.3" for a numeric version, the bare name for a product ("MailHog").</summary>
+    internal static string VersionLabel(string version) => char.IsAsciiDigit(version[0]) ? "v" + version : version;
 
     private static string Meta(ServiceStatus s)
     {

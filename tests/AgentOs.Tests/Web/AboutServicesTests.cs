@@ -311,6 +311,12 @@ public sealed partial class AboutServicesTests
         AboutReport.Text([s], DateTimeOffset.UnixEpoch, includeInfra: true).ShouldContain("Base URL: https://internal:5080");
     }
 
+    [Theory]
+    [InlineData("18.3", "v18.3")]
+    [InlineData("MailHog", "MailHog")]
+    public void VersionLabel_PrefixesOnlyNumericVersions(string version, string label)
+        => AboutServices.VersionLabel(version).ShouldBe(label);
+
     // ---- rendered page -------------------------------------------------------------------------------
 
     private sealed class StaticAuth(System.Security.Claims.ClaimsPrincipal user) : AuthenticationStateProvider
