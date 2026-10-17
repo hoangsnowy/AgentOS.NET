@@ -1,6 +1,6 @@
-# AgentOS — Configuration Reference
+# AgentOS.NET — Configuration Reference
 
-AgentOS splits configuration in two (ADR-0011 — UI-first configuration):
+AgentOS.NET splits configuration in two (ADR-0011 — UI-first configuration):
 
 1. **Set at deploy** — the few keys a host needs *before anyone can sign in*: where the database is,
    how sign-in works, logging, secrets, and operator locks. These live in `appsettings*.json`,

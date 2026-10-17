@@ -35,7 +35,7 @@ internal static class ErrorPage
             <head>
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                <title>AgentOS — something went wrong</title>
+                <title>AgentOS.NET — something went wrong</title>
                 <link rel="stylesheet" href="/app.css" />
                 <style>
                     .error-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center;
@@ -57,7 +57,7 @@ internal static class ErrorPage
             <body>
                 <div class="error-shell">
                     <div class="error-card">
-                        <div class="error-brand">AgentOS</div>
+                        <div class="error-brand">AgentOS.NET</div>
                         <h1 class="error-title">Something went wrong</h1>
                         <p class="error-sub">The request hit an unexpected error. It has been logged on the server —
                            retry, and if it keeps happening give your administrator the request id below.</p>

@@ -33,7 +33,7 @@ public class EmailSenderTests
         var (subject, html, text) = InvitationEmail.Build(
             "acme", "admin", "https://localhost:5180/signup?invite=abc123");
 
-        subject.ShouldContain("AgentOS");
+        subject.ShouldContain("AgentOS.NET");
         html.ShouldContain("https://localhost:5180/signup?invite=abc123");
         html.ShouldContain("acme");
         html.ShouldContain("admin");

@@ -130,7 +130,7 @@ public sealed class GraphExecutor : IGraphExecutor
             return new GraphRunResult(false, $"Graph not runnable: {reasons}");
         }
 
-        // Run-level budget gate. The Workflow studio runs full multi-agent LLM work on AgentOS's OWN
+        // Run-level budget gate. The Workflow studio runs full multi-agent LLM work on AgentOS.NET's OWN
         // server tokens, so it passes the same per-tenant spend check as the pipeline path (this was an
         // ungated server-token entrypoint). Returns a clean failed result — not throw — to match the
         // not-runnable channel so the canvas renders the block instead of crashing the circuit. Skipped

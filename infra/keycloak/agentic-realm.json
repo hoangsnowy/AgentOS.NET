@@ -1,8 +1,8 @@
 {
   "realm": "agentic",
   "enabled": true,
-  "displayName": "AgentOS",
-  "displayNameHtml": "AgentOS",
+  "displayName": "AgentOS.NET",
+  "displayNameHtml": "AgentOS.NET",
   "loginTheme": "agentos",
   "registrationAllowed": true,
   "registrationEmailAsUsername": false,
@@ -16,7 +16,7 @@
     "host": "${KC_SMTP_HOST:mailhog}",
     "port": "${KC_SMTP_PORT:1025}",
     "from": "${KC_SMTP_FROM:noreply@agentic.local}",
-    "fromDisplayName": "${KC_SMTP_FROM_NAME:AgentOS}",
+    "fromDisplayName": "${KC_SMTP_FROM_NAME:AgentOS.NET}",
     "ssl": "${KC_SMTP_SSL:false}",
     "starttls": "${KC_SMTP_STARTTLS:false}",
     "auth": "${KC_SMTP_AUTH:false}",
@@ -72,7 +72,7 @@
   "clients": [
     {
       "clientId": "agentic-web",
-      "name": "AgentOS Web",
+      "name": "AgentOS.NET Web",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -136,7 +136,7 @@
     },
     {
       "clientId": "agentic-api",
-      "name": "AgentOS API",
+      "name": "AgentOS.NET API",
       "enabled": true,
       "protocol": "openid-connect",
       "bearerOnly": true,

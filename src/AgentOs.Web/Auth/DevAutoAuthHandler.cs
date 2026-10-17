@@ -1,6 +1,6 @@
 // Development-only auto-login. When Auth:DevAutoLogin is set (Development only — see Program.cs, which
 // hard-throws if it is ever true outside Development), this scheme authenticates every request as a
-// fixed "developer" principal so the AgentOS desktop runs with a single `dotnet run --project
+// fixed "developer" principal so the AgentOS.NET desktop runs with a single `dotnet run --project
 // src/AgentOs.Web`, no Keycloak / Postgres required. The full Aspire stack turns it OFF (the AppHost
 // injects Auth__DevAutoLogin=false) so it always uses real Keycloak OIDC. NEVER enabled in production.
 

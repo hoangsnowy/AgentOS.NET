@@ -1,5 +1,5 @@
 // App-side email seam. Implemented by MailKitEmailSender (real SMTP) or NullEmailSender (no-op log).
-// Used for AgentOS-owned mail such as invitation links. NOTE: Keycloak still sends its OWN auth
+// Used for AgentOS.NET-owned mail such as invitation links. NOTE: Keycloak still sends its OWN auth
 // emails (verify-email, reset-password) via the realm smtpServer — this seam is for app-originated
 // mail only, not those.
 

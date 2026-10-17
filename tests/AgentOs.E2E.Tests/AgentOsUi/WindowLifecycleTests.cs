@@ -1,4 +1,4 @@
-// AgentOS UI — window manager + dock + topbar + toast.
+// AgentOS.NET UI — window manager + dock + topbar + toast.
 // Covers test-plan scenarios 4, 5, 7, 9, 10. Skeletons for 6, 8, 11, 12.
 
 using System;
@@ -129,7 +129,7 @@ public sealed class WindowLifecycleTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(dot).ToBeVisibleAsync();
     }
 
-    // Scenario 9: TopBar center reflects the focused window title (or "AgentOS — Desktop").
+    // Scenario 9: TopBar center reflects the focused window title (or "AgentOS.NET — Desktop").
     [Fact]
     public async Task TopBar_Center_Reflects_FocusedWindowTitle()
     {
@@ -139,7 +139,7 @@ public sealed class WindowLifecycleTests : IClassFixture<AgentOsPageFixture>
 
         // GNOME panel: focused-app title sits top-left (.tb-appname); the clock is centered.
         var center = _fx.Page.Locator(".topbar .tb-appname");
-        await Assertions.Expect(center).ToContainTextAsync("AgentOS — Desktop");
+        await Assertions.Expect(center).ToContainTextAsync("AgentOS.NET — Desktop");
 
         await LaunchFromDockAsync("Insights");
         await Assertions.Expect(center).ToContainTextAsync("Insights");

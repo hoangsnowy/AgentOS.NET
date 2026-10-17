@@ -1,4 +1,4 @@
-// M2 — the source-control providers AgentOS can connect a workspace to. The provider abstraction
+// M2 — the source-control providers AgentOS.NET can connect a workspace to. The provider abstraction
 // (ISourceProvider) is keyed by this so GitHub and Azure DevOps live behind one seam, the way
 // ILlmClient sits in front of the LLM vendors.
 

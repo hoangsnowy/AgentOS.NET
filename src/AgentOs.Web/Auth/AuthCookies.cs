@@ -1,6 +1,6 @@
 // Sign-in cookie hygiene for the Web host.
 //
-// 1. Per-instance cookie names. Cookies are scoped to the host, NOT the port, so two AgentOS instances on one
+// 1. Per-instance cookie names. Cookies are scoped to the host, NOT the port, so two AgentOS.NET instances on one
 //    host (the dev and lab stacks on localhost, or several deployments under one parent domain) would share
 //    and overwrite each other's auth, OIDC correlation/nonce and antiforgery cookies. Auth:CookiePrefix
 //    gives every instance its own names; the default ("agentic") keeps the historic auth cookie name.
@@ -95,7 +95,7 @@ internal static partial class AuthCookies
         var html = $$"""
             <!doctype html>
             <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-            <title>Couldn't sign you in — AgentOS</title>
+            <title>Couldn't sign you in — AgentOS.NET</title>
             <style>
               :root { color-scheme: light dark; }
               body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 15px/1.5 "Inter", system-ui, sans-serif;
@@ -110,7 +110,7 @@ internal static partial class AuthCookies
               <p>{{why}}</p>
               <ul>
                 <li>Try again — this usually works.</li>
-                <li>Still failing? Open AgentOS in a private window, or clear this site's cookies.</li>
+                <li>Still failing? Open AgentOS.NET in a private window, or clear this site's cookies.</li>
               </ul>
               <a class="btn" href="{{retry}}">Try again</a>
             </main></body></html>

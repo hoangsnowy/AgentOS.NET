@@ -1,4 +1,4 @@
-// AgentOS desktop UI — REAL-AUTH Playwright fixture. Unlike AgentOsPageFixture (dev-auto-login + a
+// AgentOS.NET desktop UI — REAL-AUTH Playwright fixture. Unlike AgentOsPageFixture (dev-auto-login + a
 // localStorage flag against a standalone Web), this drives the actual Keycloak OIDC login against the
 // full Aspire stack (AppHost): https://localhost:5180 → redirect to Keycloak → fill credentials →
 // back to the authenticated desktop. This is the true end-to-end auth path.

@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for AgentOs.Web (Blazor Server — AgentOS desktop UI, modular monolith).
+# Multi-stage Dockerfile for AgentOs.Web (Blazor Server — AgentOS.NET desktop UI, modular monolith).
 # Build: docker build -f Dockerfile.web -t agentos-web:dev .
 # The pipeline engine runs in-process via the same module set as the Api (except RemoteAgent —
 # the SignalR hub lives on the Api side).

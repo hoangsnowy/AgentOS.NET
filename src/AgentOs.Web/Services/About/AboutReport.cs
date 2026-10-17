@@ -16,7 +16,7 @@ public static class AboutReport
     {
         ArgumentNullException.ThrowIfNull(services);
         var sb = new StringBuilder(1024);
-        sb.Append(CultureInfo.InvariantCulture, $"AgentOS status — {SystemSnapshot.Headline(services)}").AppendLine();
+        sb.Append(CultureInfo.InvariantCulture, $"AgentOS.NET status — {SystemSnapshot.Headline(services)}").AppendLine();
         sb.Append(CultureInfo.InvariantCulture, $"Checked {checkedAt.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC").AppendLine();
         foreach (var s in services)
         {

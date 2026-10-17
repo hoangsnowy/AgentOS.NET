@@ -11,7 +11,7 @@ namespace AgentOs.Domain.Workspaces;
 /// <param name="Title">Imperative one-line title.</param>
 /// <param name="Body">Markdown body — typically the requirement plus a <c>- [ ]</c> acceptance-criteria checklist.</param>
 /// <param name="Labels">Labels to apply (drawn from the standard taxonomy; includes the ai gate).</param>
-/// <param name="AiReady">True when AgentOS may auto-run this ticket (mirrors the <c>ai:ready</c> label).</param>
+/// <param name="AiReady">True when AgentOS.NET may auto-run this ticket (mirrors the <c>ai:ready</c> label).</param>
 public sealed record TicketDraft(string Title, string Body, IReadOnlyList<string> Labels, bool AiReady);
 
 /// <summary>A ticket created by <see cref="ISourceProvider.CreateTicketsAsync"/> — the resolved ids + URL.</summary>

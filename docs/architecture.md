@@ -1,14 +1,14 @@
-# AgentOS — Architecture
+# AgentOS.NET — Architecture
 
 > Source of truth for the system shape. Diagrams are [Mermaid](https://mermaid.js.org/) — they
 > render on GitHub and in most Markdown viewers. Verified against the code on 2026-10-17
 > (csproj references, host module sets, hub mapping).
 
-AgentOS is a **.NET 10 modular monolith**: every feature is a self-contained `IModule` that
+AgentOS.NET is a **.NET 10 modular monolith**: every feature is a self-contained `IModule` that
 references **`AgentOs.Domain` + `AgentOs.SharedKernel` only**, owns its DbContext + Postgres schema
 + migration history, and is wired into a host by one `AddModulesFromAssemblies(...)` call. Two
 composition roots ship the product: the **Api** (minimal API + `/mcp` + the SignalR hub) and the
-**Web** (Blazor Server AgentOS desktop).
+**Web** (Blazor Server AgentOS.NET desktop).
 
 ---
 
@@ -20,7 +20,7 @@ runner plugs in.
 ```mermaid
 flowchart TB
   subgraph clients[Clients]
-    Browser["Browser<br/>(AgentOS desktop)"]
+    Browser["Browser<br/>(AgentOS.NET desktop)"]
     MCPhost["MCP host<br/>(Claude Desktop / VS Code)"]
     Runner["Dev-machine runner<br/>AgentOs.RemoteAgent.exe<br/>(needs claude CLI)"]
   end

@@ -32,14 +32,14 @@
     <!-- Release stamp surfaced by the hosts' / and /version endpoints (AssemblyInformationalVersion). -->
     <Version>0.6.0</Version>
     <Product>AgentOs</Product>
-    <RepositoryUrl>https://github.com/hoangsnowy/AgentOs</RepositoryUrl>
+    <RepositoryUrl>https://github.com/hoangsnowy/AgentOS.NET</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/hoangsnowy/AgentOs</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/hoangsnowy/AgentOS.NET</PackageProjectUrl>
   </PropertyGroup>
 
   <!-- MailKit / MimeKit moderate advisories (NU1902). Both are DoS issues in MIME *parsing*;
-       AgentOS only *sends* app-generated, trusted mail and never parses untrusted inbound MIME,
+       AgentOS.NET only *sends* app-generated, trusted mail and never parses untrusted inbound MIME,
        so the exposed code path is not reached. No patched MailKit/MimeKit release clears the
        advisory at the pinned version — revisit when an upstream fix ships. Solution-wide because
        MailKit flows transitively into Api / Web / Tests via the Tenants module. -->

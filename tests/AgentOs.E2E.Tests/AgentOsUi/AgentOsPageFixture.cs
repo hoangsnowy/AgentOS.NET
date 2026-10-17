@@ -1,4 +1,4 @@
-// AgentOS desktop UI — Playwright fixture.
+// AgentOS.NET desktop UI — Playwright fixture.
 //
 // Each test class gets one browser + page. The fixture:
 //   - Honours AGENTOS_URL env var (defaults to http://localhost:5180 — see launchSettings.json).
@@ -32,7 +32,7 @@ public sealed class AgentOsPageFixture : IAsyncLifetime
     private static readonly string[] PlaywrightInstallArgs = ["install", "chromium"];
 
     public const string SkipReason =
-        "AgentOS UI E2E: set RUN_AGENTOS_E2E=true and start the Web at AGENTOS_URL " +
+        "AgentOS.NET UI E2E: set RUN_AGENTOS_E2E=true and start the Web at AGENTOS_URL " +
         "(default http://localhost:5180) before running.";
 
     public string BaseUrl { get; } =

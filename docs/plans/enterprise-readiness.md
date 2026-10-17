@@ -1,7 +1,7 @@
-# AgentOS — Enterprise readiness review & plan (2026-10-17)
+# AgentOS.NET — Enterprise readiness review & plan (2026-10-17)
 
 > Owner: *"Review the roadmap thoroughly — as it is, an enterprise can't use it."* This is that review: what an
-> enterprise buyer checks, where AgentOS stands **today (grounded in code, with evidence)**, and the
+> enterprise buyer checks, where AgentOS.NET stands **today (grounded in code, with evidence)**, and the
 > re-baselined track that closes the gaps — **E0 Pilot-safe → E1 Enterprise pilot → E2 Enterprise GA**.
 > It supersedes the old one-paragraph "Q3 — Enterprise-grade operations" in [ROADMAP.md](../../ROADMAP.md)
 > and slots in next to the agentic-SDLC plan ([agentic-sdlc-v2.md](agentic-sdlc-v2.md)), which keeps the
@@ -9,7 +9,7 @@
 
 ## 1. Verdict
 
-**Today AgentOS is a credible single-team pilot on a trusted network — not something an enterprise security
+**Today AgentOS.NET is a credible single-team pilot on a trusted network — not something an enterprise security
 review would pass.** The engine, the desktop, metrics and governance basics are real. What blocks an
 enterprise is not one feature: it's the checklist a security architect, an IT/identity admin, a platform-ops
 team and procurement each walk through. Each of these alone is a "no":

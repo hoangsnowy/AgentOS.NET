@@ -14,18 +14,18 @@ reviewed and are not guessed.
 | rivet-dev/agentOS | 4.8k | WASM / V8 sandboxes for agents | Low; a possible sandbox backend |
 | AgentVerse-OS | 1.0k | Browser windowed desktop running Claude Code / Codex | Medium: same desktop metaphor |
 | SapienXai/AgentOS (agentos.sapienx.app) | 121 | Control plane for OpenClaw | Medium; feature list drove §3 |
-| **hoangsnowy/AgentOs** | 3 | This repo, created 2026-05-17 | — |
+| **hoangsnowy/AgentOS.NET** (AgentOS.NET) | 3 | This repo, created 2026-05-17 | — |
 
 Agno has used the name for the same category since 2025-09, eight months before this repo existed. A USPTO
-"AGENTOS" mark could not be verified. **Owner decision needed before v1.0:** either qualify the name
-everywhere (e.g. "AgentOS for .NET") or rename to a distinctive coined name. Renaming is cheapest while the
-repo is small.
+"AGENTOS" mark could not be verified. **Decision (owner, 2026-10-18): the product is renamed AgentOS.NET** —
+qualified everywhere (UI, docs, login, mail, repo), so it no longer reads as Agno's product. Code namespaces
+stay `AgentOs.*`.
 
 ## 2 — Feature matrix vs. the AI coding agents
 
 ✅ yes · 🟡 partial · ❌ not offered · ❓ not found
 
-| Capability | AgentOS | OpenHands | Devin | Copilot agent | Cursor agents | Claude Code Action | Codex | Agno |
+| Capability | AgentOS.NET | OpenHands | Devin | Copilot agent | Cursor agents | Claude Code Action | Codex | Agno |
 |---|---|---|---|---|---|---|---|---|
 | Self-host the full stack | ✅ | ✅ | 🟡 vendor-run VPC | ❌ | 🟡 workers only | 🟡 your runners | ❌ | ✅ |
 | Air-gapped / local models | ✅ | 🟡 | ❌ | ❌ | ❌ | ❌ | ❓ | ❓ |
@@ -60,7 +60,7 @@ unless the IA plan says so.** Items ship one PR each, verified in the running ap
 | # | Item | Status |
 |---|---|---|
 | 1 | ~~Installable PWA~~ | Dropped by the owner (2026-10-18) |
-| 2 | BYOK OpenAI · Gemini · xAI | ✅ [#214](https://github.com/hoangsnowy/AgentOs/pull/214) |
+| 2 | BYOK OpenAI · Gemini · xAI | ✅ [#214](https://github.com/hoangsnowy/AgentOS.NET/pull/214) |
 | 3 | Scheduled runs (cron / interval / one-off) | Next |
 | 4 | Mission Control — one live screen of every running agent / run | Planned |
 | 5 | Notifications to Slack / Discord / Telegram / Teams, then start runs from chat | Planned |
@@ -73,7 +73,7 @@ unless the IA plan says so.** Items ship one PR each, verified in the running ap
 
 1. **Govern the coders enterprises already bought.** Wrap Claude Code, Codex and OpenHands as pluggable
    *Coding agent* providers behind `IToolGateway`, so budgets, the QA gate, audit and RLS apply to them —
-   AgentOS becomes the governance layer instead of a Cursor competitor.
+   AgentOS.NET becomes the governance layer instead of a Cursor competitor.
 2. **Prove the QA loop with numbers.** A SWE-bench-Verified-style run plus a .NET task set, QA gate off vs.
    on: resolve rate, cost per resolved ticket, iterations, cache-token split.
 3. **Close the sandbox gap.** Coding/Testing tools in ephemeral containers (Docker, ACA dynamic sessions)

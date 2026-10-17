@@ -1,4 +1,4 @@
-// Persistence entity for the AgentOS orchestration graph (replaces App_Data/orchestrations.json).
+// Persistence entity for the AgentOS.NET orchestration graph (replaces App_Data/orchestrations.json).
 namespace AgentOs.Modules.Pipeline.Persistence.Entities;
 
 internal sealed class OrchestrationEntity

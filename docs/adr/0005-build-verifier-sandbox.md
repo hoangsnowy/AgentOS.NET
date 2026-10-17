@@ -1,9 +1,9 @@
 # ADR-0005 — `build_verifier` execution sandbox
 
 - **Status:** Accepted (2026-06-18)
-- **Deciders:** AgentOS maintainers
+- **Deciders:** AgentOS.NET maintainers
 - **Context decision:** [D2](../../ROADMAP.md#4--open-architecture-decisions) — Q1 "Live on Azure"
-- **Closes:** [deploy-readiness-audit #10](https://github.com/hoangsnowy/AgentOs/blob/90240386830067f52c07b1d781e223ccdfe5f174/docs/deploy-readiness-audit.md) (archived) (RCE via LLM-authored MSBuild)
+- **Closes:** [deploy-readiness-audit #10](https://github.com/hoangsnowy/AgentOS.NET/blob/90240386830067f52c07b1d781e223ccdfe5f174/docs/deploy-readiness-audit.md) (archived) (RCE via LLM-authored MSBuild)
 
 ## Context
 
@@ -17,7 +17,7 @@ targets during a build.** An LLM (or a prompt-injected one) can therefore emit:
 - a `nuget.config` pointing restore at an attacker feed; a `.rsp` response file injecting build args.
 
 Until now the tool ran MSBuild **in-process** on the server. The interim mitigation
-([#72](https://github.com/hoangsnowy/AgentOs/pull/72)) gated it **off by default in Production**
+([#72](https://github.com/hoangsnowy/AgentOS.NET/pull/72)) gated it **off by default in Production**
 (`Integration:BuildVerifier:Enabled`), which is safe but means the capability is simply unavailable
 in the deployment that matters. Q1's exit criterion requires a *real* sandbox: a malicious-`.csproj`
 fixture must prove the build cannot reach the host or the network.

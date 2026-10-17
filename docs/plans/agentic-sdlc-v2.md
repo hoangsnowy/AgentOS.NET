@@ -1,7 +1,7 @@
-# AgentOS — Agentic SDLC v2: implementation plan
+# AgentOS.NET — Agentic SDLC v2: implementation plan
 
 > **Status:** Draft for approval · **Created:** 2026-10-17 · **Owner:** @hoangsnowy
-> **Scope:** take AgentOS from a demo-grade 5-agent pipeline to a governed, measurable, full-SDLC
+> **Scope:** take AgentOS.NET from a demo-grade 5-agent pipeline to a governed, measurable, full-SDLC
 > agentic platform. This is the engineering plan; [ROADMAP.md](../../ROADMAP.md) stays the product
 > roadmap. Each phase ships as small PRs, each PR is verified in the running desktop (per CLAUDE.md),
 > and **nothing is "done" until it moves a metric we can see in Insights.**
@@ -56,7 +56,7 @@
 ## 2. Target architecture (what we are building toward)
 
 ```
-                 ┌───────────────────────── AgentOS control plane ─────────────────────────┐
+                 ┌───────────────────────── AgentOS.NET control plane ─────────────────────────┐
  Ticket / Issue  │  Spec agents ─► Plan/Tasks ─► Executor ─► Verify ─► Review ─► PR ─► Ops   │
  Webhook / UI ──►│      │              │            │           │          │         │       │
                  │      ▼              ▼            ▼           ▼          ▼         ▼       │
@@ -206,7 +206,7 @@ UI changes round-trip through Claude Design (CLAUDE.md design workflow).
 | **0.5** `fix(web)` | ✅ **Shipped #193** — Quality path refuses to open a PR unless QA `Passed` on real model output (`PrGate`, enforced in `GitHubPrService`); the human override moves to approval policies (enterprise E1.5) | Unit test on the gate |
 | **0.6** `fix(pipeline)` | Quick/CLI engines record `RunMetric`s (cost, tokens, latency), so `BudgetGuard` sees them; CLI mode records wall-time + exit code | Insights shows Quick runs with cost |
 | **0.7** `fix(remote-agent)` | Runner: command allowlist profile + per-session approval for non-allowlisted commands, runner-side timeout/kill, pairing token moved out of the URL query | Unit tests; manual pairing on Aspire |
-| **0.8** `fix(pipeline)` | Prompt branding: Coding/Qa/Requirement/Testing prompts still open "…in the Agentic SDLC system" → "…in AgentOS" (carried over from the archived deploy-readiness audit backlog). The opening line is a routing key — update any matcher in the same PR and bump the prompt version | Prompt snapshot tests; routing tests green |
+| **0.8** `fix(pipeline)` | Prompt branding: Coding/Qa/Requirement/Testing prompts still open "…in the Agentic SDLC system" → "…in AgentOS.NET" (carried over from the archived deploy-readiness audit backlog). The opening line is a routing key — update any matcher in the same PR and bump the prompt version | Prompt snapshot tests; routing tests green |
 | **0.9** `feat(security)` | **Postgres row-level security on every tenant table** (pipeline, sessions, workspaces, tools, tenants audit, config): `ENABLE ROW LEVEL SECURITY` + policy `tenant_id = current_setting('app.tenant_id')`, set per connection by a `DbConnectionInterceptor` from `ITenantContext`; a separate migration/platform role bypasses it. Today isolation is EF global filters + explicit predicates only — RLS makes a forgotten filter or raw SQL fail closed. Tenant export/purge endpoint | Two-tenant isolation tests on real Postgres (Aspire) incl. raw SQL; purge leaves zero rows |
 | **0.10** `feat(integration)` | **Lab findings** ([docs/LAB.md](../LAB.md)): implement Azure DevOps boards in `AzureDevOpsSourceProvider` (list/validate boards, read work items via WIQL, create work items, link to repos) and ADO repo context (README + top-level tree); un-skip the pinned lab tests | Lab suite green against a real Azure DevOps org |
 
@@ -308,7 +308,7 @@ memory tokens per prompt (budgeted, placed in the cached prefix when stable), ev
 evidence row.
 
 **Exit:** memory-on beats memory-off on the eval (success ↑ and/or tokens ↓), and a Claude Code
-session in CLI mode demonstrably reads a lesson an AgentOS run wrote.
+session in CLI mode demonstrably reads a lesson an AgentOS.NET run wrote.
 
 ### Phase 4 — Ecosystem: MCP catalog, Agent Skills, executor plugins (≈3–4 weeks)
 
@@ -320,7 +320,7 @@ session in CLI mode demonstrably reads a lesson an AgentOS run wrote.
 | **4.4** `feat(mcp)` | **Progressive tool disclosure**: deferred loading + a `tool_search` tool (Anthropic tool search when on Claude; our BM25 over tool descriptions otherwise) so 100+ MCP tools don't bloat every prompt |
 | **4.5** `feat(skills)` | **Agent Skills (SKILL.md)** module: built-in + tenant + git-imported skill packs (e.g. `anthropics/skills`), only name+description in the prompt, body loaded on demand (`load_skill`), skill usage metrics; our agent prompts re-expressed as skills |
 | **4.6** `feat(plugins)` | Plugin manifest v2 (`agentos-plugin.json`): contributes tools, windows, providers **+ skills, MCP server definitions, workflow templates, executors**; SHA-256/signature check on load |
-| **4.7** `feat(executors)` | `ICodingExecutor` + executors: **Claude Code** (CLI/Agent SDK on the paired runner), **Codex CLI**, **GitHub Copilot coding agent** (assign issue via API, track PR); each launched with AgentOS MCP (memory + tools) and **hooks that stream every tool call back as evidence/events**; budget + approval policy enforced at launch |
+| **4.7** `feat(executors)` | `ICodingExecutor` + executors: **Claude Code** (CLI/Agent SDK on the paired runner), **Codex CLI**, **GitHub Copilot coding agent** (assign issue via API, track PR); each launched with AgentOS.NET MCP (memory + tools) and **hooks that stream every tool call back as evidence/events**; budget + approval policy enforced at launch |
 | **4.8** `feat(web)` | **Marketplace app** (MCP + skills + plugins + executors) and executor picker on Board; Claude Design round-trip |
 
 **Exit:** a tenant enables GitHub + Playwright MCP and a skill pack from the desktop, runs a ticket
@@ -367,7 +367,7 @@ Reference: "software factory explained by a Senior Engineer" (theSeniorDev). The
 plan — *build the factory, not the code*: a chain of agent **stations** that turns raw signals into merged,
 verified changes, and engineers improve the factory when output is wrong. Station → where it lands here:
 
-| Station (video) | AgentOS | Status / gap |
+| Station (video) | AgentOS.NET | Status / gap |
 |---|---|---|
 | Triage agent — automated bug collection | **P8 SRE/incident agent** (App Insights, Sentry MCP, Board issues) + **new F.1 Triage**: cluster errors/user reports into deduplicated tickets (SimHash/LSH dedupe, §2.7) | gap → add F.1 |
 | Refinement agent — bug report → scoped ticket | **P6 spec-driven** (clarifying questions, acceptance criteria, `TicketDecomposerAgent`) | planned |

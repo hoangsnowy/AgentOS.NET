@@ -144,7 +144,7 @@ var api = (stack.IsLab && !isPublish
     .WithEnvironment("Auth__Keycloak__Admin__Password", kcAdminPassword)
     .WithEnvironment("Auth__Keycloak__Admin__ClientId", "admin-cli")
     .WithEnvironment("Email__From", "noreply@agentic.local")
-    .WithEnvironment("Email__FromName", "AgentOS")
+    .WithEnvironment("Email__FromName", "AgentOS.NET")
     .WithEnvironment("Email__SmtpHost", smtpHost)
     .WithEnvironment("Email__SmtpPort", smtpPort);
 
@@ -196,7 +196,7 @@ web
     .WithEnvironment("Auth__Keycloak__Admin__Password", kcAdminPassword)
     .WithEnvironment("Auth__Keycloak__Admin__ClientId", "admin-cli")
     .WithEnvironment("Email__From", "noreply@agentic.local")
-    .WithEnvironment("Email__FromName", "AgentOS")
+    .WithEnvironment("Email__FromName", "AgentOS.NET")
     .WithEnvironment("Email__SmtpHost", smtpHost)
     .WithEnvironment("Email__SmtpPort", smtpPort);
 

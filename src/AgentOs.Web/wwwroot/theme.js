@@ -1,4 +1,4 @@
-// AgentOS theming: persisted in localStorage, applied to <html data-theme / data-wallpaper>.
+// AgentOS.NET theming: persisted in localStorage, applied to <html data-theme / data-wallpaper>.
 // Three controls:
 //   theme      : 'light' | 'dark'
 //   wallpaper  : 'enterprise-light' | 'enterprise-dark' | 'aurora' | 'midnight' | 'sunset'

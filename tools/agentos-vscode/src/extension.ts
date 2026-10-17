@@ -1,5 +1,5 @@
-// AgentOS Runner — VS Code extension. Pairs this machine to an AgentOS server with a "sign in" flow and
-// runs the AgentOS runner locally. It does NOT reimplement the runner: it downloads the self-contained
+// AgentOS.NET Runner — VS Code extension. Pairs this machine to an AgentOS.NET server with a "sign in" flow and
+// runs the AgentOS.NET runner locally. It does NOT reimplement the runner: it downloads the self-contained
 // AgentOs.RemoteAgent binary from the server and spawns it as a child process. The runner's whole config
 // is env vars (REMOTE_AGENT_HUB|ID|TOKEN|ARGS), so wrapping it is a thin shell.
 //
@@ -32,7 +32,7 @@ let pendingState: string | undefined;
 let stopping = false;
 
 export function activate(context: vscode.ExtensionContext): void {
-  output = vscode.window.createOutputChannel('AgentOS Runner');
+  output = vscode.window.createOutputChannel('AgentOS.NET Runner');
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   context.subscriptions.push(output, status);
   setStatus('disconnected');
@@ -66,7 +66,7 @@ async function connect(): Promise<void> {
   const url = `${serverUrl()}/pair/vscode?callback=${encodeURIComponent(CALLBACK)}&state=${pendingState}`;
   setStatus('pairing');
   await vscode.env.openExternal(vscode.Uri.parse(url));
-  void vscode.window.showInformationMessage('AgentOS: approve the pairing in your browser to connect this machine.');
+  void vscode.window.showInformationMessage('AgentOS.NET: approve the pairing in your browser to connect this machine.');
 }
 
 async function onUri(context: vscode.ExtensionContext, uri: vscode.Uri): Promise<void> {
@@ -77,7 +77,7 @@ async function onUri(context: vscode.ExtensionContext, uri: vscode.Uri): Promise
     return;
   }
   if (!pendingState || state !== pendingState) {
-    void vscode.window.showErrorMessage('AgentOS: pairing state mismatch — run "AgentOS: Connect" again.');
+    void vscode.window.showErrorMessage('AgentOS.NET: pairing state mismatch — run "AgentOS.NET: Connect" again.');
     return;
   }
   pendingState = undefined;
@@ -86,10 +86,10 @@ async function onUri(context: vscode.ExtensionContext, uri: vscode.Uri): Promise
     const creds = (await requestJson('POST', `${serverUrl()}/runner/pair/exchange`, { code })) as Creds;
     await context.secrets.store(SECRET_KEY, JSON.stringify(creds));
     await startRunner(context, creds);
-    void vscode.window.showInformationMessage('AgentOS: connected — this machine is now a runner.');
+    void vscode.window.showInformationMessage('AgentOS.NET: connected — this machine is now a runner.');
   } catch (e) {
     setStatus('disconnected');
-    void vscode.window.showErrorMessage(`AgentOS pairing failed: ${errMsg(e)}`);
+    void vscode.window.showErrorMessage(`AgentOS.NET pairing failed: ${errMsg(e)}`);
   }
 }
 
@@ -102,7 +102,7 @@ async function startRunner(context: vscode.ExtensionContext, creds: Creds): Prom
     exe = await ensureRunnerBinary(context);
   } catch (e) {
     setStatus('disconnected');
-    void vscode.window.showErrorMessage(`AgentOS: could not fetch the runner binary — ${errMsg(e)}`);
+    void vscode.window.showErrorMessage(`AgentOS.NET: could not fetch the runner binary — ${errMsg(e)}`);
     return;
   }
 
@@ -155,7 +155,7 @@ async function disconnect(context: vscode.ExtensionContext): Promise<void> {
   await context.secrets.delete(SECRET_KEY);
   setStatus('disconnected');
   void vscode.window.showInformationMessage(
-    'AgentOS: disconnected. Revoke the runner in the AgentOS Runners tab to remove it server-side.',
+    'AgentOS.NET: disconnected. Revoke the runner in the AgentOS.NET Runners tab to remove it server-side.',
   );
 }
 
@@ -298,9 +298,9 @@ function download(urlStr: string, dest: string): Promise<void> {
 
 function setStatus(state: 'connected' | 'disconnected' | 'pairing'): void {
   const text: Record<typeof state, string> = {
-    connected: '$(check) AgentOS: Connected',
-    disconnected: '$(plug) AgentOS: Disconnected',
-    pairing: '$(sync~spin) AgentOS: Pairing…',
+    connected: '$(check) AgentOS.NET: Connected',
+    disconnected: '$(plug) AgentOS.NET: Disconnected',
+    pairing: '$(sync~spin) AgentOS.NET: Pairing…',
   };
   status.text = text[state];
   status.tooltip = state === 'connected' ? 'Click to disconnect this runner' : 'Click to pair this machine';

@@ -1,4 +1,4 @@
-// AgentOS UI — login overlay + desktop icons + right-click context menu.
+// AgentOS.NET UI — login overlay + desktop icons + right-click context menu.
 // Covers test-plan scenarios 1, 2, 3.
 
 using System.Threading.Tasks;

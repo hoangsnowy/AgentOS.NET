@@ -1,26 +1,26 @@
 <p align="center">
-  <img src="docs/assets/agentos-logo-512.png" alt="AgentOS" width="128" height="128" />
+  <img src="docs/assets/agentos-logo-512.png" alt="AgentOS.NET" width="128" height="128" />
 </p>
 
-# AgentOS
+# AgentOS.NET
 
 > A **modular .NET agentic platform** for software delivery. A central orchestrator coordinates
 > specialist agents — Requirements → Code → Tests → QA — over a provider-agnostic LLM gateway, on a
 > multi-tenant runtime with row-level isolation, driven from a Blazor desktop UI.
 
-[![CI](https://github.com/hoangsnowy/AgentOs/actions/workflows/ci.yml/badge.svg)](https://github.com/hoangsnowy/AgentOs/actions/workflows/ci.yml)
+[![CI](https://github.com/hoangsnowy/AgentOS.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/hoangsnowy/AgentOS.NET/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4)
 ![C#](https://img.shields.io/badge/C%23-14-239120)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 <p align="center">
-  <img src="docs/images/hero-light.png" alt="The AgentOS desktop — a GNOME/Adwaita shell with a top panel and a Dash of pinned apps" width="100%">
+  <img src="docs/images/hero-light.png" alt="The AgentOS.NET desktop — a GNOME/Adwaita shell with a top panel and a Dash of pinned apps" width="100%">
   <br>
-  <sub><em>The <strong>AgentOS</strong> desktop — a Blazor Server window manager with an authentic GNOME shell (Activities overview, virtual workspaces, Dash). Every capability is a window: Insights, the visual Workflow editor (where runs start), Board, Settings, Terminal, Files.</em></sub>
+  <sub><em>The <strong>AgentOS.NET</strong> desktop — a Blazor Server window manager with an authentic GNOME shell (Activities overview, virtual workspaces, Dash). Every capability is a window: Insights, the visual Workflow editor (where runs start), Board, Settings, Terminal, Files.</em></sub>
 </p>
 
-AgentOS turns a plain-English user story into reviewed, test-backed C# code. Five agents collaborate
+AgentOS.NET turns a plain-English user story into reviewed, test-backed C# code. Five agents collaborate
 under an orchestrator; a QA agent scores requirement ↔ code ↔ test consistency and loops until the
 result converges or an iteration cap is hit. Every model call is metered (tokens, cost, latency),
 every tool call passes a policy gate and is recorded as evidence, and every setting is changed in the
@@ -33,7 +33,7 @@ with its own DI surface, EF Core context and Postgres schema, so any one can lat
 > **Status:** pre-1.0. The pipeline, gateway, modular runtime, multi-tenant identity and the desktop
 > are working and deployed on Azure Container Apps; public surfaces may still change before `v1.0`.
 
-**Contents:** [Quick start](#quick-start) · [Screenshots](#screenshots) · [Why AgentOS](#why-agentos) ·
+**Contents:** [Quick start](#quick-start) · [Screenshots](#screenshots) · [Why AgentOS.NET](#why-agentos) ·
 [Concepts](#concepts) · [Architecture](#architecture) · [Modules](#modules) ·
 [LLM gateway](#llm-gateway) · [Configuration](#configuration) · [Multi-tenant](#multi-tenant) ·
 [API](#api) · [Extending](#extending) · [Deploy](#deploy) · [Contributing](#contributing)
@@ -59,7 +59,7 @@ Prerequisites: **.NET 10 SDK** (pinned in `global.json`). Docker only for the fu
 ### 1 — Standalone desktop (one command, no Docker, no API keys)
 
 ```bash
-git clone https://github.com/hoangsnowy/AgentOs.git
+git clone https://github.com/hoangsnowy/AgentOS.NET.git
 cd AgentOs
 dotnet run --project src/AgentOs.Web
 ```
@@ -82,7 +82,7 @@ dotnet run --project infra/AgentOs.AppHost
 | What | Where |
 |---|---|
 | Aspire dashboard | https://localhost:17050 |
-| AgentOS desktop | https://localhost:5180 — sign in as `operator` / `operator` (realm `agentic`) |
+| AgentOS.NET desktop | https://localhost:5180 — sign in as `operator` / `operator` (realm `agentic`) |
 | Api + Scalar UI | https://localhost:5080/scalar/v1 |
 
 If the first run misbehaves, it is almost always one of three known causes — a stale Docker volume
@@ -138,9 +138,9 @@ Light and dark are first-class (top bar → appearance toggle, or System → App
 
 | Light | Dark |
 |:---:|:---:|
-| [![AgentOS desktop, light theme](docs/images/desktop-light.png)](docs/images/desktop-light.png) | [![AgentOS desktop, dark theme](docs/images/desktop-dark.png)](docs/images/desktop-dark.png) |
+| [![AgentOS.NET desktop, light theme](docs/images/desktop-light.png)](docs/images/desktop-light.png) | [![AgentOS.NET desktop, dark theme](docs/images/desktop-dark.png)](docs/images/desktop-dark.png) |
 
-## Why AgentOS
+## Why AgentOS.NET
 
 - **Modular by construction.** Every feature is an `IModule` discovered by reflection; hosts wire the
   whole platform with one `services.AddModulesFromAssemblies(cfg, …)` call. Modules depend on
@@ -220,7 +220,7 @@ loop with `FunctionInvokingChatClient`. Every invocation passes `IToolPolicy` (g
 `AgentOs.Modules.Mcp` connects to upstream **MCP servers** and registers their tools as
 `{server}.{tool}` — local and remote tools share one registry. The Api also **serves MCP** at `/mcp`
 (Streamable HTTP) with `run_pipeline`, `list_runs` and `get_run`, so any MCP host (Claude Desktop,
-VS Code, another orchestrator) can drive AgentOS.
+VS Code, another orchestrator) can drive AgentOS.NET.
 
 ### Pipeline dataflow
 
@@ -352,7 +352,7 @@ The most used routes:
 | `GET` `POST` | `/tenants`, `/tenants/{id}/members` | Admin | Tenants and members |
 | `GET` `POST` `DELETE` | `/settings*` | Admin | Legacy runtime-config endpoint (see CONFIG.md) |
 | `POST` | `/llm/test` | signed in | Probe the configured provider with a minimal call |
-| — | `/mcp` | signed in | AgentOS as an MCP server |
+| — | `/mcp` | signed in | AgentOS.NET as an MCP server |
 | `GET`  | `/health` · `/alive` · `/health/llm` | none | Readiness, liveness, provider-key readiness |
 
 ## Extending

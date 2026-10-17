@@ -1,4 +1,4 @@
-// AgentOS UI — REAL-AUTH end-to-end for the PR #98/#100 budget gate against the full Aspire stack.
+// AgentOS.NET UI — REAL-AUTH end-to-end for the PR #98/#100 budget gate against the full Aspire stack.
 // Proves on the running app what unit tests can only simulate: with month-to-date spend over an ENFORCED
 // cap, the Cost app reports the tenant "Over budget" — i.e. BudgetGuard, reading run_metrics
 // tenant-explicitly from real Postgres, evaluates State=Exceeded. That is exactly the condition the pre-run

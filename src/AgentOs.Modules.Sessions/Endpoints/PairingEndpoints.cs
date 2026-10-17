@@ -43,13 +43,13 @@ public static class PairingEndpoints
         {
             return Results.Content(Page("Invalid pairing request",
                 "<p>This link is missing a valid editor callback. Start pairing from the editor extension "
-                + "(<strong>AgentOS: Connect</strong>), not by opening this URL directly.</p>"), "text/html");
+                + "(<strong>AgentOS.NET: Connect</strong>), not by opening this URL directly.</p>"), "text/html");
         }
 
         var who = WebUtility.HtmlEncode(tenant.UserName ?? tenant.UserId ?? "you");
         var machine = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(label) ? "My dev machine" : label);
         var body =
-            $"<p>Pair a new AgentOS runner to your editor, signed in as <strong>{who}</strong>. "
+            $"<p>Pair a new AgentOS.NET runner to your editor, signed in as <strong>{who}</strong>. "
             + "The runner executes AI coding sessions on this machine.</p>"
             + "<form method=\"post\" action=\"/pair/vscode\">"
             + $"<input type=\"hidden\" name=\"callback\" value=\"{WebUtility.HtmlEncode(callback)}\" />"
@@ -117,11 +117,11 @@ public static class PairingEndpoints
             scheme => callback.StartsWith(scheme, StringComparison.OrdinalIgnoreCase));
     }
 
-    // Minimal branded page chrome (AgentOS, dark) — no external CSS dependency.
+    // Minimal branded page chrome (AgentOS.NET, dark) — no external CSS dependency.
     private static string Page(string title, string body) =>
         "<!doctype html><html><head><meta charset=\"utf-8\" />"
         + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />"
-        + $"<title>{WebUtility.HtmlEncode(title)} · AgentOS</title><style>"
+        + $"<title>{WebUtility.HtmlEncode(title)} · AgentOS.NET</title><style>"
         + ":root{color-scheme:dark}*{box-sizing:border-box}"
         + "body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;"
         + "color:#e6e8ee;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}"
@@ -135,7 +135,7 @@ public static class PairingEndpoints
         + ".b{display:inline-block;margin-top:18px;padding:10px 16px;background:#4c6ef5;color:#fff;"
         + "border:0;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none}"
         + ".b:hover{background:#4263e0}</style></head><body><div class=\"c\">"
-        + "<div class=\"m\">AgentOS</div>" + $"<h1>{WebUtility.HtmlEncode(title)}</h1>{body}</div></body></html>";
+        + "<div class=\"m\">AgentOS.NET</div>" + $"<h1>{WebUtility.HtmlEncode(title)}</h1>{body}</div></body></html>";
 }
 
 /// <summary>Body for <c>POST /runner/pair/exchange</c>.</summary>

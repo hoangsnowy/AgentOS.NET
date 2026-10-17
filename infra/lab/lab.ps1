@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    AgentOS lab server — a long-running, isolated full stack for real GitHub / Azure DevOps / LLM testing.
+    AgentOS.NET lab server — a long-running, isolated full stack for real GitHub / Azure DevOps / LLM testing.
 
 .DESCRIPTION
     Runs the Aspire AppHost with the "lab" profile from its OWN git worktree (default ..\AgentOs-lab), so the

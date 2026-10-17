@@ -35,7 +35,7 @@ public sealed class KeyRingWrappingTests : IDisposable
     private string WriteCertificate(string password)
     {
         using var rsa = RSA.Create(2048);
-        var request = new CertificateRequest("CN=AgentOS key ring (test)", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var request = new CertificateRequest("CN=AgentOS.NET key ring (test)", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
         var path = Path.Join(_dir, "keyring.pfx");
         File.WriteAllBytes(path, cert.Export(X509ContentType.Pfx, password));
@@ -66,7 +66,7 @@ public sealed class KeyRingWrappingTests : IDisposable
         var protection = host.Services.GetRequiredService<KeyRingProtection>();
         protection.IsWrapped.ShouldBeTrue();
         protection.Mode.ShouldBe("Certificate");
-        protection.Detail.ShouldBe("CN=AgentOS key ring (test)");
+        protection.Detail.ShouldBe("CN=AgentOS.NET key ring (test)");
     }
 
     [Fact]

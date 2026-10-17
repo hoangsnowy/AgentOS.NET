@@ -1,28 +1,28 @@
 {
   "name": "agentos-runner",
-  "displayName": "AgentOS Runner",
-  "description": "Pair this machine as an AgentOS runner — run AI coding sessions locally, with a one-click sign-in.",
+  "displayName": "AgentOS.NET Runner",
+  "description": "Pair this machine as an AgentOS.NET runner — run AI coding sessions locally, with a one-click sign-in.",
   "version": "0.1.0",
   "publisher": "agentos",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/hoangsnowy/AgentOs.git" },
+  "repository": { "type": "git", "url": "https://github.com/hoangsnowy/AgentOS.NET.git" },
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Other"],
   "main": "./dist/extension.js",
   "activationEvents": ["onUri", "onStartupFinished"],
   "contributes": {
     "commands": [
-      { "command": "agentos.connect", "title": "AgentOS: Connect this machine" },
-      { "command": "agentos.disconnect", "title": "AgentOS: Disconnect" },
-      { "command": "agentos.showLogs", "title": "AgentOS: Show runner logs" }
+      { "command": "agentos.connect", "title": "AgentOS.NET: Connect this machine" },
+      { "command": "agentos.disconnect", "title": "AgentOS.NET: Disconnect" },
+      { "command": "agentos.showLogs", "title": "AgentOS.NET: Show runner logs" }
     ],
     "configuration": {
-      "title": "AgentOS",
+      "title": "AgentOS.NET",
       "properties": {
         "agentos.serverUrl": {
           "type": "string",
           "default": "https://localhost:5180",
-          "description": "AgentOS server base URL (the Web host)."
+          "description": "AgentOS.NET server base URL (the Web host)."
         },
         "agentos.runOnMyMachine": {
           "type": "boolean",

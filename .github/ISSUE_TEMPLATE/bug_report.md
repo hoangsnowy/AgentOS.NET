@@ -23,7 +23,7 @@ What you expected instead.
 
 - OS:
 - .NET SDK (`dotnet --version`):
-- Host: API / AgentOS Web / AppHost
+- Host: API / AgentOS.NET Web / AppHost
 - Provider: Claude / AzureOpenAI / RemoteAgent
 
 ## Logs / screenshots

@@ -23,7 +23,7 @@ public sealed record RepoInstructionFile(string Path, string Content, int Origin
 /// <summary>Known instruction-file paths, the budget, and the prompt block.</summary>
 public static class RepoInstructions
 {
-    /// <summary>Paths read from the repo root, in precedence order (earlier = more specific to AgentOS / agents).</summary>
+    /// <summary>Paths read from the repo root, in precedence order (earlier = more specific to AgentOS.NET / agents).</summary>
     public static IReadOnlyList<string> KnownPaths { get; } =
     [
         ".agentos/instructions.md",

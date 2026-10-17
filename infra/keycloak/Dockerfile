@@ -1,4 +1,4 @@
-# Custom Keycloak image for cloud deploy — bakes realm JSON + AgentOS theme into the image so
+# Custom Keycloak image for cloud deploy — bakes realm JSON + AgentOS.NET theme into the image so
 # neither bind-mounts nor WithRealmImport are needed in ACA. Build stage compiles KC with
 # Postgres support (--optimized startup skips re-build at container start time).
 #
@@ -18,7 +18,7 @@ COPY --from=builder /opt/keycloak/ /opt/keycloak/
 # Bake realm so KC imports it on first start (idempotent — KC skips if realm already exists in DB).
 COPY agentic-realm.json /opt/keycloak/data/import/agentic-realm.json
 
-# Bake AgentOS login theme.
+# Bake AgentOS.NET login theme.
 COPY themes/agentos /opt/keycloak/themes/agentos
 
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

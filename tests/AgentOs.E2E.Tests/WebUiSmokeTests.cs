@@ -48,7 +48,7 @@ public sealed class WebUiSmokeTests
         // The framework script must load — the exact bug we hit (404 in published/container mode).
         Assert.DoesNotContain(notFound, u => u.Contains("blazor.web.js", StringComparison.OrdinalIgnoreCase));
 
-        // The AgentOS desktop shell renders (would fail if the prerender crash returned a broken page).
+        // The AgentOS.NET desktop shell renders (would fail if the prerender crash returned a broken page).
         await Assertions.Expect(page.Locator(".syn-root")).ToBeVisibleAsync();
     }
 }

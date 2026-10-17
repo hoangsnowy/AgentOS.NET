@@ -107,7 +107,7 @@
                 .Where(x => !x.Minimized && x.Workspace == WM.ActiveWorkspace)
                 .OrderByDescending(x => x.Z)
                 .FirstOrDefault();
-            return w is null ? "AgentOS — Desktop" : w.Title;
+            return w is null ? "AgentOS.NET — Desktop" : w.Title;
         }
     }
 

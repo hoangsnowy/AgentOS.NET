@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# AgentOS design-review — phantom CSS class detector.
+# AgentOS.NET design-review — phantom CSS class detector.
 #
 # Lists class tokens referenced in .razor (static class="..." attributes) that are defined in NO
 # CSS the app ships (wwwroot/*.css + the scoped-css bundle under obj/). Phantom classes render

@@ -98,7 +98,7 @@ public sealed class RunnerShellTool : ITool
         {
             throw new ToolException(
                 "runner_shell: no runner connected for the current session member. " +
-                "Register a runner and start the AgentOS remote agent on your dev machine.");
+                "Register a runner and start the AgentOS.NET remote agent on your dev machine.");
         }
 
         var toolCallId = Guid.NewGuid().ToString("N");

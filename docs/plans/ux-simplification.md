@@ -1,6 +1,6 @@
 # UX simplification — fewer places, task-first (2026-10-18)
 
-The owner's call: AgentOS has too many features on the surface. This plan, based on an audit of the
+The owner's call: AgentOS.NET has too many features on the surface. This plan, based on an audit of the
 code and on GNOME/Apple/Microsoft guidance, NN/g research and the agent platforms users already know,
 cuts the number of places users have to look. Every capability stays; fewer of them are on the first screen.
 Every UI step still round-trips through Claude Design and is verified in light and dark mode.

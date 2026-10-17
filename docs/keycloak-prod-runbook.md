@@ -2,7 +2,7 @@
 
 How the deployed Keycloak works, and how to operate + verify it on Azure. The cloud topology is
 **already wired in code** — a single `azd up` provisions a durable, Postgres-backed Keycloak with the
-`agentic` realm + AgentOS login theme baked into a custom image. This is **not** a paste-these-snippets
+`agentic` realm + AgentOS.NET login theme baked into a custom image. This is **not** a paste-these-snippets
 TODO; the infra ships in `main`. Your job on a real deploy is: set a few secrets, run `azd up`, set the
 two public URLs, re-run the realm-patch hook, verify.
 
@@ -34,7 +34,7 @@ These were once manual steps; they are now code. Re-doing them by hand breaks th
   reusing the Postgres `PostgresUsername`/`PostgresPassword` params (`Program.cs:113-116`). Do **not**
   hand-build a JDBC URL or set a `KeycloakDbUrl`/`KeycloakDbUsername`/`KeycloakDbPassword` parameter —
   none exist.
-- **The realm + AgentOS theme.** Baked into a custom image by `infra/keycloak/Dockerfile`
+- **The realm + AgentOS.NET theme.** Baked into a custom image by `infra/keycloak/Dockerfile`
   (`quay.io/keycloak/keycloak:26.6`, `kc.sh build --db=postgres`, realm JSON copied to
   `/opt/keycloak/data/import/`, theme to `/opt/keycloak/themes/agentos`, `CMD ["start", "--import-realm",
   "--optimized"]`). The publish branch points the resource at it via
@@ -188,7 +188,7 @@ Confirm the things only a real deploy proves:
    `KeycloakWebClientSecret` (the value the Web app holds).
 3. **Persistence across restart** — `az containerapp revision restart -n keycloak -g "$RG"`; log in
    again → realm + users survive (proves the Postgres `keycloak` DB backing, not ephemeral H2).
-4. **Saved app secrets survive** — in AgentOS Settings save an LLM key, restart the `web` app, confirm
+4. **Saved app secrets survive** — in AgentOS.NET Settings save an LLM key, restart the `web` app, confirm
    it still decrypts (proves the durable DataProtection key ring).
 5. **Bearer / issuer** — an authenticated API call (`Auth__Keycloak__Authority` =
    `<KC_URL>/realms/agentic`, `Program.cs:123,168,189-195`) returns 200, proving issuer/hostname

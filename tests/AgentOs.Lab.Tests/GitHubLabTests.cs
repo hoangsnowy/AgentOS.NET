@@ -55,7 +55,7 @@ public sealed class GitHubLabTests
     {
         SkipUnlessConfigured();
         var ctx = await _github.ReadRepoContextAsync(Repo());
-        ctx.Readme.ShouldContain("AgentOS lab");
+        ctx.Readme.ShouldContain("AgentOS.NET lab");
         ctx.TopLevelPaths.ShouldContain(p => p.StartsWith("src", StringComparison.Ordinal));
     }
 
@@ -87,7 +87,7 @@ public sealed class GitHubLabTests
         var name = "lab-test-" + Guid.NewGuid().ToString("N")[..6];
         try
         {
-            var first = await _github.EnsureLabelsAsync(Repo(), [new LabelSpec(name, "0e8a16", "AgentOS lab test")]);
+            var first = await _github.EnsureLabelsAsync(Repo(), [new LabelSpec(name, "0e8a16", "AgentOS.NET lab test")]);
             first.Created.ShouldContain(name);
             var second = await _github.EnsureLabelsAsync(Repo(), [new LabelSpec(name, "0e8a16")]);
             second.Created.ShouldBeEmpty();
