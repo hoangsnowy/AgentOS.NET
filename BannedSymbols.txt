@@ -1,0 +1,5 @@
+M:System.IO.Path.Combine(System.String,System.String);cs/path-combine: an absolute later segment silently discards earlier ones — use Path.Join (+ Path.GetFullPath and a prefix check for untrusted input)
+M:System.IO.Path.Combine(System.String,System.String,System.String);cs/path-combine: use Path.Join
+M:System.IO.Path.Combine(System.String,System.String,System.String,System.String);cs/path-combine: use Path.Join
+M:System.IO.Path.Combine(System.String[]);cs/path-combine: use Path.Join
+M:System.IO.Path.Combine(System.ReadOnlySpan{System.String});cs/path-combine: use Path.Join
