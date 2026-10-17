@@ -7,19 +7,25 @@ second, long-running full stack on this machine that never collides with the dev
 | | Dev stack | Lab stack |
 |---|---|---|
 | Start | `dotnet run --project infra/AgentOs.AppHost` | `pwsh infra/lab/lab.ps1 up` |
-| Desktop | https://localhost:5180 | **https://localhost:6180** |
+| Desktop | https://localhost:5180 | **https://lab.dev.localhost:6180** |
 | Api / Scalar | https://localhost:5080 | https://localhost:6080 |
-| Keycloak / MailHog | :8080 / :8025 | :9080 / :9025 |
+| Keycloak / MailHog | https://localhost:8080 / :8025 | https://labkc.dev.localhost:9080 / :9025 |
 | Aspire dashboard | https://localhost:17050 | https://localhost:18050 |
 | Code | your working copy | its own git worktree `..\AgentOs-lab` (rebuilding dev never disturbs it) |
 | Data | Aspire default volumes | `agentos-lab-postgres-data`, `agentos-lab-keycloak-data` |
 
 Login on both: `operator` / `operator` (realm `agentic`).
 
-> **Use a separate browser profile (or an incognito window) for the lab.** Cookies are scoped to the host,
-> not the port, so the dev and lab Keycloaks (and every other app on `localhost`) share one cookie jar; once
-> it overflows, sign-in fails with **HTTP 431** on both stacks. A fresh profile/incognito window fixes it
-> instantly; clearing `localhost` site data also works.
+> **Why `*.dev.localhost`?** Cookies are scoped to the host, not the port. On plain `localhost` the lab would
+> share one cookie jar with the dev stack, its Keycloak and every other local app — sessions overwrite each
+> other and the jar overflows (*HTTP 431*, *"Correlation failed"* at `/signin-oidc`). `lab.dev.localhost` and
+> `labkc.dev.localhost` resolve to loopback in every modern browser and in .NET with no hosts-file edit, and
+> the ASP.NET dev certificate already covers `*.dev.localhost`, so the lab gets its own cookie jars. Each
+> instance also uses its own cookie names (`Auth:CookiePrefix`), and a sign-in callback that can't be
+> completed restarts the login once instead of failing.
+>
+> The **dev** stack still lives on `localhost` with everything else; if its sign-in ever reports *HTTP 431*,
+> clear `localhost` site data (or use a private window).
 
 ## Lab commands
 

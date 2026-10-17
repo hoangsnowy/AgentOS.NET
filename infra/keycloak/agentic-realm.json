@@ -79,8 +79,8 @@
       "secret": "agentic-web-dev-secret",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "redirectUris": ["https://localhost:5180/*", "https://localhost:6180/*"],
-      "webOrigins": ["https://localhost:5180", "https://localhost:6180"],
+      "redirectUris": ["https://localhost:5180/*", "https://lab.dev.localhost:6180/*"],
+      "webOrigins": ["https://localhost:5180", "https://lab.dev.localhost:6180"],
       "defaultClientScopes": ["tenant"],
       "protocolMappers": [
         {

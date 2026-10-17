@@ -7,9 +7,9 @@
     Runs the Aspire AppHost with the "lab" profile from its OWN git worktree (default ..\AgentOs-lab), so the
     lab keeps running while you rebuild the dev checkout. Lab ports never collide with the dev stack:
 
-        Desktop  https://localhost:6180   (login operator / operator)
+        Desktop  https://lab.dev.localhost:6180   (login operator / operator)
         Api      https://localhost:6080
-        Keycloak http://localhost:9080    MailHog http://localhost:9025
+        Keycloak https://labkc.dev.localhost:9080    MailHog http://localhost:9025
         Aspire   https://localhost:18050
 
     Commands:
@@ -37,7 +37,8 @@ $LabDir = [System.IO.Path]::GetFullPath($LabDir)
 $StateDir = Join-Path $LabDir '.lab'
 $PidFile = Join-Path $StateDir 'apphost.pid'
 $LogFile = Join-Path $StateDir 'apphost.log'
-$WebUrl = 'https://localhost:6180'
+$WebUrl = 'https://lab.dev.localhost:6180'
+$KeycloakUrl = 'https://labkc.dev.localhost:9080'
 
 function Test-Web {
     # Healthy = the login endpoint answers 302 to Keycloak. curl.exe (ships with Windows 10+) because
@@ -82,11 +83,33 @@ function Start-Lab {
     $p.Id | Set-Content $PidFile
     Write-Host -NoNewline 'Waiting for the lab to be healthy'
     for ($i = 0; $i -lt 90; $i++) {
-        if (Test-Web) { Write-Host ''; Show-Status; return }
+        if (Test-Web) { Write-Host ''; Sync-LabRealm; Show-Status; return }
         Write-Host -NoNewline '.'
         Start-Sleep -Seconds 5
     }
     throw "Lab did not become healthy — see $LogFile"
+}
+
+function Sync-LabRealm {
+    # Keycloak imports the realm only on first start, so an existing lab realm never picks up changes to
+    # agentic-realm.json. Make sure the agentic-web client accepts the lab desktop origin (idempotent).
+    $kcAdmin = 'https://localhost:9080'
+    try {
+        $token = (Invoke-RestMethod -SkipCertificateCheck -Method Post "$kcAdmin/realms/master/protocol/openid-connect/token" `
+            -Body @{ grant_type = 'password'; client_id = 'admin-cli'; username = 'admin'; password = 'admin' }).access_token
+        $headers = @{ Authorization = "Bearer $token" }
+        $client = (Invoke-RestMethod -SkipCertificateCheck -Headers $headers "$kcAdmin/admin/realms/agentic/clients?clientId=agentic-web")[0]
+        $redirect = "$WebUrl/*"
+        if ($client.redirectUris -notcontains $redirect -or $client.webOrigins -notcontains $WebUrl) {
+            $client.redirectUris = @($client.redirectUris + $redirect | Select-Object -Unique)
+            $client.webOrigins = @($client.webOrigins + $WebUrl | Select-Object -Unique)
+            Invoke-RestMethod -SkipCertificateCheck -Method Put -Headers $headers -ContentType 'application/json' `
+                "$kcAdmin/admin/realms/agentic/clients/$($client.id)" -Body ($client | ConvertTo-Json -Depth 20) | Out-Null
+            Write-Host "Realm: agentic-web now accepts $WebUrl"
+        }
+    } catch {
+        Write-Warning "Could not sync the lab realm ($($_.Exception.Message)). Sign-in may fail until it is synced."
+    }
 }
 
 function Show-Status {
