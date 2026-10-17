@@ -10,7 +10,11 @@ namespace AgentOs.Domain.Llm;
 public static class LlmProviders
 {
     /// <summary>Provider names an operator can pick in Settings (Anthropic is accepted as an alias of Claude).</summary>
-    public static IReadOnlyList<string> Selectable { get; } = ["Claude", "Anthropic", "AzureOpenAI", "MAF", "RemoteAgent"];
+    public static IReadOnlyList<string> Selectable { get; } = ["Claude", "Anthropic", "AzureOpenAI", OpenAiCompatible, "MAF", "RemoteAgent"];
+
+    /// <summary>Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, Azure AI Foundry, a gateway) — the
+    /// self-hosted / air-gapped option.</summary>
+    public const string OpenAiCompatible = "OpenAICompatible";
 
     /// <summary>The keyless canned client (<c>OfflineLlmClient</c>). A response tagged with it never reached a model.</summary>
     public const string Offline = "Offline";

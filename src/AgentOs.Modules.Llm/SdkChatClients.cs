@@ -29,6 +29,19 @@ internal static class SdkChatClients
             .GetChatClient(deployment)
             .AsIChatClient();
 
+    /// <summary>Any OpenAI-compatible <c>/v1/chat/completions</c> server — vLLM, Ollama, LM Studio, llama.cpp,
+    /// Azure AI Foundry, a corporate gateway — via the official OpenAI SDK with a custom endpoint (E0.8).
+    /// Many self-hosted servers take no key; the SDK still needs a credential, so a blank key becomes a dummy.</summary>
+    public static IChatClient CreateOpenAiCompatible(string? apiKey, string endpoint, string model)
+        => new OpenAI.OpenAIClient(
+                new ApiKeyCredential(string.IsNullOrWhiteSpace(apiKey) || apiKey == OpenAiCompatibleNoKey ? "not-needed" : apiKey),
+                new OpenAI.OpenAIClientOptions { Endpoint = new Uri(endpoint) })
+            .GetChatClient(model)
+            .AsIChatClient();
+
+    /// <summary>Pool placeholder for a keyless OpenAI-compatible server (the pool needs one entry to route).</summary>
+    public const string OpenAiCompatibleNoKey = "(no key)";
+
     /// <summary>True when an exception represents an HTTP 429 / rate-limit / overloaded across the
     /// Azure (ClientResultException) and Anthropic (HttpRequestException) SDK shapes.</summary>
     public static bool IsRateLimited(Exception? ex) => IsRateLimitShaped(ex);

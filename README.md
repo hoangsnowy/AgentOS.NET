@@ -255,6 +255,7 @@ Agents depend only on `ILlmClient`; `LlmClientFactory` resolves a keyed implemen
 |---|---|---|
 | `Claude` (alias `Anthropic`) | Anthropic SDK, pooled over multiple keys | `Modules.Llm` |
 | `AzureOpenAI` | `Azure.AI.OpenAI`, pooled over multiple keys | `Modules.Llm` |
+| `OpenAICompatible` (aliases `Ollama`, `vLLM`, `Local`) | Any `/v1/chat/completions` server via the OpenAI SDK — self-hosted / air-gapped, your own prices | `Modules.Llm` |
 | `MAF` | Microsoft Agent Framework over Azure OpenAI | `Modules.Llm` |
 | `RemoteAgent` | SignalR-dispatched dev-machine agent | `Modules.RemoteAgent` |
 | `Offline` | Keyless canned output — only at the end of a failover chain when offline fallback is on | `Modules.Llm` |

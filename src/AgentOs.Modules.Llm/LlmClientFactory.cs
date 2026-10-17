@@ -148,6 +148,7 @@ public sealed class LlmClientFactory : ILlmClientFactory
             "AZUREOPENAI" or "AZURE" or "OPENAI" => "AzureOpenAI",
             "MAF" or "MAF-AZURE" or "AGENTFRAMEWORK" => "MAF",
             "REMOTEAGENT" or "REMOTE" or "IDE" => "RemoteAgent",
+            "OPENAICOMPATIBLE" or "OPENAI-COMPATIBLE" or "LOCAL" or "OLLAMA" or "VLLM" => LlmProviders.OpenAiCompatible,
             _ => trimmed,
         };
     }

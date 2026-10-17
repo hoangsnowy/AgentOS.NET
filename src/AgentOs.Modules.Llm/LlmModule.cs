@@ -110,6 +110,33 @@ public sealed class LlmModule : IModule
                 cacheKeyDiscriminator: () => !string.IsNullOrWhiteSpace(ov.AzureEndpoint) ? ov.AzureEndpoint! : opts.Value.AzureOpenAi.Endpoint);
         });
 
+        // OpenAI-compatible (E0.8): vLLM / Ollama / LM Studio / Foundry / a corporate gateway. Platform-scoped settings
+        // (read live per call), the operator's own prices, and the profile's model mapped to one this server hosts.
+        services.AddKeyedSingleton<ILlmClient>(LlmProviders.OpenAiCompatible, (sp, _) =>
+        {
+            var settings = sp.GetService<AgentOs.Domain.Configuration.ISettings>();
+            string? Read(string key) => settings is null ? null : LiveSettings.Read(settings, key, null);
+            string Endpoint() => Read(LlmSettings.CompatEndpoint)
+                ?? throw new LlmException("No OpenAI-compatible endpoint is configured — a platform admin sets it in Settings → LLM & providers.", LlmProviders.OpenAiCompatible);
+            return new PooledChatLlmClient(
+                LlmProviders.OpenAiCompatible,
+                (key, model) => SdkChatClients.CreateOpenAiCompatible(key, Endpoint(), model),
+                _ => ValueTask.FromResult<IReadOnlyList<string>>([Read(LlmSettings.CompatApiKey) is { Length: > 0 } k ? k : SdkChatClients.OpenAiCompatibleNoKey]),
+                sp.GetRequiredService<ApiKeyRouter>(),
+                SdkChatClients.IsRateLimited,
+                _ => null,
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PooledChatLlmClient>>(),
+                baseDelay: null,
+                toolRegistry: sp.GetService<AgentOs.Domain.Tools.IToolRegistry>(),
+                toolPolicy: sp.GetService<AgentOs.Domain.Tools.IToolPolicy>(),
+                toolInvocationLog: sp.GetService<AgentOs.Domain.Tools.IToolInvocationLog>(),
+                tenantProvider: sp,
+                classifyError: SdkChatClients.Classify,
+                cacheKeyDiscriminator: () => Read(LlmSettings.CompatEndpoint) ?? string.Empty,
+                modelResolver: requested => OpenAiCompatibleModels.Resolve(requested, Read(LlmSettings.CompatModel)),
+                costOverride: (_, usage) => OpenAiCompatibleModels.Cost(usage, Read(LlmSettings.CompatInputPrice), Read(LlmSettings.CompatOutputPrice)));
+        });
+
         services.AddSingleton<ILlmClientFactory, LlmClientFactory>();
         services.AddTransient<ILlmClient>(sp => sp.GetRequiredService<ILlmClientFactory>().CreateDefault());
     }

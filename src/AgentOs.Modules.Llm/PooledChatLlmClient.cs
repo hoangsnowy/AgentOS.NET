@@ -66,7 +66,9 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         IToolInvocationLog? toolInvocationLog = null,
         IServiceProvider? tenantProvider = null,
         Func<Exception, LlmErrorKind>? classifyError = null,
-        Func<string>? cacheKeyDiscriminator = null)
+        Func<string>? cacheKeyDiscriminator = null,
+        Func<string, string>? modelResolver = null,
+        Func<string, TokenUsage, decimal?>? costOverride = null)
     {
         Provider = string.IsNullOrWhiteSpace(provider) ? throw new ArgumentException("provider required", nameof(provider)) : provider;
         _clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
@@ -86,7 +88,14 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         _toolPolicy = toolPolicy;
         _toolInvocationLog = toolInvocationLog;
         _cacheKeyDiscriminator = cacheKeyDiscriminator;
+        _modelResolver = modelResolver;
+        _costOverride = costOverride;
     }
+
+    // Maps the agent profile's model to the one this provider actually serves (e.g. an OpenAI-compatible server
+    // that only hosts its own models), and prices usage itself (self-hosted = the operator's own rates).
+    private readonly Func<string, string>? _modelResolver;
+    private readonly Func<string, TokenUsage, decimal?>? _costOverride;
 
     // The tenant for tool tagging / telemetry when there is no AmbientIdentity on the call. Prefer a
     // directly-supplied ITenantContext (tests); otherwise resolve the request-scoped one inside a fresh
@@ -115,6 +124,7 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                 Provider);
         }
 
+        var model = _modelResolver?.Invoke(request.Model) is { Length: > 0 } resolved ? resolved : request.Model;
         var messages = new List<ChatMessage>(2);
         if (!string.IsNullOrEmpty(request.SystemPrompt))
         {
@@ -124,8 +134,8 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         var resolvedTools = ResolveTools(request.Tools);
         var options = new ChatOptions
         {
-            ModelId = request.Model,
-            Temperature = ModelCapabilities.TemperatureFor(request.Model, request.Temperature),
+            ModelId = model,
+            Temperature = ModelCapabilities.TemperatureFor(model, request.Temperature),
             MaxOutputTokens = request.MaxTokens,
             Tools = resolvedTools.Count > 0 ? resolvedTools.Cast<AITool>().ToList() : null,
         };
@@ -143,10 +153,10 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             var key = _router.Acquire(Provider, keys)!;
-            var clientCacheKey = $"{key}|{cacheDiscriminator}|{request.Model}";
+            var clientCacheKey = $"{key}|{cacheDiscriminator}|{model}";
             // Usage is normalised per provider turn (cache reads/writes, reasoning) BENEATH function invocation, so
             // tool-calling loops keep per-turn cache detail when FunctionInvokingChatClient sums the turns.
-            var chat = _clients.GetOrAdd(clientCacheKey, _ => new UsageNormalizingChatClient(_clientFactory(key, request.Model)));
+            var chat = _clients.GetOrAdd(clientCacheKey, _ => new UsageNormalizingChatClient(_clientFactory(key, model)));
             if (resolvedTools.Count > 0)
             {
                 // FunctionInvokingChatClient wrapper drives the tool-call loop transparently so the
@@ -156,7 +166,7 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
 
             // One span per attempt; usage/metrics fire only on the success return below, so a 429
             // failover attempt (handled in the catch) never double-counts tokens or cost.
-            using var activity = LlmTelemetry.StartChat(genAiSystem, request.Model, tenantId);
+            using var activity = LlmTelemetry.StartChat(genAiSystem, model, tenantId);
             var stopwatch = Stopwatch.StartNew();
             try
             {
@@ -167,19 +177,20 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                 var usage = UsageReader.Read(response.Usage);
                 var inputTokens = usage.Input;
                 var outputTokens = usage.Output;
-                var cost = CostCalculator.Calculate(request.Model, usage);
-                if (!CostCalculator.IsKnown(request.Model))
+                var overridden = _costOverride?.Invoke(model, usage);
+                var cost = overridden ?? CostCalculator.Calculate(model, usage);
+                if (overridden is null && !CostCalculator.IsKnown(model))
                 {
                     // Unpriced model = cost is a pessimistic ceiling estimate until the model is added to the table.
                     _logger.LogWarning(
                         "Cost: model {Model} is not in the price table — cost ESTIMATED at the fail-closed ceiling rate so it still counts against the budget. Add it to CostCalculator.",
-                        LogSafe.Scrub(request.Model));
+                        LogSafe.Scrub(model));
                 }
-                LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, response.ModelId ?? request.Model,
+                LlmTelemetry.RecordSuccess(activity, genAiSystem, model, response.ModelId ?? model,
                     inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds);
                 _logger.LogInformation(
                     "LlmCallCompleted {Provider} {Model} {InTok} {CacheReadTok} {CacheWriteTok} {OutTok} {CostUsd} {Ms} {Tenant}",
-                    Provider, LogSafe.Scrub(request.Model), inputTokens, usage.CacheRead, usage.CacheWrite, outputTokens, cost,
+                    Provider, LogSafe.Scrub(model), inputTokens, usage.CacheRead, usage.CacheWrite, outputTokens, cost,
                     stopwatch.Elapsed.TotalMilliseconds, LogSafe.Scrub(tenantId ?? ""));
                 return new LlmResponse(
                     Content: response.Text ?? string.Empty,
@@ -187,7 +198,7 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                     OutputTokens: outputTokens,
                     CostUsd: cost,
                     Latency: stopwatch.Elapsed,
-                    Model: request.Model,
+                    Model: model,
                     Provider: Provider)
                 {
                     CacheReadTokens = usage.CacheRead,

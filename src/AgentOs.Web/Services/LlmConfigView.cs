@@ -37,6 +37,9 @@ public sealed record LlmEffectiveConfig(
     /// <summary><c>Llm:OfflineFallback</c> — a keyless provider is answered by the canned offline client.</summary>
     public bool OfflineFallback { get; init; }
 
+    /// <summary>The platform's OpenAI-compatible endpoint (vLLM / Ollama / Foundry), or null when not configured.</summary>
+    public string? CompatEndpoint { get; init; }
+
     /// <summary>The provider a run will ask for: the forced one, else the default.</summary>
     public string EffectiveProvider => string.IsNullOrWhiteSpace(Force) ? DefaultProvider : Force;
 
@@ -50,6 +53,7 @@ public sealed record LlmEffectiveConfig(
     {
         "CLAUDE" or "ANTHROPIC" => AnthropicKeySet,
         "AZUREOPENAI" or "AZURE" or "OPENAI" => AzureKeySet && !string.IsNullOrWhiteSpace(AzureEndpoint),
+        "OPENAICOMPATIBLE" or "OPENAI-COMPATIBLE" or "LOCAL" or "OLLAMA" or "VLLM" => !string.IsNullOrWhiteSpace(CompatEndpoint),
         "OFFLINE" => false,
         _ => true,
     };
@@ -81,6 +85,7 @@ public sealed class LlmConfigView(IRuntimeOverrides overrides, IOptions<LlmOptio
         {
             DefaultProvider = LiveSettings.Read(_settings, LlmSettings.Provider, tenantId) ?? cfg.DefaultProvider,
             OfflineFallback = LiveSettings.ReadBool(_settings, LlmSettings.OfflineFallback, tenantId, cfg.OfflineFallback),
+            CompatEndpoint = LiveSettings.Read(_settings, LlmSettings.CompatEndpoint, null),
         };
     }
 

@@ -37,6 +37,7 @@ public static class LlmGatewayCard
             }),
             new("Anthropic key", cfg.AnthropicKeySet ? "Configured" : "Not set"),
             new("Azure OpenAI", cfg.HasKeyFor("AzureOpenAI") ? "Configured" : cfg.AzureKeySet ? "Key set, endpoint missing" : "Not set"),
+            new("OpenAI-compatible", string.IsNullOrWhiteSpace(cfg.CompatEndpoint) ? "Not set" : "Configured (platform)"),
             new("Offline fallback", cfg.OfflineFallback ? "On" : "Off"),
             new("SDK", $"Microsoft.Extensions.AI {SdkVersion}"),
         };
@@ -46,7 +47,11 @@ public static class LlmGatewayCard
             MapLabel = map,
             Summary = summary,
             Facts = facts,
-            Infra = cfg.AzureEndpoint is { Length: > 0 } endpoint ? [new("Azure endpoint", endpoint)] : [],
+            Infra =
+            [
+                .. cfg.AzureEndpoint is { Length: > 0 } azure ? new[] { new ServiceFact("Azure endpoint", azure) } : [],
+                .. cfg.CompatEndpoint is { Length: > 0 } compat ? new[] { new ServiceFact("OpenAI-compatible endpoint", compat) } : [],
+            ],
         };
     }
 }
