@@ -137,6 +137,27 @@ public sealed class GitHubSourceProvider : ISourceProvider
         return GitHubProjectsClient.ReadItemsAsync(board, cancellationToken);
     }
 
+    public async Task<string?> ReadTicketBodyAsync(WorkspaceDescriptor repo, int number, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(repo);
+        if (number <= 0)
+        {
+            return null;
+        }
+
+        var client = CreateClient(repo.AccessToken, repo.Host);
+        try
+        {
+            // The Issues API also serves pull requests, so one call covers both ticket kinds.
+            var issue = await client.Issue.Get(repo.Owner, repo.Repo, number).ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(issue.Body) ? null : issue.Body;
+        }
+        catch (NotFoundException)
+        {
+            return null;
+        }
+    }
+
     // ── Writes (bootstrap) ───────────────────────────────────────────────────────────────────────
 
     public async Task<LabelSyncResult> EnsureLabelsAsync(WorkspaceDescriptor repo, IReadOnlyList<LabelSpec> labels, CancellationToken cancellationToken = default)

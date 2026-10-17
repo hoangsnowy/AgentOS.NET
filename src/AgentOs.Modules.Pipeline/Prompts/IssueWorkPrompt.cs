@@ -8,6 +8,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using AgentOs.Domain.Llm;
 using AgentOs.Domain.Sessions;
 
 namespace AgentOs.Modules.Pipeline.Prompts;
@@ -67,7 +68,7 @@ internal static class IssueWorkPrompt
         repo.DefaultBranch,
         req.IssueNumber,
         CrossServiceNote(req, repo),
-        CrossLinkCommitNote(req, repo));
+        CrossLinkCommitNote(req, repo)) + SecurityFooter;
 
     // CLI-mode system prompt — used when the run is routed to the member's paired dev-machine CLI
     // (claude-code / codex) via the RemoteAgent provider. That CLI has its OWN native shell/file/git
@@ -122,14 +123,20 @@ internal static class IssueWorkPrompt
         repo.DefaultBranch,
         req.IssueNumber,
         CrossServiceNote(req, repo),
-        CrossLinkCommitNote(req, repo));
+        CrossLinkCommitNote(req, repo)) + SecurityFooter;
+
+    // The ticket title/body are written by whoever can open an issue — fence them as data. The branch name,
+    // repo, and workflow come only from these system prompts, never from the ticket.
+    private const string SecurityFooter = "\n\n" + UntrustedText.SystemRule;
 
     internal static string User(IssueWorkRequest req, WorkRepo repo) => string.Format(
         CultureInfo.InvariantCulture,
         """
         Repository: {0}/{1}  (base branch: {2})
-        Ticket #{3}: {4}
+        Ticket #{3} — title:
+        {4}
 
+        Ticket #{3} — description:
         {5}
 
         Implement a fix for this ticket in THIS repository. Create branch `issue-{3}-ai-fix`,
@@ -139,8 +146,10 @@ internal static class IssueWorkPrompt
         repo.Repo,
         repo.DefaultBranch,
         req.IssueNumber,
-        req.IssueTitle,
-        string.IsNullOrWhiteSpace(req.IssueBody) ? "(no description provided)" : req.IssueBody);
+        UntrustedText.Wrap("ticket-title", req.IssueTitle, maxChars: 512),
+        string.IsNullOrWhiteSpace(req.IssueBody)
+            ? "(no description provided)"
+            : UntrustedText.Wrap("ticket-body", req.IssueBody));
 
     private static string CrossServiceNote(IssueWorkRequest req, WorkRepo repo)
     {

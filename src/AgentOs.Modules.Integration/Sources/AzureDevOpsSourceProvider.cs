@@ -69,6 +69,10 @@ public sealed class AzureDevOpsSourceProvider : ISourceProvider
     public Task<BoardTickets> ReadBoardTicketsAsync(BoardDescriptor board, CancellationToken cancellationToken = default)
         => throw new NotSupportedException(BoardsNotSupportedMessage);
 
+    // ADO boards/work items aren't wired yet — no body to read; the run proceeds on the title.
+    public Task<string?> ReadTicketBodyAsync(WorkspaceDescriptor repo, int number, CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
+
     public Task<LabelSyncResult> EnsureLabelsAsync(WorkspaceDescriptor repo, IReadOnlyList<LabelSpec> labels, CancellationToken cancellationToken = default)
         => throw new NotSupportedException(BoardsNotSupportedMessage);
 

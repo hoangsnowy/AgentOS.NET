@@ -1530,6 +1530,32 @@ else if (_tab == Tab.Sessions)
         new(board.Id, tenantId, board.Kind, owner, repo, board.Project,
             string.IsNullOrWhiteSpace(defaultBranch) ? "main" : defaultBranch, pat);
 
+    // Read the ticket's CURRENT body (third-party text — the agent prompts fence it as untrusted data).
+    // Best-effort: an unsupported backend, a missing ticket, or a network/API failure yields null and the
+    // run proceeds on the title alone rather than failing.
+    private static async Task<string?> ReadTicketBodyAsync(
+        IServiceScope scope, WorkspaceEntity board, string tenantId, RemoteSessionEntity session, string pat)
+    {
+        if (session.IssueNumber is not > 0 || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName))
+        {
+            return null;
+        }
+        var resolver = scope.ServiceProvider.GetRequiredService<ISourceProviderResolver>();
+        if (!resolver.TryResolve(board.Kind, out var provider) || provider is null)
+        {
+            return null;
+        }
+        var repo = RepoDescriptor(board, tenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat);
+        try
+        {
+            return await provider.ReadTicketBodyAsync(repo, session.IssueNumber.Value).ConfigureAwait(false);
+        }
+        catch (System.Net.Http.HttpRequestException) { return null; }
+        catch (Octokit.ApiException) { return null; }
+        catch (InvalidOperationException) { return null; }
+        catch (TaskCanceledException) { return null; }
+    }
+
     // The ai:ready tickets on the board that the agent can run unattended (real issue, has a repo).
     private List<BoardTicket> ReadyTickets() => _tickets is null
         ? new List<BoardTicket>()
@@ -1660,6 +1686,8 @@ else if (_tab == Tab.Sessions)
                     var agent = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Sessions.IIssueWorkAgent>();
                     var prService = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Workspaces.IPrCreationService>();
 
+                    var issueBody = await ReadTicketBodyAsync(scope, capturedBoard, capturedTenantId, capturedSession, capturedPat).ConfigureAwait(false);
+
                     var workRepos = capturedChildren
                         .Select(c => new AgentOs.Domain.Sessions.WorkRepo(c.Id, c.Owner, c.Repo, c.DefaultBranch))
                         .ToList();
@@ -1670,7 +1698,7 @@ else if (_tab == Tab.Sessions)
                         Repos: workRepos,
                         IssueNumber: capturedSession.IssueNumber ?? 0,
                         IssueTitle: capturedSession.Title,
-                        IssueBody: "",
+                        IssueBody: issueBody ?? "",
                         TicketKind: capturedSession.TicketKind ?? "Issue",
                         ProviderOverride: capturedSession.RunOnMachine ? "RemoteAgent" : null,
                         CliProfile: capturedSession.RunOnMachine ? capturedCli : null);
@@ -1816,7 +1844,8 @@ else if (_tab == Tab.Sessions)
 
         Publish(SessionRunEventKind.Running, $"Quality engine — 5-agent pipeline on {repoLabel}.", repoLabel);
 
-        var story = IssueToStoryAdapter.ToUserStory(session.Title, null, QualityNMax());
+        var ticketBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
+        var story = IssueToStoryAdapter.ToUserStory(session.Title, ticketBody, QualityNMax());
         PipelineResult? result = null;
         string? error = null;
         // The pipeline runs through PersistingOrchestratorAgent, which applies the S1 per-tenant budget gate
