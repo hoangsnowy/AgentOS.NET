@@ -83,6 +83,10 @@ public sealed class WorkflowAppTests : IClassFixture<AgentOsPageFixture>
         // Keyless → the chip says Offline before anything runs; a green "Live" chip here would be a lie.
         await Assertions.Expect(win.GetByTestId("llm-chip-offline")).ToBeVisibleAsync();
 
+        // Each agent node shows its character (the QA evaluator runs as the QA agent), at rest before the run.
+        await Assertions.Expect(win.Locator(".step-node svg.mascot.is-idle")).ToHaveCountAsync(4);
+        await Assertions.Expect(win.Locator(".step-node svg.mascot.role-qa")).ToHaveCountAsync(1);
+
         await StartRunAsync(win);
 
         // The drawn agent nodes reach the Canned run-state on the canvas (not a static mock) and the run
@@ -90,6 +94,9 @@ public sealed class WorkflowAppTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(win.Locator(".syn-log")).ToContainTextAsync("Dry run complete — OFFLINE",
             new LocatorAssertionsToContainTextOptions { Timeout = 60_000 });
         await Assertions.Expect(win.Locator(".step-node.run-canned")).ToHaveCountAsync(4);
+        // …and the characters act it out: asleep (canned), never the happy "done" hop on canned output.
+        await Assertions.Expect(win.Locator(".step-node svg.mascot.is-canned")).ToHaveCountAsync(4);
+        await Assertions.Expect(win.Locator(".step-node svg.mascot.is-done")).ToHaveCountAsync(0);
         await Assertions.Expect(win.Locator(".syn-log")).Not.ToContainTextAsync("Workflow complete.");
     }
 

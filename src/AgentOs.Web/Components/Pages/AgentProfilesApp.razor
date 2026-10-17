@@ -49,7 +49,7 @@ else
                 {
                     var locked = row.IsLocked;
                     <tr @key="row.Role">
-                        <td><strong>@row.Role</strong></td>
+                        <td><span class="agent-profiles-who"><AgentMascot Role="@row.Role" Size="30" /><strong>@row.Role</strong></span></td>
                         <td>
                             <select class="prefs-select" disabled="@locked" aria-label="@($"{row.Role} provider")"
                                     value="@row.Provider" @onchange="e => row.Provider = e.Value?.ToString() ?? string.Empty">

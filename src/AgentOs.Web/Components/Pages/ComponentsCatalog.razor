@@ -35,6 +35,33 @@
     </section>
 
     <section class="catalog-section">
+        <h2 class="catalog-section-h">AgentMascot — role × run state</h2>
+        <table class="catalog-tbl">
+            <thead>
+                <tr>
+                    <th>Role ↓ / State →</th>
+                    @foreach (var state in Enum.GetValues<AgentMascot.MascotState>())
+                    {
+                        <th>@state</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var role in _mascotRoles)
+                {
+                    <tr>
+                        <th>@role</th>
+                        @foreach (var state in Enum.GetValues<AgentMascot.MascotState>())
+                        {
+                            <td><AgentMascot Role="@role" State="@state" Size="56" /></td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+
+    <section class="catalog-section">
         <h2 class="catalog-section-h">Btn — variant × size</h2>
         <table class="catalog-tbl">
             <thead><tr><th>Size →<br />Variant ↓</th><th>Sm (24)</th><th>Md (32)</th><th>Lg (40)</th><th>Disabled</th></tr></thead>
@@ -228,6 +255,8 @@
         new TabStrip.TabDef("runs", "Runs", "3"),
         new TabStrip.TabDef("history", "History"),
     };
+
+    private static readonly string[] _mascotRoles = ["Orchestrator", "Requirement", "Coding", "Testing", "Qa", "Plugin"];
 
     private readonly string[] _iconNames = new[]
     {
