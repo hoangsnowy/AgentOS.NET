@@ -41,6 +41,22 @@ pg_dump -Fc -h <host> -U <user> -d agentos -f agentos-$(date +%F).dump
    the `AgentOs.Modules.AppConfig` logs, or as blank values where data exists).
 4. Users re-authenticate (cookies issued before the restore may be rejected — expected).
 
+## Wrapping the key ring (do this before go-live)
+
+The ring lives in the same Postgres it protects, so by default a database copy carries the keys that decrypt
+its own secrets. Wrap it with a key the database never holds (bootstrap config, set at deploy):
+
+| Option | Setting | Notes |
+|---|---|---|
+| Azure Key Vault | `DataProtection__KeyVaultKeyId=https://<vault>.vault.azure.net/keys/<key>` | Give the Web + Api managed identities *Key Vault Crypto User* on the key. Key Vault keys rotate in place; old versions must stay enabled while old ring entries exist. |
+| Certificate file | `DataProtection__CertificatePath` (+ `__CertificatePassword`) | PFX mounted from a k8s secret / on-prem secret store. Keep every certificate that ever wrapped a live key until those keys expire. |
+| Windows cert store | `DataProtection__CertificateThumbprint` | Looked up in CurrentUser, then LocalMachine \ My. |
+
+Then set `DataProtection__RequireKeyWrapping=true` so a host that lost its wrapping config refuses to start
+instead of silently writing unwrapped keys. **System → About → Web desktop → Key ring** shows the protection in
+force (Degraded when unwrapped outside Development). Back up the wrapping key / certificate **separately**
+from the database backup — restoring one without the other loses every tenant secret.
+
 ## Key rotation
 
 DataProtection rotates keys automatically (default 90-day lifetime) and keeps old keys in the ring
