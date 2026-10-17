@@ -89,7 +89,7 @@ pwsh infra/lab/lab.ps1 unpair   # stop it (revoke it in Board → Runners to ret
 for the lab tenant and starts the runner in the background (log: `.lab/runner.log`). The pairing token goes
 straight into the runner's environment — it is never printed or written to disk. Runs use your Claude
 subscription through `claude -p` in prompt mode (no `--dangerously-skip-permissions`); a server-driven shell
-command outside the runner allowlist is denied.
+command outside the runner allowlist is denied. With the runner paired, `RUN_AGENTOS_E2E_REAL=true AGENTOS_REAL_URL=https://lab.dev.localhost:6180 AGENTOS_E2E_RUN_TIMEOUT_SECONDS=1200 dotnet test --project tests/AgentOs.E2E.Tests --filter-class "*WorkflowAppRealAuthTests"` runs the full 5-agent pipeline live.
 
 ## Run the lab tests
 

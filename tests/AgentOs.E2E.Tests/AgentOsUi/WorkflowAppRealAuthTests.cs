@@ -88,9 +88,14 @@ public sealed class WorkflowAppRealAuthTests : IClassFixture<AgentOsRealAuthFixt
         // The full stack may or may not have a provider key: live → "Workflow complete." with Done nodes;
         // keyless → a labelled "Dry run complete — OFFLINE" with Canned agent nodes. Either is honest.
         await Assertions.Expect(win.Locator(".step-node.run-done, .step-node.run-canned").First).ToBeVisibleAsync(
-            new LocatorAssertionsToBeVisibleOptions { Timeout = 90_000 });
+            new LocatorAssertionsToBeVisibleOptions { Timeout = RunTimeoutMs });
         await Assertions.Expect(win.Locator(".syn-log")).ToContainTextAsync(
             new System.Text.RegularExpressions.Regex("Workflow complete|Dry run complete — OFFLINE"),
-            new LocatorAssertionsToContainTextOptions { Timeout = 90_000 });
+            new LocatorAssertionsToContainTextOptions { Timeout = RunTimeoutMs });
     }
+
+    // Offline runs finish in seconds; a LIVE run (real model, e.g. the lab's paired claude -p runner) takes minutes.
+    // AGENTOS_E2E_RUN_TIMEOUT_SECONDS raises the wait for live runs (default 90 s).
+    private static float RunTimeoutMs =>
+        (int.TryParse(System.Environment.GetEnvironmentVariable("AGENTOS_E2E_RUN_TIMEOUT_SECONDS"), out var s) && s > 0 ? s : 90) * 1000f;
 }
