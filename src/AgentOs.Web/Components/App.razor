@@ -7,10 +7,14 @@
     <base href="/" />
     <title>AgentOS</title>
     <link rel="preconnect" href="https://rsms.me/" />
-    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
-    <link rel="stylesheet" href="_content/Z.Blazor.Diagrams/style.min.css" />
-    <link rel="stylesheet" href="app.css" />
-    <link rel="stylesheet" href="orchestration.css" />
+    @* Webfont is non-blocking: first paint uses the system UI font, Inter swaps in when it arrives. *@
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" media="print" onload="this.media='all'" />
+    @* Local assets go through @Assets: fingerprinted URLs served with long-lived immutable caching by
+       MapStaticAssets (precompressed in Release), instead of a revalidation round trip on every load. *@
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["_content/Z.Blazor.Diagrams/style.min.css"]" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["orchestration.css"]" />
     <link rel="icon" href="data:," />
     <HeadOutlet @rendermode="@(new Microsoft.AspNetCore.Components.Web.InteractiveServerRenderMode(prerender: false))" />
 </head>
@@ -41,11 +45,11 @@
         </div>
     </div>
 
-    <script src="_content/Z.Blazor.Diagrams/script.min.js"></script>
-    <script src="theme.js"></script>
-    <script src="workflow-keys.js"></script>
-    <script src="panel-resize.js"></script>
-    <script src="_framework/blazor.web.js"></script>
+    <script src="@Assets["_content/Z.Blazor.Diagrams/script.min.js"]"></script>
+    <script src="@Assets["theme.js"]"></script>
+    <script src="@Assets["workflow-keys.js"]"></script>
+    <script src="@Assets["panel-resize.js"]"></script>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
 </body>
 
 </html>

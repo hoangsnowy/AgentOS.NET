@@ -623,8 +623,8 @@ select {
     grid-template-columns: var(--shell-sidebar-w) 1fr;
     min-height: 100vh;
     background: rgba(238,242,247,.55);
-    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    backdrop-filter: var(--glass-filter, none);
+    -webkit-backdrop-filter: var(--glass-filter, none);
 }
 
 .shell-brand .brand-mark {
@@ -1513,8 +1513,8 @@ select {
 .appwin {
     position: fixed;
     background: var(--bg-2);
-    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    backdrop-filter: var(--glass-filter, none);
+    -webkit-backdrop-filter: var(--glass-filter, none);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-window-unfocused);
@@ -2522,7 +2522,8 @@ input[type=range] { accent-color: var(--accent); }
    (compositor-only — dozens on a canvas stay cheap). transform-box:view-box puts every transform-origin
    in the 64x64 viewBox's own units. Motion stops under prefers-reduced-motion or the viewer's
    System → Appearance → "Animations" = off (data-agent-motion="off"); the face still shows state. */
-.mascot { display: inline-block; flex: none; overflow: visible; vertical-align: middle; }
+/* contain: paint keeps a mascot's repaints inside its own box (everything it draws lies in the viewBox). */
+.mascot { display: inline-block; flex: none; overflow: visible; vertical-align: middle; contain: layout paint style; }
 .mascot * { transform-box: view-box; }
 .mascot.role-orchestrator { --m-c: var(--mascot-orchestrator); --m-d: var(--mascot-orchestrator-dark); --m-b: var(--mascot-orchestrator-belly); }
 .mascot.role-requirement  { --m-c: var(--mascot-requirement);  --m-d: var(--mascot-requirement-dark);  --m-b: var(--mascot-requirement-belly); }
@@ -2585,21 +2586,25 @@ input[type=range] { accent-color: var(--accent); }
 .mascot.is-skipped .m-eyes-shut { display: inline; }
 
 /* Motion. */
-.mascot.is-idle .m-body { animation: m-float 3.2s ease-in-out infinite; }
-.mascot.is-idle .m-shadow { animation: m-shadow 3.2s ease-in-out infinite; }
-.mascot.is-idle .m-eyes, .mascot.is-running .m-eyes { transform-origin: 32px 30px; animation: m-blink 4.2s infinite; }
-.mascot.is-idle:hover .m-body { transform-origin: 32px 56px; animation: m-hop .6s var(--ease-emphasized); }
+/* PERFORMANCE: nothing loops at rest. Measured — a dozen idle infinite loops inside windows with a backdrop
+   filter took the desktop from 60 to 20 fps. Idle characters are still and come alive on hover (of the
+   character, its Workflow node or its table row); finished states play a few times and then hold the pose;
+   only a RUNNING agent loops, and that is bounded by the run. */
+:is(.mascot, .step-node, tr, .ins-bar-row):hover .mascot.is-idle .m-body { transform-origin: 32px 56px; animation: m-hop .6s var(--ease-emphasized); }
+:is(.mascot, .step-node, tr, .ins-bar-row):hover .mascot.is-idle .m-eyes,
+.mascot.is-idle:hover .m-eyes { transform-origin: 32px 30px; animation: m-blink .6s; }
+.mascot.is-running .m-eyes { transform-origin: 32px 30px; animation: m-blink 4.2s infinite; }
 .mascot.is-running .m-body { transform-origin: 32px 56px; animation: m-bob .62s ease-in-out infinite; }
 .mascot.is-running .m-shadow { animation: m-shadow .62s ease-in-out infinite; }
 .mascot.is-running .m-talk { transform-origin: 32px 40.6px; animation: m-talk .31s ease-in-out infinite alternate; }
-.mascot.is-done .m-body { transform-origin: 32px 56px; animation: m-hop .7s var(--ease-emphasized), m-float 3.2s ease-in-out .7s infinite; }
-.mascot.is-done .m-star { animation: m-sparkle 1.6s ease-in-out infinite; }
+.mascot.is-done .m-body { transform-origin: 32px 56px; animation: m-hop .7s var(--ease-emphasized); }
+.mascot.is-done .m-star { animation: m-sparkle 1.6s ease-in-out 2; }
 .mascot.is-done .m-sparkles g:nth-child(2) .m-star { animation-delay: .5s; }
 .mascot.is-done .m-sparkles g:nth-child(3) .m-star { animation-delay: 1s; }
 .mascot.is-failed .m-body { transform-origin: 32px 56px; animation: m-shake .45s ease-in-out 2; }
-.mascot.is-failed .m-sweat { animation: m-drip 1.8s ease-in infinite; }
-.mascot.is-canned .m-body { transform-origin: 32px 56px; animation: m-breathe 3.6s ease-in-out infinite; }
-.mascot.is-canned .m-z { animation: m-zzz 2.4s ease-out infinite; }
+.mascot.is-failed .m-sweat { animation: m-drip 1.8s ease-in 3; }
+.mascot.is-canned .m-body { transform-origin: 32px 56px; animation: m-breathe 3.6s ease-in-out 2; }
+.mascot.is-canned .m-z { animation: m-zzz 2.4s ease-out 3; }
 .mascot.is-canned .m-z2 { animation-delay: 1.2s; }
 
 /* Role props while working. */
@@ -2610,7 +2615,7 @@ input[type=range] { accent-color: var(--accent); }
 .mascot.is-running .m-lines { animation: m-write 1.4s linear infinite; }
 .mascot.is-running .m-hand-l { animation: m-type .22s ease-in-out infinite alternate; }
 .mascot.is-running .m-hand-r { animation: m-type .22s ease-in-out .11s infinite alternate; }
-.mascot.is-idle .m-cursor, .mascot.is-running .m-cursor { animation: m-cursor 1s steps(2, jump-none) infinite; }
+.mascot.is-running .m-cursor { animation: m-cursor 1s steps(2, jump-none) infinite; }
 .mascot.is-running .m-lens { transform-origin: 49.5px 42px; animation: m-sweep .9s ease-in-out infinite alternate; }
 .mascot.is-running .m-stamp { transform-origin: 49px 43.5px; animation: m-stamp .9s var(--ease-standard) infinite; }
 .mascot.is-running .m-check { animation: m-check .9s var(--ease-standard) infinite; }
