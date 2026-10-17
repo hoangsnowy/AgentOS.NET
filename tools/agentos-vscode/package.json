@@ -5,35 +5,16 @@
   "version": "0.1.0",
   "publisher": "agentos",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/hoangsnowy/AgentOs.git"
-  },
-  "engines": {
-    "vscode": "^1.90.0"
-  },
-  "categories": [
-    "Other"
-  ],
+  "repository": { "type": "git", "url": "https://github.com/hoangsnowy/AgentOs.git" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onUri",
-    "onStartupFinished"
-  ],
+  "activationEvents": ["onUri", "onStartupFinished"],
   "contributes": {
     "commands": [
-      {
-        "command": "agentos.connect",
-        "title": "AgentOS: Connect this machine"
-      },
-      {
-        "command": "agentos.disconnect",
-        "title": "AgentOS: Disconnect"
-      },
-      {
-        "command": "agentos.showLogs",
-        "title": "AgentOS: Show runner logs"
-      }
+      { "command": "agentos.connect", "title": "AgentOS: Connect this machine" },
+      { "command": "agentos.disconnect", "title": "AgentOS: Disconnect" },
+      { "command": "agentos.showLogs", "title": "AgentOS: Show runner logs" }
     ],
     "configuration": {
       "title": "AgentOS",
@@ -50,10 +31,7 @@
         },
         "agentos.cliAgent": {
           "type": "string",
-          "enum": [
-            "claude",
-            "codex"
-          ],
+          "enum": ["claude", "codex"],
           "default": "claude",
           "description": "Default CLI agent the runner invokes (uses your flat monthly subscription, not metered API). The server can override this per session."
         }
