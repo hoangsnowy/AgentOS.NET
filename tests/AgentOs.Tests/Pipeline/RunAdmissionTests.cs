@@ -28,7 +28,7 @@ public sealed class RunAdmissionTests
     public void Concurrency_IsCapped_AndReleasedOnDispose()
     {
         var admission = new RunAdmission(clock: new ManualClock());
-        var a = admission.Admit("t1", maxConcurrent: 2, perMinute: 100);
+        using var a = admission.Admit("t1", maxConcurrent: 2, perMinute: 100);
         using var b = admission.Admit("t1", 2, 100);
         using var c = admission.Admit("t1", 2, 100);
 
@@ -40,8 +40,10 @@ public sealed class RunAdmissionTests
         a.Dispose();
         a.Dispose();   // idempotent: a double dispose must not free a second slot
         admission.Running("t1").ShouldBe(1);
-        admission.Admit("t1", 2, 100).Admitted.ShouldBeTrue();
-        admission.Admit("t1", 2, 100).Admitted.ShouldBeFalse();
+        using var d = admission.Admit("t1", 2, 100);
+        d.Admitted.ShouldBeTrue();
+        using var e = admission.Admit("t1", 2, 100);
+        e.Admitted.ShouldBeFalse();
     }
 
     [Fact]

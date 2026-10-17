@@ -26,9 +26,9 @@
                     }
                     @if (!string.IsNullOrEmpty(v.Text))
                     {
-                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="() => _open = _open == index ? -1 : index">@(_open == index ? "Hide" : "View")</Btn>
+                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="() => Open = Open == index ? -1 : index">@(Open == index ? "Hide" : "View")</Btn>
                     }
-                    @if (_open == index)
+                    @if (Open == index)
                     {
                         <pre class="prompt-history-text">@v.Text</pre>
                     }
@@ -42,5 +42,6 @@
     [Parameter, EditorRequired] public IReadOnlyList<PromptVersion> Versions { get; set; } = [];
     [Parameter] public EventCallback<PromptVersion> OnRestore { get; set; }
 
-    private int _open = -1;
+    // A property (not a field): CodeQL does not see the markup lambdas assign it and flags a field as readonly.
+    private int Open { get; set; } = -1;
 }

@@ -12,6 +12,7 @@
 //   DataProtection:RequireKeyWrapping       true → refuse to start with an unwrapped ring (outside Development)
 
 using System;
+using System.Linq;
 using System.Security.Cryptography.X509Certificates;
 using AgentOs.Modules.AppConfig.Persistence;
 using Azure.Identity;
@@ -104,14 +105,13 @@ public static class DataProtectionExtensions
     private static readonly StoreLocation[] StoreLocations = [StoreLocation.CurrentUser, StoreLocation.LocalMachine];
 
     private static X509Certificate2? FindByThumbprint(string thumbprint)
+        => StoreLocations.Select(location => FindIn(location, thumbprint)).FirstOrDefault(c => c is not null);
+
+    private static X509Certificate2? FindIn(StoreLocation location, string thumbprint)
     {
-        foreach (var location in StoreLocations)
-        {
-            using var store = new X509Store(StoreName.My, location);
-            store.Open(OpenFlags.ReadOnly);
-            var found = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
-            if (found.Count > 0) { return found[0]; }
-        }
-        return null;
+        using var store = new X509Store(StoreName.My, location);
+        store.Open(OpenFlags.ReadOnly);
+        var found = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
+        return found.Count > 0 ? found[0] : null;
     }
 }
