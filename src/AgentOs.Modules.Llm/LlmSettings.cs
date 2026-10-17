@@ -27,6 +27,21 @@ public sealed class LlmSettings(bool offlineFallbackDefault = false) : ISettings
     /// <summary>Canonical price-table id for an aliased Azure deployment.</summary>
     public const string AzurePricingModel = "Llm:AzureOpenAi:PricingModel";
 
+    /// <summary>OpenAI-compatible server base URL, e.g. <c>http://ollama:11434/v1</c> (platform-only: the server calls it).</summary>
+    public const string CompatEndpoint = "Llm:OpenAiCompatible:Endpoint";
+
+    /// <summary>OpenAI-compatible API key (blank for keyless servers).</summary>
+    public const string CompatApiKey = "Llm:OpenAiCompatible:ApiKey";
+
+    /// <summary>Model served when an agent profile names a vendor model this server doesn't host.</summary>
+    public const string CompatModel = "Llm:OpenAiCompatible:Model";
+
+    /// <summary>USD per 1M input tokens (0 for self-hosted).</summary>
+    public const string CompatInputPrice = "Llm:OpenAiCompatible:InputPricePerMTok";
+
+    /// <summary>USD per 1M output tokens (0 for self-hosted).</summary>
+    public const string CompatOutputPrice = "Llm:OpenAiCompatible:OutputPricePerMTok";
+
     /// <inheritdoc />
     public IEnumerable<SettingDescriptor> Describe()
     {
@@ -65,6 +80,37 @@ public sealed class LlmSettings(bool offlineFallbackDefault = false) : ISettings
         yield return new(AzurePricingModel, SettingKind.Model, Category, "Azure pricing model")
         {
             Help = "Canonical model id for cost when the deployment name is an alias (e.g. gpt41-prod → gpt-4.1).",
+        };
+
+        // OpenAI-compatible (self-hosted / air-gapped). Platform scope: AgentOS calls this URL server-side, so a
+        // tenant must never be able to point it at an internal address (SSRF).
+        yield return new(CompatEndpoint, SettingKind.Text, Category, "OpenAI-compatible endpoint")
+        {
+            Scope = SettingScope.Platform,
+            Help = "Base URL of any /v1/chat/completions server — vLLM, Ollama (http://host:11434/v1), LM Studio, Azure AI Foundry.",
+            Validator = v => System.Uri.TryCreate(v, System.UriKind.Absolute, out var u) && (u.Scheme == "http" || u.Scheme == "https")
+                ? null
+                : "Enter an absolute http(s) URL, e.g. http://ollama:11434/v1.",
+        };
+        yield return new(CompatApiKey, SettingKind.Secret, Category, "OpenAI-compatible API key")
+        {
+            Scope = SettingScope.Platform,
+            Help = "Leave empty for servers that need no key (Ollama, most vLLM setups).",
+        };
+        yield return new(CompatModel, SettingKind.Model, Category, "OpenAI-compatible model")
+        {
+            Scope = SettingScope.Platform,
+            DefaultValue = "llama3.1",
+            Help = "Used when an agent's profile names a vendor model (Claude/GPT) this server doesn't host.",
+        };
+        yield return new(CompatInputPrice, SettingKind.Number, Category, "OpenAI-compatible input price ($/1M)")
+        {
+            Scope = SettingScope.Platform, DefaultValue = "0", Min = 0, Max = 1000,
+            Help = "What a million input tokens cost you — 0 for your own hardware. Feeds cost metrics and the budget.",
+        };
+        yield return new(CompatOutputPrice, SettingKind.Number, Category, "OpenAI-compatible output price ($/1M)")
+        {
+            Scope = SettingScope.Platform, DefaultValue = "0", Min = 0, Max = 1000,
         };
     }
 }

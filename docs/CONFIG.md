@@ -79,6 +79,10 @@ Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant
 | `Llm:AzureOpenAi:Endpoint` / `ApiKey` / `ApiKeys` | empty | Tenant | Endpoint must be absolute `https://`. |
 | `Llm:AzureOpenAi:Model` | `gpt-4.1` | Tenant | Default deployment. |
 | `Llm:AzureOpenAi:PricingModel` | empty | Tenant | Canonical price-table id for an aliased deployment (`gpt41-prod` → `gpt-4.1`). |
+| `Llm:OpenAiCompatible:Endpoint` | empty | Platform | Any `/v1/chat/completions` server — vLLM, Ollama (`http://host:11434/v1`), LM Studio, Azure AI Foundry, a gateway. Platform-only because the server calls it (no tenant-set SSRF). Provider name `OpenAICompatible` (aliases `Ollama`, `vLLM`, `Local`). |
+| `Llm:OpenAiCompatible:ApiKey` | empty | Platform | Secret; leave empty for keyless servers. |
+| `Llm:OpenAiCompatible:Model` | `llama3.1` | Platform | Served when an agent profile names a vendor model (Claude/GPT) the server doesn't host; any other model id in a profile is sent as-is. |
+| `Llm:OpenAiCompatible:InputPricePerMTok` / `OutputPricePerMTok` | `0` / `0` | Platform | Your own $/1M rates — metrics and the budget use them (0 on your own hardware), never the unknown-model ceiling. |
 
 Code-only (no UI yet; seed via env if you must): `Llm:Claude:Endpoint` (`https://api.anthropic.com`),
 `Llm:Claude:ApiVersion` (`2023-06-01`), `Llm:*:TimeoutSeconds` (60), `Llm:Fallbacks`
