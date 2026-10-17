@@ -13,7 +13,8 @@ namespace AgentOs.Modules.Pipeline.Cost;
 public static class CostCsv
 {
     /// <summary>The CSV header row.</summary>
-    public const string Header = "section,key,cost_usd,tokens_in,tokens_out,calls";
+    /// cache_read_tokens / cache_write_tokens are subsets of tokens_in (appended last, so existing column positions hold).
+    public const string Header = "section,key,cost_usd,tokens_in,tokens_out,calls,cache_read_tokens,cache_write_tokens";
 
     private static readonly char[] SpecialChars = [',', '"', '\n', '\r'];
 
@@ -24,7 +25,8 @@ public static class CostCsv
 
         var sb = new StringBuilder();
         sb.Append(Header).Append('\n');
-        AppendRow(sb, "total", string.Empty, summary.TotalCostUsd, summary.TotalTokensIn, summary.TotalTokensOut, summary.CallCount);
+        AppendRow(sb, "total", string.Empty, summary.TotalCostUsd, summary.TotalTokensIn, summary.TotalTokensOut, summary.CallCount,
+            summary.TotalCacheReadTokens, summary.TotalCacheWriteTokens);
         AppendBuckets(sb, "agent", summary.ByAgent);
         AppendBuckets(sb, "provider", summary.ByProvider);
         AppendBuckets(sb, "model", summary.ByModel);
@@ -36,18 +38,22 @@ public static class CostCsv
     {
         foreach (var bucket in buckets)
         {
-            AppendRow(sb, section, bucket.Key, bucket.CostUsd, bucket.TokensIn, bucket.TokensOut, bucket.Calls);
+            AppendRow(sb, section, bucket.Key, bucket.CostUsd, bucket.TokensIn, bucket.TokensOut, bucket.Calls,
+                bucket.CacheReadTokens, bucket.CacheWriteTokens);
         }
     }
 
-    private static void AppendRow(StringBuilder sb, string section, string key, decimal cost, int tokensIn, int tokensOut, int calls)
+    private static void AppendRow(StringBuilder sb, string section, string key, decimal cost, int tokensIn, int tokensOut, int calls,
+        long cacheRead, long cacheWrite)
     {
         sb.Append(section).Append(',')
           .Append(Escape(key)).Append(',')
           .Append(cost.ToString("0.######", CultureInfo.InvariantCulture)).Append(',')
           .Append(tokensIn.ToString(CultureInfo.InvariantCulture)).Append(',')
           .Append(tokensOut.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(calls.ToString(CultureInfo.InvariantCulture)).Append('\n');
+          .Append(calls.ToString(CultureInfo.InvariantCulture)).Append(',')
+          .Append(cacheRead.ToString(CultureInfo.InvariantCulture)).Append(',')
+          .Append(cacheWrite.ToString(CultureInfo.InvariantCulture)).Append('\n');
     }
 
     private static string Escape(string value)

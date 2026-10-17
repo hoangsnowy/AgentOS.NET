@@ -20,4 +20,29 @@ public sealed record LlmResponse(
     decimal CostUsd,
     System.TimeSpan Latency,
     string Model,
-    string Provider);
+    string Provider)
+{
+    /// <summary>Input tokens served from the provider's prompt cache — a subset of <see cref="InputTokens"/>,
+    /// billed at the (much lower) cache-read rate.</summary>
+    public int CacheReadTokens { get; init; }
+
+    /// <summary>Input tokens written to the prompt cache on this call — a subset of <see cref="InputTokens"/>,
+    /// billed at the cache-write rate (Anthropic; 0 for providers that cache implicitly).</summary>
+    public int CacheWriteTokens { get; init; }
+
+    /// <summary>Reasoning / thinking tokens — a subset of <see cref="OutputTokens"/> (billed as output).</summary>
+    public int ReasoningTokens { get; init; }
+}
+
+/// <summary>
+/// Provider-neutral token usage of one call. <see cref="Input"/> is ALL prompt tokens (fresh + cache read +
+/// cache write) and <see cref="Output"/> includes reasoning — the Microsoft.Extensions.AI convention.
+/// </summary>
+public sealed record TokenUsage(int Input, int Output, int CacheRead = 0, int CacheWrite = 0, int Reasoning = 0)
+{
+    /// <summary>Prompt tokens billed at the full input rate (neither read from nor written to the cache).</summary>
+    public int FreshInput => System.Math.Max(0, Input - CacheRead - CacheWrite);
+
+    /// <summary>Share of the prompt served from cache, 0..1.</summary>
+    public double CacheHitRatio => Input <= 0 ? 0d : (double)CacheRead / Input;
+}

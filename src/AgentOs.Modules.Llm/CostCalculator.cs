@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
+using AgentOs.Domain.Llm;
 
 namespace AgentOs.Modules.Llm;
 
@@ -143,6 +144,22 @@ public static class CostCalculator
                   + cacheReadTokens * readRate
                   + cacheWriteTokens * writeRate) / 1_000_000m;
         return Math.Round(cost, 6, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>Cost (USD) for one call from normalised usage: fresh input, cache reads and cache writes are
+    /// each priced at their own rate (see <see cref="UsageReader"/> for how usage is normalised).</summary>
+    public static decimal Calculate(string model, TokenUsage usage)
+    {
+        ArgumentNullException.ThrowIfNull(usage);
+        return Calculate(model, usage.FreshInput, usage.Output, usage.CacheRead, usage.CacheWrite);
+    }
+
+    /// <summary>What the cache saved on this call: the same prompt billed entirely as fresh input, minus the
+    /// actual cost. Positive when reads dominate; can be negative on a call that only writes the cache.</summary>
+    public static decimal CacheSavings(string model, TokenUsage usage)
+    {
+        ArgumentNullException.ThrowIfNull(usage);
+        return Calculate(model, usage.Input, usage.Output) - Calculate(model, usage);
     }
 
     /// <summary>True if the model (or its dated snapshot) has a real price in the table. False means

@@ -24,6 +24,15 @@ public sealed record AgentMetrics(
     public static AgentMetrics Empty { get; } =
         new(Provider: "None", Model: "None", InputTokens: 0, OutputTokens: 0, CostUsd: 0m, Latency: System.TimeSpan.Zero);
 
+    /// <summary>Prompt-cache reads — a subset of <see cref="InputTokens"/>, billed at the cache-read rate.</summary>
+    public int CacheReadTokens { get; init; }
+
+    /// <summary>Prompt-cache writes — a subset of <see cref="InputTokens"/>, billed at the cache-write rate.</summary>
+    public int CacheWriteTokens { get; init; }
+
+    /// <summary>Reasoning / thinking tokens — a subset of <see cref="OutputTokens"/>.</summary>
+    public int ReasoningTokens { get; init; }
+
     /// <summary>Sum of two metrics (accumulated for the pipeline result aggregate).</summary>
     public AgentMetrics Add(AgentMetrics other)
     {
@@ -34,6 +43,11 @@ public sealed record AgentMetrics(
             InputTokens: InputTokens + other.InputTokens,
             OutputTokens: OutputTokens + other.OutputTokens,
             CostUsd: CostUsd + other.CostUsd,
-            Latency: Latency + other.Latency);
+            Latency: Latency + other.Latency)
+        {
+            CacheReadTokens = CacheReadTokens + other.CacheReadTokens,
+            CacheWriteTokens = CacheWriteTokens + other.CacheWriteTokens,
+            ReasoningTokens = ReasoningTokens + other.ReasoningTokens,
+        };
     }
 }

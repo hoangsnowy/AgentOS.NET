@@ -144,7 +144,9 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             var key = _router.Acquire(Provider, keys)!;
             var clientCacheKey = $"{key}|{cacheDiscriminator}|{request.Model}";
-            var chat = _clients.GetOrAdd(clientCacheKey, _ => _clientFactory(key, request.Model));
+            // Usage is normalised per provider turn (cache reads/writes, reasoning) BENEATH function invocation, so
+            // tool-calling loops keep per-turn cache detail when FunctionInvokingChatClient sums the turns.
+            var chat = _clients.GetOrAdd(clientCacheKey, _ => new UsageNormalizingChatClient(_clientFactory(key, request.Model)));
             if (resolvedTools.Count > 0)
             {
                 // FunctionInvokingChatClient wrapper drives the tool-call loop transparently so the
@@ -161,9 +163,11 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                 var response = await chat.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
 
-                var inputTokens = (int)(response.Usage?.InputTokenCount ?? 0);
-                var outputTokens = (int)(response.Usage?.OutputTokenCount ?? 0);
-                var cost = CostCalculator.Calculate(request.Model, inputTokens, outputTokens);
+                // Already normalised per turn (and summed across a tool loop) — read it, don't re-apply raw usage.
+                var usage = UsageReader.Read(response.Usage);
+                var inputTokens = usage.Input;
+                var outputTokens = usage.Output;
+                var cost = CostCalculator.Calculate(request.Model, usage);
                 if (!CostCalculator.IsKnown(request.Model))
                 {
                     // Unpriced model = cost is a pessimistic ceiling estimate until the model is added to the table.
@@ -174,8 +178,9 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                 LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, response.ModelId ?? request.Model,
                     inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds);
                 _logger.LogInformation(
-                    "LlmCallCompleted {Provider} {Model} {InTok} {OutTok} {CostUsd} {Ms} {Tenant}",
-                    Provider, LogSafe.Scrub(request.Model), inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalMilliseconds, LogSafe.Scrub(tenantId ?? ""));
+                    "LlmCallCompleted {Provider} {Model} {InTok} {CacheReadTok} {CacheWriteTok} {OutTok} {CostUsd} {Ms} {Tenant}",
+                    Provider, LogSafe.Scrub(request.Model), inputTokens, usage.CacheRead, usage.CacheWrite, outputTokens, cost,
+                    stopwatch.Elapsed.TotalMilliseconds, LogSafe.Scrub(tenantId ?? ""));
                 return new LlmResponse(
                     Content: response.Text ?? string.Empty,
                     InputTokens: inputTokens,
@@ -183,7 +188,12 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                     CostUsd: cost,
                     Latency: stopwatch.Elapsed,
                     Model: request.Model,
-                    Provider: Provider);
+                    Provider: Provider)
+                {
+                    CacheReadTokens = usage.CacheRead,
+                    CacheWriteTokens = usage.CacheWrite,
+                    ReasoningTokens = usage.Reasoning,
+                };
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

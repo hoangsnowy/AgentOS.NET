@@ -29,6 +29,9 @@ public static class RunMetricFactory
             CostUsd: response.CostUsd,
             Success: success,
             ErrorMessage: errorMessage,
-            Timestamp: DateTimeOffset.UtcNow);
+            Timestamp: DateTimeOffset.UtcNow,
+            CacheReadTokens: response.CacheReadTokens,
+            CacheWriteTokens: response.CacheWriteTokens,
+            ReasoningTokens: response.ReasoningTokens);
     }
 }

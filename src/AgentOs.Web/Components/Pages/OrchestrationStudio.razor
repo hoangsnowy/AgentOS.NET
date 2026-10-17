@@ -210,19 +210,21 @@
                                     var maxTok = Math.Max(1, _lastUsage.Max(u => u.TotalTokens));
                                     var inv = System.Globalization.CultureInfo.InvariantCulture;
                                     <table class="syn-usage" aria-label="Tokens by agent for the last run">
-                                        <thead><tr><th>Agent</th><th>Tokens</th><th class="num">In</th><th class="num">Out</th><th class="num">Calls</th><th class="num">Cost</th></tr></thead>
+                                        <thead><tr><th>Agent</th><th>Tokens</th><th class="num">Input</th><th class="num" title="Prompt tokens served from the provider cache (billed at the cache-read rate)">Cache read</th><th class="num" title="Prompt tokens written to the cache (billed at the cache-write rate)">Cache write</th><th class="num">Output</th><th class="num">Calls</th><th class="num">Cost</th></tr></thead>
                                         <tbody>
                                             @foreach (var u in _lastUsage)
                                             {
                                                 <tr>
                                                     <td><span class="syn-usage-who"><AgentMascot Role="@UsageRole(u.Agent)" State="@(u.Estimated ? AgentMascot.MascotState.Canned : AgentMascot.MascotState.Done)" Size="22" /> @u.Agent</span></td>
                                                     <td>
-                                                        <div class="syn-usage-bar" title="@($"{u.TokensIn.ToString("N0", inv)} in · {u.TokensOut.ToString("N0", inv)} out")" style="width:@((u.TotalTokens * 100.0 / maxTok).ToString("0.#", inv))%">
-                                                            <span class="in" style="flex:@u.TokensIn"></span><span class="out" style="flex:@u.TokensOut"></span>
+                                                        <div class="syn-usage-bar" title="@($"{Fresh(u).ToString("N0", inv)} fresh input · {u.CacheReadTokens.ToString("N0", inv)} cache read · {u.CacheWriteTokens.ToString("N0", inv)} cache write · {u.TokensOut.ToString("N0", inv)} output")" style="width:@((u.TotalTokens * 100.0 / maxTok).ToString("0.#", inv))%">
+                                                            <span class="in" style="flex:@Fresh(u)"></span><span class="cr" style="flex:@u.CacheReadTokens"></span><span class="cw" style="flex:@u.CacheWriteTokens"></span><span class="out" style="flex:@u.TokensOut"></span>
                                                         </div>
                                                         <span class="syn-usage-total">@(u.Estimated ? "≈" : "")@u.TotalTokens.ToString("N0", inv)</span>
                                                     </td>
                                                     <td class="num">@u.TokensIn.ToString("N0", inv)</td>
+                                                    <td class="num">@u.CacheReadTokens.ToString("N0", inv)</td>
+                                                    <td class="num">@u.CacheWriteTokens.ToString("N0", inv)</td>
                                                     <td class="num">@u.TokensOut.ToString("N0", inv)</td>
                                                     <td class="num">@u.Calls</td>
                                                     <td class="num">@(u.Estimated && u.CostUsd == 0m ? "not billed" : "$" + u.CostUsd.ToString("0.0000", inv))</td>
@@ -234,13 +236,15 @@
                                                 <td>Total</td>
                                                 <td><span class="syn-usage-total">@(_lastUsage.Any(u => u.Estimated) ? "≈" : "")@_lastUsage.Sum(u => u.TotalTokens).ToString("N0", inv)</span></td>
                                                 <td class="num">@_lastUsage.Sum(u => u.TokensIn).ToString("N0", inv)</td>
+                                                <td class="num">@_lastUsage.Sum(u => u.CacheReadTokens).ToString("N0", inv)</td>
+                                                <td class="num">@_lastUsage.Sum(u => u.CacheWriteTokens).ToString("N0", inv)</td>
                                                 <td class="num">@_lastUsage.Sum(u => u.TokensOut).ToString("N0", inv)</td>
                                                 <td class="num">@_lastUsage.Sum(u => u.Calls)</td>
                                                 <td class="num">$@_lastUsage.Sum(u => u.CostUsd).ToString("0.0000", inv)</td>
                                             </tr>
                                         </tfoot>
                                     </table>
-                                    <p class="muted"><span class="syn-usage-key in"></span> input <span class="syn-usage-key out"></span> output@(_lastUsage.Any(u => u.Estimated) ? " · ≈ = estimate (offline answers have no provider-reported usage and are not billed)" : "")</p>
+                                    <p class="muted"><span class="syn-usage-key in"></span> fresh input <span class="syn-usage-key cr"></span> cache read <span class="syn-usage-key cw"></span> cache write <span class="syn-usage-key out"></span> output · input includes cache@(_lastUsage.Any(u => u.Estimated) ? " · ≈ = estimate (offline answers have no provider-reported usage and are not billed)" : "")</p>
                                 }
                             }
                             else
@@ -398,6 +402,9 @@
         new("3", "Recent Runs", _recent.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)),
         new("4", "Tokens", _lastUsage.Count == 0 ? null : CompactTokens(_lastUsage.Sum(u => u.TotalTokens))),
     ];
+
+    // Input billed at the full rate: total input minus what was read from / written to the prompt cache.
+    private static int Fresh(AgentTokenUsage u) => Math.Max(0, u.TokensIn - u.CacheReadTokens - u.CacheWriteTokens);
 
     private static string CompactTokens(int n) => n >= 1000
         ? (n / 1000.0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "k"
@@ -1157,7 +1164,8 @@
         {
             var est = u.Estimated ? "≈" : " ";
             var cost = u.Estimated && u.CostUsd == 0m ? "not billed" : "$" + u.CostUsd.ToString("0.0000", inv);
-            Log($"   {u.Agent.PadRight(width)}  {est}{u.TotalTokens.ToString("N0", inv),8} tok  ({u.TokensIn.ToString("N0", inv)} in · {u.TokensOut.ToString("N0", inv)} out)  ·  {u.Calls} call{(u.Calls == 1 ? "" : "s")}  ·  {cost}");
+            var cache = u.CacheReadTokens + u.CacheWriteTokens == 0 ? "" : $" · cache {u.CacheReadTokens.ToString("N0", inv)} read / {u.CacheWriteTokens.ToString("N0", inv)} write";
+            Log($"   {u.Agent.PadRight(width)}  {est}{u.TotalTokens.ToString("N0", inv),8} tok  ({u.TokensIn.ToString("N0", inv)} in{cache} · {u.TokensOut.ToString("N0", inv)} out)  ·  {u.Calls} call{(u.Calls == 1 ? "" : "s")}  ·  {cost}");
         }
         var anyEst = usage.Any(u => u.Estimated);
         var total = usage.Sum(u => u.TotalTokens);

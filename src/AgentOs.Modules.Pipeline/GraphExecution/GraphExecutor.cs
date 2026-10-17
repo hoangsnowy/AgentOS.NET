@@ -274,13 +274,15 @@ public sealed class GraphExecutor : IGraphExecutor
                     TokensIn = r.TokensIn + m.TokensIn,
                     TokensOut = r.TokensOut + m.TokensOut,
                     CostUsd = r.CostUsd + m.CostUsd,
+                    CacheReadTokens = r.CacheReadTokens + m.CacheReadTokens,
+                    CacheWriteTokens = r.CacheWriteTokens + m.CacheWriteTokens,
                     Estimated = r.Estimated || estimated,
                 };
             }
             else
             {
                 index[m.AgentName] = rows.Count;
-                rows.Add(new AgentTokenUsage(m.AgentName, 1, m.TokensIn, m.TokensOut, m.CostUsd, estimated));
+                rows.Add(new AgentTokenUsage(m.AgentName, 1, m.TokensIn, m.TokensOut, m.CostUsd, estimated, m.CacheReadTokens, m.CacheWriteTokens));
             }
         }
         return rows;
@@ -936,14 +938,16 @@ public sealed class GraphExecutor : IGraphExecutor
     private void RecordAgentSpend(GraphState s, string agentName, string kcId, AgentMetrics m)
         => s.Record(new RunMetric(
             s.RunId, kcId, s.Iteration, agentName, m.Model, m.Provider,
-            m.InputTokens, m.OutputTokens, m.Latency.TotalMilliseconds, m.CostUsd, true, null, _clock.GetUtcNow()));
+            m.InputTokens, m.OutputTokens, m.Latency.TotalMilliseconds, m.CostUsd, true, null, _clock.GetUtcNow(),
+            m.CacheReadTokens, m.CacheWriteTokens, m.ReasoningTokens));
 
     // Record a raw-LLM / decision node's spend from its LlmResponse. These call the gateway directly (not
     // through a typed agent), so without this their tokens would never reach run_metrics.
     private void RecordLlmSpend(GraphState s, PlanNode node, LlmResponse r)
         => s.Record(new RunMetric(
             s.RunId, "graph", 0, NodeLabel(node), r.Model, r.Provider,
-            r.InputTokens, r.OutputTokens, r.Latency.TotalMilliseconds, r.CostUsd, true, null, _clock.GetUtcNow()));
+            r.InputTokens, r.OutputTokens, r.Latency.TotalMilliseconds, r.CostUsd, true, null, _clock.GetUtcNow(),
+            r.CacheReadTokens, r.CacheWriteTokens, r.ReasoningTokens));
 
     // run_metrics.AgentName is capped at 64 chars; a node title can be longer, so clamp it.
     private static string NodeLabel(PlanNode node)
