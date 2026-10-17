@@ -110,6 +110,32 @@ public sealed class LlmModule : IModule
                 cacheKeyDiscriminator: () => !string.IsNullOrWhiteSpace(ov.AzureEndpoint) ? ov.AzureEndpoint! : opts.Value.AzureOpenAi.Endpoint);
         });
 
+        // BYOK vendors (OpenAI, Gemini, xAI): fixed endpoints, tenant-scoped keys read live per call, the profile's
+        // model kept when the vendor serves it (else the tenant's default), priced from the CostCalculator table.
+        foreach (var vendor in VendorProviders.All)
+        {
+            services.AddKeyedSingleton<ILlmClient>(vendor.Name, (sp, _) =>
+            {
+                var settings = sp.GetService<AgentOs.Domain.Configuration.ISettings>();
+                string? Read(string key) => settings is null ? null : LiveSettings.Read(settings, key, LiveSettings.CurrentTenant(sp));
+                return new PooledChatLlmClient(
+                    vendor.Name,
+                    (key, model) => SdkChatClients.CreateOpenAiCompatible(key, vendor.Endpoint, model),
+                    _ => ValueTask.FromResult<IReadOnlyList<string>>(Read(vendor.KeySetting) is { Length: > 0 } k ? [k] : []),
+                    sp.GetRequiredService<ApiKeyRouter>(),
+                    SdkChatClients.IsRateLimited,
+                    _ => null,
+                    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PooledChatLlmClient>>(),
+                    baseDelay: null,
+                    toolRegistry: sp.GetService<AgentOs.Domain.Tools.IToolRegistry>(),
+                    toolPolicy: sp.GetService<AgentOs.Domain.Tools.IToolPolicy>(),
+                    toolInvocationLog: sp.GetService<AgentOs.Domain.Tools.IToolInvocationLog>(),
+                    tenantProvider: sp,
+                    classifyError: SdkChatClients.Classify,
+                    modelResolver: requested => vendor.ResolveModel(requested, Read(vendor.ModelSetting)));
+            });
+        }
+
         // OpenAI-compatible (E0.8): vLLM / Ollama / LM Studio / Foundry / a corporate gateway. Platform-scoped settings
         // (read live per call), the operator's own prices, and the profile's model mapped to one this server hosts.
         services.AddKeyedSingleton<ILlmClient>(LlmProviders.OpenAiCompatible, (sp, _) =>

@@ -40,6 +40,9 @@ public sealed record LlmEffectiveConfig(
     /// <summary>The platform's OpenAI-compatible endpoint (vLLM / Ollama / Foundry), or null when not configured.</summary>
     public string? CompatEndpoint { get; init; }
 
+    /// <summary>BYOK vendors (OpenAI, Gemini, xAI) this tenant has a key for.</summary>
+    public IReadOnlySet<string> VendorKeys { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The provider a run will ask for: the forced one, else the default.</summary>
     public string EffectiveProvider => string.IsNullOrWhiteSpace(Force) ? DefaultProvider : Force;
 
@@ -52,7 +55,10 @@ public sealed record LlmEffectiveConfig(
     public bool HasKeyFor(string provider) => provider.Trim().ToUpperInvariant() switch
     {
         "CLAUDE" or "ANTHROPIC" => AnthropicKeySet,
-        "AZUREOPENAI" or "AZURE" or "OPENAI" => AzureKeySet && !string.IsNullOrWhiteSpace(AzureEndpoint),
+        "AZUREOPENAI" or "AZURE" => AzureKeySet && !string.IsNullOrWhiteSpace(AzureEndpoint),
+        "OPENAI" => VendorKeys.Contains(LlmProviders.OpenAi),
+        "GEMINI" or "GOOGLE" => VendorKeys.Contains(LlmProviders.Gemini),
+        "XAI" or "GROK" => VendorKeys.Contains(LlmProviders.Xai),
         "OPENAICOMPATIBLE" or "OPENAI-COMPATIBLE" or "LOCAL" or "OLLAMA" or "VLLM" => !string.IsNullOrWhiteSpace(CompatEndpoint),
         "OFFLINE" => false,
         _ => true,
@@ -86,6 +92,10 @@ public sealed class LlmConfigView(IRuntimeOverrides overrides, IOptions<LlmOptio
             DefaultProvider = LiveSettings.Read(_settings, LlmSettings.Provider, tenantId) ?? cfg.DefaultProvider,
             OfflineFallback = LiveSettings.ReadBool(_settings, LlmSettings.OfflineFallback, tenantId, cfg.OfflineFallback),
             CompatEndpoint = LiveSettings.Read(_settings, LlmSettings.CompatEndpoint, null),
+            VendorKeys = VendorProviders.All
+                .Where(v => !string.IsNullOrWhiteSpace(LiveSettings.Read(_settings, v.KeySetting, tenantId)))
+                .Select(v => v.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
         };
     }
 

@@ -92,7 +92,7 @@ incognito window). Fixes are in [docs/SETUP.md](docs/SETUP.md#troubleshooting-th
 ### 3 — Use a real model
 
 In the desktop: **Settings → LLM & providers → API keys** — paste an Anthropic and/or Azure OpenAI
-key (stored encrypted, per tenant). Then pick each agent's model in **Settings → Agent profiles**;
+key — or an OpenAI, Gemini or xAI key under **OpenAI · Gemini · xAI** (stored encrypted, per tenant). Then pick each agent's model in **Settings → Agent profiles**;
 the next run uses it, no restart. Keys can also be seeded from the environment
 (`Llm__Claude__ApiKey`, user-secrets) — see [docs/CONFIG.md](docs/CONFIG.md).
 
@@ -146,8 +146,9 @@ Light and dark are first-class (top bar → appearance toggle, or System → App
   whole platform with one `services.AddModulesFromAssemblies(cfg, …)` call. Modules depend on
   `Domain` + `SharedKernel`; the few cross-module references are explicit (see
   [Architecture](#architecture)).
-- **Provider-agnostic LLM gateway.** Claude, Azure OpenAI, Microsoft Agent Framework and a paired
-  dev-machine agent are interchangeable `ILlmClient`s. Pick per agent in the desktop — no code
+- **Provider-agnostic LLM gateway.** Claude, Azure OpenAI, OpenAI, Google Gemini, xAI Grok, any
+  OpenAI-compatible server, Microsoft Agent Framework and a paired dev-machine agent are interchangeable
+  `ILlmClient`s; each tenant brings its own keys. Pick per agent in the desktop — no code
   change, no restart.
 - **Measured.** Every call records tokens in/out, cost and latency per run and agent. Prices come from
   a built-in table of official list prices (Claude 5.x, GPT-6/5.x, o-series, incl. prompt-cache and
@@ -259,6 +260,7 @@ Agents depend only on `ILlmClient`; `LlmClientFactory` resolves a keyed implemen
 |---|---|---|
 | `Claude` (alias `Anthropic`) | Anthropic SDK, pooled over multiple keys | `Modules.Llm` |
 | `AzureOpenAI` | `Azure.AI.OpenAI`, pooled over multiple keys | `Modules.Llm` |
+| `OpenAI` · `Gemini` (alias `Google`) · `xAI` (alias `Grok`) | Bring-your-own-key vendors over the OpenAI protocol — fixed endpoints, tenant-scoped keys, built-in prices | `Modules.Llm` |
 | `OpenAICompatible` (aliases `Ollama`, `vLLM`, `Local`) | Any `/v1/chat/completions` server via the OpenAI SDK — self-hosted / air-gapped, your own prices | `Modules.Llm` |
 | `MAF` | Microsoft Agent Framework over Azure OpenAI | `Modules.Llm` |
 | `RemoteAgent` | SignalR-dispatched dev-machine agent | `Modules.RemoteAgent` |

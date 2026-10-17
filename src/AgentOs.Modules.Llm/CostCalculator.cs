@@ -44,6 +44,7 @@ public static class CostCalculator
 
     private const int AnthropicLongPrompt = 100_000;
     private const int OpenAiLongPrompt = 272_000;
+    private const int GrokLongPrompt = 200_000;
 
     // Anthropic: cache reads 0.1× input unless stated (0.025× Fable 5.1, 0.05× Opus 5.5 / Sonnet 5.5); 5-minute
     // cache writes 1.25× input. OpenAI: published cached-input rate; no cache-write surcharge (write = input).
@@ -101,6 +102,21 @@ public static class CostCalculator
         O("gpt-4o-mini",   0.15m, 0.075m,  0.60m),
         O("o1",           15.00m, 7.50m,  60.00m),
         O("o1-pro",      150.00m, 150.00m, 600.00m),
+        // ── Google Gemini (ai.google.dev/gemini-api/docs/pricing, updated 2026-10-16; 3.x Flash promo rates) ──
+        O("gemini-3.8-flash",      0.75m, 0.075m, 3.75m),
+        O("gemini-3.6-flash",      0.75m, 0.075m, 3.75m),
+        O("gemini-3.5-flash-lite", 0.30m, 0.03m,  2.50m),
+        O("gemini-3.1-flash-lite", 0.25m, 0.025m, 1.50m),
+        O("gemini-2.5-flash",      0.30m, 0.03m,  2.50m),
+        O("gemini-2.5-flash-lite", 0.10m, 0.01m,  0.40m),
+
+        // ── xAI Grok (docs.x.ai/docs/models, 2026-10-18; whole request at the long rate from 200k prompt tokens) ──
+        O("grok-4.7",       2.00m, 0.50m, 6.00m, new LongTier(GrokLongPrompt, 4.00m, 12.00m, 1.00m, 4.00m)),
+        O("grok-4.6",       2.00m, 0.50m, 6.00m, new LongTier(GrokLongPrompt, 4.00m, 12.00m, 1.00m, 4.00m)),
+        O("grok-4.5",       2.00m, 0.30m, 6.00m, new LongTier(GrokLongPrompt, 4.00m, 12.00m, 0.60m, 4.00m)),
+        O("grok-4.3",       1.25m, 0.20m, 2.50m, new LongTier(GrokLongPrompt, 2.50m,  5.00m, 0.40m, 2.50m)),
+        O("grok-build-0.1", 1.00m, 0.20m, 2.00m, new LongTier(GrokLongPrompt, 2.00m,  4.00m, 0.40m, 2.00m)),
+
         O("o3-pro",       20.00m, 20.00m, 80.00m),
         O("o3",            2.00m, 0.50m,   8.00m),
         O("o4-mini",       1.10m, 0.275m,  4.40m),
@@ -172,16 +188,30 @@ public static class CostCalculator
     // Provider family → its priced models, built once (table order). Keys are the normalised family names.
     private static readonly FrozenDictionary<string, string[]> ByFamily = new Dictionary<string, string[]>
     {
-        ["anthropic"] = Array.FindAll(Table, p => p.ModelId.StartsWith("claude-", StringComparison.Ordinal)).Select(p => p.ModelId).ToArray(),
-        ["openai"] = Array.FindAll(Table, p => !p.ModelId.StartsWith("claude-", StringComparison.Ordinal)).Select(p => p.ModelId).ToArray(),
+        ["anthropic"] = IdsOf("anthropic"),
+        ["openai"] = IdsOf("openai"),
+        ["gemini"] = IdsOf("gemini"),
+        ["xai"] = IdsOf("xai"),
     }.ToFrozenDictionary(StringComparer.Ordinal);
 
-    /// <summary>The model family a provider serves: <c>anthropic</c> (Claude/Anthropic) or <c>openai</c>
-    /// (AzureOpenAI/MAF/OpenAI); null for providers that pick their own model (RemoteAgent, plugins).</summary>
+    private static string[] IdsOf(string family) => Array.FindAll(Table, p => FamilyOfModel(p.ModelId) == family).Select(p => p.ModelId).ToArray();
+
+    // The family a priced model id belongs to (by its vendor prefix; everything else is OpenAI's).
+    private static string FamilyOfModel(string id) =>
+        id.StartsWith("claude-", StringComparison.Ordinal) ? "anthropic"
+        : id.StartsWith("gemini-", StringComparison.Ordinal) ? "gemini"
+        : id.StartsWith("grok-", StringComparison.Ordinal) ? "xai"
+        : "openai";
+
+    /// <summary>The model family a provider serves: <c>anthropic</c> (Claude/Anthropic), <c>openai</c>
+    /// (AzureOpenAI/MAF/OpenAI), <c>gemini</c> or <c>xai</c>; null for providers that pick their own model
+    /// (RemoteAgent, OpenAI-compatible, plugins).</summary>
     public static string? FamilyOf(string? provider) => provider?.Trim().ToUpperInvariant() switch
     {
         "CLAUDE" or "ANTHROPIC" => "anthropic",
         "AZUREOPENAI" or "AZURE" or "OPENAI" or "MAF" => "openai",
+        "GEMINI" or "GOOGLE" => "gemini",
+        "XAI" or "GROK" => "xai",
         _ => null,
     };
 

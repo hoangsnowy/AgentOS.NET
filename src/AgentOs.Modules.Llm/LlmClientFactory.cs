@@ -139,13 +139,16 @@ public sealed class LlmClientFactory : ILlmClientFactory
 
     // Maps known aliases to their canonical built-in key. An UNKNOWN name falls through to the trimmed
     // original (case preserved) so a plugin-registered keyed ILlmClient resolves under its own name.
-    private static string NormalizeKey(string providerName)
+    internal static string NormalizeKey(string providerName)
     {
         var trimmed = providerName.Trim();
         return trimmed.ToUpperInvariant() switch
         {
             "CLAUDE" or "ANTHROPIC" => "Claude",
-            "AZUREOPENAI" or "AZURE" or "OPENAI" => "AzureOpenAI",
+            "AZUREOPENAI" or "AZURE" => "AzureOpenAI",
+            "OPENAI" => LlmProviders.OpenAi,
+            "GEMINI" or "GOOGLE" => LlmProviders.Gemini,
+            "XAI" or "GROK" => LlmProviders.Xai,
             "MAF" or "MAF-AZURE" or "AGENTFRAMEWORK" => "MAF",
             "REMOTEAGENT" or "REMOTE" or "IDE" => "RemoteAgent",
             "OPENAICOMPATIBLE" or "OPENAI-COMPATIBLE" or "LOCAL" or "OLLAMA" or "VLLM" => LlmProviders.OpenAiCompatible,

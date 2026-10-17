@@ -10,7 +10,16 @@ namespace AgentOs.Domain.Llm;
 public static class LlmProviders
 {
     /// <summary>Provider names an operator can pick in Settings (Anthropic is accepted as an alias of Claude).</summary>
-    public static IReadOnlyList<string> Selectable { get; } = ["Claude", "Anthropic", "AzureOpenAI", OpenAiCompatible, "MAF", "RemoteAgent"];
+    public static IReadOnlyList<string> Selectable { get; } = ["Claude", "Anthropic", "AzureOpenAI", OpenAi, Gemini, Xai, OpenAiCompatible, "MAF", "RemoteAgent"];
+
+    /// <summary>OpenAI (api.openai.com), bring-your-own-key.</summary>
+    public const string OpenAi = "OpenAI";
+
+    /// <summary>Google Gemini (OpenAI-compatible endpoint), bring-your-own-key.</summary>
+    public const string Gemini = "Gemini";
+
+    /// <summary>xAI Grok, bring-your-own-key.</summary>
+    public const string Xai = "xAI";
 
     /// <summary>Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, Azure AI Foundry, a gateway) — the
     /// self-hosted / air-gapped option.</summary>
