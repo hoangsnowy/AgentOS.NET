@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-06-18)
 - **Deciders:** AgentOS maintainers
 - **Context decision:** [D2](../../ROADMAP.md#4--open-architecture-decisions) — Q1 "Live on Azure"
-- **Closes:** [deploy-readiness-audit #10](../deploy-readiness-audit.md) (RCE via LLM-authored MSBuild)
+- **Closes:** [deploy-readiness-audit #10](https://github.com/hoangsnowy/AgentOs/blob/90240386830067f52c07b1d781e223ccdfe5f174/docs/deploy-readiness-audit.md) (archived) (RCE via LLM-authored MSBuild)
 
 ## Context
 

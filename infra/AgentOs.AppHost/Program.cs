@@ -21,7 +21,7 @@
 // provision; it skips silently until these are set):
 //         azd env set KEYCLOAK_BASE_URL "https://keycloak.<env>.<region>.azurecontainerapps.io"
 //         azd env set WEB_BASE_URL      "https://web.<env>.<region>.azurecontainerapps.io"
-// The hook (infra/hooks/postprovision.*) patches realm redirectUris/webOrigins + the agentic-web
+// The hook (infra/hooks/postdeploy.*) patches realm redirectUris/webOrigins + the agentic-web
 // client secret to match KEYCLOAKWEBCLIENTSECRET, rotates seed-user passwords, and disables
 // verifyEmail in cloud (no SMTP yet — roadmap D4).
 //

@@ -16,7 +16,26 @@ When reporting, include: affected component, reproduction steps, and impact.
 - **API auth** is Keycloak OIDC JWT bearer (RS256); tokens are signed by the Keycloak realm key
   and validated against its JWKS — rotate the signing key in Keycloak, not in AgentOS.
 - The **remote dev-agent runtime** executes work on a developer machine — treat the pairing
-  credential as a secret and run it behind an approval gate (tracked in the runtime design).
+  credential as a secret. Remote execution needs a human approval; unattended auto-approve is a
+  platform setting that Production locks off.
+
+## Built-in safeguards
+
+- **Tool governance** — every tool call goes through `IToolGateway` → per-tenant policy → evidence log
+  (refusals and errors included). Production enforces a fail-closed allowlist.
+- **Build sandbox** — generated code is compiled only in an ephemeral, no-network, read-only, non-root
+  container with CPU/memory/PID quotas ([ADR-0005](docs/adr/0005-build-verifier-sandbox.md));
+  Production locks the sandbox to `Container`.
+- **Prompt-injection fencing** — third-party text (tickets, issues, repo content) is wrapped as
+  untrusted data before it reaches a prompt.
+- **Operator locks** — Production pins the riskiest settings so the Settings UI cannot change them
+  ([CONFIG.md](docs/CONFIG.md#production-locks-appsettingsproductionjson-api--web)); platform-wide
+  settings require the `platform-admin` role, and every settings change is audited with secrets masked.
+- **Tenant isolation** — row-level EF query filters; per-tenant keys are never mixed with another
+  tenant's or the platform's.
+- **SSRF guard** — tenant-supplied hosts are validated and limited to an allowlist.
+- **Supply chain / SAST** — Dependabot, dependency review, SHA-pinned actions, CodeQL with
+  compiler-enforced twins for its query classes.
 
 ## Supported versions
 

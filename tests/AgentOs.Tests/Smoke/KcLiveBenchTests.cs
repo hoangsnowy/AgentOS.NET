@@ -4,7 +4,7 @@ using AgentOs.SharedKernel.Modularity;
 // Runs the full hybrid pipeline n times against a REAL LLM, then derives KC1–KC5 metrics from the
 // per-agent metric rows + PipelineResult. Skipped unless RUN_LIVE_LLM=1. Never runs in CI.
 //
-// See docs/KC_REPRODUCIBILITY.md for how to run + interpret. Core capture (latency / cost / tokens /
+// See tests/fixtures/kc/README.md for how to run. Core capture (latency / cost / tokens /
 // completion / iterations / score-delta) needs no extra deps; compile-pass (KC2) and tests-build (KC3)
 // are opt-in via KC_LIVE_BUILD=1 because they shell out to `dotnet build` on generated code.
 

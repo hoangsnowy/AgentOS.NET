@@ -1,65 +1,80 @@
 # Infra — Azure deploy via azd (Aspire)
 
 Deployment is driven by **.NET Aspire + Azure Developer CLI (`azd`)**. The AppHost
-(`infra/AgentOs.AppHost`) is the single source of truth for the topology; `azd`
-provisions everything from it:
+(`infra/AgentOs.AppHost`) is the single source of truth for the topology; `azd` provisions from it:
 
 | Resource | From the app model |
 |---|---|
-| Container Apps Environment + Log Analytics | implicit (Aspire) |
+| Container Apps environment + Log Analytics | implicit (Aspire) |
 | Azure Container Registry | implicit (image push) |
-| Container App: API | `AddProject("api")` |
-| Container App: Web (AgentOS desktop) | `AddProject("web")` |
-| Azure Database for PostgreSQL flexible | `AddAzurePostgresFlexibleServer("postgres")` |
+| Container App: `api` | `AddProject("api")` |
+| Container App: `web` (AgentOS desktop) | `AddProject("web")` |
+| Container App: `keycloak` (custom image + `agentic` realm import) | `AddKeycloak(...)` |
+| Azure Database for PostgreSQL flexible server (password auth) | `AddAzurePostgresFlexibleServer("postgres")` |
+| Key Vault for the Postgres secrets | `infra/postgres-kv*` |
 | Managed identity + role assignments | implicit (Aspire) |
 
-> The old hand-written `infra/main.bicep` + `.github/workflows/deploy.yml` (Docker build +
-> `az containerapp`) were **removed** — `azd` replaces them. `azd` builds container images
-> via the .NET SDK (no Dockerfile needed); `Dockerfile`/`Dockerfile.web` are kept only for
-> standalone `docker build`.
+`infra/main.bicep`, `resources.bicep` and the `postgres*` modules are the azd-generated infrastructure
+(`azd infra synth`), committed so the provisioned shape is reviewable — regenerate them rather than
+hand-editing when the app model changes. `azd` builds images with the .NET SDK (no Dockerfile needed).
 
 ## First deploy (local)
 
 ```bash
 azd auth login
-azd up                 # prompts for env name + subscription + region, then provisions + deploys
+azd up      # asks for env name, subscription, region and the parameters below, then provisions + deploys
 ```
 
-`azd up` prints the API + Web URLs. Re-deploy after code changes: `azd deploy` (or `azd up`).
+| Parameter (`azd env set …`) | Secret | Purpose |
+|---|---|---|
+| `KeycloakAdminUsername` / `KeycloakAdminPassword` | password | Keycloak bootstrap admin |
+| `KeycloakWebClientSecret` | yes | OIDC client secret for `agentic-web` (rotated into the realm by the hook) |
+| `PostgresUsername` / `PostgresPassword` | password | App + Keycloak database |
+| `SmtpHost` / `SmtpPort` | — | Invitation email (leave empty → emails are logged, not sent) |
+| `OPERATORPASSWORD` / `MEMBERPASSWORD` | optional | Rotate the seeded realm users |
 
-## LLM secrets
+`azd up` prints the Api + Web URLs. Re-deploy after code changes with `azd deploy`.
+
+### Post-deploy hook
+
+`azure.yaml` runs `infra/hooks/postdeploy.sh` (`.ps1` on Windows) after every deploy. Once Keycloak is
+up it patches the `agentic-web` redirect URIs/web origins to the real Web URL, rotates the client
+secret, disables email verification when no SMTP is configured, rotates seed passwords, and ensures
+the `platform-admin` role exists (an imported realm never gains new roles on its own). It is
+idempotent; run it by hand with `bash infra/hooks/postdeploy.sh`.
+
+## LLM keys
+
+Real deployments use **per-tenant keys entered in the desktop** (Settings → LLM & providers). A
+platform-wide fallback for a demo can be seeded from the environment:
 
 ```bash
-azd env set Llm__Claude__ApiKey   "sk-ant-..."
-azd env set Llm__AzureOpenAi__ApiKey "..."
-azd env set Llm__AzureOpenAi__Endpoint "https://<resource>.openai.azure.com"
+azd env set Llm__Claude__ApiKey "sk-ant-..."
 azd deploy
 ```
 
-(The Web still boots without keys on a degraded path — `Auth:DevAutoLogin` + the no-op
-repositories — so you can deploy first and add keys later.)
+Production runs with `ASPNETCORE_ENVIRONMENT=Production`: there is no auto-login and offline fallback
+is locked off, so without any key a model call fails loudly instead of serving canned output.
 
 ## CI/CD (GitHub Actions)
 
-Easiest: `azd pipeline config` — wires OIDC + the repo secrets/variables and a workflow.
-The committed [`.github/workflows/azd-deploy.yml`](../.github/workflows/azd-deploy.yml) runs
-`azd up` on push to `main`. It needs:
+[`.github/workflows/azd-deploy.yml`](../.github/workflows/azd-deploy.yml) is **manual**
+(`workflow_dispatch`). Continuous delivery on `main` is intentionally off until the Azure AD app has a
+federated credential for `refs/heads/main` (instructions in the workflow header). It needs:
 
-- secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (existing OIDC app)
+- secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC app), plus
+  `KEYCLOAKADMINPASSWORD`, `KEYCLOAKWEBCLIENTSECRET`; optional `LLM__CLAUDE__APIKEY`
 - variables `AZURE_ENV_NAME`, `AZURE_LOCATION`
 
-⚠️ The OIDC service principal needs **Owner** or **User Access Administrator** — `azd`
-creates role assignments for the managed identity (ACR pull, Key Vault). Contributor alone fails.
+⚠️ The OIDC service principal needs **Owner** or **User Access Administrator** — `azd` creates role
+assignments for the managed identity (ACR pull, Key Vault). Contributor alone fails.
 
-## Local dev (run everything)
+`azd pipeline config` can wire OIDC and the secrets for you.
 
-```bash
-azd auth login            # or just run the AppHost without Azure
-dotnet run --project infra/AgentOs.AppHost
-```
+## Local dev
 
-The AppHost runs Postgres + Keycloak + MailHog as local containers + API + Web + the Aspire
-dashboard, with connection strings and the OIDC authority wired automatically.
+No Azure needed: `dotnet run --project infra/AgentOs.AppHost` runs Postgres, Keycloak and MailHog as
+local containers plus the Api, Web and the Aspire dashboard (see [docs/SETUP.md](../docs/SETUP.md)).
 
 ## Cleanup
 

@@ -204,6 +204,7 @@ UI changes round-trip through Claude Design (CLAUDE.md design workflow).
 | **0.5** `fix(web)` | Quality path refuses to open a PR unless QA `Passed` (or an explicit human override, logged) | Unit test on the gate |
 | **0.6** `fix(pipeline)` | Quick/CLI engines record `RunMetric`s (cost, tokens, latency), so `BudgetGuard` sees them; CLI mode records wall-time + exit code | Insights shows Quick runs with cost |
 | **0.7** `fix(remote-agent)` | Runner: command allowlist profile + per-session approval for non-allowlisted commands, runner-side timeout/kill, pairing token moved out of the URL query | Unit tests; manual pairing on Aspire |
+| **0.8** `fix(pipeline)` | Prompt branding: Coding/Qa/Requirement/Testing prompts still open "…in the Agentic SDLC system" → "…in AgentOS" (carried over from the archived deploy-readiness audit backlog). The opening line is a routing key — update any matcher in the same PR and bump the prompt version | Prompt snapshot tests; routing tests green |
 
 ### Phase C — UI-first configuration (≈2 weeks) — *foundation every later phase registers into*
 
