@@ -71,12 +71,18 @@ public sealed class LlmModule : IModule
         {
             var opts = sp.GetRequiredService<IOptions<LlmOptions>>();
             var ov = sp.GetRequiredService<IRuntimeOverrides>();
+            var settings = sp.GetService<AgentOs.Domain.Configuration.ISettings>();
+            // Default deployment when a request names none: live from Settings (Llm:AzureOpenAi:Model) when the
+            // registry is wired, else the bound option.
+            string DefaultDeployment() => settings is null
+                ? opts.Value.AzureOpenAi.Model
+                : LiveSettings.Read(settings, LlmSettings.AzureModel, LiveSettings.CurrentTenant(sp)) ?? opts.Value.AzureOpenAi.Model;
             return new PooledChatLlmClient(
                 "AzureOpenAI",
                 (key, model) => SdkChatClients.CreateAzure(
                     key,
                     !string.IsNullOrWhiteSpace(ov.AzureEndpoint) ? ov.AzureEndpoint! : opts.Value.AzureOpenAi.Endpoint,
-                    string.IsNullOrWhiteSpace(model) ? opts.Value.AzureOpenAi.Model : model),
+                    string.IsNullOrWhiteSpace(model) ? DefaultDeployment() : model),
                 ct => AzureKeyPoolAsync(opts.Value.AzureOpenAi, ov, ct),
                 sp.GetRequiredService<ApiKeyRouter>(),
                 SdkChatClients.IsRateLimited,

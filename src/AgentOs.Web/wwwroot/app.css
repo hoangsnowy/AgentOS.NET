@@ -2100,6 +2100,9 @@ input[type=range] { accent-color: var(--accent); }
 .agent-profiles td:nth-child(2) { min-width: 9rem; }
 .agent-profiles td:nth-child(3) { min-width: 14rem; }
 .agent-profiles-num { max-width: 9rem; }
+.settings-field-control { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.settings-field-control .prefs-select,
+.settings-field-control .prefs-input { min-width: 14rem; }
 .agent-profiles-actions { display: flex; gap: var(--space-2); justify-content: flex-end; white-space: nowrap; }
 
 .prefs-list { padding-left: 18px; margin: 4px 0; font-size: 12.5px; color: var(--txt-soft); }

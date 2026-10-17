@@ -29,7 +29,15 @@ public sealed class AppConfigModule : IModule, IEndpointModule, IInitializableMo
         // ISettings resolves lock → tenant → platform → seed → default over the store registered below.
         services.TryAddSingleton<ISettingsCatalog, SettingsCatalog>();
         services.TryAddSingleton<ISettingsAuditSink, NullSettingsAuditSink>();
-        services.TryAddSingleton<ISettings, SettingsService>();
+        // The seed/lock source is the host configuration; fall back to the one handed to AddServices so hosts
+        // (and tests) that don't register IConfiguration in DI still resolve the registry.
+        services.TryAddSingleton<ISettings>(sp => new SettingsService(
+            sp.GetRequiredService<ISettingsCatalog>(),
+            sp.GetRequiredService<IAppConfigStore>(),
+            sp.GetService<IConfiguration>() ?? configuration,
+            sp.GetRequiredService<ISettingsAuditSink>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SettingsService>>(),
+            sp.GetService<TimeProvider>()));
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))

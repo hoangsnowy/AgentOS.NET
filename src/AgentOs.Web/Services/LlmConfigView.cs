@@ -3,6 +3,7 @@
 // Settings > Status table and the "Live · provider" chips can never claim a provider/key the actual run
 // won't use. Before this, that precedence was re-derived in three razor files and drifted.
 
+using AgentOs.Domain.Configuration;
 using AgentOs.Domain.Llm;
 using AgentOs.Modules.Llm;
 using AgentOs.SharedKernel.Identity;
@@ -58,10 +59,11 @@ public sealed record LlmEffectiveConfig(
 /// under the tenant's ambient identity (a Blazor circuit has no <c>HttpContext</c>) then falling back to
 /// appsettings. Scoped. The pure <see cref="Combine"/> overload is shared with the Settings tab, which
 /// sources the override values from its own (split-mode-aware) seeded fields instead of this reader.</summary>
-public sealed class LlmConfigView(IRuntimeOverrides overrides, IOptions<LlmOptions> options)
+public sealed class LlmConfigView(IRuntimeOverrides overrides, IOptions<LlmOptions> options, ISettings? settings = null)
 {
     private readonly IRuntimeOverrides _overrides = overrides;
     private readonly LlmOptions _opts = options.Value;
+    private readonly ISettings? _settings = settings;
 
     /// <summary>Read this tenant's overrides (under its ambient identity; skipped standalone) and combine
     /// them with the appsettings fallback. Call once per window open — each override read is a 15s-cached
@@ -69,7 +71,17 @@ public sealed class LlmConfigView(IRuntimeOverrides overrides, IOptions<LlmOptio
     public LlmEffectiveConfig Resolve(string? tenantId, string? userId = null)
     {
         using var _ = AmbientIdentity.PushOrNull(tenantId, userId);
-        return Combine(_opts, _overrides.ForceProvider, _overrides.AnthropicApiKey, _overrides.AzureApiKey, _overrides.AzureEndpoint);
+        var cfg = Combine(_opts, _overrides.ForceProvider, _overrides.AnthropicApiKey, _overrides.AzureApiKey, _overrides.AzureEndpoint);
+        if (_settings is null)
+        {
+            return cfg;
+        }
+        // Same live values LlmClientFactory reads per call (Settings UI), so the chip can't drift from a run.
+        return cfg with
+        {
+            DefaultProvider = LiveSettings.Read(_settings, LlmSettings.Provider, tenantId) ?? cfg.DefaultProvider,
+            OfflineFallback = LiveSettings.ReadBool(_settings, LlmSettings.OfflineFallback, tenantId, cfg.OfflineFallback),
+        };
     }
 
     /// <summary>Pure precedence combine: per-tenant override first, then the platform appsettings value.</summary>
