@@ -12,6 +12,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Cost;
+using AgentOs.Domain.Pipeline;
 using AgentOs.Domain.Llm;
 using AgentOs.Domain.Sessions;
 using AgentOs.Modules.Pipeline.Prompts;
@@ -33,6 +34,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
     private readonly ISessionRunFeed? _feed;
     private readonly IBudgetGuard? _budgetGuard;
     private readonly IAgentProfiles? _profiles;
+    private readonly IRunAdmission? _admission;
 
     public IssueWorkAgent(
         ILlmClientFactory factory,
@@ -40,8 +42,10 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         ILogger<IssueWorkAgent> logger,
         ISessionRunFeed? feed = null,
         IBudgetGuard? budgetGuard = null,
-        IAgentProfiles? profiles = null)
+        IAgentProfiles? profiles = null,
+        IRunAdmission? admission = null)
     {
+        _admission = admission;
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(options);
         // Resolve the LLM client lazily in RunAsync — NOT here. This agent is injected into the Board
@@ -139,6 +143,16 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             {
                 return blocked;
             }
+        }
+
+        // E0.6: per-tenant admission (concurrency + burst) — applies to CLI runs too (they hold a runner + a session).
+        using var lease = _admission is null ? null : await _admission.AdmitAsync(request.TenantId, ct).ConfigureAwait(false);
+        if (lease is { Admitted: false })
+        {
+            Emit(request, SessionRunEventKind.Step, "Blocked — " + lease.Reason);
+            return new IssueWorkResult(false,
+                request.Repos.Select(r => new RepoWorkOutcome(r.SessionRepoId, false, r.Owner, r.Repo, "", "", lease.Reason)).ToList(),
+                lease.Reason);
         }
 
         Emit(request, SessionRunEventKind.Running, cliMode

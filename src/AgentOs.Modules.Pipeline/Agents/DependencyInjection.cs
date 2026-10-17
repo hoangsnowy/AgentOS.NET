@@ -43,6 +43,10 @@ public static class AgentsServiceCollectionExtensions
             .ValidateOnStart();
         // UI-first settings (ADR-0011): agent profiles + pipeline knobs, editable in the desktop.
         services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, AgentSettings>();
+        // E0.6: per-tenant run admission (concurrent runs + runs per minute), shared by every run entry point.
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, Limits.RunLimitSettings>();
+        services.TryAddSingleton<AgentOs.Domain.Pipeline.IRunAdmission>(sp =>
+            new Limits.RunAdmission(sp.GetService<AgentOs.Domain.Configuration.ISettings>(), sp.GetService<TimeProvider>()));
         services.AddSingleton<IAgentProfiles>(sp =>
             sp.GetService<AgentOs.Domain.Configuration.ISettings>() is { } settings
                 ? new SettingsAgentProfiles(settings, sp.GetService<IServiceScopeFactory>())
@@ -89,7 +93,8 @@ public static class AgentsServiceCollectionExtensions
                 sp.GetRequiredService<AgentOs.Domain.Cost.IBudgetGuard>(),
                 sp.GetRequiredService<TimeProvider>(),
                 sp.GetRequiredService<AgentOs.SharedKernel.Identity.ITenantContext>(),
-                sp.GetRequiredService<ILogger<PersistingOrchestratorAgent>>());
+                sp.GetRequiredService<ILogger<PersistingOrchestratorAgent>>(),
+                sp.GetService<AgentOs.Domain.Pipeline.IRunAdmission>());
         });
 
         // Defaults to no-op — a host needing realtime (Blazor) overrides it with a scoped registration after AddAgents.

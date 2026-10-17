@@ -54,6 +54,7 @@ public sealed class GraphExecutor : IGraphExecutor
     private readonly ILogger<GraphExecutor> _logger;
     // Optional: the per-tenant spend gate. Null in no-DB/standalone (nothing to meter against).
     private readonly IBudgetGuard? _budgetGuard;
+    private readonly IRunAdmission? _admission;
     // Optional: persists the run's own per-node LLM spend to run_metrics so the budget gate actually meters
     // workflow-studio runs. Null/no-op repo in no-DB/standalone (nothing to persist to).
     private readonly IPipelineRunRepository? _runRepository;
@@ -72,8 +73,10 @@ public sealed class GraphExecutor : IGraphExecutor
         IBudgetGuard? budgetGuard = null,
         IPipelineRunRepository? runRepository = null,
         TimeProvider? clock = null,
-        IAgentProfiles? profiles = null)
+        IAgentProfiles? profiles = null,
+        IRunAdmission? admission = null)
     {
+        _admission = admission;
         _requirement = requirement ?? throw new ArgumentNullException(nameof(requirement));
         _coding = coding ?? throw new ArgumentNullException(nameof(coding));
         _testing = testing ?? throw new ArgumentNullException(nameof(testing));
@@ -162,6 +165,13 @@ public sealed class GraphExecutor : IGraphExecutor
                 return new GraphRunResult(false,
                     $"Budget exceeded for this workspace — spent ${budget.SpentUsd:0.00} of ${budget.CapUsd:0.00} this month. The run was blocked before any agent ran.");
             }
+        }
+
+        // E0.6: per-tenant admission (concurrency + burst), after the budget gate and before any agent runs.
+        using var lease = _admission is null ? null : await _admission.AdmitAsync(budgetTenant, ct).ConfigureAwait(false);
+        if (lease is { Admitted: false })
+        {
+            return new GraphRunResult(false, lease.Reason);
         }
 
         // Carry the signed-in tenant + user into the run via the shared precedence. Each agent resolves its

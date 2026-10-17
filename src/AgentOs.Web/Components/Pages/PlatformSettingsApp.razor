@@ -26,6 +26,9 @@ else
         <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@SafetyKeys" />
     </Panel>
 
+    <Panel Title="Run limits (per tenant)">
+        <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@LimitKeys" />
+    </Panel>
     <Panel Title="Build sandbox">
         <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@BuildKeys" />
     </Panel>
@@ -46,6 +49,11 @@ else
     ];
 
     private static readonly string[] LlmKeys = [AgentOs.Modules.Llm.LlmSettings.OfflineFallback];
+    private static readonly string[] LimitKeys =
+    [
+        AgentOs.Modules.Pipeline.Limits.RunLimitSettings.MaxConcurrent,
+        AgentOs.Modules.Pipeline.Limits.RunLimitSettings.PerMinute,
+    ];
 
     private static readonly string[] BuildKeys =
     [
