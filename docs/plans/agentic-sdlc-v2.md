@@ -74,7 +74,7 @@
 | Module | Schema | Responsibility |
 |---|---|---|
 | `AgentOs.Modules.Metrics` *(new)* | `metrics` | Append-only event ledger, rollups, KPI queries, eval result store, PR-outcome sync |
-| `AgentOs.Modules.Memory` *(new)* | `memory` | Run blackboard, project memory (pgvector + full-text), episodic run index, repo map, memory MCP tools |
+| `AgentOs.Modules.Memory` *(new)* | `memory` | Run blackboard, project memory (pgvector + full-text), episodic run index, repo map, **bi-temporal knowledge graph** (nodes/edges, CSR + PPR retrieval), memory MCP tools, Memory app visualisers ([ADR-0008](../adr/0008-memory-and-knowledge-graph.md)) |
 | `AgentOs.Modules.Skills` *(new)* | `skills` | SKILL.md catalog (built-in + tenant + git-imported), progressive disclosure tool |
 | `AgentOs.Modules.Mcp` *(changed)* | `mcp` *(new tables)* | Per-tenant server registry, curated catalog, HTTP auth/OAuth, deferred tool loading |
 | `AgentOs.Modules.Executors` *(new)* | — (uses `sessions`) | `ICodingExecutor` plugins: built-in loop, Claude Code, Codex, Copilot coding agent |
@@ -176,6 +176,8 @@ Concrete choices per component. "Budget" values are p95 targets enforced by the 
 | Run blackboard / artifacts | **content-addressed store** (SHA-256 → blob), handles `kind@hash`; immutable versions | dedupe identical files across iterations/runs; agents pass handles, not content (token + memory win) | put/get O(1) |
 | Iteration diffs | **Myers diff** (line-level) for file edits and QA deltas; `apply_patch` with hunk fuzz | send only changed hunks to the model | diff 10k lines < 20 ms |
 | Project memory retrieval | pgvector **HNSW** index + Postgres **GIN tsvector** (BM25-style) → **Reciprocal Rank Fusion**, recency decay, **top-k min-heap** selection under a token budget (greedy knapsack) | sub-linear ANN + exact keyword recall; fused ranking beats either alone | retrieve top-20 < 50 ms |
+| Knowledge-graph traversal | **CSR adjacency** (`int[]` offsets/targets + `FrozenDictionary` key→index) per tenant+repo, versioned invalidation; **personalised PageRank** by push approximation (ε-bounded) from retrieval seeds | O(edges touched) expansion, no per-hop SQL round trip; bounded work per query | 2-hop PPR on 100k edges < 10 ms |
+| Topic / module clusters | **Leiden** community detection (incremental per commit), summaries generated lazily and cached | GraphRAG-style global answers without an LLM pass at index time | recluster 100k edges < 2 s |
 | Memory dedupe | **SimHash/MinHash + LSH** buckets on write | near-duplicate lessons merged in O(1) expected instead of O(n) pairwise | write < 20 ms |
 | Embedding / response cache | **HybridCache** (L1 memory LRU + L2 Postgres/Redis) keyed by content hash | no re-embedding unchanged text; free reruns for temp-0 calls | hit < 1 ms |
 | Repo map / code index | per-commit **Merkle tree of file hashes** (re-index only changed files), symbol **trie** for prefix lookup, **PageRank** over the import/call graph to rank files (Aider-style) | incremental indexing O(changed files); most relevant symbols first within a token budget | re-index 1 changed file < 200 ms |
@@ -205,6 +207,7 @@ UI changes round-trip through Claude Design (CLAUDE.md design workflow).
 | **0.6** `fix(pipeline)` | Quick/CLI engines record `RunMetric`s (cost, tokens, latency), so `BudgetGuard` sees them; CLI mode records wall-time + exit code | Insights shows Quick runs with cost |
 | **0.7** `fix(remote-agent)` | Runner: command allowlist profile + per-session approval for non-allowlisted commands, runner-side timeout/kill, pairing token moved out of the URL query | Unit tests; manual pairing on Aspire |
 | **0.8** `fix(pipeline)` | Prompt branding: Coding/Qa/Requirement/Testing prompts still open "…in the Agentic SDLC system" → "…in AgentOS" (carried over from the archived deploy-readiness audit backlog). The opening line is a routing key — update any matcher in the same PR and bump the prompt version | Prompt snapshot tests; routing tests green |
+| **0.9** `feat(security)` | **Postgres row-level security on every tenant table** (pipeline, sessions, workspaces, tools, tenants audit, config): `ENABLE ROW LEVEL SECURITY` + policy `tenant_id = current_setting('app.tenant_id')`, set per connection by a `DbConnectionInterceptor` from `ITenantContext`; a separate migration/platform role bypasses it. Today isolation is EF global filters + explicit predicates only — RLS makes a forgotten filter or raw SQL fail closed. Tenant export/purge endpoint | Two-tenant isolation tests on real Postgres (Aspire) incl. raw SQL; purge leaves zero rows |
 
 ### Phase C — UI-first configuration (≈2 weeks) — *foundation every later phase registers into*
 
@@ -288,15 +291,16 @@ Four layers, one module (`AgentOs.Modules.Memory`), one governance path:
 
 | PR | Change |
 |---|---|
-| **3.1** `docs(adr)` | ADR-0008 — layers above, write/read policies, retention/decay, redaction, provider interface (`IMemoryStore`) with built-in pgvector default and adapters for Mem0 / Zep-Graphiti / Letta as plugins |
-| **3.2** `feat(memory)` | Module skeleton + **run blackboard** (`IRunContext`): put/get/list artifacts by handle with versions; Quality/Graph engines switched to handles; `MemoryRead/Write` events |
-| **3.3** `infra` | pgvector: local Postgres image `pgvector/pgvector` in AppHost, `azure.extensions` allow-list in bicep (`VECTOR`), `Pgvector.EntityFrameworkCore`; embeddings via MEAI `IEmbeddingGenerator` (Azure OpenAI default; local ONNX option for air-gapped) |
-| **3.4** `feat(memory)` | **Project memory**: items with scope, kind (`convention|decision|fact|lesson|preference`), provenance (run/PR/comment), confidence, `LastUsedUtc`, decay; hybrid retrieval (vector + FTS + recency) with a token budget; dedupe/merge on write |
-| **3.5** `feat(memory)` | **Reflection step** after each run (Haiku): extract lessons from failures, QA issues, review comments → candidate memories (auto-accept above threshold, else queue for human curation) |
-| **3.6** `feat(memory)` | **Episodic index** of finished work items + **repo map** builder (Roslyn for C#, tree-sitter/ctags for other languages) exposed as tools `repo_map`, `find_symbol` |
-| **3.7** `feat(mcp)` | Memory exposed as **MCP tools** on `/mcp` (`memory.search`, `memory.write`, `context.get`) + Anthropic `memory_20250818` tool backend mapped to the store → **delegated agents (Claude Code / Codex) share the same memory** |
-| **3.8** `feat(web)` | **Memory app** in the desktop: browse/search/edit/pin/forget, curation queue, per-item provenance and usage stats; Claude Design round-trip |
-| **3.9** `test(evals)` | Eval A/B memory on vs off → publish Δpass@1, Δtokens; tune retrieval budget |
+| **3.1** `docs(adr)` | [ADR-0008](../adr/0008-memory-and-knowledge-graph.md) — layers, **bi-temporal knowledge graph in Postgres**, deterministic-first extraction, retrieval pipeline, policies, visualisation; `IMemoryStore` with built-in pgvector default and Mem0 / Zep-Graphiti / Letta as plugins — *written* |
+| **3.2** `feat(memory)` | Module skeleton (schema `memory`, uuidv7 ids, tenant RLS + EF filter) + **run blackboard** (`IRunContext`): content-addressed artifacts by handle with versions; Quality/Graph engines switched to handles; `MemoryRead/Write` events |
+| **3.3** `infra` | Postgres 18 + pgvector 0.8 (`halfvec`, HNSW, iterative scans) in AppHost and the Azure `azure.extensions` allow-list (`VECTOR`); `Pgvector.EntityFrameworkCore`; embeddings via MEAI `IEmbeddingGenerator` — provider is a UI setting (Voyage `voyage-code-4`/`voyage-4`, Azure OpenAI, local ONNX), stored 1024-d `halfvec`, `HybridCache` by content hash |
+| **3.4** `feat(memory)` | **Graph core**: `memory.nodes` / `memory.edges` (bi-temporal: `valid_from/valid_to` + `recorded_at/retracted_at`, provenance), invalidate-not-overwrite, in-process **CSR adjacency** cache per repo, recursive-CTE fallback; property tests + benchmarks |
+| **3.5** `feat(memory)` | **Deterministic extractors**: Roslyn (C#) + tree-sitter repo map → `File/Symbol` nodes and `calls/implements/depends_on/contains` edges per commit; git/PR/issue links (`Ticket -solved_by-> PR -touches-> File`); ADR/doc ingestion; tools `repo_map`, `find_symbol` |
+| **3.6** `feat(memory)` | **Project memory + retrieval**: items (`convention|decision|fact|lesson|preference|doc`), confidence, decay, pin; seed = halfvec k-NN (binary-quantised first pass + re-rank) ∥ FTS (`pg_search` BM25 when self-hosted) → RRF; **personalised PageRank** expansion (1–2 hops, task-weighted relations); optional reranker; min-heap/knapsack packing under the budget into the cached prefix; full trace in `memory.retrievals`; SimHash+LSH dedupe |
+| **3.7** `feat(memory)` | **Reflection** after each run (small model): lessons/decisions from failures, QA issues, review comments → candidates (auto-accept above threshold, else curation queue); **episodic index** of finished work; lazy **Leiden community** summaries (generated on first use, cached) |
+| **3.8** `feat(mcp)` | **MCP tools** on `/mcp` (`memory.search`, `memory.write`, `graph.neighbors`, `graph.path`, `context.get`) + Anthropic memory-tool backend + context editing for long delegated sessions → **Claude Code / Codex share the same memory** |
+| **3.9** `feat(web)` | **Memory app — visualise everything** (designed in Claude Design first): **Graph Explorer** (sigma.js v3 + graphology WebGL, ForceAtlas2 in a Web Worker, filters, expand, community hulls, *as-of* time slider), **Retrieval Inspector** (seeds → expansion path on the graph → packed token bars vs budget → used), **Run Blackboard** timeline + version diffs + tokens saved, **Knowledge base** table + curation queue, **Code Map**, **Memory metrics**; table alternative for every graph view, reduced-motion, vendored JS (no CDN) |
+| **3.10** `test(evals)` | Eval A/B: memory off / hybrid only / hybrid + graph → publish Δpass@1, Δtokens, Δ$/solved; ship each step only if it wins; tune budgets |
 
 Guardrails: secret/PII redaction before write, per-tenant isolation tests on real Postgres, max
 memory tokens per prompt (budgeted, placed in the cached prefix when stable), every read/write is an
