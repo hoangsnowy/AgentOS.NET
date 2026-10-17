@@ -46,6 +46,14 @@ dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Po
 dotnet ef migrations add <Name> \
   --project src/AgentOs.Modules.Pipeline --startup-project src/AgentOs.Modules.Pipeline \
   --output-dir Persistence/Migrations --context PipelineDbContext
+
+# UI E2E (Playwright) against the standalone Web — what CI runs
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AgentOs.Web -c Release --no-build --urls http://localhost:5199 --no-launch-profile
+RUN_AGENTOS_E2E=true AGENTOS_URL=http://localhost:5199 dotnet test --project tests/AgentOs.E2E.Tests -c Release
+
+# Lab server — long-running full stack for REAL GitHub / Azure DevOps / LLM tests, side by side with dev
+# (own worktree ..\AgentOs-lab, own ports/volumes, own hostnames). See docs/LAB.md.
+pwsh infra/lab/lab.ps1 up | update [-Ref origin/<branch>] | status | test | down | reset
 ```
 
 CI: `.github/workflows/ci.yml` runs `restore → build Release → test` on Ubuntu, on push to `main`/`develop` or PR to `main`.
@@ -108,7 +116,7 @@ Agents call **tools** through the gateway: `LlmRequest.Tools = ["build_verifier"
 **Full-stack (Aspire) run — make it work the FIRST try; these are KNOWN landmines, not "small bugs" to rediscover.** `dotnet run --project infra/AgentOs.AppHost` (dashboard `:17050`, Web `https://localhost:5180`, login `operator`/`operator`, realm `agentic`). Before debugging deeper, rule these out — each has a one-line fix:
 - **Postgres "Running (Unhealthy)" + Web shows "Finished" (crashed), Api stays up** → a **stale `postgres-data` volume**: Postgres bakes the superuser password at initdb and never updates it, so a volume from an earlier run rejects the current pinned `PostgresPassword` (`FATAL: password authentication failed`) → the Web dies in `InitializeModulesAsync`. Fix: `docker volume rm agentos.apphost-*-postgres-data` (password is pinned to `postgres` in the AppHost, so it won't recur).
 - **Keycloak login shows a stale realm name / old theme** → a **stale `keycloak-data` volume**: `WithRealmImport` skips re-import when the realm already exists. Fix: `docker volume rm agentos.apphost-*-keycloak-data`. (The realm displayName + login theme are baked from `infra/keycloak/`; the repo is the source of truth.) The same applies to **new realm roles** (e.g. `platform-admin`): an existing realm never gets them from the import — the azd postdeploy hook ensures `platform-admin` exists (idempotent); locally either drop the volume or create + assign it via the KC admin API (keep role descriptions ASCII — a `—` made the admin API return 400).
-- **HTTP 431 (Request Header Fields Too Large)** → `localhost` shares ONE cookie jar across every dev app on the box → the Cookie header overflows the server header limit. Fixed in code: Keycloak `QUARKUS_HTTP_LIMITS_MAX_HEADER_SIZE=128K` (AppHost) **and** Kestrel `MaxRequestHeadersTotalSize = 128 KB` (`ServiceDefaults.AddServiceDefaults`, covers Web + Api). But cookies are **host-scoped, not port-scoped** — every dev app on `localhost` (any port) piles cookies into the one jar sent to KC `:8080`, so a heavy box can still exceed the limit; the real fix is browser-side: an **incognito** window (empty jar) or clear `localhost` cookies (DevTools → Application → Clear site data, or `chrome://settings/content/all` → search `localhost`). Also enable `chrome://flags/#allow-insecure-localhost` for the self-signed dev cert.
+- **HTTP 431 (Request Header Fields Too Large)** → `localhost` shares ONE cookie jar across every dev app on the box → the Cookie header overflows the server header limit. Fixed in code: Keycloak `QUARKUS_HTTP_LIMITS_MAX_HEADER_SIZE=128K` (AppHost) **and** Kestrel `MaxRequestHeadersTotalSize = 128 KB` (`ServiceDefaults.AddServiceDefaults`, covers Web + Api). But cookies are **host-scoped, not port-scoped** — every dev app on `localhost` (any port) piles cookies into the one jar sent to KC `:8080`, so a heavy box can still exceed the limit; the real fix is browser-side: an **incognito** window (empty jar) or clear `localhost` cookies (DevTools → Application → Clear site data, or `chrome://settings/content/all` → search `localhost`). Also enable `chrome://flags/#allow-insecure-localhost` for the self-signed dev cert. The lab stack avoids the whole problem with its own `*.dev.localhost` hostnames (see Lessons learned).
 - **Verify the Web/OIDC chain is actually up** (not just the container): `curl -k https://localhost:5180/account/login` must return **302** to `…/realms/agentic/protocol/openid-connect/auth?…request_uri=urn:ietf:…` — the `request_uri=urn:` proves PAR succeeded (redirect_uri accepted). `http://localhost:5180` returns `000` (single-scheme, Kestrel owns 5180 directly). Full landmine catalogue + token-forwarding details live in the `keycloak-aspire-gotchas` memory.
 
 **UI / design**: before adding or editing any screen/component, read [docs/design/design-system.md](docs/design/design-system.md) **or run `/design-review`** — it is the written contract. Reuse the **defined** vocabulary (`Btn`/`Field`/`Panel`/`Icon` components; the `prefs-*`, `.page-head`, `.settings-table` classes SystemApp uses; `var(--…)` tokens). **Never reference a CSS class that is not defined in `app.css` or a scoped `.razor.css`** — phantom classes render unstyled and were the root cause of past app layout breakage (the old Spine — now **Board** — and Users windows); `/design-review` greps `.razor` class tokens against defined CSS to catch them. Surface chrome outside the shell (the Keycloak login at `infra/keycloak/themes/agentos`) mirrors the same tokens + branding (it is **AgentOS**, never "AgentOs").
@@ -129,3 +137,70 @@ Hand-editing the repo directly (Claude Design auth unavailable in a non-interact
 **Branding**: the product + desktop UI are both **AgentOS**. Code namespaces stay `AgentOs.*`. Do not reintroduce "Agent Studio" or the retired `AgenticSdlc.*` prefix.
 
 **PR**: fill in `.github/PULL_REQUEST_TEMPLATE.md` (summary + test plan) on every pull request.
+
+## Owner directives (non-negotiable — they define "done")
+
+The owner's standing instructions. They apply to every change; the execution plan is
+[docs/plans/agentic-sdlc-v2.md](docs/plans/agentic-sdlc-v2.md).
+
+1. **Enterprise level.** Own the quality calls without asking: tokens not raw colours, accessibility
+   (role/name, keyboard, `prefers-reduced-motion`), an opt-out for anything playful, tests at every layer,
+   docs updated, verified in the running app (light + dark). A feature that only works on the happy path
+   isn't done.
+2. **Performance first — measure, then fix.** Use the right data structure / algorithm on every hot path
+   and exploit .NET 9/10 (`FrozenDictionary`/`FrozenSet`, `Span`/`SearchValues`, `HybridCache`,
+   source-generated regex/JSON/logging, `MapStaticAssets` + `@Assets`, pooled buffers, single-pass folds,
+   dictionary indexes instead of rescans). Never guess at a slowdown: reproduce it with a probe (frame rate,
+   long tasks, circuit frames/s, interaction latency), turn suspects off one at a time, fix the measured
+   cause, add a regression guard. The DS&A playbook is §2.7 of the plan.
+3. **Metrics first.** Every agent feature is measurable: tokens per agent split into **fresh input · cache
+   read · cache write · output (· reasoning)**, cost per class, latency, outcome. Offline/estimated numbers
+   are always labelled (`≈`, "not billed"), never shown as real usage.
+4. **UI-first configuration** ([ADR-0011](docs/adr/0011-ui-first-configuration.md)). A new setting is a
+   `SettingDescriptor` in the module's `ISettingsContributor`, read through `ISettings` per call — never a
+   new `appsettings.json` key (a test fails the build if product sections reappear there).
+5. **Multi-tenant by default.** Every row carries `TenantId`; knowledge/memory is strictly per tenant; no
+   cross-tenant reads, caches keyed by tenant. Anything touching persistence/identity/tenancy is verified on
+   the full stack with two tenants (plan 0.9 adds Postgres RLS).
+6. **Latest technology, verified.** Check current versions/APIs before choosing (today's date, release
+   notes) — don't rely on memory. Prefer provider-neutral abstractions (Microsoft.Extensions.AI/VectorData).
+7. **Visualise everything.** Every capability has a desktop surface; data-heavy features (graphs, retrieval,
+   tokens, runs) get a real visualiser with a table alternative. Designed in Claude Design first.
+8. **Lively, but never at the cost of speed.** Agent characters + living icons are part of the product —
+   and nothing loops at rest (only a running agent animates continuously), `transform`/`opacity` only.
+9. **Real integrations are tested for real** on the lab server (docs/LAB.md), not only with fakes.
+10. **Docs stay true.** Update README/CONFIG/SETUP/LAB/ADRs with the change; delete docs that are superseded
+    instead of letting them rot.
+
+## Lessons learned (found in practice — don't rediscover them)
+
+- **Cookies are scoped to the host, not the port.** Two stacks on `localhost` (dev 5180 + lab 6180, their
+  Keycloaks, any other local app) share one cookie jar → sessions overwrite each other, the jar overflows
+  (HTTP 431, *"Correlation failed"* at `/signin-oidc`). Fix: own hostnames (`lab.dev.localhost`,
+  `labkc.dev.localhost` — `*.dev.localhost` resolves to loopback and is covered by the ASP.NET dev cert) +
+  per-instance cookie names (`Auth:CookiePrefix`). A failed OIDC callback restarts sign-in once
+  (`AuthCookies`), never a developer exception page.
+- **Frontend lag was rendering, not Blazor.** Circuit traffic was ~1 frame/s and there were no long tasks;
+  idle `infinite` animations inside windows with a `backdrop-filter` took the desktop from 60 to 20 fps.
+  `backdrop-filter: blur(0px)` still builds a backdrop layer — use `none` when glass is off. Guard tests
+  enforce both. Link local assets with `@Assets[...]` (fingerprinted, brotli, immutable caching).
+- **Token usage conventions differ per provider.** MEAI counts cached ⊂ input and reasoning ⊂ output;
+  Anthropic's `input_tokens` EXCLUDES `cache_read`/`cache_creation`. Normalise **per provider turn,
+  beneath `FunctionInvokingChatClient`** (`UsageNormalizingChatClient`) — the tool loop sums turns but keeps
+  only the last turn's raw response.
+- **Tests on shared stacks must leave zero residue.** A test that changes real tenant data (budget caps,
+  seeded spend, registered runners with live tokens) snapshots and restores it in a `finally`; verify with a
+  residue query after the suite.
+- **A running app locks its build output.** Stop the standalone Web / AppHost before `dotnet build`, or the
+  build fails with MSB3021 — and an E2E run against stale binaries proves nothing. The lab runs from its own
+  git worktree so dev rebuilds never touch it.
+- **Aspire:** `AddProject(..., launchProfileName: null)` drops the launch profile's
+  `ASPNETCORE_ENVIRONMENT` — set it explicitly (the lab Api otherwise boots as Production and exits). An
+  existing Keycloak realm is never re-imported — sync changes through the admin API (`lab.ps1` does).
+- **Recurring CodeQL notes:** `cs/linq/missed-where` (a `foreach` whose body is one `if (x is T)` → use
+  `OfType<T>()`/`Where`), `cs/path-combine` (banned at build time via `BannedSymbols.txt` — use `Path.Join`).
+- **Editing gotchas:** shell heredocs and `sed` mangle escapes (`\n`, `\\`, `$`) in C#/JS/regex — use the
+  Edit/Write tools or a small Node script with asserted replacements; preserve the file's line endings.
+  PowerShell `Invoke-WebRequest` treats an unfollowed 302 as an error — probe with `curl.exe`.
+- **Secrets:** never type real tokens into a browser or the chat. Tokens live in user-secrets / env and are
+  read by test code; the owner sets them in their own terminal.
