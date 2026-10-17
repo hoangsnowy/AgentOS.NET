@@ -105,6 +105,13 @@ else
                         @_testResult
                     </div>
                 }
+
+                <div class="prefs-section" style="margin-top:var(--space-5)">
+                    <h2 class="prefs-h">Routing &amp; deployment</h2>
+                    <p class="prefs-sub">Applied live to the next call — no restart. Per-agent models live in <strong>Agent profiles</strong>.</p>
+                </div>
+                <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
+                                Keys="@(new[] { AgentOs.Modules.Llm.LlmSettings.Provider, AgentOs.Modules.Llm.LlmSettings.AzureModel, AgentOs.Modules.Llm.LlmSettings.AzurePricingModel, AgentOs.Modules.Llm.LlmSettings.OfflineFallback })" />
                 break;
 
             case "keys":

@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using AgentOs.Domain.Configuration;
 using AgentOs.Domain.Llm;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -18,24 +19,34 @@ public sealed class LlmClientFactory : ILlmClientFactory
     private readonly IServiceProvider _services;
     private readonly LlmOptions _options;
     private readonly IRuntimeOverrides _overrides;
+    private readonly ISettings? _settings;
 
-    public LlmClientFactory(IServiceProvider services, IOptions<LlmOptions> options, IRuntimeOverrides overrides)
+    /// <summary>Create. With <paramref name="settings"/> the default provider, force provider and offline
+    /// fallback are read live per call (Settings UI, no restart); without it they come from options/overrides.</summary>
+    public LlmClientFactory(IServiceProvider services, IOptions<LlmOptions> options, IRuntimeOverrides overrides, ISettings? settings = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _options = options.Value ?? new LlmOptions();
         _overrides = overrides ?? throw new ArgumentNullException(nameof(overrides));
+        _settings = settings;
     }
 
     /// <inheritdoc />
-    public ILlmClient CreateDefault() => Create(_options.Provider);
+    public ILlmClient CreateDefault() =>
+        Create(_settings is null
+            ? _options.Provider
+            : LiveSettings.Read(_settings, LlmSettings.Provider, LiveSettings.CurrentTenant(_services)) ?? _options.Provider);
 
     /// <inheritdoc />
     public ILlmClient Create(string providerName)
     {
-        var force = !string.IsNullOrWhiteSpace(_overrides.ForceProvider)
-            ? _overrides.ForceProvider
-            : _options.ForceProvider;
+        // Settings path: one lookup covers tenant override → platform → appsettings seed (same key the old
+        // RuntimeOverrides row + Llm:ForceProvider config used). Legacy path kept for hosts without a registry.
+        var tenant = _settings is null ? null : LiveSettings.CurrentTenant(_services);
+        var force = _settings is not null
+            ? LiveSettings.Read(_settings, AppConfigKeys.LlmForceProvider, tenant)
+            : !string.IsNullOrWhiteSpace(_overrides.ForceProvider) ? _overrides.ForceProvider : _options.ForceProvider;
         var effective = string.IsNullOrWhiteSpace(force) ? providerName : force;
         if (string.IsNullOrWhiteSpace(effective))
         {
@@ -50,7 +61,10 @@ public sealed class LlmClientFactory : ILlmClientFactory
         // to the END of the chain so a no-key LlmException falls through to canned schema-valid output instead
         // of failing the run. Skipped when the effective provider already IS Offline, or it's already a
         // configured fallback, so it never appears twice.
-        if (_options.OfflineFallback
+        var offlineFallback = _settings is null
+            ? _options.OfflineFallback
+            : LiveSettings.ReadBool(_settings, LlmSettings.OfflineFallback, tenant, _options.OfflineFallback);
+        if (offlineFallback
             && !string.Equals(NormalizeKey(effective), OfflineLlmClient.ProviderName, StringComparison.Ordinal))
         {
             var offline = _services.GetKeyedService<ILlmClient>(OfflineLlmClient.ProviderName);

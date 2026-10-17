@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.OpenAI;
+using AgentOs.Domain.Configuration;
 using AgentOs.Domain.Llm;
 using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Logging;
@@ -31,17 +32,25 @@ public sealed class MafChatClient : ILlmClient
     private readonly AzureOpenAiOptions _options;
     private readonly IRuntimeOverrides _overrides;
     private readonly ILogger<MafChatClient> _logger;
+    private readonly ISettings? _settings;
 
     /// <inheritdoc />
     public string Provider => "MAF";
 
-    public MafChatClient(IOptions<LlmOptions> options, IRuntimeOverrides overrides, ILogger<MafChatClient> logger)
+    public MafChatClient(IOptions<LlmOptions> options, IRuntimeOverrides overrides, ILogger<MafChatClient> logger, ISettings? settings = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value?.AzureOpenAi ?? new AzureOpenAiOptions();
         _overrides = overrides ?? throw new ArgumentNullException(nameof(overrides));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _settings = settings;
     }
+
+    // Llm:AzureOpenAi:PricingModel, live from Settings when the registry is wired; else the bound option.
+    private async ValueTask<string?> PricingModelAsync(CancellationToken ct) =>
+        _settings is null
+            ? _options.PricingModel
+            : await _settings.GetStringAsync(LlmSettings.AzurePricingModel, AmbientIdentity.Current?.TenantId, _options.PricingModel, ct).ConfigureAwait(false);
 
     /// <inheritdoc />
     public async Task<LlmResponse> SendAsync(LlmRequest request, CancellationToken cancellationToken = default)
@@ -53,6 +62,7 @@ public sealed class MafChatClient : ILlmClient
         // who set only their Settings key (no platform Llm:AzureOpenAi:ApiKey) must still be able to force MAF,
         // and per-tenant isolation requires using THEIR key/endpoint, not the shared platform one. Resolved
         // per-call (this is keyed-transient): IRuntimeOverrides reads the ambient tenant, never at ctor time.
+        var configuredPricingModel = await PricingModelAsync(cancellationToken).ConfigureAwait(false);
         var tenantKeys = await _overrides.GetAzureApiKeysAsync(cancellationToken).ConfigureAwait(false);
         var apiKey = tenantKeys.Count > 0 ? tenantKeys[0] : _options.ApiKey;
         var endpoint = !string.IsNullOrWhiteSpace(_overrides.AzureEndpoint) ? _overrides.AzureEndpoint! : _options.Endpoint;
@@ -80,7 +90,7 @@ public sealed class MafChatClient : ILlmClient
         {
             ModelId = deployment,
             // Capability is keyed on the canonical (pricing) model, not the arbitrary deployment alias.
-            Temperature = ModelCapabilities.TemperatureFor(ResolvePricingModel(_options.PricingModel, deployment), request.Temperature),
+            Temperature = ModelCapabilities.TemperatureFor(ResolvePricingModel(configuredPricingModel, deployment), request.Temperature),
             MaxOutputTokens = request.MaxTokens,
         };
 
@@ -107,7 +117,7 @@ public sealed class MafChatClient : ILlmClient
         // Pricing is a SEPARATE id: deployment names are arbitrary aliases (e.g. "gpt41-prod") that aren't
         // priced prefixes, so PricingModel maps the alias to a canonical price-table prefix; fall back to the
         // deployment when unset. Cost AND the UNPRICED warning both read this same id — no four-way disagreement.
-        var pricingModel = ResolvePricingModel(_options.PricingModel, deployment);
+        var pricingModel = ResolvePricingModel(configuredPricingModel, deployment);
         var cost = CostCalculator.Calculate(pricingModel, inputTokens, outputTokens);
         if (!CostCalculator.IsKnown(pricingModel))
         {
