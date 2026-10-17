@@ -82,6 +82,26 @@ Don't memorize values — reference these names. Full list in `app.css`; the fam
 | `Toast` (via `ToastService`) | Transient feedback | A dialog for "saved" |
 | `Spinner` / `Progress` | Loading / determinate progress | A "Loading…" string |
 | `AppFrame` + `WindowManagerService` | **Any new app** = a window | A full-page route; AgentOS apps live in windows |
+| `ModelPicker` | Choosing an LLM model (priced, provider-filtered, `Custom…` for aliases) | A `<datalist>` input — it hides every option once the box has a value |
+| `AgentMascot` (role × `MascotState`) | Showing *which agent* and *what it is doing* (Workflow nodes, Agent profiles) | Ad-hoc agent emoji/avatars; a mascot as the **only** status signal (keep the text/badge beside it) |
+
+### Agent mascots
+
+One cartoon character per role, defined once in `Components/UI/AgentMascot.razor` + the `.mascot` block
+in `app.css`; the gallery of every role × state is on `/_/components`.
+
+- **Roles**: Orchestrator (violet, baton), Requirement (amber, clipboard + pencil), Coding (blue,
+  laptop), Testing (green, magnifier), QA (rose, shield stamp); anything else (plugins, custom agents)
+  gets the slate antenna bot. An **Evaluator** node is drawn as QA — it runs as the QA agent.
+- **States**: idle (float + blink) · running (bob + prop works) · done (hop, ^^ eyes, sparkles) ·
+  failed (shake, X eyes, sweat) · canned (asleep, grey, zzz — never the happy look on offline output) ·
+  skipped (grey, faded). The face carries the state, so it reads with motion off.
+- **Colors**: only `--mascot-*` tokens (illustration palette, identical in both schemes). Props that
+  stick out past the body use mid-tones so they read on light **and** dark surfaces.
+- **Performance**: animate `transform`/`opacity` only; no `filter` on or above animated content (greying
+  is a palette swap); no `<defs>`/ids, so any number can share a page.
+- **Motion off**: `prefers-reduced-motion`, or System → Appearance → *Animated agents* (per viewer,
+  `<html data-agent-motion="off">`, restored by `theme.js` before Blazor mounts).
 
 ### Desktop shell anatomy (and who owns what)
 

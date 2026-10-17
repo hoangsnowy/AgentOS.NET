@@ -127,6 +127,20 @@
     --desktop-text-secondary: var(--text-secondary);
     --desktop-text-shadow: none;
 
+    /* ----- Agent mascots (illustration palette — one hue per role; same in both schemes) ----- */
+    --mascot-orchestrator: #9b6cf0;   --mascot-orchestrator-dark: #7444d4;   --mascot-orchestrator-belly: #e4d8fc;
+    --mascot-requirement: #f6b73c;    --mascot-requirement-dark: #c98a0a;    --mascot-requirement-belly: #fde9b8;
+    --mascot-coding: #4a95ea;         --mascot-coding-dark: #1f66c4;         --mascot-coding-belly: #d3e5fb;
+    --mascot-testing: #3fb878;        --mascot-testing-dark: #1f7a48;        --mascot-testing-belly: #cdeedb;
+    --mascot-qa: #ef6b95;             --mascot-qa-dark: #c23a66;             --mascot-qa-belly: #fbd3e0;
+    --mascot-generic: #94a3b8;        --mascot-generic-dark: #64748b;        --mascot-generic-belly: #e2e8f0;
+    --mascot-ink: #1f1d2b;
+    --mascot-eye: #ffffff;
+    --mascot-cheek: #ff8fa3;
+    --mascot-gold: #fbbf24;
+    --mascot-gold-dark: #b45309;
+    --mascot-sweat: #7dd3fc;
+
     /* ----- Layout constants ----- */
     --shell-sidebar-w: 232px;
     --shell-topbar-h: 56px;
@@ -2105,6 +2119,7 @@ input[type=range] { accent-color: var(--accent); }
 .settings-field-control .prefs-input { width: 14rem; min-width: 0; }
 .settings-field-control .prefs-input[type="number"] { width: 8rem; }
 .model-picker { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.agent-profiles-who { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
 .agent-profiles-actions { display: flex; gap: var(--space-2); justify-content: flex-end; white-space: nowrap; }
 
 .prefs-list { padding-left: 18px; margin: 4px 0; font-size: 12.5px; color: var(--txt-soft); }
@@ -2488,3 +2503,128 @@ input[type=range] { accent-color: var(--accent); }
 .board-ticket-title { width: 100%; }
 .board-runall { margin-bottom: var(--space-3); }
 .board-ai-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-tertiary); white-space: nowrap; }
+
+/* ===== Agent mascots (AgentMascot.razor) =====
+   A cartoon character per agent role that acts out its run state. Only transform/opacity are animated
+   (compositor-only — dozens on a canvas stay cheap). transform-box:view-box puts every transform-origin
+   in the 64x64 viewBox's own units. Motion stops under prefers-reduced-motion or the viewer's
+   System → Appearance → "Animated agents" = off (data-agent-motion="off"); the face still shows state. */
+.mascot { display: inline-block; flex: none; overflow: visible; vertical-align: middle; }
+.mascot * { transform-box: view-box; }
+.mascot.role-orchestrator { --m-c: var(--mascot-orchestrator); --m-d: var(--mascot-orchestrator-dark); --m-b: var(--mascot-orchestrator-belly); }
+.mascot.role-requirement  { --m-c: var(--mascot-requirement);  --m-d: var(--mascot-requirement-dark);  --m-b: var(--mascot-requirement-belly); }
+.mascot.role-coding       { --m-c: var(--mascot-coding);       --m-d: var(--mascot-coding-dark);       --m-b: var(--mascot-coding-belly); }
+.mascot.role-testing      { --m-c: var(--mascot-testing);      --m-d: var(--mascot-testing-dark);      --m-b: var(--mascot-testing-belly); }
+.mascot.role-qa           { --m-c: var(--mascot-qa);           --m-d: var(--mascot-qa-dark);           --m-b: var(--mascot-qa-belly); }
+.mascot.role-generic      { --m-c: var(--mascot-generic);      --m-d: var(--mascot-generic-dark);      --m-b: var(--mascot-generic-belly); }
+
+.mascot .m-shadow { fill: rgba(15, 23, 42, .18); transform-origin: 32px 58.5px; }
+.mascot .m-skin { fill: var(--m-c); stroke: var(--m-d); stroke-width: 1.4; }
+.mascot .m-belly { fill: var(--m-b); opacity: .7; }
+.mascot .m-dark { fill: var(--m-d); }
+.mascot .m-shine { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; opacity: .55; }
+.mascot .m-eye { fill: var(--mascot-eye); stroke: var(--m-d); stroke-width: .8; }
+.mascot .m-pupil { fill: var(--mascot-ink); }
+.mascot .m-glint { fill: #fff; }
+.mascot .m-cheek { fill: var(--mascot-cheek); opacity: .45; }
+.mascot .m-face { fill: none; stroke: var(--mascot-ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.mascot .m-mouth, .mascot .m-ink { fill: var(--mascot-ink); }
+/* Props that stick out past the body use mid-tones so they read on light AND dark surfaces. */
+.mascot .m-stick { fill: none; stroke: var(--mascot-gold-dark); stroke-width: 1.9; stroke-linecap: round; }
+.mascot .m-antenna { fill: none; stroke: var(--m-d); stroke-width: 1.8; stroke-linecap: round; }
+.mascot .m-tip { fill: #fff; stroke: var(--mascot-gold-dark); stroke-width: .7; }
+.mascot .m-board { fill: #a16207; }
+.mascot .m-paper { fill: #fff; }
+.mascot .m-lines { fill: none; stroke: #94a3b8; stroke-width: 1.1; stroke-linecap: round; stroke-dasharray: 7; }
+.mascot .m-pencil-body { fill: none; stroke: var(--mascot-gold); stroke-width: 2.8; }
+.mascot .m-screen { fill: #1e293b; stroke: #94a3b8; stroke-width: .8; }
+.mascot .m-code { fill: #7dd3fc; font: 700 5.6px var(--font-mono); }
+.mascot .m-cursor { fill: #7dd3fc; }
+.mascot .m-base { fill: #94a3b8; }
+.mascot .m-handle { fill: none; stroke: #475569; stroke-width: 2.6; stroke-linecap: round; }
+.mascot .m-glass { fill: rgba(186, 230, 253, .45); stroke: #475569; stroke-width: 2; }
+.mascot .m-glass-shine { fill: none; stroke: #fff; stroke-width: 1.2; stroke-linecap: round; }
+.mascot .m-shield { fill: var(--mascot-gold); stroke: var(--mascot-gold-dark); stroke-width: 1; }
+.mascot .m-check { fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 12; }
+.mascot .m-bulb { fill: var(--accent); }
+.mascot .m-star { fill: var(--mascot-gold); transform-box: fill-box; transform-origin: center; }
+.mascot .m-z { fill: var(--txt-dim); font: 700 7px var(--font-sans); }
+.mascot .m-z2 { font-size: 9px; }
+.mascot .m-note { fill: var(--m-d); font: 700 9px var(--font-sans); }
+.mascot .m-sweat { fill: var(--mascot-sweat); }
+
+/* Face + effects per state (static — still legible without motion). */
+.mascot .m-eyes-happy, .mascot .m-eyes-shut, .mascot .m-eyes-x,
+.mascot .m-talk, .mascot .m-grin, .mascot .m-frown, .mascot .m-fx { display: none; }
+.mascot.is-running .m-smile { display: none; }
+.mascot.is-running .m-talk, .mascot.is-running .m-notes { display: inline; }
+.mascot.is-done .m-eyes, .mascot.is-done .m-smile { display: none; }
+.mascot.is-done .m-eyes-happy, .mascot.is-done .m-grin, .mascot.is-done .m-sparkles { display: inline; }
+.mascot.is-failed .m-eyes, .mascot.is-failed .m-smile { display: none; }
+.mascot.is-failed .m-eyes-x, .mascot.is-failed .m-frown, .mascot.is-failed .m-sweat { display: inline; }
+.mascot.is-canned .m-eyes, .mascot.is-canned .m-smile { display: none; }
+.mascot.is-canned .m-eyes-shut, .mascot.is-canned .m-talk, .mascot.is-canned .m-zzz { display: inline; }
+.mascot.is-done .m-check, .mascot.is-canned .m-check { stroke-dashoffset: 0; }
+/* Greyed via the palette, not a filter — a filter over animated content re-rasterizes every frame. */
+.mascot.is-canned, .mascot.is-skipped { --m-c: var(--mascot-generic); --m-d: var(--mascot-generic-dark); --m-b: var(--mascot-generic-belly); }
+.mascot.is-skipped { opacity: .55; }
+.mascot.is-skipped .m-eyes { display: none; }
+.mascot.is-skipped .m-eyes-shut { display: inline; }
+
+/* Motion. */
+.mascot.is-idle .m-body { animation: m-float 3.2s ease-in-out infinite; }
+.mascot.is-idle .m-shadow { animation: m-shadow 3.2s ease-in-out infinite; }
+.mascot.is-idle .m-eyes, .mascot.is-running .m-eyes { transform-origin: 32px 30px; animation: m-blink 4.2s infinite; }
+.mascot.is-idle:hover .m-body { transform-origin: 32px 56px; animation: m-hop .6s var(--ease-emphasized); }
+.mascot.is-running .m-body { transform-origin: 32px 56px; animation: m-bob .62s ease-in-out infinite; }
+.mascot.is-running .m-shadow { animation: m-shadow .62s ease-in-out infinite; }
+.mascot.is-running .m-talk { transform-origin: 32px 40.6px; animation: m-talk .31s ease-in-out infinite alternate; }
+.mascot.is-done .m-body { transform-origin: 32px 56px; animation: m-hop .7s var(--ease-emphasized), m-float 3.2s ease-in-out .7s infinite; }
+.mascot.is-done .m-star { animation: m-sparkle 1.6s ease-in-out infinite; }
+.mascot.is-done .m-sparkles g:nth-child(2) .m-star { animation-delay: .5s; }
+.mascot.is-done .m-sparkles g:nth-child(3) .m-star { animation-delay: 1s; }
+.mascot.is-failed .m-body { transform-origin: 32px 56px; animation: m-shake .45s ease-in-out 2; }
+.mascot.is-failed .m-sweat { animation: m-drip 1.8s ease-in infinite; }
+.mascot.is-canned .m-body { transform-origin: 32px 56px; animation: m-breathe 3.6s ease-in-out infinite; }
+.mascot.is-canned .m-z { animation: m-zzz 2.4s ease-out infinite; }
+.mascot.is-canned .m-z2 { animation-delay: 1.2s; }
+
+/* Role props while working. */
+.mascot.is-running .m-baton { transform-origin: 49.5px 38.5px; animation: m-conduct .5s ease-in-out infinite alternate; }
+.mascot.is-running .m-note { animation: m-zzz 1.6s ease-out infinite; }
+.mascot.is-running .m-note2 { animation-delay: .8s; }
+.mascot.is-running .m-pencil { animation: m-scribble .34s ease-in-out infinite; }
+.mascot.is-running .m-lines { animation: m-write 1.4s linear infinite; }
+.mascot.is-running .m-hand-l { animation: m-type .22s ease-in-out infinite alternate; }
+.mascot.is-running .m-hand-r { animation: m-type .22s ease-in-out .11s infinite alternate; }
+.mascot.is-idle .m-cursor, .mascot.is-running .m-cursor { animation: m-cursor 1s steps(2, jump-none) infinite; }
+.mascot.is-running .m-lens { transform-origin: 49.5px 42px; animation: m-sweep .9s ease-in-out infinite alternate; }
+.mascot.is-running .m-stamp { transform-origin: 49px 43.5px; animation: m-stamp .9s var(--ease-standard) infinite; }
+.mascot.is-running .m-check { animation: m-check .9s var(--ease-standard) infinite; }
+.mascot.is-running .m-bulb { animation: m-cursor .5s steps(2, jump-none) infinite; }
+
+@keyframes m-float    { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+@keyframes m-shadow   { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(.86); } }
+@keyframes m-blink    { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
+@keyframes m-bob      { 0%, 100% { transform: translateY(0) scale(1, 1); } 50% { transform: translateY(-3px) scale(.97, 1.03); } }
+@keyframes m-hop      { 0% { transform: none; } 20% { transform: translateY(1px) scale(1.07, .9); } 50% { transform: translateY(-8px) scale(.94, 1.07); } 80% { transform: translateY(0) scale(1.04, .96); } 100% { transform: none; } }
+@keyframes m-shake    { 0%, 100% { transform: none; } 20% { transform: translateX(-2.5px) rotate(-5deg); } 40% { transform: translateX(2.5px) rotate(5deg); } 60% { transform: translateX(-1.5px) rotate(-3deg); } 80% { transform: translateX(1.5px) rotate(3deg); } }
+@keyframes m-breathe  { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.025, .975); } }
+@keyframes m-talk     { from { transform: scaleY(1); } to { transform: scaleY(.35); } }
+@keyframes m-sparkle  { 0%, 100% { opacity: 0; transform: scale(.3) rotate(0deg); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
+@keyframes m-zzz      { 0% { opacity: 0; transform: translate(0, 0); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(4px, -9px); } }
+@keyframes m-drip     { 0% { opacity: 0; transform: translateY(-2px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(5px); } }
+@keyframes m-conduct  { from { transform: rotate(-22deg); } to { transform: rotate(18deg); } }
+@keyframes m-scribble { 0%, 100% { transform: translate(0, 0); } 33% { transform: translate(-1.6px, 1.2px); } 66% { transform: translate(1.2px, -.8px); } }
+@keyframes m-write    { from { stroke-dashoffset: 14; } to { stroke-dashoffset: 0; } }
+@keyframes m-type     { from { transform: translateY(0); } to { transform: translateY(-1.8px); } }
+@keyframes m-cursor   { 0% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes m-sweep    { from { transform: rotate(-16deg) translateX(-1px); } to { transform: rotate(12deg) translateX(1px); } }
+@keyframes m-stamp    { 0%, 100% { transform: translateY(-3px) rotate(-10deg); } 40% { transform: translateY(2px) rotate(0deg); } 55% { transform: translateY(2px) scale(1.08); } }
+@keyframes m-check    { 0%, 35% { stroke-dashoffset: 12; } 60%, 100% { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+    .mascot, .mascot * { animation: none !important; }
+}
+:root[data-agent-motion="off"] .mascot,
+:root[data-agent-motion="off"] .mascot * { animation: none !important; }

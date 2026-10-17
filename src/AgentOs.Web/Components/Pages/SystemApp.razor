@@ -39,7 +39,7 @@
             case "appearance":
                 <div class="prefs-section">
                     <h2 class="prefs-h">Appearance</h2>
-                    <p class="prefs-sub">Color scheme, wallpaper, glass strength.</p>
+                    <p class="prefs-sub">Color scheme, wallpaper, glass strength, agent animation.</p>
                 </div>
                 <div class="prefs-row">
                     <div class="prefs-label"><strong>Color scheme</strong><br /><span class="prefs-hint">Light or dark UI palette.</span></div>
@@ -64,6 +64,10 @@
                         <input type="range" min="0" max="100" value="@_glass" @oninput="OnGlassChanged" />
                         <span class="prefs-range-val">@_glass%</span>
                     </div>
+                </div>
+                <div class="prefs-row">
+                    <div class="prefs-label"><strong>Animated agents</strong><br /><span class="prefs-hint">Agents act out their run state (working, done, failed). Off keeps the faces, stops the motion; the OS reduce-motion setting always wins.</span></div>
+                    <Toggle Checked="_agentMotion" Title="Animated agents" CheckedChanged="OnAgentMotionChanged" />
                 </div>
                 break;
             case "datetime":
@@ -144,6 +148,7 @@
     private string _theme = "light";
     private string _wall = "enterprise-light";
     private int _glass = 0;
+    private bool _agentMotion = true;
 
     // Date & time
     private bool _clock24 = true;
@@ -174,6 +179,7 @@
             _theme = await JS.InvokeAsync<string>("agenticTheme.getTheme");
             _wall = await JS.InvokeAsync<string>("agenticTheme.getWallpaper");
             _glass = await JS.InvokeAsync<int>("agenticTheme.getGlass");
+            _agentMotion = await JS.InvokeAsync<string>("agenticTheme.getAgentMotion") != "off";
 
             // Reflect the live singleton state (restored at shell start by AppShellLayout).
             _notifs = Toasts.ShowToasts;
@@ -276,6 +282,12 @@
             _glass = v;
             await JS.InvokeVoidAsync("agenticTheme.applyGlass", _glass);
         }
+    }
+
+    private async Task OnAgentMotionChanged(bool v)
+    {
+        _agentMotion = v;
+        await JS.InvokeVoidAsync("agenticTheme.applyAgentMotion", v ? "on" : "off");
     }
 
     private void Lock() => Nav.NavigateTo("/account/logout", forceLoad: true);

@@ -3,14 +3,21 @@
 //   theme      : 'light' | 'dark'
 //   wallpaper  : 'enterprise-light' | 'enterprise-dark' | 'aurora' | 'midnight' | 'sunset'
 //   glass      : 0..100 (percent) → --glass-blur in pixels (0..32px)
+//   agentMotion: 'on' | 'off' → <html data-agent-motion> (AgentMascot animations; reduce-motion always wins)
 window.agenticTheme = {
     THEME_KEY: 'theme',
     WALL_KEY: 'wallpaper',
     GLASS_KEY: 'glass',
+    AGENT_MOTION_KEY: 'agent-motion',
 
     getTheme: function () { return localStorage.getItem(this.THEME_KEY) || 'light'; },
     getWallpaper: function () { return localStorage.getItem(this.WALL_KEY) || 'enterprise-light'; },
     getGlass: function () { var g = parseInt(localStorage.getItem(this.GLASS_KEY), 10); return isNaN(g) ? 0 : g; },
+    getAgentMotion: function () { return window.agenticTheme.readPref(window.agenticTheme.AGENT_MOTION_KEY) === 'off' ? 'off' : 'on'; },
+
+    // Storage can be blocked (private mode, enterprise policy) — a preference must never break the shell.
+    readPref: function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
+    writePref: function (key, value) { try { localStorage.setItem(key, value); } catch (e) { /* not persisted */ } },
 
     applyTheme: function (t) {
         document.documentElement.dataset.theme = t;
@@ -29,6 +36,13 @@ window.agenticTheme = {
         document.documentElement.style.setProperty('--glass-saturate', (100 + p) + '%');
         localStorage.setItem(this.GLASS_KEY, p);
         return p;
+    },
+    applyAgentMotion: function (v) {
+        var T = window.agenticTheme;   // not `this` — Blazor interop drops the receiver.
+        var value = v === 'off' ? 'off' : 'on';
+        document.documentElement.dataset.agentMotion = value;
+        T.writePref(T.AGENT_MOTION_KEY, value);
+        return value;
     },
     toggleTheme: function () {
         // Use the explicit reference, not `this` — Blazor's JS interop invokes this
@@ -69,6 +83,7 @@ window.agenticTheme = {
         this.applyTheme(this.getTheme());
         this.applyWallpaper(this.getWallpaper());
         this.applyGlass(this.getGlass());
+        this.applyAgentMotion(this.getAgentMotion());
     },
 };
 

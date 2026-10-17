@@ -303,9 +303,13 @@ a.syn-nav-item { text-decoration: none; }
 }
 .step-node .sn-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px; background: var(--syn-head); }
 .step-node .sn-ico { font-size: 13px; opacity: .9; }
+/* Agent + evaluator nodes show the agent itself (AgentMascot), floated in the body so the title keeps the
+   full head width. flow-root contains the float. No filter on it: a filter over
+   animated content re-rasterizes every frame. */
+.step-node .sn-mascot { float: right; display: flex; margin: -2px -4px 2px 6px; }
 .step-node .sn-title { font-weight: 600; font-size: 12.5px; color: var(--syn-text-strong); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-node .sn-start { font-size: 9px; font-weight: 700; letter-spacing: .5px; background: var(--syn-start-bg); color: var(--syn-start-fg); padding: 2px 6px; border-radius: 4px; }
-.step-node .sn-body { padding: 8px 10px; }
+.step-node .sn-body { padding: 8px 10px; display: flow-root; }
 .step-node .sn-type { font-size: 9.5px; font-weight: 700; letter-spacing: 1px; color: var(--syn-muted); margin-bottom: 5px; }
 .step-node .sn-desc { font-size: 11px; color: var(--syn-text-soft); margin-bottom: 6px; line-height: 1.35; }
 .step-node .sn-io { font-size: 10.5px; color: var(--syn-text-dim); }

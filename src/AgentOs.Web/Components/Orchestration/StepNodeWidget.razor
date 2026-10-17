@@ -21,6 +21,12 @@
     </div>
 
     <div class="sn-body">
+        @if (MascotRole is not null)
+        {
+            @* The agent itself, acting out the node's live run state (see AgentMascot). Floated so the
+               title keeps the full head width and the text wraps around the character. *@
+            <span class="sn-mascot"><AgentMascot Role="@MascotRole" State="@MascotState" Size="40" /></span>
+        }
         <div class="sn-type">@TypeLabel</div>
         @if (!string.IsNullOrWhiteSpace(Data.Description))
         {
@@ -78,6 +84,25 @@
         NodeRunState.Skipped => "skipped",
         NodeRunState.Canned => "canned",
         _ => "idle",
+    };
+
+    // Which agent runs this node — mirrors GraphExecutor.RoleOf: an Evaluator step executes as the QA agent,
+    // an Agent step as its role. Other steps (logic, tools, human) have no agent, so no character.
+    private string? MascotRole => Data.Type switch
+    {
+        StepType.Evaluator => "Qa",
+        StepType.Agent => Data.AgentRole ?? string.Empty,
+        _ => null,
+    };
+
+    private AgentMascot.MascotState MascotState => Node.RunState switch
+    {
+        NodeRunState.Running => AgentMascot.MascotState.Running,
+        NodeRunState.Done => AgentMascot.MascotState.Done,
+        NodeRunState.Failed => AgentMascot.MascotState.Failed,
+        NodeRunState.Skipped => AgentMascot.MascotState.Skipped,
+        NodeRunState.Canned => AgentMascot.MascotState.Canned,
+        _ => AgentMascot.MascotState.Idle,
     };
 
     // A glyph, not an icon-font call, so the status dot renders identically inside the SVG-hosted canvas
