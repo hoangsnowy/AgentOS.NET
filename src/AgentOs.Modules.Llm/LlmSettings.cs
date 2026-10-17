@@ -9,7 +9,8 @@ using AgentOs.Domain.Llm;
 namespace AgentOs.Modules.Llm;
 
 /// <summary>Declares <c>Llm:*</c> settings.</summary>
-public sealed class LlmSettings : ISettingsContributor
+/// <param name="offlineFallbackDefault">Default for <see cref="OfflineFallback"/> — on only in Development.</param>
+public sealed class LlmSettings(bool offlineFallbackDefault = false) : ISettingsContributor
 {
     /// <summary>UI category for provider wiring.</summary>
     public const string Category = "LLM providers";
@@ -42,7 +43,7 @@ public sealed class LlmSettings : ISettingsContributor
         };
         yield return new(OfflineFallback, SettingKind.Boolean, Category, "Offline fallback")
         {
-            DefaultValue = "false",
+            DefaultValue = offlineFallbackDefault ? "true" : "false",
             Scope = SettingScope.Platform,
             Help = "When a provider has no key, answer with canned output instead of failing. Runs are labelled Offline. Dev/demo only.",
         };

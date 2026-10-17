@@ -25,13 +25,19 @@ public sealed class LlmModule : IModule
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
+        // Code is the single source of defaults (ADR-0011, C.6) — appsettings carries no Llm section. The one
+        // environment-dependent default: a fresh Development checkout has no keys, so it answers with
+        // labelled offline output instead of failing; everywhere else a missing key fails loudly (and
+        // Production also locks it off). Configure runs before Bind, so any explicit value still wins.
+        var offlineByDefault = ModuleEnvironment.IsDevelopment(configuration);
         services.AddOptions<LlmOptions>()
+            .Configure(o => o.OfflineFallback = offlineByDefault)
             .Bind(configuration.GetSection(LlmOptions.SectionName))
             .ValidateOnStart();
 
         services.TryAddSingleton(TimeProvider.System);
         // UI-first settings (ADR-0011): provider wiring, editable in the desktop.
-        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, LlmSettings>();
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor>(new LlmSettings(offlineByDefault));
         services.AddSingleton<ApiKeyRouter>();
         services.AddSingleton<IRuntimeOverrides, RuntimeOverrides>();
 

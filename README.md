@@ -51,7 +51,7 @@ Postgres schema, so any one of them can later ship as a standalone NuGet package
   references another's runtime types — only contracts in `Domain` / `SharedKernel`.
 - **Provider-agnostic LLM gateway.** Claude (Anthropic.SDK), Azure OpenAI (`Azure.AI.OpenAI`),
   MAF (Microsoft Agent Framework), and a remote dev-IDE agent all register as keyed
-  `ILlmClient` under their canonical name. Swap a provider in `appsettings.json`; no code change.
+  `ILlmClient` under their canonical name. Swap a provider in Settings → Agent profiles; no code change, no restart.
 - **Multi-tenant from day one.** Row-level isolation via EF Core global query filters; a
   Keycloak-backed OIDC `tenant` claim drives `ITenantContext`. A Development-only `DevAutoLogin`
   handler keeps a fixed user for standalone local runs; anonymous requests fall back to a default
@@ -242,7 +242,7 @@ process restart keeps the operator's last-saved keys.
 | Testing | AzureOpenAI | `gpt-4o-mini` |
 | QA | Claude | `claude-haiku-4-5` |
 
-Illustrative only — reassign any agent to any provider in `appsettings.json`. The shipped config
+Illustrative only — reassign any agent to any provider in Settings → Agent profiles. The code defaults
 uses the provider alias `Anthropic`, which `LlmClientFactory.NormalizeKey` normalizes to `Claude`.
 
 ## Configuration
@@ -256,23 +256,12 @@ dotnet user-secrets set "Llm:AzureOpenAi:ApiKey" "..."
 dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://<resource>.openai.azure.com"
 ```
 
-Per-agent provider/model lives in `appsettings.json`:
-
-```json
-{
-  "Llm": {
-    "Claude":      { "ApiKey": "", "ApiKeys": [] },
-    "AzureOpenAi": { "Endpoint": "", "ApiKey": "", "ApiKeys": [], "Model": "gpt-4.1" }
-  },
-  "Agents": {
-    "Orchestrator": { "Provider": "Claude",      "Model": "claude-haiku-4-5", "Temperature": 0.3, "MaxTokens": 2000 },
-    "Requirement":  { "Provider": "Claude",      "Model": "claude-sonnet-4-6", "Temperature": 0.1, "MaxTokens": 2000 },
-    "Coding":       { "Provider": "AzureOpenAI", "Model": "gpt-4.1",          "Temperature": 0.2, "MaxTokens": 4000 },
-    "Testing":      { "Provider": "AzureOpenAI", "Model": "gpt-4o-mini",      "Temperature": 0.2, "MaxTokens": 3000 },
-    "Qa":           { "Provider": "Claude",      "Model": "claude-haiku-4-5", "Temperature": 0.1, "MaxTokens": 1500 }
-  }
-}
-```
+Everything else is configured in the desktop: **Settings → Agent profiles** (per-agent provider,
+model, temperature, max output tokens, QA-loop cap), **LLM providers** (keys, endpoints, routing) and
+**Platform** (safety switches, build sandbox). Changes apply to the next call — no restart.
+`appsettings.json` holds bootstrap keys only (database, sign-in, logging, operator locks); any setting
+can still be *seeded* from the environment, e.g. `Agents__Coding__Model=gpt-5.4`. Full reference —
+what you set at deploy vs in the UI, precedence, Production locks — in [docs/CONFIG.md](docs/CONFIG.md).
 
 ### Multi-key pool + 429 failover
 

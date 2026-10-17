@@ -25,6 +25,7 @@ public static class ModuleEnvironment
     public static bool IsProduction(IConfiguration configuration)
         => string.Equals(Name(configuration), "Production", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary><c>true</c> when the host environment is Development (first-run conveniences, e.g. offline LLM fallback).</summary>
     public static bool IsDevelopment(IConfiguration configuration)
         => string.Equals(Name(configuration), "Development", StringComparison.OrdinalIgnoreCase);
 }
