@@ -110,9 +110,9 @@ public sealed class MafChatClient : ILlmClient
         var cost = CostCalculator.Calculate(pricingModel, inputTokens, outputTokens);
         if (!CostCalculator.IsKnown(pricingModel))
         {
-            // Unpriced model = the budget gate and the Cost app are blind to this spend.
+            // Unpriced model = cost is a pessimistic ceiling estimate until the model is added to the table.
             _logger.LogWarning(
-                "Cost: model {Model} is not in the price table — call recorded UNPRICED ($0). "
+                "Cost: model {Model} is not in the price table — cost ESTIMATED at the fail-closed ceiling rate. "
                 + "Update CostCalculator or set 'Llm:AzureOpenAi:PricingModel' to a canonical price-table id.",
                 LogSafe.Scrub(pricingModel));
         }

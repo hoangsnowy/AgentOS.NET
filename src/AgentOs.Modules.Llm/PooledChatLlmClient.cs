@@ -166,9 +166,9 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                 var cost = CostCalculator.Calculate(request.Model, inputTokens, outputTokens);
                 if (!CostCalculator.IsKnown(request.Model))
                 {
-                    // Unpriced model = the budget gate and the Cost app are blind to this spend.
+                    // Unpriced model = cost is a pessimistic ceiling estimate until the model is added to the table.
                     _logger.LogWarning(
-                        "Cost: model {Model} is not in the price table — call recorded UNPRICED ($0). Update CostCalculator.",
+                        "Cost: model {Model} is not in the price table — cost ESTIMATED at the fail-closed ceiling rate so it still counts against the budget. Add it to CostCalculator.",
                         LogSafe.Scrub(request.Model));
                 }
                 LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, response.ModelId ?? request.Model,

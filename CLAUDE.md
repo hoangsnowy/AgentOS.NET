@@ -83,7 +83,7 @@ The 5 agents **do not call vendor SDKs directly** — they depend on `ILlmClient
 - **`MAF`** — Microsoft Agent Framework `ChatClient` (`Microsoft.Agents.AI`).
 - **`RemoteAgent`** — dispatches to a paired dev-machine agent over SignalR (owned by `Modules.RemoteAgent`).
 
-Provider selection: `Llm:ForceProvider` / per-agent `Agents:<Name>:Provider` + runtime overrides from the Settings UI (hydrated per request from tenant-scoped `AppConfig`). Cost: `CostCalculator.Calculate(model, in, out)` looks up hardcoded pricing (Sonnet 4 / Haiku 4.5 / GPT-4.1 / GPT-4o-mini, USD per 1M tokens, Q2/2026 snapshot); case-insensitive `StartsWith` match (allows suffixes like `claude-sonnet-4-20250514`); no match → `0m`.
+Provider selection: `Llm:ForceProvider` / per-agent `Agents:<Name>:Provider` + runtime overrides from the Settings UI (hydrated per request from tenant-scoped `AppConfig`). Cost: `CostCalculator.Calculate(model, in, out[, cacheRead, cacheWrite])` looks up a built-in price table (Claude Fable/Opus/Sonnet/Haiku + GPT-4.1/4o families, USD per 1M tokens, Oct 2026 list prices, incl. prompt-cache rates) by **exact id** in a `FrozenDictionary`; dated snapshots resolve to their base id (`claude-sonnet-4-20250514`, `gpt-4o-mini-2024-07-18`, `…@20251101`). No loose prefix match (`gpt-4.1` must not price `gpt-4.1-mini`). Unknown model → **fail-closed** at the table's ceiling rate (never `$0`, so it can't bypass the budget gate) + a warning; `IsKnown` tells callers which.
 
 ### Tools, policy & evidence (governance)
 
