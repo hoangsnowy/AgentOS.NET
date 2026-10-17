@@ -38,12 +38,21 @@ public sealed class RemoteAgentHub : Hub
         _pairing = pairing;
     }
 
+    private static string? HeaderOrQuery(Microsoft.AspNetCore.Http.HttpRequest? request, string header, string query)
+    {
+        if (request is null) { return null; }
+        var fromHeader = request.Headers[header].ToString();
+        return string.IsNullOrWhiteSpace(fromHeader) ? request.Query[query].ToString() : fromHeader;
+    }
+
     /// <inheritdoc />
     public override async Task OnConnectedAsync()
     {
-        var query = Context.GetHttpContext()?.Request.Query;
-        var rawRunnerId = query?["runnerId"].ToString();
-        var presentedToken = query?["token"].ToString();
+        // Credentials come in headers (E0.5 — the token must not ride the URL, which lands in proxy/server logs);
+        // the query string is accepted only as a fallback for runner binaries that predate it.
+        var request = Context.GetHttpContext()?.Request;
+        var rawRunnerId = HeaderOrQuery(request, "X-AgentOS-Runner-Id", "runnerId");
+        var presentedToken = HeaderOrQuery(request, "X-AgentOS-Runner-Token", "token");
 
         if (!Guid.TryParse(rawRunnerId, CultureInfo.InvariantCulture, out var runnerId)
             || string.IsNullOrWhiteSpace(presentedToken))

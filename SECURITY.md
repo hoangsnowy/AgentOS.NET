@@ -42,6 +42,11 @@ When reporting, include: affected component, reproduction steps, and impact.
   output (`PrGate`, enforced inside the PR service itself): failed runs, the iteration cap with QA still
   failing, and offline canned text are blocked with the reason on the session.
 - **SSRF guard** — tenant-supplied hosts are validated and limited to an allowlist.
+- **Paired runners** — a server-driven shell command runs on a developer's machine only if every segment of the
+  chain starts with an allowlisted build/test/VCS program (`REMOTE_AGENT_ALLOW` to change); command
+  substitution is refused; anything else needs approval at the runner console and is denied when nobody is
+  there. Each command has a timeout that kills the whole process tree. The pairing token travels in a header,
+  never in the URL.
 - **Supply chain / SAST** — Dependabot, dependency review, SHA-pinned actions, CodeQL with
   compiler-enforced twins for its query classes.
 
