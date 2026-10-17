@@ -1,6 +1,7 @@
 // AgentOs.Application/Prompts/RequirementPrompt.cs
 // Sprint 3 — extracted the prompt from RequirementAgent. Version v1.
 
+using AgentOs.Domain.Llm;
 using AgentOs.Domain.Pipeline;
 
 namespace AgentOs.Modules.Pipeline.Prompts;
@@ -9,7 +10,7 @@ namespace AgentOs.Modules.Pipeline.Prompts;
 public static class RequirementPrompt
 {
     /// <summary>Prompt version. Bump when editing <see cref="System"/> or <see cref="RenderUser"/>.</summary>
-    public const string Version = "v1";
+    public const string Version = "v1.1";   // v1.1: untrusted-input rule (ticket stories are fenced data)
 
     /// <summary>System prompt.</summary>
     public const string System = """
@@ -36,7 +37,7 @@ public static class RequirementPrompt
         - MUST have ≥ 1 entity, ≥ 1 endpoint, ≥ 3 acceptance criteria.
         - Use English for all field text except the entity name (English PascalCase) and the HTTP method.
         - Do NOT include comments, do NOT use a trailing comma.
-        """;
+        """ + "\n" + UntrustedText.SystemRule;
 
     /// <summary>Renders the user prompt from the user story.</summary>
     public static string RenderUser(UserStory story)

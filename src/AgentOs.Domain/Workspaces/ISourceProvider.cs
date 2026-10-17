@@ -41,6 +41,14 @@ public interface ISourceProvider
     /// <summary>Read the board's items (tickets) across all repos it spans.</summary>
     Task<BoardTickets> ReadBoardTicketsAsync(BoardDescriptor board, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Read the current description (body) of ticket <paramref name="number"/> on <paramref name="repo"/> — read
+    /// at run time so the agent sees the latest edit, not a copy taken when the session was created. Returns
+    /// null when the backend can't supply it (the run then proceeds on the title alone). The text is
+    /// third-party input: callers must fence it (<c>UntrustedText.Wrap</c>) before it reaches a prompt.
+    /// </summary>
+    Task<string?> ReadTicketBodyAsync(WorkspaceDescriptor repo, int number, CancellationToken cancellationToken = default);
+
     // ── Writes (bootstrap) ───────────────────────────────────────────────────────────────────────
     // The first write members: stamping a standard label taxonomy and creating tickets from a
     // generated RequirementSpec. Labels are repo-scoped, so they take a WorkspaceDescriptor.
