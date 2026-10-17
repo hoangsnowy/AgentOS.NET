@@ -355,6 +355,33 @@ not agent activity).
 
 ---
 
+### The software-factory view (owner request 2026-10-17)
+
+Reference: "software factory explained by a Senior Engineer" (theSeniorDev). The goal is the same as this
+plan — *build the factory, not the code*: a chain of agent **stations** that turns raw signals into merged,
+verified changes, and engineers improve the factory when output is wrong. Station → where it lands here:
+
+| Station (video) | AgentOS | Status / gap |
+|---|---|---|
+| Triage agent — automated bug collection | **P8 SRE/incident agent** (App Insights, Sentry MCP, Board issues) + **new F.1 Triage**: cluster errors/user reports into deduplicated tickets (SimHash/LSH dedupe, §2.7) | gap → add F.1 |
+| Refinement agent — bug report → scoped ticket | **P6 spec-driven** (clarifying questions, acceptance criteria, `TicketDecomposerAgent`) | planned |
+| Prioritizer — what gets built | **new F.2 Prioritizer**: score tickets (impact × confidence ÷ effort, blast radius) into a priority queue (heap); human can reorder | gap → add F.2 |
+| Implementer — CLAUDE.md, skills, MCP | **P5 built-in executor** + **P4 skills/MCP** + project memory (P3) | planned |
+| Built-in quality pipeline | QA on real signals (P5), **P7 code-review + security agents** | planned |
+| E2E tests over TDD + visual diffs | P5 runs E2E; **new F.3 visual-diff check** (Playwright screenshots vs baseline, pixel/perceptual diff) | gap → add F.3 |
+| 100-turn limit when stuck | iteration cap + **task budgets** (P2) + stuck detection (no-progress in N turns → escalate to a human) | partial → in P5 |
+| PRs, blast radius, auto-merge | **new F.4 merge policy**: blast-radius score (files/modules touched, ownership, test coverage of changed lines); low radius + green checks + AI review pass → auto-merge, else human | gap → add F.4 |
+| AI reviewer | **P7 code-review agent** | planned |
+| Staging, smoke tests, QA agent | **P8 deploy agent** + smoke tests + QA agent driving the running app (Playwright MCP) | planned |
+| Formal verification | out of scope for v2 (note for later: property-based tests as the practical step) | deferred |
+| Observability, agent-friendly codebase | **P1 metrics ledger**, OTel GenAI, repo map (P3) | planned |
+| Model router, docs agent, feature flags | **P2.5 model router**, **P8 docs agent**, **new F.5 feature-flag gating** of agent-shipped changes | gap → add F.5 |
+
+**Phase F — Factory stations (folds into P6–P8 order):** F.1 Triage · F.2 Prioritizer · F.3 visual diffs ·
+F.4 blast-radius + auto-merge policy (configurable in Settings, default = human merge) · F.5 feature flags.
+A **Factory** desktop app shows the line as stations with live throughput, queue depth, pass/fail and
+$ per station — straight off the P1 metrics ledger.
+
 ## 4. Sequencing & dependencies
 
 ```
