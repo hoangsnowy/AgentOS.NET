@@ -16,6 +16,11 @@ second, long-running full stack on this machine that never collides with the dev
 
 Login on both: `operator` / `operator` (realm `agentic`).
 
+> **Use a separate browser profile (or an incognito window) for the lab.** Cookies are scoped to the host,
+> not the port, so the dev and lab Keycloaks (and every other app on `localhost`) share one cookie jar; once
+> it overflows, sign-in fails with **HTTP 431** on both stacks. A fresh profile/incognito window fixes it
+> instantly; clearing `localhost` site data also works.
+
 ## Lab commands
 
 ```powershell
