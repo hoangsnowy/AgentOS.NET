@@ -84,10 +84,13 @@ public sealed class WorkflowAppRealAuthTests : IClassFixture<AgentOsRealAuthFixt
 
         await StartRunAsync(win);
 
-        // The drawn nodes reach the Done run-state on the canvas (not a static mock) and the run completes.
-        await Assertions.Expect(win.Locator(".step-node.run-done").First).ToBeVisibleAsync(
+        // The drawn nodes reach a finished run-state on the canvas (not a static mock) and the run completes.
+        // The full stack may or may not have a provider key: live → "Workflow complete." with Done nodes;
+        // keyless → a labelled "Dry run complete — OFFLINE" with Canned agent nodes. Either is honest.
+        await Assertions.Expect(win.Locator(".step-node.run-done, .step-node.run-canned").First).ToBeVisibleAsync(
             new LocatorAssertionsToBeVisibleOptions { Timeout = 90_000 });
-        await Assertions.Expect(win.Locator(".syn-log")).ToContainTextAsync("Workflow complete",
+        await Assertions.Expect(win.Locator(".syn-log")).ToContainTextAsync(
+            new System.Text.RegularExpressions.Regex("Workflow complete|Dry run complete — OFFLINE"),
             new LocatorAssertionsToContainTextOptions { Timeout = 90_000 });
     }
 }

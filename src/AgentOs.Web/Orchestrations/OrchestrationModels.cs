@@ -92,6 +92,9 @@ public enum NodeRunState
 
     /// <summary>Not run — the node type isn't supported by the executor yet.</summary>
     Skipped,
+
+    /// <summary>Finished on canned offline output — no model was called (no API key + offline fallback).</summary>
+    Canned,
 }
 
 /// <summary>A step on the canvas. The (X,Y) position is in canvas coordinates.</summary>
