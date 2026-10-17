@@ -116,10 +116,13 @@ internal sealed class WebHostProbe : ServiceProbe
     private readonly CircuitCounter _circuits;
     private readonly IServer _server;
     private readonly TimeProvider _time;
+    private readonly AgentOs.Modules.AppConfig.KeyRingProtection? _keyRing;
 
-    public WebHostProbe(IHostEnvironment env, DevModeState dev, IConfiguration config, CircuitCounter circuits, IServer server, TimeProvider time)
+    public WebHostProbe(IHostEnvironment env, DevModeState dev, IConfiguration config, CircuitCounter circuits, IServer server, TimeProvider time,
+        AgentOs.Modules.AppConfig.KeyRingProtection? keyRing = null)
         : base("web", "Web desktop", "Blazor Server host", "squares-four", 0)
     {
+        _keyRing = keyRing;
         _env = env;
         _dev = dev;
         _config = config;
@@ -149,8 +152,16 @@ internal sealed class WebHostProbe : ServiceProbe
             new("GC", $"{(GCSettings.IsServerGC ? "Server" : "Workstation")} · {GCSettings.LatencyMode}"),
         ];
         if (commit is not null) { facts.Insert(0, new("Build", commit)); }
+        // E0.2: the key ring encrypts every tenant secret; unwrapped outside Development is a finding.
+        var unwrappedInProd = _keyRing is { IsWrapped: false } && !_env.IsDevelopment();
+        facts.Add(new("Key ring", _keyRing switch
+        {
+            null => "—",
+            { IsWrapped: true } k => $"Wrapped · {k.Mode}",
+            _ => unwrappedInProd ? "Unwrapped — set DataProtection:KeyVaultKeyId or a certificate" : "Unwrapped (fine in Development)",
+        }));
 
-        return Task.FromResult(Status(ServiceHealth.Healthy) with
+        return Task.FromResult(Status(unwrappedInProd ? ServiceHealth.Degraded : ServiceHealth.Healthy) with
         {
             Version = Format.ShortVersion(InformationalVersion),
             Summary = $"{_env.EnvironmentName} · {Environment.ProcessorCount} CPUs",
@@ -162,6 +173,7 @@ internal sealed class WebHostProbe : ServiceProbe
                 new("OS", RuntimeInformation.OSDescription),
                 new("Machine", Environment.MachineName),
                 new("Cookie prefix", _config["Auth:CookiePrefix"] is { Length: > 0 } p ? p : "agentic (default)"),
+                new("Key ring protection", _keyRing?.Detail ?? "none"),
             ],
         });
     }
