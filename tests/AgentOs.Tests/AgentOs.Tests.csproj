@@ -44,4 +44,10 @@
     <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The runner is an exe whose top-level records would clash with Modules.RemoteAgent's; compile only its
+         dependency-free command policy into the tests. -->
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\RunnerCommandPolicy.cs" Link="Linked\RunnerCommandPolicy.cs" />
+  </ItemGroup>
+
 </Project>

@@ -18,6 +18,13 @@
 //                       codex --full-auto) — the "Run on my machine" opt-in for non-interactive tool use.
 //   REMOTE_AGENT_CMD    override the profile's command (advanced)
 //   REMOTE_AGENT_ARGS   override the profile's args entirely (advanced; wins over the profile + YOLO)
+//   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
+//                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
+//   REMOTE_AGENT_TIMEOUT_SECONDS  per shell command (default 600); on expiry the whole process tree is killed
+//
+// A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
+// 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
+// never in the URL (URLs end up in proxy and server logs).
 //
 // "Run on my machine" (issue-work routed to the local CLI): the server sends a full agentic prompt
 // that expects the CLI to clone, edit, build, and `git push` on its own. For that the CLI must
@@ -33,12 +40,22 @@ using Microsoft.AspNetCore.SignalR.Client;
 
 const int MaxOutputBytes = 32 * 1024; // 32 KB cap on tool output
 
+var policy = AgentOs.RemoteAgent.RunnerCommandPolicy.FromSetting(Environment.GetEnvironmentVariable("REMOTE_AGENT_ALLOW"));
+var commandTimeout = TimeSpan.FromSeconds(int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_TIMEOUT_SECONDS"), out var t) && t > 0 ? t : 600);
+var approvedForSession = new HashSet<string>(StringComparer.Ordinal);
+var approvalGate = new SemaphoreSlim(1, 1);
+
 var hubUrl = Environment.GetEnvironmentVariable("REMOTE_AGENT_HUB") ?? "https://localhost:5080/hubs/remote-agent";
 var runnerId = Environment.GetEnvironmentVariable("REMOTE_AGENT_ID") ?? "";
 var token = Environment.GetEnvironmentVariable("REMOTE_AGENT_TOKEN") ?? "";
 
 var connection = new HubConnectionBuilder()
-    .WithUrl($"{hubUrl}?runnerId={Uri.EscapeDataString(runnerId)}&token={Uri.EscapeDataString(token)}")
+    .WithUrl(hubUrl, options =>
+    {
+        // Credentials in headers, not the query string (E0.5): the hub reads these first.
+        options.Headers["X-AgentOS-Runner-Id"] = runnerId;
+        options.Headers["X-AgentOS-Runner-Token"] = token;
+    })
     .WithAutomaticReconnect()
     .Build();
 
@@ -60,7 +77,7 @@ connection.On<RemoteExecRequest>("Execute", async request =>
 connection.On<RunnerToolCall>("ExecuteToolCall", async call =>
 {
     Console.WriteLine($"[agent] ExecuteToolCall {call.ToolCallId} ({call.ToolName})");
-    var result = await ExecuteToolAsync(call).ConfigureAwait(false);
+    var result = await ExecuteToolAsync(call, policy, commandTimeout, ApproveAsync).ConfigureAwait(false);
     await connection.SendAsync("CompleteToolCall", result).ConfigureAwait(false);
     Console.WriteLine($"[agent] -> {call.ToolCallId} ok={result.Ok}");
 });
@@ -187,7 +204,38 @@ static CliProfile ResolveProfile(string cli) => cli.ToUpperInvariant() switch
 
 // ── M4: execute a single tool call (shell command) ──────────────────────────────────────────────
 
-static async Task<RunnerToolResult> ExecuteToolAsync(RunnerToolCall call)
+// Ask the person at the console. Serialized (one prompt at a time); 60 s, default deny; "a" approves the exact
+// command for the rest of this runner session. No interactive console → deny.
+async Task<bool> ApproveAsync(string command, string reason)
+{
+    if (approvedForSession.Contains(command)) { return true; }
+    if (Console.IsInputRedirected || !Environment.UserInteractive)
+    {
+        Console.WriteLine($"[agent] DENIED (no console to approve; {reason}): {command}");
+        return false;
+    }
+    await approvalGate.WaitAsync().ConfigureAwait(false);
+    try
+    {
+        Console.WriteLine($"[agent] The server asks to run a command that needs approval ({reason}):");
+        Console.WriteLine($"          {command}");
+        Console.Write("[agent] Allow? [y]es / [a]lways this session / [N]o (60 s): ");
+        var read = Task.Run(Console.ReadLine);
+        var answer = await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(60))).ConfigureAwait(false) == read
+            ? (await read.ConfigureAwait(false))?.Trim().ToLowerInvariant()
+            : null;
+        Console.WriteLine();
+        if (answer == "a") { approvedForSession.Add(command); return true; }
+        return answer == "y";
+    }
+    finally
+    {
+        approvalGate.Release();
+    }
+}
+
+static async Task<RunnerToolResult> ExecuteToolAsync(
+    RunnerToolCall call, AgentOs.RemoteAgent.RunnerCommandPolicy policy, TimeSpan timeout, Func<string, string, Task<bool>> approve)
 {
     try
     {
@@ -202,6 +250,12 @@ static async Task<RunnerToolResult> ExecuteToolAsync(RunnerToolCall call)
 
         var command = root.GetProperty("command").GetString()
             ?? throw new InvalidOperationException("Missing 'command' in tool input.");
+
+        if (policy.Check(command) is { } needsApproval && !await approve(command, needsApproval).ConfigureAwait(false))
+        {
+            return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty,
+                $"Refused by the runner: {needsApproval}. Approve it at the runner console, or add it to REMOTE_AGENT_ALLOW.");
+        }
 
         string? workingDir = null;
         if (root.TryGetProperty("working_dir", out var wdProp))
@@ -232,7 +286,20 @@ static async Task<RunnerToolResult> ExecuteToolAsync(RunnerToolCall call)
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().ConfigureAwait(false);
+        using (var deadline = new CancellationTokenSource(timeout))
+        {
+            try
+            {
+                await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Runaway command: kill the whole tree (a shell's children too), report, never hang the session.
+                process.Kill(entireProcessTree: true);
+                return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty,
+                    $"Timed out after {timeout.TotalSeconds:0} s — the process tree was killed.");
+            }
+        }
 
         var stdout = await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
