@@ -44,6 +44,8 @@ public sealed class BoardAppRealAuthTests : IClassFixture<AgentOsRealAuthFixture
         var win = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Board");
 
+        // Runner registration lives on the Runners tab (Board opens on Boards).
+        await win.Locator(".board-tab", new() { HasTextString = "Runners" }).ClickAsync();
         var label = "e2e-runner-" + Guid.NewGuid().ToString("N")[..8];
         await win.GetByPlaceholder("Hoang's laptop").FillAsync(label);
         await win.GetByRole(AriaRole.Button, new() { Name = "Register runner" }).ClickAsync();
