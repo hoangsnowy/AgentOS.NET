@@ -35,6 +35,9 @@ governance, and evidence/audit built in.
 
 ### Competitive positioning
 
+Full 2026-10-18 scan (the "AgentOS" name collision, a feature matrix against OpenHands / Devin / Copilot /
+Cursor / Claude Code / Codex / Agno, and the parity track): [docs/plans/competitive-parity.md](docs/plans/competitive-parity.md).
+
 | Product | Form factor | Language | Focus | Multi-tenant / on-prem | Where AgentOS differs |
 |---------|-------------|----------|-------|------------------------|------------------------|
 | [AutoGen](https://github.com/microsoft/autogen) (Microsoft) | Python library | Python | General multi-agent conversation | No (library) | AgentOS is a deployed product with UI + identity, not a lib you assemble |
@@ -74,7 +77,7 @@ AgentOS is a working platform, not a sketch. Already shipped:
   ([#54](https://github.com/hoangsnowy/AgentOs/pull/54),
   [#73](https://github.com/hoangsnowy/AgentOs/pull/73)).
 - **5-agent SDLC pipeline** (Orchestrator/Requirement/Coding/Testing/QA) in a **Leader–Specialists–Quality loop** that iterates to convergence or an iteration cap.
-- **Provider-agnostic LLM gateway** — Claude + Azure OpenAI via `Microsoft.Extensions.AI` `IChatClient`, plus Microsoft Agent Framework and a paired dev-machine **RemoteAgent** (zero server API tokens). Multi-key pool with 429 failover; cost calculation; per-tenant BYO LLM keys ([#71](https://github.com/hoangsnowy/AgentOs/pull/71)).
+- **Provider-agnostic LLM gateway** — Claude, Azure OpenAI, bring-your-own-key OpenAI / Gemini / xAI ([#214](https://github.com/hoangsnowy/AgentOs/pull/214)) and any OpenAI-compatible server via `Microsoft.Extensions.AI` `IChatClient`, plus Microsoft Agent Framework and a paired dev-machine **RemoteAgent** (zero server API tokens). Multi-key pool with 429 failover; cost calculation; per-tenant BYO LLM keys ([#71](https://github.com/hoangsnowy/AgentOs/pull/71)).
 - **Safety baseline** — budget gate on every server-token entrypoint, per-tenant rate + concurrency
   limits, `runner_shell` output cap ([#55](https://github.com/hoangsnowy/AgentOs/pull/55));
   fail-closed tool-policy gates, tenant-filter freeze, and SSRF guard
@@ -105,7 +108,7 @@ deployment), **Shipped, cloud-unverified** (in code and tested, but no real clou
 | Multi-tenant isolation | **Shipped+verified** at application level — a real-auth E2E creates a second tenant through `/signup` and proves it sees none of the first's boards, runners, evidence or runs, on the dev stack and the lab ([#192](https://github.com/hoangsnowy/AgentOs/pull/192)); cross-tenant tenant endpoints closed ([#193](https://github.com/hoangsnowy/AgentOs/pull/193)). **Not yet DB-enforced** — Postgres RLS is E0.1 |
 | QA gate before PR | **Shipped** — a result becomes a PR only when QA passed on real model output, enforced in the PR service ([#193](https://github.com/hoangsnowy/AgentOs/pull/193)); human approval policies are E1.5 |
 | Audit trail | **Shipped** — settings + config writes (redacted), members, invitations, sign-in; Settings → Audit log + CSV ([#194](https://github.com/hoangsnowy/AgentOs/pull/194)). Tamper-evidence + SIEM are E2.2 |
-| Enterprise readiness | **E0 pilot-safe complete** (2026-10-18): Postgres RLS, KMS/cert-wrapped key ring, lossless evidence, fail-closed approvals, runner allowlist, per-tenant run limits, repo instructions, self-hosted models; plus tenant export/purge and workspace rules. **Still missing for an enterprise pilot:** corporate SSO, RBAC v2, API tokens, approval policies, on-prem install — see [the review](docs/plans/enterprise-readiness.md) |
+| Enterprise readiness | **E0 pilot-safe complete** (2026-10-18): Postgres RLS, KMS/cert-wrapped key ring, lossless evidence, fail-closed approvals, runner allowlist, per-tenant run limits, repo instructions, self-hosted models; plus tenant export/purge and workspace rules. plus API tokens / service accounts ([#212](https://github.com/hoangsnowy/AgentOs/pull/212)). **Still missing for an enterprise pilot:** corporate SSO, RBAC v2, approval policies, on-prem install — see [the review](docs/plans/enterprise-readiness.md) |
 | `build_verifier` execution | **Sandboxed** — ADR-0005 Accepted ([docs/adr/0005](docs/adr/0005-build-verifier-sandbox.md)); Layer-1 input hardening (`BuildInputSanitizer`: build-control files rejected, project synthesized, feed cut) + Layer-2 OS isolation (`docker run --network none --read-only --user --cap-drop ALL`) shipped ([#96](https://github.com/hoangsnowy/AgentOs/pull/96)). **Cloud-unverified** — only the ACA-Jobs cloud round-trip on a real `azd up` remains |
 | Scale-out (≥2 replicas) | **Unverified** — single-instance only until a 2-replica test (see Q2) |
 
@@ -209,6 +212,9 @@ interleaved with the agentic-SDLC phases:
 - **E2 — Enterprise GA (≈6 more weeks):** SCIM · tamper-evident audit + SIEM export · HA (≥2 replicas, HA
   Postgres, geo backups, executed DR drill) · GitLab / Bitbucket / webhooks · tenant-defined custom agents ·
   SOC 2 / ISO mapping + pen test · platform admin console + metering · WCAG 2.2 AA + i18n.
+- **Parity track** (alongside E1, [docs/plans/competitive-parity.md](docs/plans/competitive-parity.md)): BYOK
+  OpenAI / Gemini / xAI ✅ · scheduled runs · Mission Control · chat notifications + chat-started runs · agent
+  chat · custom agents + SDLC templates · one-click deploy · plans / quotas / retention.
 - **Exit criteria:** E1 — a customer tenant signs in with their own Entra ID, roles come from their groups, a
   ticket from their tracker becomes an *approved* PR under their policy, shaped by their rules and skills, on
   Azure or their own k8s, and they can export or purge everything. E2 — SCIM, HA + DR drill, audit to their
