@@ -107,6 +107,11 @@ An unpriced model is charged at the fail-closed $15/$75 per 1M rate until added 
 
 ### Settings → Platform (platform admins)
 
+**Run limits (per tenant)** — `Pipeline:Limits:MaxConcurrentRuns` (default `4`) and `Pipeline:Limits:RunsPerMinute`
+(default `30`): admission for every Pipeline, Workflow and Quick run, so one tenant's burst or parallel load can't
+starve the others. Separate from the monthly budget cap, which still applies.
+
+
 | Key | Default | Notes |
 |---|---|---|
 | `RemoteAgent:AutoApprove` | `false` (Production locked) | Unattended remote execution. |

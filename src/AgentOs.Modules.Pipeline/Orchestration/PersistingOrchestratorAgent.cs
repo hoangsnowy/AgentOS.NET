@@ -20,6 +20,7 @@ internal sealed class PersistingOrchestratorAgent : IOrchestratorAgent
     private readonly TimeProvider _clock;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<PersistingOrchestratorAgent> _logger;
+    private readonly IRunAdmission? _admission;
 
     public PersistingOrchestratorAgent(
         IOrchestratorAgent inner,
@@ -27,8 +28,10 @@ internal sealed class PersistingOrchestratorAgent : IOrchestratorAgent
         IBudgetGuard budgetGuard,
         TimeProvider clock,
         ITenantContext tenantContext,
-        ILogger<PersistingOrchestratorAgent> logger)
+        ILogger<PersistingOrchestratorAgent> logger,
+        IRunAdmission? admission = null)
     {
+        _admission = admission;
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _budgetGuard = budgetGuard ?? throw new ArgumentNullException(nameof(budgetGuard));
@@ -73,6 +76,9 @@ internal sealed class PersistingOrchestratorAgent : IOrchestratorAgent
                 "LLM budget warning for tenant {Tenant}: spent ${Spent} of ${Cap} ({Percent:P0}) this month.",
                 tenantId, budget.SpentUsd, budget.CapUsd, budget.Percent);
         }
+
+        // E0.6: per-tenant admission (concurrency + burst) — refused runs never reach an agent.
+        using var lease = _admission is null ? null : (await _admission.AdmitAsync(tenantId, cancellationToken).ConfigureAwait(false)).EnsureAdmitted();
 
         var runId = Guid.NewGuid();
         var createdAtUtc = _clock.GetUtcNow();
