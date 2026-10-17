@@ -256,7 +256,7 @@ public sealed class KcLiveBenchTests
 
     private static AgentCfg[] AgentPlan(string mode)
     {
-        var sonnet = Env("ANTHROPIC_SONNET_MODEL") ?? "claude-sonnet-5";
+        var sonnet = Env("ANTHROPIC_SONNET_MODEL") ?? "claude-sonnet-4-6";
         var haiku = Env("ANTHROPIC_HAIKU_MODEL") ?? "claude-haiku-4-5";
         var gpt41 = Env("AZURE_GPT41_DEPLOYMENT") ?? "gpt-4.1";
         var mini = Env("AZURE_GPT4OMINI_DEPLOYMENT") ?? "gpt-4o-mini";
@@ -298,7 +298,7 @@ public sealed class KcLiveBenchTests
         if (agents.Any(a => a.Provider == "Claude"))
         {
             s["Llm:Claude:ApiKey"] = Env(AnthropicKey);
-            s["Llm:Claude:Model"] = Env("ANTHROPIC_SONNET_MODEL") ?? "claude-sonnet-5";
+            s["Llm:Claude:Model"] = Env("ANTHROPIC_SONNET_MODEL") ?? "claude-sonnet-4-6";
         }
         if (agents.Any(a => a.Provider == "AzureOpenAI"))
         {

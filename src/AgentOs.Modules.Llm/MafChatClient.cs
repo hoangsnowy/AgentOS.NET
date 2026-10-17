@@ -79,7 +79,8 @@ public sealed class MafChatClient : ILlmClient
         var options = new ChatOptions
         {
             ModelId = deployment,
-            Temperature = (float)request.Temperature,
+            // Capability is keyed on the canonical (pricing) model, not the arbitrary deployment alias.
+            Temperature = ModelCapabilities.TemperatureFor(ResolvePricingModel(_options.PricingModel, deployment), request.Temperature),
             MaxOutputTokens = request.MaxTokens,
         };
 

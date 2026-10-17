@@ -125,7 +125,7 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         var options = new ChatOptions
         {
             ModelId = request.Model,
-            Temperature = (float)request.Temperature,
+            Temperature = ModelCapabilities.TemperatureFor(request.Model, request.Temperature),
             MaxOutputTokens = request.MaxTokens,
             Tools = resolvedTools.Count > 0 ? resolvedTools.Cast<AITool>().ToList() : null,
         };

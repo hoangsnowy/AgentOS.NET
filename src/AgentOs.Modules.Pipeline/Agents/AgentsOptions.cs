@@ -15,7 +15,7 @@ public sealed class AgentsOptions
     public AgentOptions Orchestrator { get; set; } = new() { Model = "claude-haiku-4-5", Temperature = 0.3, MaxTokens = 2000 };
 
     /// <summary>RequirementAgent configuration.</summary>
-    public AgentOptions Requirement { get; set; } = new() { Model = "claude-sonnet-5", Temperature = 0.1, MaxTokens = 2000 };
+    public AgentOptions Requirement { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.1, MaxTokens = 2000 };
 
     /// <summary>CodingAgent configuration.</summary>
     public AgentOptions Coding { get; set; } = new() { Provider = "AzureOpenAI", Model = "gpt-4.1", Temperature = 0.2, MaxTokens = 4000 };
@@ -27,10 +27,10 @@ public sealed class AgentsOptions
     public AgentOptions Qa { get; set; } = new() { Model = "claude-haiku-4-5", Temperature = 0.1, MaxTokens = 1500 };
 
     /// <summary>IssueWorkAgent configuration (M5 — agentic issue→PR pipeline).</summary>
-    public AgentOptions IssueWork { get; set; } = new() { Model = "claude-sonnet-5", Temperature = 0.2, MaxTokens = 32768 };
+    public AgentOptions IssueWork { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.2, MaxTokens = 32768 };
 
     /// <summary>TicketDecomposerAgent configuration (bootstrap — RequirementSpec → board tickets).</summary>
-    public AgentOptions Decomposer { get; set; } = new() { Model = "claude-sonnet-5", Temperature = 0.2, MaxTokens = 4000 };
+    public AgentOptions Decomposer { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.2, MaxTokens = 4000 };
 
     /// <summary>Every configured agent, for cross-cutting checks (startup validation).</summary>
     public IEnumerable<AgentOptions> All()

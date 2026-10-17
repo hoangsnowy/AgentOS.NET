@@ -44,7 +44,7 @@ public sealed class ChatClientLlmClient : ILlmClient
         var options = new ChatOptions
         {
             ModelId = request.Model,
-            Temperature = (float)request.Temperature,
+            Temperature = ModelCapabilities.TemperatureFor(request.Model, request.Temperature),
             MaxOutputTokens = request.MaxTokens,
         };
 

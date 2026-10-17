@@ -15,12 +15,16 @@ public class CostCalculatorTests
     [InlineData("claude-fable-5-1", 60.00)]
     [InlineData("claude-opus-5-5", 24.00)]
     [InlineData("claude-opus-5", 30.00)]
+    [InlineData("claude-sonnet-5-5", 12.00)]
     [InlineData("claude-sonnet-5", 12.00)]
     [InlineData("claude-sonnet-4-6", 18.00)]
     [InlineData("claude-haiku-4-5", 6.00)]
     [InlineData("gpt-4.1", 10.00)]
     [InlineData("gpt-4.1-mini", 2.00)]
     [InlineData("gpt-4o-mini", 0.75)]
+    [InlineData("gpt-5.4-mini", 5.25)]
+    [InlineData("gpt-5-nano", 0.45)]
+    [InlineData("o3", 10.00)]
     public void Calculate_KnownModel_1MIn1MOut_UsesListPrice(string model, double expected)
         => CostCalculator.Calculate(model, 1_000_000, 1_000_000).ShouldBe((decimal)expected);
 
@@ -54,7 +58,8 @@ public class CostCalculatorTests
     public void Calculate_UnknownModel_FailsClosedAtCeilingRate(string model)
     {
         CostCalculator.IsKnown(model).ShouldBeFalse();
-        // Ceiling = the most expensive input/output rates in the table (Opus 4 / 4.1: $15 / $75).
+        // Fail-closed rate = the top standard Claude tier ($15 / $75), a fixed constant — not the table max,
+        // which would be o1-pro's $150 / $600.
         CostCalculator.Calculate(model, 1_000_000, 1_000_000).ShouldBe(90.00m);
     }
 
@@ -70,9 +75,45 @@ public class CostCalculatorTests
     [Theory]
     [InlineData("claude-fable-5-1", 0.25)]   // explicit 0.025× rate
     [InlineData("claude-opus-5-5", 0.20)]    // explicit 0.05× rate
+    [InlineData("claude-sonnet-5-5", 0.10)]  // explicit 0.05× rate
     [InlineData("gpt-4.1", 0.50)]            // OpenAI published cached-input rate
     public void Calculate_CacheRead_UsesModelSpecificRate(string model, double perMillion)
         => CostCalculator.Calculate(model, 0, 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0).ShouldBe((decimal)perMillion);
+
+    [Theory]
+    // Tiered models priced on a short prompt (below their long-context threshold): 10k in + 10k out.
+    [InlineData("claude-haiku-5-5", "0.006")]   // $0.10 / $0.50
+    [InlineData("gpt-6.1-sol", "0.12")]         // $2.00 / $10.00
+    [InlineData("gpt-6-luna", "0.006")]         // $0.10 / $0.50
+    public void Calculate_TieredModel_ShortPrompt_UsesBaseRates(string model, string expected)
+        => CostCalculator.Calculate(model, 10_000, 10_000).ShouldBe(decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture));
+
+    [Fact]
+    public void Calculate_Haiku55_CacheRead_ShortPrompt_IsTenthOfInput()
+        => CostCalculator.Calculate("claude-haiku-5-5", 0, 0, cacheReadTokens: 100_000, cacheWriteTokens: 0).ShouldBe(0.001m);
+
+    [Fact]
+    public void Calculate_Haiku55_PromptOver100k_BillsWholeRequestAtLongTier()
+    {
+        // ≤100k prompt: $0.10 in / $0.50 out. >100k (input + cache read + cache write): $0.50 / $2.50.
+        CostCalculator.Calculate("claude-haiku-5-5", 100_000, 1_000_000).ShouldBe(0.51m);
+        CostCalculator.Calculate("claude-haiku-5-5", 100_001, 1_000_000).ShouldBe(2.550001m);
+        // Cache reads count toward the prompt length that selects the tier.
+        CostCalculator.Calculate("claude-haiku-5-5", 1_000, 0, cacheReadTokens: 100_000, cacheWriteTokens: 0)
+            .ShouldBe(0.0055m);   // long tier: 1k × $0.50 + 100k × $0.05 per 1M
+    }
+
+    [Fact]
+    public void Calculate_Gpt6Sol_PromptOver272k_UsesLongContextRates()
+    {
+        CostCalculator.Calculate("gpt-6-sol", 272_000, 0).ShouldBe(0.544m);       // $2.00 / 1M
+        CostCalculator.Calculate("gpt-6-sol", 300_000, 0).ShouldBe(1.20m);        // $4.00 / 1M
+    }
+
+    [Fact]
+    public void Calculate_PricedSnapshot_WinsOverBaseModel()
+        // gpt-4o-2024-05-13 has its own (higher) list price — it must not collapse to gpt-4o.
+        => CostCalculator.Calculate("gpt-4o-2024-05-13", 1_000_000, 0).ShouldBe(5.00m);
 
     [Theory]
     [InlineData("", 1, 1)]
