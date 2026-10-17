@@ -1678,6 +1678,9 @@ select {
 
 /* AppFrame windows should not start inside the TopBar either */
 .appwin { top: max(40px, var(--win-top, 0px)); }
+/* A window never runs under the Dash or off the right edge on a small screen: its saved size is a
+   preference, clamped to the space between its top-left corner and the Dash (≈88 px incl. margin). */
+.appwin:not(.maximized) { max-height: max(200px, calc(100dvh - max(40px, var(--win-y, 40px)) - 88px)); max-width: max(280px, calc(100vw - var(--win-x, 0px) - 8px)); }
 
 /* AppFrame maximized state */
 .appwin.maximized { border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; }

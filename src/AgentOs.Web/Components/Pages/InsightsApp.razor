@@ -131,7 +131,7 @@ else
 
         @* ── Chart: per-agent (calls + cost) ─────────────────────────────────────────────── *@
         <Panel Title="By agent">
-            @{ var agents = _summary!.ByAgent; var maxAgent = agents.Count == 0 ? 1 : agents.Max(a => a.Calls); }
+            @{ var agents = _summary!.ByAgent.OrderByDescending(a => a.TokensIn + a.TokensOut).ToList(); var maxAgent = agents.Count == 0 ? 1 : Math.Max(1, agents.Max(a => a.TokensIn + a.TokensOut)); }
             @if (agents.Count == 0)
             {
                 <p class="muted ins-note">No agent calls in this range.</p>
@@ -143,12 +143,12 @@ else
                     {
                         <div class="ins-bar-row">
                             <div class="ins-bar-label ins-bar-agent"><AgentMascot Role="@AgentShort(a.Key)" Size="22" /><span>@AgentShort(a.Key)</span></div>
-                            <div class="ins-bar-track"><div class="ins-bar-fill" style="width:@(Pct(a.Calls, maxAgent))%"></div></div>
-                            <div class="ins-bar-val">@Num(a.Calls) · @Money(a.CostUsd)</div>
+                            <div class="ins-bar-track" title="@($"{Num(a.TokensIn)} in · {Num(a.TokensOut)} out")"><div class="ins-bar-fill" style="width:@(Pct(a.TokensIn + a.TokensOut, maxAgent))%"></div></div>
+                            <div class="ins-bar-val">@Num(a.TokensIn + a.TokensOut) tok · @Num(a.Calls) calls · @Money(a.CostUsd)</div>
                         </div>
                     }
                 </div>
-                <div class="ins-legend"><span class="ins-legend-dot" style="background:var(--accent)"></span> LLM calls · billed cost</div>
+                <div class="ins-legend"><span class="ins-legend-dot" style="background:var(--accent)"></span> tokens (in + out) · calls · billed cost</div>
             }
         </Panel>
 

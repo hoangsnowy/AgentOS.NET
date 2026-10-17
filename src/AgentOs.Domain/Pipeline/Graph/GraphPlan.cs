@@ -71,4 +71,18 @@ public sealed record GraphHumanReply(bool Approved, string? Note = null);
 
 /// <summary>The outcome of a graph run. <paramref name="Offline"/> = at least one node was answered by the
 /// canned offline client, so the run is a dry run and must not be presented or counted as live output.</summary>
-public sealed record GraphRunResult(bool Completed, string? FailureMessage, bool Offline = false);
+public sealed record GraphRunResult(bool Completed, string? FailureMessage, bool Offline = false)
+{
+    /// <summary>Tokens and cost per agent for this run, in the order the agents first ran. Empty when the
+    /// run stopped before any model call.</summary>
+    public IReadOnlyList<AgentTokenUsage> Usage { get; init; } = [];
+}
+
+/// <summary>One agent's share of a run: how many calls it made and the tokens/cost they used.
+/// <paramref name="Estimated"/> = some of the calls were answered offline, so their tokens are an estimate
+/// (text length ÷ 4), not provider-reported usage.</summary>
+public sealed record AgentTokenUsage(string Agent, int Calls, int TokensIn, int TokensOut, decimal CostUsd, bool Estimated)
+{
+    /// <summary>Input + output tokens.</summary>
+    public int TotalTokens => TokensIn + TokensOut;
+}

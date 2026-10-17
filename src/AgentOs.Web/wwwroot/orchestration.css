@@ -458,7 +458,15 @@ a.syn-nav-item { text-decoration: none; }
 }
 
 /* ---------- bottom panel ---------- */
-.syn-bottom { height: 120px; flex: 0 0 120px; border-top: 1px solid var(--syn-border); background: var(--syn-bg-deep); display: flex; flex-direction: column; min-height: 0; }
+/* Splitter above the run panel (panel-resize.js): a 7 px hit area with a centred grip; accent while hovered,
+   focused or dragged. The panel height is set inline by the script (default 220 px, persisted per viewer). */
+.syn-splitter { flex: none; height: 7px; margin-top: -3px; position: relative; z-index: 2; cursor: row-resize; touch-action: none; outline: none; }
+.syn-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 3px; height: 1px; background: transparent; transition: background var(--duration-fast) var(--ease-standard); }
+.syn-splitter::after { content: ""; position: absolute; left: 50%; top: 1px; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--syn-border); }
+.syn-splitter:hover::before, .syn-splitter.dragging::before, .syn-splitter:focus-visible::before { height: 2px; background: var(--syn-blue); }
+.syn-splitter:hover::after, .syn-splitter.dragging::after, .syn-splitter:focus-visible::after { background: var(--syn-blue); }
+body.panel-resizing, body.panel-resizing * { cursor: row-resize !important; user-select: none !important; }
+.syn-bottom { height: 220px; flex: 0 0 220px; border-top: 1px solid var(--syn-border); background: var(--syn-bg-deep); display: flex; flex-direction: column; min-height: 0; }
 .syn-canvas { min-height: 0; }
 .syn-tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--syn-border); }
 .syn-tab { padding: 9px 14px; color: var(--syn-muted); cursor: pointer; font-size: 12.5px; border: 0; border-bottom: 2px solid transparent; background: transparent; font-family: inherit; }
@@ -485,3 +493,19 @@ a.syn-nav-item { text-decoration: none; }
 .syn-runs .rr-name { font-weight: 600; color: var(--syn-text-strong); }
 .syn-runs .rr-detail { color: var(--syn-muted); }
 .syn-runs .rr-when { margin-left: auto; color: var(--syn-faint); font-variant-numeric: tabular-nums; }
+
+/* ---------- run panel: Tokens tab (per-agent usage of the last run) ---------- */
+.syn-usage { width: 100%; border-collapse: collapse; font-size: 12px; color: var(--syn-text); }
+.syn-usage th { text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--syn-muted); padding: 4px 8px; border-bottom: 1px solid var(--syn-border); }
+.syn-usage td { padding: 5px 8px; border-bottom: 1px solid var(--syn-border); vertical-align: middle; }
+.syn-usage tfoot td { font-weight: 600; border-bottom: 0; }
+.syn-usage .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.syn-usage td:nth-child(2) { width: 45%; }
+.syn-usage-who { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.syn-usage-bar { display: inline-flex; vertical-align: middle; height: 10px; min-width: 3px; border-radius: 5px; overflow: hidden; background: var(--syn-panel-2); margin-right: 8px; max-width: calc(100% - 64px); }
+.syn-usage-bar .in { background: var(--syn-blue); }
+.syn-usage-bar .out { background: var(--syn-green-border); }
+.syn-usage-total { font-variant-numeric: tabular-nums; color: var(--syn-text-soft); }
+.syn-usage-key { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 8px; }
+.syn-usage-key.in { background: var(--syn-blue); }
+.syn-usage-key.out { background: var(--syn-green-border); }
