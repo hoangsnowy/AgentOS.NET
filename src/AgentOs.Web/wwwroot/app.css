@@ -2112,6 +2112,60 @@ input[type=range] { accent-color: var(--accent); }
 .prefs-tbl tr:last-child th, .prefs-tbl tr:last-child td { border-bottom: 0; }
 .prefs-tbl code { background: var(--bg-3); padding: 1px 6px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
 
+/* About (System → About) — live service status: header pill, topology map, one card per service.
+   Tokens only; nothing animates at rest (the refresh icon loops only while a probe runs). */
+.about-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.about-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.about-overall { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--line); background: var(--bg-3); color: var(--txt-soft); }
+.about-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--txt-dim); flex: none; }
+.about-overall.is-healthy .about-dot { background: var(--ok); }
+.about-overall.is-degraded .about-dot { background: var(--warn); }
+.about-overall.is-down .about-dot { background: var(--err); }
+.about-overall.is-healthy { color: var(--ok-text); }
+.about-overall.is-degraded { color: var(--warn-text); }
+.about-overall.is-down { color: var(--err); }
+.about-dim { color: var(--txt-dim); font-size: 12px; }
+.about-product th { width: 120px; }
+.about-checking { display: inline-flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+
+.about-topo { margin: var(--space-3) 0 var(--space-2); padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--r-4); background: var(--bg-3); }
+.about-topo svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; }
+.about-topo figcaption { text-align: center; margin-top: var(--space-1); }
+.topo-edge { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+.topo-edge.is-degraded { stroke: var(--warn); }
+.topo-edge.is-down { stroke: var(--err); stroke-dasharray: 4 4; }
+.topo-edge.is-off { stroke: var(--line); stroke-dasharray: 2 5; }
+.topo-node rect { fill: var(--bg-2); stroke: var(--line-strong); stroke-width: 1; }
+.topo-node.is-down rect { stroke: var(--err); }
+.topo-node.is-degraded rect { stroke: var(--warn); }
+.topo-node.is-off rect { stroke-dasharray: 3 3; }
+.topo-node.is-off text { opacity: .6; }
+.topo-dot { fill: var(--txt-dim); }
+.topo-node.is-healthy .topo-dot { fill: var(--ok); }
+.topo-node.is-degraded .topo-dot { fill: var(--warn); }
+.topo-node.is-down .topo-dot { fill: var(--err); }
+.topo-name { fill: var(--txt); font-size: 12px; font-weight: 600; }
+.topo-meta { fill: var(--txt-dim); font-size: 10.5px; font-family: var(--mono); }
+
+.about-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); align-items: start; gap: var(--space-3); margin-top: var(--space-3); }
+.about-svc { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: var(--r-4); background: var(--bg-2); box-shadow: var(--shadow-1); min-width: 0; }
+.about-svc.is-healthy { border-left-color: var(--ok); }
+.about-svc.is-degraded { border-left-color: var(--warn); }
+.about-svc.is-down { border-left-color: var(--err); }
+.about-svc-head { display: flex; align-items: center; gap: var(--space-2); }
+.about-svc-ic { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-3); background: var(--bg-3); color: var(--txt-soft); flex: none; }
+.about-svc-title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.about-svc-title strong { font-size: 13px; }
+.about-svc-meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-size: 11.5px; color: var(--txt-soft); }
+.about-ver, .about-lat { padding: 1px 6px; border-radius: var(--r-2); background: var(--bg-3); font-family: var(--mono); }
+.about-svc-sum { margin: 0; font-size: 12px; color: var(--txt-soft); }
+.about-facts { display: grid; grid-template-columns: minmax(90px, max-content) 1fr; gap: 3px var(--space-2); margin: 0; font-size: 12px; }
+.about-facts dt { color: var(--txt-dim); }
+.about-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--txt); }
+.about-infra summary { cursor: pointer; font-size: 12px; color: var(--txt-dim); }
+.about-infra[open] summary { margin-bottom: var(--space-1); }
+.badge.muted { background: var(--bg-3); color: var(--txt-dim); border-color: var(--line); }
+
 /* Agent profiles (Settings → Agent profiles) — compact editable data-table; tokens only. */
 .agent-profiles-scroll { overflow-x: auto; }
 .agent-profiles td { vertical-align: top; }

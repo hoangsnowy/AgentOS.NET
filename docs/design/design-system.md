@@ -113,6 +113,20 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
 - **Motion off**: `prefers-reduced-motion`, or System → Appearance → *Animations* (per viewer,
   `<html data-agent-motion="off">`, restored by `theme.js` before Blazor mounts).
 
+### Service status (System → About)
+
+`Components/UI/AboutServices.razor` + the `.about-*` / `.topo-*` block in `app.css`; data from
+`Services/About` (one `IServiceProbe` per service behind the cached, single-flight `SystemStatusService`).
+
+- **Map + cards**: an SVG service map (`.about-topo`, `role="img"` with an aria-label naming every state)
+  and one card per service (`.about-svc`, the accessible table alternative): badge, version, latency,
+  summary, facts (`.about-facts` `dl`), and — for platform admins only — a closed `details.about-infra`.
+- **States**: `is-healthy` (ok) · `is-degraded` (warn) · `is-down` (err, dashed edge) · `is-off` = *Not in
+  this run* (dashed, muted — an absent optional service is not an outage and never counts in the headline).
+- **Motion**: none at rest; only the Refresh icon loops while a probe runs.
+- **Adding a service**: implement `IServiceProbe` (it may throw — the aggregator turns throws and timeouts
+  into Down), register it in `Program.cs`; never show secrets (keys = *Configured / Not set*).
+
 ### Desktop shell anatomy (and who owns what)
 
 - **TopBar** (`Components/UI/TopBar.razor`) — GNOME top panel: LEFT = an **Activities** button + the

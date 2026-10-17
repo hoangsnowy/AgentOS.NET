@@ -1,0 +1,252 @@
+@* System → About: every service the desktop depends on, probed live — a topology map (visual) plus one
+   card per service (the accessible, detailed alternative). Infra facts (hosts, URLs, errors) only for
+   platform admins. Its own component so SystemApp's 1 Hz clock re-render never re-renders the cards. *@
+
+@using AgentOs.Web.Services.About
+@implements IDisposable
+@inject SystemStatusService StatusService
+@inject LlmConfigView LlmView
+@inject IJSRuntime JS
+@inject ToastService Toasts
+
+<div class="about-head">
+    <div>
+        <h2 class="prefs-h">About AgentOS</h2>
+        <p class="prefs-sub">A .NET multi-agent platform for the software lifecycle — and the services it runs on, checked live.</p>
+    </div>
+    <div class="about-actions">
+        <span class="about-overall is-@StateClass(_overall)" role="status">
+            <span class="about-dot" aria-hidden="true"></span>@_headline
+        </span>
+        <Btn Size="Btn.ButtonSize.Sm" OnClick="RefreshAsync" Disabled="_busy" Title="Probe every service again">
+            <Icon Name="arrow-clockwise" Size="13" Loop="_busy" /> Refresh
+        </Btn>
+        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="CopyAsync" Disabled="_services.Count == 0" Title="Copy a plain-text status report">
+            <Icon Name="file" Size="13" /> Copy report
+        </Btn>
+    </div>
+</div>
+
+<table class="prefs-tbl about-product">
+    <tr><th>Version</th><td>@Format.ShortVersion(WebHostProbe.InformationalVersion)@if (Format.Commit(WebHostProbe.InformationalVersion) is { } sha) {<span class="about-dim"> · @sha</span>}</td></tr>
+    <tr><th>Runtime</th><td>@System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription</td></tr>
+    <tr><th>License</th><td>MIT</td></tr>
+    <tr><th>Source</th><td><a href="https://github.com/hoangsnowy/AgentOs" target="_blank" rel="noopener">github.com/hoangsnowy/AgentOs</a></td></tr>
+</table>
+
+@if (_services.Count == 0)
+{
+    <p class="about-dim about-checking"><Icon Name="arrow-clockwise" Size="13" Loop="true" /> Checking services…</p>
+}
+else
+{
+    <figure class="about-topo">
+        <svg viewBox="0 0 560 @TopoHeight" role="img" aria-label="@TopoLabel()" preserveAspectRatio="xMidYMin meet">
+            @{ var webY = TopoHeight / 2 - NodeH / 2; }
+            <path class="topo-edge" d="M112 @(webY + NodeH / 2) L168 @(webY + NodeH / 2)" />
+            @for (var i = 0; i < Outer.Count; i++)
+            {
+                var s = Outer[i];
+                var y = OuterY(i) + NodeH / 2;
+                <path class="topo-edge is-@StateClass(s.Health)" d="M300 @(webY + NodeH / 2) C340 @(webY + NodeH / 2) 340 @y 380 @y" />
+            }
+            <g class="topo-node is-healthy">
+                <rect x="8" y="@webY" width="104" height="@NodeH" rx="8" />
+                <text class="topo-name" x="22" y="@(webY + 17)">Browser</text>
+                <text class="topo-meta" x="22" y="@(webY + 31)">you</text>
+            </g>
+            @if (Web is { } web)
+            {
+                <g class="topo-node is-@StateClass(web.Health)">
+                    <rect x="168" y="@webY" width="132" height="@NodeH" rx="8" />
+                    <circle class="topo-dot" cx="180" cy="@(webY + 13)" r="4" />
+                    <text class="topo-name" x="190" y="@(webY + 17)">@web.Name</text>
+                    <text class="topo-meta" x="180" y="@(webY + 31)">@Meta(web)</text>
+                </g>
+            }
+            @for (var i = 0; i < Outer.Count; i++)
+            {
+                var s = Outer[i];
+                var y = OuterY(i);
+                <g class="topo-node is-@StateClass(s.Health)">
+                    <rect x="380" y="@y" width="172" height="@NodeH" rx="8" />
+                    <circle class="topo-dot" cx="392" cy="@(y + 13)" r="4" />
+                    <text class="topo-name" x="402" y="@(y + 17)">@s.Name</text>
+                    <text class="topo-meta" x="392" y="@(y + 31)">@Meta(s)</text>
+                </g>
+            }
+        </svg>
+        <figcaption class="about-dim">
+            Checked @_checkedAt.ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) · results are shared for @((int)SystemStatusService.Ttl.TotalSeconds) s
+        </figcaption>
+    </figure>
+
+    <div class="about-grid">
+        @foreach (var s in _services)
+        {
+            <article class="about-svc is-@StateClass(s.Health)" aria-label="@($"{s.Name}: {AboutReport.Label(s.Health)}")" data-service="@s.Id">
+                <header class="about-svc-head">
+                    <span class="about-svc-ic" aria-hidden="true"><Icon Name="@s.Icon" Size="16" /></span>
+                    <div class="about-svc-title">
+                        <strong>@s.Name</strong>
+                        <span class="about-dim">@s.Role</span>
+                    </div>
+                </header>
+                <div class="about-svc-meta">
+                    <span class="badge @BadgeClass(s.Health)">@AboutReport.Label(s.Health)</span>
+                    @if (s.Version is { Length: > 0 })
+                    {
+                        <span class="about-ver">v@(s.Version)</span>
+                    }
+                    @if (s.LatencyMs is { } ms)
+                    {
+                        <span class="about-lat">@Format.Latency(ms)</span>
+                    }
+                </div>
+                @if (s.Summary is { Length: > 0 })
+                {
+                    <p class="about-svc-sum">@s.Summary</p>
+                }
+                @if (s.Facts.Count > 0)
+                {
+                    <dl class="about-facts">
+                        @foreach (var f in s.Facts)
+                        {
+                            <dt>@f.Label</dt>
+                            <dd>@f.Value</dd>
+                        }
+                    </dl>
+                }
+                @if (_platformAdmin && s.Infra.Count > 0)
+                {
+                    <details class="about-infra">
+                        <summary>Infrastructure</summary>
+                        <dl class="about-facts">
+                            @foreach (var f in s.Infra)
+                            {
+                                <dt>@f.Label</dt>
+                                <dd>@f.Value</dd>
+                            }
+                        </dl>
+                    </details>
+                }
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private const int NodeH = 40;
+    private const int RowGap = 52;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private readonly CancellationTokenSource _cts = new();
+    private List<ServiceStatus> _services = [];
+    private ServiceStatus? _llm;
+    private DateTimeOffset _checkedAt;
+    private ServiceHealth _overall = ServiceHealth.Healthy;
+    private string _headline = "Checking…";
+    private bool _busy;
+    private bool _platformAdmin;
+
+    private ServiceStatus? Web => _services.Find(s => s.Id == "web");
+    private List<ServiceStatus> Outer => _services.FindAll(s => s.Id != "web");
+    private int TopoHeight => Math.Max(NodeH + 16, Outer.Count * RowGap + 8);
+    private static int OuterY(int i) => 8 + i * RowGap;
+
+    protected override async Task OnInitializedAsync()
+    {
+        string? tenant = null, user = null;
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _platformAdmin = state.User.IsPlatformAdmin();
+            tenant = state.User.GetTenantId();
+            user = state.User.Identity?.Name;
+        }
+        _llm = LlmGatewayCard.From(LlmView.Resolve(tenant, user));
+
+        if (StatusService.Last is { } last) { Apply(last); }   // paint the last snapshot immediately
+        await LoadAsync(refresh: false);
+    }
+
+    private async Task RefreshAsync() => await LoadAsync(refresh: true);
+
+    private async Task LoadAsync(bool refresh)
+    {
+        _busy = true;
+        try
+        {
+            Apply(await StatusService.GetAsync(refresh, _cts.Token));
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        {
+            // Window closed mid-probe.
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Apply(SystemSnapshot snapshot)
+    {
+        var services = new List<ServiceStatus>(snapshot.Services.Count + 1);
+        services.AddRange(snapshot.Services);
+        if (_llm is not null) { services.Add(_llm); }
+        _services = services;
+        _checkedAt = snapshot.CheckedAt;
+        _overall = SystemSnapshot.Worst(services);
+        _headline = SystemSnapshot.Headline(services);
+    }
+
+    private async Task CopyAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", AboutReport.Text(_services, _checkedAt, _platformAdmin));
+            Toasts.Show("About", "Status report copied", ToastKind.Ok);
+        }
+        catch (JSException)
+        {
+            Toasts.Show("About", "The browser blocked clipboard access", ToastKind.Warn);
+        }
+    }
+
+    private static string Meta(ServiceStatus s)
+    {
+        if (s.Health == ServiceHealth.NotConfigured) { return "not in this run"; }
+        if (s.Health == ServiceHealth.Down) { return "down"; }
+        if (s.MapLabel is { Length: > 0 } label) { return s.LatencyMs is { } t ? $"{label} · {Format.Latency(t)}" : label; }
+        var parts = new List<string>(2);
+        if (s.Version is { Length: > 0 } v) { parts.Add(v.Length > 14 ? v[..14] : v); }
+        if (s.LatencyMs is { } ms) { parts.Add(Format.Latency(ms)); }
+        return parts.Count == 0 ? AboutReport.Label(s.Health).ToLowerInvariant() : string.Join(" · ", parts);
+    }
+
+    private string TopoLabel()
+        => $"Service map: browser to Web desktop, which uses {string.Join(", ", Outer.Select(s => $"{s.Name} ({AboutReport.Label(s.Health)})"))}.";
+
+    private static string StateClass(ServiceHealth h) => h switch
+    {
+        ServiceHealth.Healthy => "healthy",
+        ServiceHealth.Degraded => "degraded",
+        ServiceHealth.Down => "down",
+        _ => "off",
+    };
+
+    private static string BadgeClass(ServiceHealth h) => h switch
+    {
+        ServiceHealth.Healthy => "ok",
+        ServiceHealth.Degraded => "warn",
+        ServiceHealth.Down => "err",
+        _ => "muted",
+    };
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

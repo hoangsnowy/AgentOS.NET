@@ -295,6 +295,22 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<string?> GetServerVersionAsync(CancellationToken ct = default)
+    {
+        var token = await GetAdminTokenAsync(ct).ConfigureAwait(false);
+        using var req = BuildRequest(HttpMethod.Get, "admin/serverinfo", token);
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Keycloak serverinfo failed ({(int)resp.StatusCode}).");
+        }
+        using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false), cancellationToken: ct).ConfigureAwait(false);
+        return doc.RootElement.TryGetProperty("systemInfo", out var info) && info.TryGetProperty("version", out var v)
+            ? v.GetString()
+            : null;
+    }
+
+    /// <inheritdoc />
     public async Task<string?> GetUserTenantAsync(string userId, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
