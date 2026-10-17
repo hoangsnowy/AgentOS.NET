@@ -1,4 +1,4 @@
-# AgentOS lab — a test server for real integrations
+# AgentOS.NET lab — a test server for real integrations
 
 The dev stack proves the app runs; the **lab** proves it works against the real world: a real GitHub repo
 and Projects board, a real Azure DevOps project, and (optionally) a real LLM with a hard budget cap. It is a
@@ -45,7 +45,7 @@ so tokens never land in a transcript. The lab tests read a dedicated store, `age
 ### 1. GitHub (sandbox repo `hoangsnowy/agentos-lab`, already created)
 
 1. Create a Projects board: https://github.com/users/hoangsnowy/projects → *New project* → name it
-   "AgentOS Lab" → add issues #1 and #2 from `hoangsnowy/agentos-lab`. Note its number (the URL ends in `/projects/<n>`).
+   "AgentOS.NET Lab" → add issues #1 and #2 from `hoangsnowy/agentos-lab`. Note its number (the URL ends in `/projects/<n>`).
 2. Create a token: https://github.com/settings/tokens → *Generate new token (classic)*, expiry 30 days,
    scopes **`repo`** and **`project`** only. (Fine-grained tokens can't reach user-owned Projects boards yet.)
 3. Store it:
@@ -56,14 +56,14 @@ so tokens never land in a transcript. The lab tests read a dedicated store, `age
 
 ### 2. Azure DevOps
 
-1. https://dev.azure.com → create an organization (e.g. `agentos-lab`) and a project **AgentOS Lab**.
+1. https://dev.azure.com → create an organization (e.g. `agentos-lab`) and a project **AgentOS.NET Lab**.
    In *Repos*, initialise the default repository **with a README** (an empty repo has no default branch).
 2. Create a PAT (User settings → Personal access tokens), expiry 30 days, scopes: **Code — Read & write**,
    **Work Items — Read & write**, **Project and Team — Read**.
 3. Store it:
    ```powershell
    dotnet user-secrets set "Lab:AzureDevOps:Org" "agentos-lab" --id agentos-lab-tests
-   dotnet user-secrets set "Lab:AzureDevOps:Project" "AgentOS Lab" --id agentos-lab-tests
+   dotnet user-secrets set "Lab:AzureDevOps:Project" "AgentOS.NET Lab" --id agentos-lab-tests
    dotnet user-secrets set "Lab:AzureDevOps:Token" "<pat>" --id agentos-lab-tests
    ```
 

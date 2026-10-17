@@ -1,4 +1,4 @@
-// AgentOS UI — the Workflow studio actually RUNS the drawn graph end-to-end in the browser. Same gate +
+// AgentOS.NET UI — the Workflow studio actually RUNS the drawn graph end-to-end in the browser. Same gate +
 // fixture as the other desktop UI tests (RUN_AGENTOS_E2E=true, Web at AGENTOS_URL). The standalone Web has
 // no LLM key, so the run rides the Offline failover provider (Llm:OfflineFallback) — proving the run-path
 // works keyless. This is the coverage the audit found missing: every prior Workflow E2E only opened the

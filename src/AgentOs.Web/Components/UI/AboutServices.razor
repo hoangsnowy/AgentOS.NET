@@ -13,7 +13,7 @@
 <div class="about">
     <header class="about-hero">
         <BrandMark Size="76" Decorative="true" />
-        <h2 class="about-title">AgentOS</h2>
+        <h2 class="about-title">AgentOS.NET</h2>
         <p class="about-version">
             Version @Format.ShortVersion(WebHostProbe.InformationalVersion)
             @if (Format.Commit(WebHostProbe.InformationalVersion) is { } sha)
@@ -21,11 +21,11 @@
                 <span class="about-build">· build @sha</span>
             }
         </p>
-        <p class="about-tagline">A .NET multi-agent platform for the software lifecycle.</p>
+        <p class="about-tagline">A self-hosted multi-agent platform for the software lifecycle.</p>
         <div class="about-links">
             <span class="about-chip">@System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription</span>
             <span class="about-chip">MIT licence</span>
-            <a class="about-chip about-chip-link" href="https://github.com/hoangsnowy/AgentOs" target="_blank" rel="noopener">
+            <a class="about-chip about-chip-link" href="https://github.com/hoangsnowy/AgentOS.NET" target="_blank" rel="noopener">
                 Source <Icon Name="arrow-square-out" Size="12" />
             </a>
         </div>

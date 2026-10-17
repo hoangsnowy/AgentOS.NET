@@ -68,7 +68,7 @@ properties:
           - name: Email__From
             value: noreply@agentic.local
           - name: Email__FromName
-            value: AgentOS
+            value: AgentOS.NET
           - name: Email__SmtpHost
             value: '{{ parameter "SmtpHost" }}'
           - name: Email__SmtpPort

@@ -1,7 +1,7 @@
 # ADR-0008 — Shared memory and knowledge graph
 
 - **Status:** Proposed (2026-10-17) — implemented in plan Phase 3
-- **Deciders:** AgentOS maintainers
+- **Deciders:** AgentOS.NET maintainers
 - **Plan:** [Agentic SDLC v2 — Phase 3](../plans/agentic-sdlc-v2.md#phase-3--shared-context-memory-34-weeks) (owner decision D-B: pgvector built-in)
 
 ## Context
@@ -126,7 +126,7 @@ their summaries are generated lazily, on first use, and cached — never a full 
 - Built-in agents: `IRunContext` (handles) + `IMemoryRetriever` inside the prompt builder.
 - **MCP tools** on `/mcp`: `memory.search`, `memory.write`, `graph.neighbors`, `graph.path`,
   `repo_map`, `find_symbol`, `context.get(handle)` — so **Claude Code / Codex sessions read and write
-  the same memory** as AgentOS agents.
+  the same memory** as AgentOS.NET agents.
 - Anthropic **memory tool** backend mapped onto the store; **context editing** enabled for long
   delegated sessions.
 

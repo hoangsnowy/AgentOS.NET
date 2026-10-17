@@ -41,6 +41,8 @@ public static class DataProtectionExtensions
 {
     /// <summary>The shared application name both hosts protect/unprotect under — must match so a value
     /// encrypted by the Web (e.g. a tenant LLM key saved in Settings) is decryptable by the Api.</summary>
+    // Deliberately the pre-rename spelling: the application name isolates the key ring, so renaming it to
+    // "AgentOS.NET" would make every existing encrypted setting undecryptable.
     private const string SharedApplicationName = "AgentOS";
 
     /// <summary>Adds DataProtection, persisting the key ring to Postgres when configured and wrapping it with

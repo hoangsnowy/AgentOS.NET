@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace AgentOs.Domain.Workspaces;
 
-/// <summary>A source-control backend (GitHub, Azure DevOps) AgentOS can connect a workspace to.</summary>
+/// <summary>A source-control backend (GitHub, Azure DevOps) AgentOS.NET can connect a workspace to.</summary>
 public interface ISourceProvider
 {
     /// <summary>Which backend this implementation serves.</summary>

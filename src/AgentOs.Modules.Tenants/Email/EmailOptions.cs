@@ -21,7 +21,7 @@ public sealed class EmailOptions
     public string From { get; set; } = "noreply@agentic.local";
 
     /// <summary>Display name shown to recipients.</summary>
-    public string FromName { get; set; } = "AgentOS";
+    public string FromName { get; set; } = "AgentOS.NET";
 
     /// <summary>Use STARTTLS (port 587 providers). Port 465 implies implicit TLS regardless.</summary>
     public bool UseStartTls { get; set; }

@@ -147,15 +147,15 @@
         </div>
 
         <div class="ko-footer">
-            <button class="ko-user" @onclick="ShowAbout" title="About AgentOS">
+            <button class="ko-user" @onclick="ShowAbout" title="About AgentOS.NET">
                 <span class="ko-avatar">@AvatarLetter</span>
                 <span class="ko-user-text">
                     <span class="ko-user-name">@(_user ?? "operator")</span>
-                    <span class="ko-user-sub">AgentOS v1.0</span>
+                    <span class="ko-user-sub">AgentOS.NET v1.0</span>
                 </span>
             </button>
             <div class="ko-footer-actions">
-                <button class="ko-fbtn" @onclick="ShowAbout" title="About" aria-label="About AgentOS">
+                <button class="ko-fbtn" @onclick="ShowAbout" title="About" aria-label="About AgentOS.NET">
                     <Icon Name="info" Size="16" />
                 </button>
                 <button class="ko-fbtn ko-fbtn-danger" @onclick="Lock" title="Lock screen" aria-label="Lock screen">
@@ -167,15 +167,15 @@
 }
 
 @* ===== About dialog ===== *@
-<Dialog Show="_aboutOpen" Title="About — AgentOS" Width="440" OnClose="@(() => _aboutOpen = false)">
+<Dialog Show="_aboutOpen" Title="About — AgentOS.NET" Width="440" OnClose="@(() => _aboutOpen = false)">
     <ChildContent>
-        <h3 class="about-h">AgentOS</h3>
+        <h3 class="about-h">AgentOS.NET</h3>
         <p class="about-tag">A .NET multi-agent AI framework for the software development lifecycle.</p>
         <table class="about-tbl">
             <tr><th>Version</th><td>1.0</td></tr>
             <tr><th>Runtime</th><td>.NET 10</td></tr>
             <tr><th>License</th><td>MIT</td></tr>
-            <tr><th>Source</th><td><a href="https://github.com/hoangsnowy/AgentOs" target="_blank">github.com/hoangsnowy/AgentOs</a></td></tr>
+            <tr><th>Source</th><td><a href="https://github.com/hoangsnowy/AgentOS.NET" target="_blank">github.com/hoangsnowy/AgentOS.NET</a></td></tr>
         </table>
     </ChildContent>
     <Footer>

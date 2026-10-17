@@ -1,6 +1,6 @@
 # Setup & First Run
 
-Everything you need to build, run and test AgentOS on your machine. For *what* to configure (deploy
+Everything you need to build, run and test AgentOS.NET on your machine. For *what* to configure (deploy
 time vs the desktop) see [CONFIG.md](CONFIG.md); for Azure see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## 1. Prerequisites
@@ -8,7 +8,7 @@ time vs the desktop) see [CONFIG.md](CONFIG.md); for Azure see [DEPLOYMENT.md](D
 - **.NET 10 SDK** — <https://dotnet.microsoft.com/download/dotnet/10.0>. `global.json` pins the
   version; check with `dotnet --list-sdks`.
 - **Docker** (Docker Desktop / Podman) — only for the full stack (§4).
-- Optional: an Anthropic and/or Azure OpenAI API key. Not needed to try AgentOS — see §3.
+- Optional: an Anthropic and/or Azure OpenAI API key. Not needed to try AgentOS.NET — see §3.
 
 ## 2. Build and test
 
@@ -58,7 +58,7 @@ them, wiring connection strings and the OIDC authority automatically.
 | What | Where |
 |---|---|
 | Aspire dashboard (logs, traces, resources) | <https://localhost:17050> |
-| AgentOS desktop | <https://localhost:5180> |
+| AgentOS.NET desktop | <https://localhost:5180> |
 | Api — Scalar UI / OpenAPI | <https://localhost:5080/scalar/v1> · `/openapi/v1.json` |
 | Keycloak admin console | URL shown for the `keycloak` resource in the dashboard (`admin` / `admin`) |
 | MailHog (invitation emails) | URL shown for the `mailhog` resource |

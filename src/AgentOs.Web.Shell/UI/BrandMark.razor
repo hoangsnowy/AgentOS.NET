@@ -1,11 +1,11 @@
-@* BrandMark — the AgentOS product icon: a friendly agent face (antenna with a gold light, big eyes, cheeks, smile)
+@* BrandMark — the AgentOS.NET product icon: a friendly agent face (antenna with a gold light, big eyes, cheeks, smile)
    on the accent squircle, drawn in the same illustration palette as the agent characters (--mascot-* tokens).
    Pure inline SVG with no ids/defs (any number can share a page); the gradient is the wrapper's CSS background.
    Still at rest; on hover it blinks and waves its antenna once. Busy (loading) is the only looping state, off
    under reduced motion or the Animations setting. The static twin is wwwroot/favicon.svg (+ PNG renders) and the Keycloak login tile. *@
 
 <span class="brand-logo @(Busy ? "is-busy" : "")" style="width:@(Size)px;height:@(Size)px"
-      role="@(Decorative ? null : "img")" aria-label="@(Decorative ? null : "AgentOS")" aria-hidden="@(Decorative ? "true" : null)">
+      role="@(Decorative ? null : "img")" aria-label="@(Decorative ? null : "AgentOS.NET")" aria-hidden="@(Decorative ? "true" : null)">
     <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
         <g class="bl-antenna">
             <line class="bl-stalk" x1="32" y1="18" x2="32" y2="10" />
@@ -28,7 +28,7 @@
     /// <summary>Edge length in CSS pixels.</summary>
     [Parameter] public int Size { get; set; } = 40;
 
-    /// <summary>True when a visible "AgentOS" label sits next to it (the mark is then hidden from assistive tech).</summary>
+    /// <summary>True when a visible "AgentOS.NET" label sits next to it (the mark is then hidden from assistive tech).</summary>
     [Parameter] public bool Decorative { get; set; }
 
     /// <summary>Loading state: the agent bobs, glances around and its antenna light pulses — loops only while

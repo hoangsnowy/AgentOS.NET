@@ -1,11 +1,11 @@
-# AgentOS Design System
+# AgentOS.NET Design System
 
-> Single source of truth for the AgentOS desktop UI. Read this before adding any screen,
+> Single source of truth for the AgentOS.NET desktop UI. Read this before adding any screen,
 > component, or style. If a value isn't here, it goes through a **token** — never a magic number.
 
 ## North star
 
-**An operating system for agents — a desktop world, authentic GNOME / Adwaita.** AgentOS isn't a
+**An operating system for agents — a desktop world, authentic GNOME / Adwaita.** AgentOS.NET isn't a
 dashboard with a sidebar; it's a *desktop metaphor*: a wallpaper, a top bar, the GNOME Dash, CSD
 draggable/resizable windows, **virtual workspaces**, a full-screen **Activities overview**, and a
 GDM lock/sign-in. Every feature is an **app** you launch into a window, not a route you navigate to.
@@ -81,7 +81,7 @@ Don't memorize values — reference these names. Full list in `app.css`; the fam
 | `Badge` / `Chip` / `Grade` | Status pills | Color-only status with no text/icon (a11y) |
 | `Toast` (via `ToastService`) | Transient feedback | A dialog for "saved" |
 | `Spinner` / `Progress` | Loading / determinate progress | A "Loading…" string |
-| `AppFrame` + `WindowManagerService` | **Any new app** = a window | A full-page route; AgentOS apps live in windows |
+| `AppFrame` + `WindowManagerService` | **Any new app** = a window | A full-page route; AgentOS.NET apps live in windows |
 | `ModelPicker` | Choosing an LLM model (priced, provider-filtered, `Custom…` for aliases) | A `<datalist>` input — it hides every option once the box has a value |
 | `AgentMascot` (role × `MascotState`) | Showing *which agent* and *what it is doing* (Workflow nodes, Agent profiles) | Ad-hoc agent emoji/avatars; a mascot as the **only** status signal (keep the text/badge beside it) |
 
@@ -97,7 +97,7 @@ on hover and squish on press. Same opt-outs as the mascots (`prefers-reduced-mot
 
 ### Brand mark + loading
 
-`BrandMark` (Shell UI kit) is the AgentOS product icon: a friendly agent face (antenna with a gold light, big
+`BrandMark` (Shell UI kit) is the AgentOS.NET product icon: a friendly agent face (antenna with a gold light, big
 eyes, cheeks, smile) on the accent squircle, in the mascot palette (`--mascot-*`). It is inline SVG with no
 ids; the gradient is the wrapper's CSS background. The same mark appears everywhere:
 
@@ -114,8 +114,8 @@ ids; the gradient is the wrapper's CSS background. The same mark appears everywh
 - **Loading = the agent at work:** `<Spinner>` renders the busy mark plus three "thinking" dots (small 16 /
   medium 26 / large 44 px). The reconnect screen uses the same character. It loops only while something is
   loading, and is still under reduced motion or Animations off.
-- `Decorative="true"` when a visible "AgentOS" label sits next to it (hidden from assistive tech); otherwise it is
-  `role="img"` named "AgentOS".
+- `Decorative="true"` when a visible "AgentOS.NET" label sits next to it (hidden from assistive tech); otherwise it is
+  `role="img"` named "AgentOS.NET".
 
 ### Agent mascots
 

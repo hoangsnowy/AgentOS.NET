@@ -1,4 +1,4 @@
-// AgentOS UI — the Board app: connected Boards (GitHub Projects v2), paired Runners, Sessions.
+// AgentOS.NET UI — the Board app: connected Boards (GitHub Projects v2), paired Runners, Sessions.
 // Same gate + fixture as the other desktop UI tests: skipped unless RUN_AGENTOS_E2E=true with a
 // Web running at AGENTOS_URL. The register-runner flow needs no DB — the one-time pairing token is
 // minted by the real IRunnerPairingService, so the token panel appears even against Null repos.

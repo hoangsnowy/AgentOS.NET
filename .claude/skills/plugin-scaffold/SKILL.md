@@ -1,14 +1,14 @@
 ---
 name: plugin-scaffold
 description: >
-  Scaffold a new AgentOS plugin (IAgentOsPlugin) — a runtime-discovered extension dropped in the
+  Scaffold a new AgentOS.NET plugin (IAgentOsPlugin) — a runtime-discovered extension dropped in the
   host's plugins/ folder, with no compile-time reference. Generates the project (SharedKernel + Domain
   references, Private=false), the plugin class + manifest, and a contributed capability (a tool, an LLM
   provider, and/or a desktop window). Use when the user says "scaffold a plugin", "new plugin X",
   "add a plugin", or invokes "/plugin-scaffold X".
 ---
 
-Scaffold one AgentOS plugin end-to-end. The template is the in-repo reference
+Scaffold one AgentOS.NET plugin end-to-end. The template is the in-repo reference
 `samples/AgentOs.Plugins.Sample` (the `IAgentOsPlugin` contract lives in `AgentOs.SharedKernel.Plugins`).
 
 ## Input

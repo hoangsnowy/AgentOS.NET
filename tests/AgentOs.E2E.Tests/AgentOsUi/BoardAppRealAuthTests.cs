@@ -1,4 +1,4 @@
-// AgentOS UI — REAL-AUTH end-to-end against the full Aspire stack (real Keycloak login, real Postgres).
+// AgentOS.NET UI — REAL-AUTH end-to-end against the full Aspire stack (real Keycloak login, real Postgres).
 // Gated by RUN_AGENTOS_E2E_REAL=true with the AppHost running. See AgentOsRealAuthFixture.
 //
 // Login_RealAuth_RendersDesktop proves the real OIDC login harness (works on any AppHost build).

@@ -29,7 +29,7 @@ public static class LlmTelemetry
     private static readonly Counter<long> Calls =
         Meter.CreateCounter<long>("agentos.llm.calls", unit: "{call}", description: "LLM calls made.");
 
-    /// <summary>Maps an AgentOS provider name to the OTel GenAI <c>gen_ai.system</c> well-known value.</summary>
+    /// <summary>Maps an AgentOS.NET provider name to the OTel GenAI <c>gen_ai.system</c> well-known value.</summary>
     public static string SystemFor(string provider) => provider switch
     {
         "Claude" => "anthropic",

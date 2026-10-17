@@ -1,4 +1,4 @@
-// AgentOS UI — REAL-AUTH end-to-end for the Workflow studio. Unlike WorkflowAppTests (dev-auto-login against
+// AgentOS.NET UI — REAL-AUTH end-to-end for the Workflow studio. Unlike WorkflowAppTests (dev-auto-login against
 // a standalone Web), this drives the ACTUAL Keycloak OIDC session against the full Aspire stack: login as
 // operator/operator → open the Workflow app → Run the seeded "5-Agent SDLC Pipeline" → the drawn nodes reach
 // the Done run-state on the canvas and the run completes. The full stack carries no LLM key in E2E, so the

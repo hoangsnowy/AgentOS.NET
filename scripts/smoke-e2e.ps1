@@ -1,7 +1,7 @@
 #requires -Version 7
 <#
 .SYNOPSIS
-  End-to-end smoke for AgentOS. Two modes:
+  End-to-end smoke for AgentOS.NET. Two modes:
     (default)   boot the STANDALONE Web (no DB) and health-probe it — automated proof the app boots +
                 serves the desktop. Then prints the runbook for the parts that need real services.
     -FullStack  print the full Aspire-stack runbook (Postgres + Keycloak + Api + Web) + the click-by-click
@@ -74,8 +74,8 @@ try {
     if ($healthy) {
         Ok "GET /health -> 200"
         $page = Invoke-WebRequest $url -SkipCertificateCheck -TimeoutSec 10
-        if ($page.Content -match 'AgentOS') { Ok "desktop served (title/content contains 'AgentOS')" }
-        else { Warn "home page served but 'AgentOS' marker not found" }
+        if ($page.Content -match 'AgentOS.NET') { Ok "desktop served (title/content contains 'AgentOS.NET')" }
+        else { Warn "home page served but 'AgentOS.NET' marker not found" }
         Write-Host "`n  Standalone boots + serves. This proves render + the degraded path ONLY — persistence," -ForegroundColor Cyan
         Write-Host "  real cost/budget/policy, and the idea->PR spine need the full stack: re-run with -FullStack." -ForegroundColor Cyan
     } else {

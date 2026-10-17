@@ -1,12 +1,12 @@
-# Contributing to AgentOS
+# Contributing to AgentOS.NET
 
-Thanks for your interest! AgentOS is a .NET-native multi-agent platform for the software development
+Thanks for your interest! AgentOS.NET is a .NET-native multi-agent platform for the software development
 lifecycle. Issues and pull requests are welcome.
 
 ## Getting started
 
 ```bash
-git clone https://github.com/hoangsnowy/AgentOs.git
+git clone https://github.com/hoangsnowy/AgentOS.NET.git
 cd AgentOs
 dotnet build AgentOs.slnx -c Release
 dotnet test  --solution AgentOs.slnx -c Release     # xUnit v3 on Microsoft.Testing.Platform
@@ -64,7 +64,7 @@ You need the **.NET 10 SDK** (pinned in `global.json`); tests need no API keys o
   are mirrored in the Claude Design project.
 - **Security**: third-party text that reaches a prompt is wrapped with `UntrustedText`; never log
   secrets; when a code-scanning alert lands, fix it and add its compiler-side twin rule if one exists.
-- **Language**: code, comments, docs and prompts are English. Branding is **AgentOS**.
+- **Language**: code, comments, docs and prompts are English. Branding is **AgentOS.NET**.
 
 ## Reporting bugs / requesting features
 

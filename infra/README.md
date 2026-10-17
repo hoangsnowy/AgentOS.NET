@@ -8,7 +8,7 @@ Deployment is driven by **.NET Aspire + Azure Developer CLI (`azd`)**. The AppHo
 | Container Apps environment + Log Analytics | implicit (Aspire) |
 | Azure Container Registry | implicit (image push) |
 | Container App: `api` | `AddProject("api")` |
-| Container App: `web` (AgentOS desktop) | `AddProject("web")` |
+| Container App: `web` (AgentOS.NET desktop) | `AddProject("web")` |
 | Container App: `keycloak` (custom image + `agentic` realm import) | `AddKeycloak(...)` |
 | Azure Database for PostgreSQL flexible server (password auth) | `AddAzurePostgresFlexibleServer("postgres")` |
 | Key Vault for the Postgres secrets | `infra/postgres-kv*` |

@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentOs.Plugins.Sample;
 
-/// <summary>Sample AgentOS plugin — contributes the <see cref="WordCountTool"/>.</summary>
+/// <summary>Sample AgentOS.NET plugin — contributes the <see cref="WordCountTool"/>.</summary>
 public sealed class SamplePlugin : IAgentOsPlugin
 {
     /// <inheritdoc />
@@ -17,7 +17,7 @@ public sealed class SamplePlugin : IAgentOsPlugin
         Id: "agentos.sample.tools",
         Name: "Sample Tools",
         Version: "1.1.0",
-        Author: "AgentOS",
+        Author: "AgentOS.NET",
         Description: "Reference plugin — contributes a word_count tool and a desktop window, discovered at runtime.");
 
     /// <inheritdoc />

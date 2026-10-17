@@ -1,7 +1,7 @@
 # ADR-0011 — UI-first configuration: settings registry, scopes, precedence
 
 - **Status:** Accepted (2026-10-17)
-- **Deciders:** AgentOS maintainers
+- **Deciders:** AgentOS.NET maintainers
 - **Plan:** [Agentic SDLC v2 — Phase C](../plans/agentic-sdlc-v2.md) (owner decision D-G)
 
 ## Context

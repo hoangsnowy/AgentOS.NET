@@ -22,7 +22,7 @@ public static class DecomposerPrompt
 
     /// <summary>System prompt — the allowed-label set is interpolated from <see cref="StandardLabels"/>.</summary>
     public static readonly string System = $$"""
-        You are the Decomposition Agent in the AgentOS SDLC system.
+        You are the Decomposition Agent in the AgentOS.NET SDLC system.
         You receive a requirement specification and a SEED list of ticket drafts from a deterministic
         mapper. Refine the seed into a clean, buildable set of work tickets.
 

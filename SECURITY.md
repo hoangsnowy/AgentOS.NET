@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please do **not** open a public issue for security vulnerabilities. Instead, report privately via
-[GitHub Security Advisories](https://github.com/hoangsnowy/AgentOs/security/advisories/new)
+[GitHub Security Advisories](https://github.com/hoangsnowy/AgentOS.NET/security/advisories/new)
 or email the maintainer. We aim to acknowledge reports within a few days.
 
 When reporting, include: affected component, reproduction steps, and impact.
@@ -14,7 +14,7 @@ When reporting, include: affected component, reproduction steps, and impact.
   variables, or the runtime Settings store (encrypted with ASP.NET Core Data Protection). See
   [docs/SETUP.md](docs/SETUP.md).
 - **API auth** is Keycloak OIDC JWT bearer (RS256); tokens are signed by the Keycloak realm key
-  and validated against its JWKS — rotate the signing key in Keycloak, not in AgentOS.
+  and validated against its JWKS — rotate the signing key in Keycloak, not in AgentOS.NET.
 - The **remote dev-agent runtime** executes work on a developer machine — treat the pairing
   credential as a secret. Remote execution needs a human approval; unattended auto-approve is a
   platform setting that Production locks off.

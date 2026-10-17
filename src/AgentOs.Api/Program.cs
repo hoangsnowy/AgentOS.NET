@@ -175,7 +175,7 @@ if (!app.Environment.IsProduction())
     app.MapOpenApi();
     app.MapScalarApiReference(options =>
     {
-        options.WithTitle("AgentOS API")
+        options.WithTitle("AgentOS.NET API")
                .WithTheme(ScalarTheme.BluePlanet)
                .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
     });

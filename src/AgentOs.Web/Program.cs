@@ -117,7 +117,7 @@ var oidcAuthority = keycloak["Authority"] is { Length: > 0 } configuredAuthority
         ? "http://localhost:8080/realms/agentic"
         : throw new InvalidOperationException(
             "Auth:Keycloak:Authority is required outside Development when DevAutoLogin is off.");
-// Per-instance cookie names. Cookies are scoped to the HOST, not the port, so two AgentOS instances on the
+// Per-instance cookie names. Cookies are scoped to the HOST, not the port, so two AgentOS.NET instances on the
 // same host (dev + lab on localhost, or several deployments under one parent domain) would otherwise share
 // and overwrite each other's auth/correlation/antiforgery cookies. The default prefix keeps today's names.
 var cookiePrefix = AuthCookies.Prefix(builder.Configuration["Auth:CookiePrefix"]);

@@ -16,7 +16,7 @@ on:
   # exists:
   #   az ad app federated-credential create --id <appId> --parameters '{"name":"agentos-main",
   #     "issuer":"https://token.actions.githubusercontent.com",
-  #     "subject":"repo:hoangsnowy/AgentOs:ref:refs/heads/main","audiences":["api://AzureADTokenExchange"]}'
+  #     "subject":"repo:hoangsnowy/AgentOS.NET:ref:refs/heads/main","audiences":["api://AzureADTokenExchange"]}'
   #   (or run `azd pipeline config`), then add back under `on:`:
   #     workflow_run: { workflows: [ "CI" ], types: [ completed ], branches: [ main ] }
   workflow_dispatch:

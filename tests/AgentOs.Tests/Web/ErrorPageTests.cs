@@ -36,7 +36,7 @@ public class ErrorPageTests
         status.ShouldBe(StatusCodes.Status500InternalServerError);
         contentType.ShouldNotBeNull();
         contentType.ShouldStartWith("text/html");
-        body.ShouldContain("AgentOS");
+        body.ShouldContain("AgentOS.NET");
         body.ShouldContain("trace-abc-123");
         body.ShouldContain("Back to the desktop");
     }

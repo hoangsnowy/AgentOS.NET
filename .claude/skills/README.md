@@ -1,4 +1,4 @@
-# Project skills — AgentOS
+# Project skills — AgentOS.NET
 
 Custom skills shipped with the repo. Loaded automatically by every Claude Code session opened in this project.
 

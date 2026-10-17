@@ -9,7 +9,7 @@ using AgentOs.Web.Shell.Services;
 
 namespace AgentOs.Web.Services;
 
-/// <summary>The catalog of apps the AgentOS shell can launch — built-ins plus any registered by plugins.</summary>
+/// <summary>The catalog of apps the AgentOS.NET shell can launch — built-ins plus any registered by plugins.</summary>
 public static class AppCatalog
 {
     // Six apps are Pinned (the GNOME Dash + pinned grid): Insights · Workflow · Board · Settings ·

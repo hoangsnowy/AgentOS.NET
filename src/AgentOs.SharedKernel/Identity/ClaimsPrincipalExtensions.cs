@@ -9,7 +9,7 @@ using System.Security.Claims;
 
 namespace AgentOs.SharedKernel.Identity;
 
-/// <summary>Canonical claim type + role names AgentOS issues (Keycloak realm mapping).</summary>
+/// <summary>Canonical claim type + role names AgentOS.NET issues (Keycloak realm mapping).</summary>
 public static class ClaimNames
 {
     /// <summary>Custom claim carrying the user's tenant id.</summary>
@@ -28,7 +28,7 @@ public static class ClaimNames
     public const string MemberRole = "member";
 }
 
-/// <summary>Reads AgentOS identity off a <see cref="ClaimsPrincipal"/>. The single source for the
+/// <summary>Reads AgentOS.NET identity off a <see cref="ClaimsPrincipal"/>. The single source for the
 /// <c>tenant</c>/<c>sub</c>/<c>admin</c> encoding — callers supply their own fallback for a missing tenant.</summary>
 public static class ClaimsPrincipalExtensions
 {

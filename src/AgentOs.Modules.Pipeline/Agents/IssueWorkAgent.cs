@@ -135,7 +135,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         var providerName = request.ProviderOverride ?? opts.Provider;
         var cliMode = providerName.Trim().ToUpperInvariant() is "REMOTEAGENT" or "REMOTE" or "IDE";
 
-        // S1 — server-token budget gate. Server-side runs spend AgentOS's OWN LLM tokens, so they pass
+        // S1 — server-token budget gate. Server-side runs spend AgentOS.NET's OWN LLM tokens, so they pass
         // the per-tenant budget gate before the expensive agentic loop (the gap the run-level pipeline
         // gate in PersistingOrchestratorAgent never covered for this path). CLI/RemoteAgent runs execute
         // on the member's paired machine and cost ZERO server tokens, so they are exempt.

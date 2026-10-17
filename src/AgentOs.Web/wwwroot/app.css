@@ -1804,7 +1804,7 @@ select {
 /* =================================================================
    Spinner
    ================================================================= */
-/* The AgentOS agent at work + three "thinking" dots (Spinner.razor). Busy is the brand mark's only looping state. */
+/* The AgentOS.NET agent at work + three "thinking" dots (Spinner.razor). Busy is the brand mark's only looping state. */
 .spinner { display: inline-flex; align-items: flex-end; gap: 5px; vertical-align: middle; padding: 2px 0; }
 .spinner-dots { display: inline-flex; gap: 3px; padding-bottom: 2px; }
 .spinner-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); opacity: .35; animation: sp-dot 1.2s ease-in-out infinite; }
@@ -2646,7 +2646,7 @@ input[type=range] { accent-color: var(--accent); }
 .board-runall { margin-bottom: var(--space-3); }
 .board-ai-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-tertiary); white-space: nowrap; }
 
-/* ===== Brand mark (BrandMark.razor) — the AgentOS product icon =====
+/* ===== Brand mark (BrandMark.razor) — the AgentOS.NET product icon =====
    An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once
    on hover (of the mark or the brand row around it). favicon.svg / the Keycloak tile are its static twins. */
 .brand-logo {

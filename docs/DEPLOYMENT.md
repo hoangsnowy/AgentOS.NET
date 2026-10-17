@@ -56,7 +56,7 @@ azd env set KeycloakAdminPassword    "$(openssl rand -base64 24)"
 azd env set KeycloakWebClientSecret  "$(openssl rand -base64 32)"
 ```
 
-**LLM keys are per-tenant, not a deploy secret.** AgentOS is bring-your-own-key: each workspace
+**LLM keys are per-tenant, not a deploy secret.** AgentOS.NET is bring-your-own-key: each workspace
 (tenant) admin enters their own Claude / Azure OpenAI key in the running app (**Settings → API keys**),
 stored encrypted per-tenant. You do **not** need to set a platform-wide LLM key to deploy — see
 [Per-tenant LLM keys](#per-tenant-llm-keys) below.
@@ -103,7 +103,7 @@ bash infra/hooks/postdeploy.sh   # normally runs automatically after azd deploy
 2. Log in with `operator` and the rotated password: `azd env get-value OPERATORPASSWORD`
    (the `postdeploy` hook rotates the seed `operator`/`member` users to the strong generated
    `OPERATORPASSWORD`/`MEMBERPASSWORD`; `temporary: false`, so there is no forced reset).
-3. You land on the AgentOS desktop. (`operator`/`operator` is the **local Aspire** seed only.)
+3. You land on the AgentOS.NET desktop. (`operator`/`operator` is the **local Aspire** seed only.)
 
 ### A.4 — Subsequent deploys
 
@@ -147,7 +147,7 @@ az role assignment create --role Owner --assignee "$APP_ID" --scope "/subscripti
 az ad app federated-credential create --id "$APP_ID" --parameters '{
   "name": "github-main",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:hoangsnowy/AgentOs:ref:refs/heads/main",
+  "subject": "repo:hoangsnowy/AgentOS.NET:ref:refs/heads/main",
   "audiences": ["api://AzureADTokenExchange"]
 }'
 ```
@@ -161,7 +161,7 @@ gh secret set AZURE_SUBSCRIPTION_ID   --body "$SUB_ID"
 gh variable set AZURE_ENV_NAME        --body "agentos-prod"
 gh variable set AZURE_LOCATION        --body "southeastasia"
 
-# AgentOS secrets — injected into azd env before each deploy
+# AgentOS.NET secrets — injected into azd env before each deploy
 gh secret set KEYCLOAKADMINPASSWORD    --body "$(openssl rand -base64 24)"
 gh secret set KEYCLOAKWEBCLIENTSECRET  --body "$(openssl rand -base64 32)"
 gh secret set LLM__CLAUDE__APIKEY      --body "sk-ant-..."
@@ -227,7 +227,7 @@ Once all four are in place, every push to `main` that passes CI auto-deploys via
 
 ## Per-tenant LLM keys
 
-AgentOS is **bring-your-own-key (BYO)**, isolated per tenant — there is no required shared platform key.
+AgentOS.NET is **bring-your-own-key (BYO)**, isolated per tenant — there is no required shared platform key.
 
 **How a workspace sets its key:**
 1. Sign in as a tenant **admin** (the `admin` realm role).
@@ -286,7 +286,7 @@ az containerapp revision activate -n api -g <rg> --revision <name>
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Invalid redirect_uri` on login | KC client still points to localhost | Run `infra/hooks/postdeploy.sh` (A.2) |
-| `Correlation failed` on OIDC callback | DataProtection key mismatch | Both API+Web must share `SetApplicationName("AgentOS")` — already wired by `AddAgentOsDataProtection()` (`src/AgentOs.Modules.AppConfig/DataProtectionExtensions.cs`), called from each host's `Program.cs` |
+| `Correlation failed` on OIDC callback | DataProtection key mismatch | Both API+Web must share `SetApplicationName("AgentOS.NET")` — already wired by `AddAgentOsDataProtection()` (`src/AgentOs.Modules.AppConfig/DataProtectionExtensions.cs`), called from each host's `Program.cs` |
 | 401 on API calls from Web | KC issuer mismatch | Set `KC_HOSTNAME` via `azd env set KeycloakHostname` then redeploy |
 | Pipeline 404 on Claude calls | Wrong model id | Check the agent's model in **Settings → Agent profiles** (the picker lists valid, priced ids; *Custom…* is for Azure deployment aliases) — see [CONFIG.md](CONFIG.md) |
 | Users lost after redeploy | KC not actually on Postgres (e.g. stale env / failed `KC_DB_*` wiring) | Cloud KC is Postgres-backed from the first deploy — confirm `KC_DB`/`KC_DB_URL` are set on the `keycloak` container app and the `keycloak` database exists on the flexible server |

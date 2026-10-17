@@ -1,5 +1,5 @@
 /* =================================================================
-   AgentOS login theme — Keycloak skin matching the AgentOS GNOME/Adwaita desktop.
+   AgentOS.NET login theme — Keycloak skin matching the AgentOS.NET GNOME/Adwaita desktop.
    Mirrors the design tokens from src/AgentOs.Web/wwwroot/app.css so the
    sign-in screen feels like part of the same product.
    ================================================================= */
@@ -50,7 +50,7 @@
         linear-gradient(135deg, #c2dcf8 0%, #7ba9e8 52%, #4f86dd 100%);
 }
 
-/* ===== Page shell — lock-screen glass over the AgentOS wallpaper ===== */
+/* ===== Page shell — lock-screen glass over the AgentOS.NET wallpaper ===== */
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body {
@@ -90,7 +90,7 @@ body, .login-pf body, .login-pf-page {
 /* GDM lock-screen wordmark above the card — thin white, THE brand identity (the in-card A-tile
    is hidden so the name shows once). */
 .login-pf-page::before {
-    content: "AgentOS";
+    content: "AgentOS.NET";
     order: 1;
     color: #fff;
     font: 200 clamp(48px, 9vw, 84px)/1 var(--font);
@@ -132,7 +132,7 @@ body, .login-pf body, .login-pf-page {
     -webkit-backdrop-filter: none;
 }
 
-/* ===== Header — replace the stock KC logo with the AgentOS mark ===== */
+/* ===== Header — replace the stock KC logo with the AgentOS.NET mark ===== */
 /* Brand tile centered at the top of the card (the squares-style mark). The realm-name text is
    hidden — the big wordmark above already names the product. */
 #kc-header {
@@ -154,7 +154,7 @@ body, .login-pf body, .login-pf-page {
     align-items: center;
 }
 
-/* Lit-app-icon brand tile — accent gradient + the AgentOS agent face (data-URI twin of the desktop BrandMark /
+/* Lit-app-icon brand tile — accent gradient + the AgentOS.NET agent face (data-URI twin of the desktop BrandMark /
    wwwroot/favicon.svg), the same mark on every surface. */
 #kc-header-wrapper::before {
     content: "";

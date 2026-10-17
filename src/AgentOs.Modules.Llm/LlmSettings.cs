@@ -96,7 +96,7 @@ public sealed class LlmSettings(bool offlineFallbackDefault = false) : ISettings
             };
         }
 
-        // OpenAI-compatible (self-hosted / air-gapped). Platform scope: AgentOS calls this URL server-side, so a
+        // OpenAI-compatible (self-hosted / air-gapped). Platform scope: AgentOS.NET calls this URL server-side, so a
         // tenant must never be able to point it at an internal address (SSRF).
         yield return new(CompatEndpoint, SettingKind.Text, Category, "OpenAI-compatible endpoint")
         {

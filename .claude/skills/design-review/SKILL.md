@@ -1,17 +1,17 @@
 ---
 name: design-review
 description: >
-  Enforce the AgentOS design system on any Blazor UI work so screens stay visually consistent
+  Enforce the AgentOS.NET design system on any Blazor UI work so screens stay visually consistent
   with the desktop shell. Loads docs/design/design-system.md as the contract, runs a phantom-CSS
   class detector (catches class names used in .razor but defined in no CSS — the Spine/Users
   layout-breakage root cause), maps stray markup back to the defined vocabulary (prefs-*,
   .page-head, .settings-table, Panel/Btn/Field/Icon), and applies the design-system checklist
-  (tokens-only, one accent, a11y, Keycloak-login mirrors the shell, "AgentOS" branding). Use when
+  (tokens-only, one accent, a11y, Keycloak-login mirrors the shell, "AgentOS.NET" branding). Use when
   the user says "review this UI", "design check", "is this consistent", "fix the layout", before
   adding/editing any screen or component, or invokes "/design-review".
 ---
 
-Review and align one Blazor screen/component (or the whole `src/AgentOs.Web` UI) to the AgentOS
+Review and align one Blazor screen/component (or the whole `src/AgentOs.Web` UI) to the AgentOS.NET
 design system. The shell is a desktop metaphor (KDE Breeze); every app is a window. Inconsistency
 is the bug this skill exists to kill.
 
@@ -66,7 +66,7 @@ phantom — and note it, the design-system doc warns against parallel vocabulari
 - [ ] Keyboard-reachable; `:focus-visible` ring on every control; a11y name on icon-only buttons.
 - [ ] Legible in light + dark × light + dark wallpaper; glass stays readable.
 - [ ] Settings (if any) live in the System app, deep-linked — not inline.
-- [ ] Branding is **AgentOS** everywhere (never "AgentOs"); the Keycloak login theme
+- [ ] Branding is **AgentOS.NET** everywhere (never "AgentOs"); the Keycloak login theme
       (`infra/keycloak/themes/agentos`) mirrors the shell tokens + mark.
 
 ## Step 4 — Verify (match the surface to the change; see CLAUDE.md "Verification")

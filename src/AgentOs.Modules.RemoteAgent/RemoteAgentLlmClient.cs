@@ -70,7 +70,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         {
             LlmTelemetry.RecordError(activity, "no remote runner connected");
             throw new LlmException(
-                "No remote dev runner connected for you. Register a runner (POST /runners), start the AgentOS "
+                "No remote dev runner connected for you. Register a runner (POST /runners), start the AgentOS.NET "
                 + "remote agent on your dev machine with that runner id + token, or pick a different provider.",
                 Provider);
         }
