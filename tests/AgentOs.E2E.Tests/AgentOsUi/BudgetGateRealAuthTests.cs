@@ -37,7 +37,8 @@ public sealed class BudgetGateRealAuthTests : IClassFixture<AgentOsRealAuthFixtu
     // Insert one parent run + one run_metrics row carrying the given spend for this month, billed to the
     // explicit tenant — the same shape GraphExecutor now persists. run_metrics.RunId FKs pipeline_runs.Id,
     // so the parent row is required; ResultJson is NOT NULL.
-    private static async Task SeedSpendAsync(string connectionString, string tenantId, decimal costUsd)
+    // Returns the seeded run id so the test can remove exactly what it added.
+    private static async Task<Guid> SeedSpendAsync(string connectionString, string tenantId, decimal costUsd)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync();
@@ -47,14 +48,52 @@ public sealed class BudgetGateRealAuthTests : IClassFixture<AgentOsRealAuthFixtu
               INSERT INTO pipeline.pipeline_runs
                 ("Id","TenantId","UserStoryText","Status","TotalCostUsd","TotalTokensIn","TotalTokensOut","IterationCount","CreatedAtUtc","CompletedAtUtc","ResultJson")
               VALUES (gen_random_uuid(), @t, 'e2e budget seed', 'Done', @c, 100, 50, 1, now(), now(), '{}'::jsonb)
-              RETURNING "Id")
-            INSERT INTO pipeline.run_metrics
-              ("TenantId","RunId","KcId","Iteration","AgentName","Model","Provider","TokensIn","TokensOut","LatencyMs","CostUsd","Success","TimestampUtc")
-            SELECT @t, r."Id", 'KC1', 0, 'SeedAgent', 'seed-model', 'Claude', 100, 50, 50, @c, true, now() FROM r;
+              RETURNING "Id"),
+            m AS (
+              INSERT INTO pipeline.run_metrics
+                ("TenantId","RunId","KcId","Iteration","AgentName","Model","Provider","TokensIn","TokensOut","LatencyMs","CostUsd","Success","TimestampUtc")
+              SELECT @t, r."Id", 'KC1', 0, 'SeedAgent', 'seed-model', 'Claude', 100, 50, 50, @c, true, now() FROM r)
+            SELECT "Id" FROM r;
             """;
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("c", costUsd);
+        return (Guid)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    // The test changes the REAL tenant's budget (cap + enforce) on a shared dev stack. Snapshot those rows
+    // verbatim (still encrypted — never decrypted here) so the finally block restores the exact prior state;
+    // otherwise every later run on that stack is blocked by "spent $10 of $5".
+    private static async Task<string> SnapshotBudgetAsync(string connectionString, string tenantId)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT coalesce(json_agg(c), '[]'::json)::text FROM config.app_config c
+            WHERE c."TenantId" = @t AND c."Key" IN ('budget/monthly-cap-usd', 'budget/enforce');
+            """;
+        cmd.Parameters.AddWithValue("t", tenantId);
+        return (string)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    private static async Task RestoreAsync(string connectionString, string tenantId, Guid seededRun, string budgetSnapshot)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            DELETE FROM pipeline.run_metrics WHERE "RunId" = @run;
+            DELETE FROM pipeline.pipeline_runs WHERE "Id" = @run;
+            DELETE FROM config.app_config WHERE "TenantId" = @t AND "Key" IN ('budget/monthly-cap-usd', 'budget/enforce');
+            INSERT INTO config.app_config SELECT * FROM json_populate_recordset(null::config.app_config, @snap::json);
+            """;
+        cmd.Parameters.AddWithValue("run", seededRun);
+        cmd.Parameters.AddWithValue("t", tenantId);
+        cmd.Parameters.AddWithValue("snap", budgetSnapshot);
         await cmd.ExecuteNonQueryAsync();
+        await tx.CommitAsync();
     }
 
     [Fact]
@@ -68,8 +107,20 @@ public sealed class BudgetGateRealAuthTests : IClassFixture<AgentOsRealAuthFixtu
         }
 
         // $10 of spend on record for the operator's tenant; the cap set below ($5) is under it.
-        await SeedSpendAsync(conn!, Tenant, 10.00m);
+        var budgetBefore = await SnapshotBudgetAsync(conn!, Tenant);
+        var seededRun = await SeedSpendAsync(conn!, Tenant, 10.00m);
+        try
+        {
+            await AssertOverBudgetAsync();
+        }
+        finally
+        {
+            await RestoreAsync(conn!, Tenant, seededRun, budgetBefore);
+        }
+    }
 
+    private async Task AssertOverBudgetAsync()
+    {
         await _fx.LoginAsync();
 
         // Open the Insights dashboard from the dock — the budget cap control lives there now (the old
