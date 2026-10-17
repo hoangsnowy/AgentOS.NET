@@ -197,10 +197,30 @@ The owner's standing instructions. They apply to every change; the execution pla
 - **Aspire:** `AddProject(..., launchProfileName: null)` drops the launch profile's
   `ASPNETCORE_ENVIRONMENT` — set it explicitly (the lab Api otherwise boots as Production and exits). An
   existing Keycloak realm is never re-imported — sync changes through the admin API (`lab.ps1` does).
-- **Recurring CodeQL notes:** `cs/linq/missed-where` (a `foreach` whose body is one `if (x is T)` → use
-  `OfType<T>()`/`Where`), `cs/path-combine` (banned at build time via `BannedSymbols.txt` — use `Path.Join`).
+- **Recurring CodeQL notes:**
+  - `cs/linq/missed-where`: a `foreach` whose body is one `if (x is T)` → use `OfType<T>()`/`Where`.
+  - `cs/linq/missed-select`: a loop body that only maps → use `Select`.
+  - `cs/path-combine`: banned at build time via `BannedSymbols.txt` — use `Path.Join`.
+  - `cs/useless-cast-to-self`: `foreach (x in (ReadOnlySpan<T>)[…])` → a `static readonly` array.
+  - `cs/local-not-disposed`: CodeQL doesn't see `await using (x.ConfigureAwait(false))` → write `await using var x = …`.
+  - `cs/catch-of-all-exceptions`: a "never throw" catch needs an explicit `when (ex is not OperationCanceledException)` filter.
+  - `cs/dispose-not-called-on-throw`: disposables in tests go under `using`.
+- **Row-level security (ADR-0012):** the dev/lab stack connects as the Postgres SUPERUSER, which bypasses RLS even
+  when forced — every connection therefore `SET ROLE agentos_rls`. A new tenant table gets the policy by being
+  added to `RowLevelSecurity.Tables`; its module context needs `.AddInterceptors(RowLevelSecurityInterceptor.Instance)`
+  and Dapper reads use `OpenWithTenantAsync`. Desktop calls carry the tenant because `CircuitIdentityHandler` pushes
+  it on every circuit event.
+- **Blazor circuit handlers:** an inbound-activity handler must keep the circuit's dispatcher — `ConfigureAwait(true)`,
+  never `false` (renderer thread affinity).
+- **Live agent runs on the lab without an API key:** `pwsh infra/lab/lab.ps1 pair` pairs this machine's `claude -p`
+  (prompt mode, no YOLO) and forces RemoteAgent for the lab tenant; `unpair` reverts it. Live runs need
+  `AGENTOS_E2E_RUN_TIMEOUT_SECONDS` (e.g. 1200) on the Workflow real-auth test.
 - **Editing gotchas:** shell heredocs and `sed` mangle escapes (`\n`, `\\`, `$`) in C#/JS/regex — use the
   Edit/Write tools or a small Node script with asserted replacements; preserve the file's line endings.
+  Never put backticks inside a double-quoted shell string (`node -e "…`x`…"`): bash executes them as commands.
+  Keep multi-line edit scripts in a file (Write) and run `node file.js` instead of inline `node -e`. In those
+  scripts pass replacements as a function (`s.replace(a, () => b)`) or use `split/join`: a `$` followed by a
+  backtick, `'`, `&` or a digit in a replacement string is a JS replace pattern and splices in other text.
   PowerShell `Invoke-WebRequest` treats an unfollowed 302 as an error — probe with `curl.exe`.
 - **Secrets:** never type real tokens into a browser or the chat. Tokens live in user-secrets / env and are
   read by test code; the owner sets them in their own terminal.
