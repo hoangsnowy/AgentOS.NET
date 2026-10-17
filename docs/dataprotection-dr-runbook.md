@@ -22,8 +22,8 @@ point in time. A ciphertext newer than the key that encrypted it cannot decrypt.
 ## Backup procedure
 
 - **Azure (flexible server):** enable automated backups ≥ 7 days AND geo-redundant backup. The
-  current bicep (`infra/AgentOs.AppHost/postgres.module.bicep`) ships `geoRedundantBackup: Disabled`
-  with 7-day retention — flip it during the `azd up` round-trip (ROADMAP Q1) for production.
+  current bicep (`infra/postgres/postgres.module.bicep`) ships `geoRedundantBackup: Disabled`
+  with 7-day retention — enable geo-redundant backup for production.
 - **Self-hosted:** nightly `pg_dump -Fc agentos` to off-box storage. The dump contains the key
   ring — treat it with the same sensitivity as a secrets vault (encrypt at rest, restrict access).
 

@@ -30,7 +30,7 @@ The realm (`agentic`) and seed users (`operator`, `member`) are baked into the c
 (`infra/keycloak/Dockerfile`, `CMD ["start", "--import-realm", "--optimized"]`) and imported on
 **first start only** — `--import-realm` is idempotent, so KC skips re-import once the realm exists in
 the Postgres store. Edits to the committed realm JSON do **not** re-apply on later deploys; use the
-`postprovision` hook or `kcadm` to change a live realm.
+`postdeploy` hook (`infra/hooks/postdeploy.sh`) or `kcadm` to change a live realm.
 
 **H2 (local dev only):**
 The embedded H2 database is used only by the local `dotnet run --project infra/AgentOs.AppHost`
@@ -74,10 +74,14 @@ azd up   # provisions RG, ACR, ACA env, Postgres → builds + pushes images → 
 
 `azd up` prints the **Web** and **API** URLs on completion.
 
-### A.2 — Patch Keycloak redirect URIs (required for login to work)
+### A.2 — Keycloak realm patch (automatic)
 
-The realm's `agentic-web` client has `redirectUris: https://localhost:5180/*` baked in. After
-provision you need to update it to the real ACA Web FQDN:
+The realm's `agentic-web` client has `redirectUris: https://localhost:5180/*` baked in. The
+**post-deploy hook** (`azure.yaml` → `infra/hooks/postdeploy.sh`) rewrites it to the real Web URL,
+rotates the client secret, ensures the `platform-admin` role and rotates seed passwords — after every
+`azd up` / `azd deploy`, with the URLs derived from the Container Apps domain. Details:
+[keycloak-prod-runbook.md](keycloak-prod-runbook.md#step-3--what-the-post-deploy-realm-patch-does).
+To re-run it by hand (e.g. with a custom domain):
 
 ```bash
 RG=$(azd env get-values | sed -n 's/^AZURE_RESOURCE_GROUP=//p' | tr -d '"')
@@ -90,7 +94,7 @@ export KEYCLOAKADMINPASSWORD="$(azd env get-value KeycloakAdminPassword)"
 export KEYCLOAKADMINUSERNAME="$(azd env get-value KeycloakAdminUsername)"
 export KEYCLOAKWEBCLIENTSECRET="$(azd env get-value KeycloakWebClientSecret)"
 
-bash infra/hooks/postprovision.sh
+bash infra/hooks/postdeploy.sh   # normally runs automatically after azd deploy
 ```
 
 ### A.3 — Verify login works
@@ -199,7 +203,7 @@ After `azd up`, patch the KC redirect URIs automatically:
     export WEB_BASE_URL="https://$WEB"
     export KEYCLOAKADMINPASSWORD="${{ secrets.KEYCLOAKADMINPASSWORD }}"
     export KEYCLOAKWEBCLIENTSECRET="${{ secrets.KEYCLOAKWEBCLIENTSECRET }}"
-    bash infra/hooks/postprovision.sh
+    bash infra/hooks/postdeploy.sh
 ```
 
 ### B.4 — Turn on auto-deploy
@@ -251,6 +255,14 @@ Follow [`docs/keycloak-prod-runbook.md`](keycloak-prod-runbook.md) for:
 - Real SMTP (`Email__SmtpHost` / realm `smtpServer`)
 - Multi-replica Web (min 1 replica + Azure SignalR backplane)
 
+Production also runs with **operator locks** (`appsettings.Production.json` → `Settings:Locks`) that the
+Settings UI cannot flip: remote auto-approve off, fail-closed tool policy, offline LLM fallback off,
+build sandbox = Container. Change one only with an env var (`Settings__Locks__<key>`). Everything
+else is configured in the desktop — see [CONFIG.md](CONFIG.md).
+
+Back up and restore the DataProtection key ring (it decrypts every stored setting and key) with
+[dataprotection-dr-runbook.md](dataprotection-dr-runbook.md).
+
 ---
 
 ## Operating the deployment
@@ -273,10 +285,10 @@ az containerapp revision activate -n api -g <rg> --revision <name>
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Invalid redirect_uri` on login | KC client still points to localhost | Run `postprovision.sh` (A.2) |
+| `Invalid redirect_uri` on login | KC client still points to localhost | Run `infra/hooks/postdeploy.sh` (A.2) |
 | `Correlation failed` on OIDC callback | DataProtection key mismatch | Both API+Web must share `SetApplicationName("AgentOS")` — already wired by `AddAgentOsDataProtection()` (`src/AgentOs.Modules.AppConfig/DataProtectionExtensions.cs`), called from each host's `Program.cs` |
 | 401 on API calls from Web | KC issuer mismatch | Set `KC_HOSTNAME` via `azd env set KeycloakHostname` then redeploy |
-| Pipeline 404 on Claude calls | Wrong model id | Models are per-agent under `Agents:<Name>:Model` (e.g. `Agents:Requirement:Model` = `claude-sonnet-4-6`, `Agents:Orchestrator:Model` = `claude-haiku-4-5`) — check `appsettings.json` |
+| Pipeline 404 on Claude calls | Wrong model id | Check the agent's model in **Settings → Agent profiles** (the picker lists valid, priced ids; *Custom…* is for Azure deployment aliases) — see [CONFIG.md](CONFIG.md) |
 | Users lost after redeploy | KC not actually on Postgres (e.g. stale env / failed `KC_DB_*` wiring) | Cloud KC is Postgres-backed from the first deploy — confirm `KC_DB`/`KC_DB_URL` are set on the `keycloak` container app and the `keycloak` database exists on the flexible server |
 | Container 503 after deploy | `/health` startup not ready | `az containerapp logs show -n <app> -g <rg>` — check DB connection string |
 | `azd up` role assignment error | SP lacks permission | Grant Owner or Contributor + User Access Administrator |

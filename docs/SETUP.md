@@ -1,115 +1,141 @@
 # Setup & First Run
 
-A step-by-step guide to build and run AgentOS locally.
+Everything you need to build, run and test AgentOS on your machine. For *what* to configure (deploy
+time vs the desktop) see [CONFIG.md](CONFIG.md); for Azure see [DEPLOYMENT.md](DEPLOYMENT.md).
 
-## 1. Install the .NET 10 SDK
+## 1. Prerequisites
 
-Download from <https://dotnet.microsoft.com/download/dotnet/10.0>, choosing the x64 SDK (Windows / macOS / Linux).
+- **.NET 10 SDK** — <https://dotnet.microsoft.com/download/dotnet/10.0>. `global.json` pins the
+  version; check with `dotnet --list-sdks`.
+- **Docker** (Docker Desktop / Podman) — only for the full stack (§4).
+- Optional: an Anthropic and/or Azure OpenAI API key. Not needed to try AgentOS — see §3.
 
-Verify:
+## 2. Build and test
 
-```bash
-dotnet --list-sdks
-# 10.0.100 [C:\Program Files\dotnet\sdk]
-```
-
-If the output has no line starting with `10.`, check `global.json` at the repo root (it pins `10.0.100`).
-
-## 2. First build & test
-
-From the `D:\LuanVan\prototype\` folder:
+From the repo root:
 
 ```bash
 dotnet restore AgentOs.slnx
-dotnet build  AgentOs.slnx --configuration Release
-# xunit.v3 4.0.0 runs on Microsoft.Testing.Platform; `dotnet test` takes the solution via --solution.
-dotnet test   --solution AgentOs.slnx --configuration Release
+dotnet build   AgentOs.slnx -c Release          # warnings are errors (TreatWarningsAsErrors)
+dotnet test    --solution AgentOs.slnx -c Release
 ```
 
-The suite is ~790+ tests; all should pass.
-
-## 3. Configure LLM secrets (local)
-
-Use .NET User Secrets so keys are never committed:
+Tests run on xUnit v3 + Microsoft.Testing.Platform, so filters use xUnit's flags:
 
 ```bash
-cd src/AgentOs.Api
-dotnet user-secrets init
-dotnet user-secrets set "Llm:Claude:ApiKey"  "sk-ant-..."
-dotnet user-secrets set "Llm:AzureOpenAi:ApiKey" "..."
-dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://<resource>.openai.azure.com"
+dotnet test --project tests/AgentOs.Tests --filter-class "*ToolGatewayTests"
+dotnet test --project tests/AgentOs.Tests --filter-method "*ToolInvocationTests.Request_Validate_AllFieldsValid_DoesNotThrow"
 ```
 
-Secrets are stored in `%APPDATA%\Microsoft\UserSecrets\<UserSecretsId>\secrets.json`, **not in the repo**.
+No test calls a real model; no secrets are needed.
 
-## 4. Run the API locally
+## 3. Run the standalone desktop (no Docker, no keys)
 
 ```bash
-cd src/AgentOs.Api
-dotnet run
+dotnet run --project src/AgentOs.Web
 ```
 
-Browse to:
+Open <http://localhost:5180>. In Development the Web:
 
-- Health: <https://localhost:5080/health>
-- Scalar API Reference (UI): <https://localhost:5080/scalar/v1>
-- OpenAPI spec (JSON): <https://localhost:5080/openapi/v1.json>
+- signs you in automatically (`Auth:DevAutoLogin`) as a user with `admin`, `member` and
+  `platform-admin` roles,
+- runs without a database (settings and runs are in memory and reset on restart),
+- answers model calls with canned **Offline** output when no key is configured
+  (`Llm:OfflineFallback` defaults on in Development), clearly labelled in the UI.
 
-## 5. Configure GitHub Actions secrets (for deploy)
+This is the right surface for UI work. It **cannot** prove persistence, real sign-in or multi-tenant
+behaviour — those silently no-op here; verify them on the full stack (§4).
 
-CI (`.github/workflows/ci.yml`) only restores, builds, and runs the test suite — no test
-calls a real LLM, so **CI needs no LLM secrets**.
-
-Secrets are only consumed by the optional azd deploy workflow
-(`.github/workflows/azd-deploy.yml`). LLM keys there are per-tenant (set in-app via
-**Settings → API keys**); a shared platform fallback is only needed for a dev/demo deploy.
-In GitHub (**Settings → Secrets and variables → Actions → New repository secret**):
-
-| Name | Value |
-|---|---|
-| `LLM__CLAUDE__APIKEY` | sk-ant-... (optional — only for a dev/demo deploy) |
-
-When present, the deploy workflow runs `azd env set Llm__Claude__ApiKey` so the containers pick
-it up. Leave it unset for a real BYO-key multi-tenant deploy.
-
-## 6. Branch protection (recommended)
-
-**Settings → Branches → Add rule:** `main`
-
-- ☑ Require a pull request before merging
-- ☑ Require status checks to pass before merging — select `Build & Test`
-- ☑ Require linear history (rebase / squash merge only)
-
-## 7. One-shot local dev — Aspire AppHost (Postgres + Keycloak + MailHog + API + Web)
-
-`AgentOs.AppHost` is an Aspire AppHost: one `dotnet run` brings up every dev dependency in
-containers (Postgres + Keycloak + MailHog) and starts the API + Blazor Web alongside them, with connection
-strings + the OIDC authority wired across via Aspire service discovery — no docker-compose, no
-hand-edited env vars.
+## 4. Run the full stack (Aspire)
 
 ```bash
 dotnet run --project infra/AgentOs.AppHost
 ```
 
-Open the Aspire dashboard URL printed in the console for live logs, traces, and the resource
-graph (api, web, postgres, keycloak). Data volumes persist across restarts.
+The AppHost starts Postgres, Keycloak and MailHog in containers and runs the Api and Web against
+them, wiring connection strings and the OIDC authority automatically.
 
-**Keycloak (multi-tenant auth)** auto-imports the `agentic` realm from
-`infra/keycloak/agentic-realm.json` on first start:
+| What | Where |
+|---|---|
+| Aspire dashboard (logs, traces, resources) | <https://localhost:17050> |
+| AgentOS desktop | <https://localhost:5180> |
+| Api — Scalar UI / OpenAPI | <https://localhost:5080/scalar/v1> · `/openapi/v1.json` |
+| Keycloak admin console | URL shown for the `keycloak` resource in the dashboard (`admin` / `admin`) |
+| MailHog (invitation emails) | URL shown for the `mailhog` resource |
 
-- Admin console: the URL Aspire prints for the `keycloak` resource (admin / admin)
-- Realm `agentic` — user registration enabled; clients `agentic-web` (auth-code) + `agentic-api`
-  (bearer-only); realm roles `admin` / `member`; a `tenant` claim from the user attribute
-- Seed user: `operator` / `operator` (tenant `default`, role `admin`)
+Keycloak imports the `agentic` realm from `infra/keycloak/agentic-realm.json` on first start:
 
-`Auth__Keycloak__Authority` is injected by the AppHost, so the API runs as an OIDC resource server
-out of the box (Keycloak OIDC is the only auth mode — there is no HS256/operator fallback). If you
-run the API directly (without the AppHost), point `Auth:Keycloak:Authority` at any reachable
-Keycloak realm; the standalone Web instead boots on `Auth:DevAutoLogin` (Development only).
+| User | Password | Roles |
+|---|---|---|
+| `operator` | `operator` | `admin`, `platform-admin` (tenant `default`) |
+| `member` | `member` | `member` |
 
-Production runs Keycloak with an external DB and `start` (not `start-dev`); for that, point the
-API/Web at a managed OIDC IdP and skip the AppHost-hosted Keycloak.
+Data volumes persist across restarts.
 
----
+### Troubleshooting the full stack
 
-Once set up, see the [README](../README.md) for running the API, the AgentOS desktop, and the pipeline.
+| Symptom | Cause | Fix |
+|---|---|---|
+| Postgres "Running (Unhealthy)", Web "Finished", `password authentication failed` | Stale `postgres-data` volume from an earlier run (the superuser password is baked in at first init) | `docker volume rm agentos.apphost-*-postgres-data` |
+| Login page shows an old realm name/theme, or a new role (e.g. `platform-admin`) is missing | Stale `keycloak-data` volume — an existing realm is never re-imported | `docker volume rm agentos.apphost-*-keycloak-data` (or add the role via the Keycloak admin API; keep descriptions ASCII) |
+| HTTP 431 Request Header Fields Too Large | Every dev app on `localhost` shares one cookie jar | Use an incognito window, or clear `localhost` site data |
+| Browser refuses the dev certificate | Self-signed localhost cert | `dotnet dev-certs https --trust`; in Chrome you can enable `chrome://flags/#allow-insecure-localhost` |
+
+Sanity check that sign-in is wired end to end:
+
+```bash
+curl -k -s -o /dev/null -w "%{http_code} %{redirect_url}\n" https://localhost:5180/account/login
+# expect: 302 …/realms/agentic/protocol/openid-connect/auth?…request_uri=urn:ietf:…
+```
+
+## 5. Use a real model
+
+The primary path is the desktop: **Settings → LLM & providers → API keys** (stored encrypted, per
+tenant), then **Settings → Agent profiles** to pick each agent's model. Applies on the next call.
+
+To seed a platform-wide fallback key for local runs instead, use user-secrets (the projects already
+carry a `UserSecretsId`, so no `init` is needed):
+
+```bash
+dotnet user-secrets set "Llm:Claude:ApiKey"        "sk-ant-..."  --project src/AgentOs.Web
+dotnet user-secrets set "Llm:AzureOpenAi:ApiKey"   "..."         --project src/AgentOs.Web
+dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://<resource>.openai.azure.com" --project src/AgentOs.Web
+```
+
+Use `--project src/AgentOs.Api` for the Api host. Secrets live in your user profile, never in the repo.
+
+## 6. Run the Api on its own
+
+The Api requires a database by default (`Persistence:RequireDatabase=true`):
+
+```bash
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" \
+  "Host=localhost;Port=5432;Database=agentos;Username=postgres;Password=postgres" --project src/AgentOs.Api
+dotnet run --project src/AgentOs.Api
+```
+
+Or boot it stateless with `Persistence__RequireDatabase=false`. Point `Auth:Keycloak:Authority` at a
+reachable realm to call protected endpoints. Health: <https://localhost:5080/health>.
+
+## 7. UI end-to-end tests (Playwright)
+
+Against the standalone Web (what CI runs):
+
+```bash
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AgentOs.Web --urls http://localhost:5199 --no-launch-profile
+RUN_AGENTOS_E2E=true AGENTOS_URL=http://localhost:5199 dotnet test --project tests/AgentOs.E2E.Tests
+```
+
+Against the full stack (real Keycloak + Postgres; local/manual): start the AppHost, then run the suite
+with `RUN_AGENTOS_E2E_REAL=true`. Playwright browsers install on first run.
+
+## 8. GitHub Actions
+
+- **CI** (`ci.yml`) — build, tests, coverage floor, dev-auth UI E2E. Needs **no secrets**.
+- **CodeQL** and **dependency review** run on every PR.
+- **Deploy** (`azd-deploy.yml`, manual `workflow_dispatch`) — needs Azure OIDC credentials plus the
+  Keycloak secrets listed in [DEPLOYMENT.md](DEPLOYMENT.md). `LLM__CLAUDE__APIKEY` is optional (a
+  platform fallback key for a demo deploy); real deployments use per-tenant keys set in the desktop.
+
+Recommended branch protection for `main`: require a PR, require the `Build & Test` check, linear
+history.

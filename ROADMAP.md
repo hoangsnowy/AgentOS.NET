@@ -3,6 +3,10 @@
 > Where AgentOS is today and where it's going. AgentOS is a .NET-native, multi-tenant
 > operating shell for AI software-engineering agents. Horizon: **12 months (Jun 2026 – Jun 2027)**,
 > plus a beyond-12-months outlook.
+>
+> This is the product roadmap (milestones, positioning, risks). The engineering execution plan —
+> metrics, shared memory, ecosystem, built-in executor, UI-first configuration, software-factory
+> stations — is [docs/plans/agentic-sdlc-v2.md](docs/plans/agentic-sdlc-v2.md) (updated 2026-10).
 
 ## Contents
 
@@ -73,11 +77,11 @@ AgentOS is a working platform, not a sketch. Already shipped:
   fail-closed tool-policy gates, tenant-filter freeze, and SSRF guard
   ([#72](https://github.com/hoangsnowy/AgentOs/pull/72)).
 - **Modular monolith** — each feature is a self-contained `IModule` with its own DI surface, EF Core context, and Postgres schema; any module can later ship as a standalone package.
-- **Multi-tenant identity** — Keycloak OIDC (RS256) or operator mode (HS256), tenant claim, **row-level isolation** via an EF global query filter.
+- **Multi-tenant identity** — Keycloak OIDC (RS256 only), tenant claim, `platform-admin` role, **row-level isolation** via an EF global query filter.
 - **Governance & evidence** — every tool call flows through `IToolGateway` → per-tenant `IToolPolicy` → `IToolInvocationLog`.
 - **Cloud hardening (in code)** — ForwardedHeaders behind TLS-terminating ingress, durable
   Postgres-backed DataProtection key ring, publish-mode environment gating, `RequireDatabase`
-  fail-loud, Keycloak custom image + postprovision hook groundwork
+  fail-loud, Keycloak custom image + postdeploy realm hook
   ([#69](https://github.com/hoangsnowy/AgentOs/pull/69),
   [#70](https://github.com/hoangsnowy/AgentOs/pull/70)).
 - **Tools & MCP** — GitHub PR service, build verifier, an MCP client (consume external tool servers), and AgentOS's own pipeline served as MCP tools.
@@ -94,7 +98,7 @@ deployment), **Shipped, cloud-unverified** (in code and tested, but no real clou
 
 | Claim | Status |
 |---|---|
-| Cloud hardening (ForwardedHeaders, DataProtection, env gating) | Shipped, **cloud-unverified** — no real `azd up` round-trip yet |
+| Cloud hardening (ForwardedHeaders, DataProtection, env gating) | **Shipped+verified** — live on Azure Container Apps since 2026-06-21 (first `azd up`) |
 | Multi-tenant isolation | Shipped+verified at row level; B4 residue now closed in code — run-history tenant stamping (run + metric rows), `AuthSession` null-`HttpContext` fail-open, `OrchestrationStore` per-tenant keying ([#72](https://github.com/hoangsnowy/AgentOs/pull/72)); full-stack two-tenant E2E pending the `azd up` round-trip |
 | `build_verifier` execution | **Sandboxed** — ADR-0005 Accepted ([docs/adr/0005](docs/adr/0005-build-verifier-sandbox.md)); Layer-1 input hardening (`BuildInputSanitizer`: build-control files rejected, project synthesized, feed cut) + Layer-2 OS isolation (`docker run --network none --read-only --user --cap-drop ALL`) shipped ([#96](https://github.com/hoangsnowy/AgentOs/pull/96)). **Cloud-unverified** — only the ACA-Jobs cloud round-trip on a real `azd up` remains |
 | Scale-out (≥2 replicas) | **Unverified** — single-instance only until a 2-replica test (see Q2) |
@@ -107,8 +111,8 @@ Sequencing is dependency-driven with one hard external commitment in the **Sep�
 The spine: **identity decision → `azd up` round-trip → tenant residue + secrets → demo hardening →
 enterprise ops → OSS launch**. The `build_verifier` sandbox shipped in code as a parallel Q1 track
 ([#96](https://github.com/hoangsnowy/AgentOs/pull/96)) — only its ACA-Jobs cloud round-trip rides on
-the Azure deployment. PR-level slicing for the E/F/G workstreams lives in
-[coherence-plan.md](coherence-plan.md), the engineering appendix to this roadmap.
+the Azure deployment. PR-level slicing for the current engineering work lives in
+[docs/plans/agentic-sdlc-v2.md](docs/plans/agentic-sdlc-v2.md) (the agentic-SDLC execution plan, Phases 0–8 + C + F).
 
 ### Q1 (Jun–Aug 2026) — Live on Azure
 
@@ -122,7 +126,7 @@ the Azure deployment. PR-level slicing for the E/F/G workstreams lives in
   - **Real `azd up` round-trip:** provision → configure → redeploy → smoke test — OIDC login on the
     real FQDN, an authenticated pipeline run that persists under the real tenant, realm + saved LLM
     keys surviving a restart.
-  - **Sandboxed `build_verifier`, done properly ([audit #10](docs/deploy-readiness-audit.md)) — ✅ shipped:**
+  - **Sandboxed `build_verifier`, done properly ([audit #10](https://github.com/hoangsnowy/AgentOs/blob/90240386830067f52c07b1d781e223ccdfe5f174/docs/deploy-readiness-audit.md), archived) — ✅ shipped:**
     ADR-0005 ([D2](#4--open-architecture-decisions)) Accepted; the two-layer sandbox is in code
     ([#96](https://github.com/hoangsnowy/AgentOs/pull/96)) — Layer-1 input hardening
     (`BuildInputSanitizer`: model-authored `.csproj`/`.targets`/`.props` rejected, project file
@@ -169,10 +173,10 @@ the Azure deployment. PR-level slicing for the E/F/G workstreams lives in
   - **Secrets, second slice (F2):** finish the `IRuntimeOverrides` reshape into an async secret
     provider — async key getters shipped in [#72](https://github.com/hoangsnowy/AgentOs/pull/72);
     retire the remaining sync bridge (unblocks Q3 secret rotation).
-  - **Gateway robustness:** pooled-client wrapper leak, failover gaps (401/400/5xx), CostCalculator
-    unknown-model `$0`.
-  - **Defense-grade docs:** `docs/architecture.md` refresh; ADRs 0001–0005 (modular monolith, LLM
-    gateway, multi-tenant isolation, one-engine-three-surfaces, sandbox);
+  - **Gateway robustness:** pooled-client wrapper leak, failover gaps (401/400/5xx) (CostCalculator
+    unknown models now fail closed at $15/$75 — done).
+  - **Defense-grade docs:** `docs/architecture.md` refresh; ADRs (0005 sandbox and 0011 UI-first config shipped; modular monolith, LLM
+    gateway, multi-tenant isolation, one-engine-three-surfaces still to write — see docs/adr/README.md);
     `docs/FEATURE-MATRIX.md` — every module/app tagged Working / Degraded-standalone / Stub / Gap.
 - **Exit criteria:** a scripted 15-minute demo on the live Azure deployment — login → board ticket →
   Quality run with streaming progress → PR on a real repo → cost + trace shown in the observability

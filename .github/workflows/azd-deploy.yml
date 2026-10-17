@@ -91,7 +91,7 @@ jobs:
           export WEB_BASE_URL="https://$WEB"
           export KEYCLOAKADMINPASSWORD="${{ secrets.KEYCLOAKADMINPASSWORD }}"
           export KEYCLOAKWEBCLIENTSECRET="${{ secrets.KEYCLOAKWEBCLIENTSECRET }}"
-          bash infra/hooks/postprovision.sh
+          bash infra/hooks/postdeploy.sh
 
       - name: Smoke — API /health
         id: smoke

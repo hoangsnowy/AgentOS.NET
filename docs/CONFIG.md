@@ -81,8 +81,9 @@ Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant
 | `Llm:AzureOpenAi:PricingModel` | empty | Tenant | Canonical price-table id for an aliased deployment (`gpt41-prod` → `gpt-4.1`). |
 
 Code-only (no UI yet; seed via env if you must): `Llm:Claude:Endpoint` (`https://api.anthropic.com`),
-`Llm:Claude:ApiVersion` (`2023-06-01`), `Llm:*:TimeoutSeconds` (60), `Llm:*:MaxRetries` (3),
-`Llm:Fallbacks` (inter-provider failover map).
+`Llm:Claude:ApiVersion` (`2023-06-01`), `Llm:*:TimeoutSeconds` (60), `Llm:Fallbacks`
+(inter-provider failover map). Resilience today is key-pool cooldown + failover; `Llm:*:MaxRetries`
+exists on the options type but is not honoured yet.
 
 ### Settings → Agent profiles
 

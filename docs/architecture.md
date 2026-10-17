@@ -1,7 +1,7 @@
 # AgentOS — Architecture
 
 > Source of truth for the system shape. Diagrams are [Mermaid](https://mermaid.js.org/) — they
-> render on GitHub and in most Markdown viewers. Verified against the code on 2026-06-07
+> render on GitHub and in most Markdown viewers. Verified against the code on 2026-10-17
 > (csproj references, host module sets, hub mapping).
 
 AgentOS is a **.NET 10 modular monolith**: every feature is a self-contained `IModule` that
@@ -26,7 +26,7 @@ flowchart TB
   end
 
   subgraph aca["Azure Container Apps env"]
-    Web["AgentOs.Web<br/>Blazor Server · 10 modules<br/>(no RemoteAgent)"]
+    Web["AgentOs.Web<br/>Blazor Server desktop<br/>/hubs/remote-agent · 11 modules"]
     Api["AgentOs.Api<br/>minimal API + Scalar<br/>/mcp + /hubs/remote-agent<br/>11 modules"]
   end
 
@@ -66,8 +66,8 @@ flowchart TB
   Keycloak / Entra External ID and point `Auth:Keycloak:Authority` at it.
 - MailHog is gated behind `if (!isPublish)` (run-mode only, "never ship to cloud"), so it does **not**
   land in ACA; it is a dev catcher and prod needs a real `Email:SmtpHost`.
-- The runner's default hub is `https://localhost:5080/hubs/remote-agent` (**Api**). The Web host does
-  **not** include the RemoteAgent module, so pairing must target the Api host.
+- Both hosts load the RemoteAgent module and map `/hubs/remote-agent`; the runner defaults to the Api
+  hub (`https://localhost:5080/hubs/remote-agent`) and can be pointed at the Web host instead.
 
 ---
 
@@ -121,7 +121,7 @@ flowchart BT
 | Host | Modules included |
 |---|---|
 | **Api** | AppConfig, Llm, Tools, Pipeline, Integration, Identity, Tenants, Workspaces, Sessions, **Mcp**, **RemoteAgent** (all 11) |
-| **Web** | AppConfig, Llm, Tools, Pipeline, Integration, Identity, Tenants, Workspaces, Sessions, **Mcp** (10 — no RemoteAgent) |
+| **Web** | the same 11 modules, plus the desktop shell (`AgentOs.Web.Shell`) |
 
 ---
 
@@ -152,10 +152,11 @@ flowchart LR
   Cfg -.hydrate per request.-> Factory
 ```
 
-> Canonical keys are **`Claude`** and **`AzureOpenAI`**. `appsettings.json` may set
-> `Agents:*:Provider = "Anthropic"` and Web `Llm:Provider = "Anthropic"` — `Anthropic` is a supported
-> alias for `Claude` (and `Azure`/`OpenAI` for `AzureOpenAI`): `LlmClientFactory.NormalizeKey` maps
-> these to the canonical key before the keyed lookup.
+> Canonical keys are **`Claude`** and **`AzureOpenAI`**. Agent profiles (Settings → Agent profiles,
+> default `Anthropic`) may use aliases — `Anthropic` for `Claude`, `Azure`/`OpenAI` for `AzureOpenAI`;
+> `LlmClientFactory.NormalizeKey` maps them before the keyed lookup. A keyless `Offline` client sits at
+> the end of every failover chain only when `Llm:OfflineFallback` is on (Development default; locked
+> off in Production), and every run it serves is flagged Offline.
 
 ---
 
@@ -202,3 +203,30 @@ runner only executes ("server thinks, runner does").
   bearer tokens against the realm JWKS, the Web uses cookie + OIDC.
 - A Blazor interactive-Server component has no `HttpContext` → read the tenant from
   `AuthenticationState`, never from `ITenantContext` inside a circuit.
+
+---
+
+## 6. Configuration (UI-first)
+
+Modules declare their settings as `SettingDescriptor`s (`ISettingsContributor`); the AppConfig
+module's registry resolves each read per call — **lock → tenant → platform → seed → code default** —
+validates and audits every write, and the desktop renders the forms from the descriptors.
+`appsettings.json` carries bootstrap keys only. See [ADR-0011](adr/0011-ui-first-configuration.md)
+and [CONFIG.md](CONFIG.md).
+
+```mermaid
+flowchart LR
+  UI["Settings UI<br/>(descriptor-driven forms)"] -->|"SetAsync (validated, audited)"| Reg["ISettings registry"]
+  Reg --> Store[("config.app_config<br/>tenant + @platform rows, encrypted")]
+  Locks["Settings:Locks<br/>(deploy config)"] --> Reg
+  Seed["env / user-secrets<br/>(seed tier)"] --> Reg
+  Defaults["descriptor defaults<br/>(code)"] --> Reg
+  Reg -->|"per-call read"| Consumers["LLM factory · agent profiles · tool policy<br/>remote approver · build verifier · host policy"]
+```
+
+## 7. Desktop
+
+`AgentOs.Web.Shell` is the window manager and UI kit (scoped per circuit: windows, toasts); `AgentOs.Web`
+registers the product apps in `AppCatalog` (Insights, Workflow, Board, Settings, Terminal, Files, and
+the Settings-hub screens) and renders them as windows. Design rules: [design-system.md](design/design-system.md).
+Plugins (`IAgentOsPlugin`, loaded from `plugins/`) can add tools, providers and windows.

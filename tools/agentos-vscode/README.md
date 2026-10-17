@@ -13,12 +13,13 @@ The extension downloads the AgentOS runner binary from your server and runs it f
 ## Settings
 
 - `agentos.serverUrl` — AgentOS server base URL (default `https://localhost:5180`).
-- `agentos.runOnMyMachine` — run sessions with the local `claude` CLI (adds `--dangerously-skip-permissions`; requires the `claude` CLI installed and logged in).
+- `agentos.cliAgent` — the CLI agent the runner invokes: `claude` (default) or `codex`. Uses your own subscription, not metered API; the server can override it per session.
+- `agentos.runOnMyMachine` — run sessions autonomously with that CLI (appends `claude --dangerously-skip-permissions` / `codex --full-auto`; the CLI must be installed and logged in). Off by default.
 
 ## Commands
 
 - **AgentOS: Connect this machine** — pair and start the runner.
-- **AgentOS: Disconnect** — stop the runner and clear the stored token (revoke server-side in the AgentOS Runners tab).
+- **AgentOS: Disconnect** — stop the runner and clear the stored token (revoke it server-side from the AgentOS desktop).
 - **AgentOS: Show runner logs** — open the runner output channel.
 
 ## Notes

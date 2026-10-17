@@ -1,8 +1,8 @@
 # AgentOS
 
-> A **modular .NET agentic platform** for software-delivery workflows. A central orchestrator
-> coordinates specialist agents — Requirements → Code → Tests → QA — over a provider-agnostic
-> LLM gateway, on a multi-tenant runtime with row-level isolation and a Blazor AgentOS desktop UI.
+> A **modular .NET agentic platform** for software delivery. A central orchestrator coordinates
+> specialist agents — Requirements → Code → Tests → QA — over a provider-agnostic LLM gateway, on a
+> multi-tenant runtime with row-level isolation, driven from a Blazor desktop UI.
 
 [![CI](https://github.com/hoangsnowy/AgentOs/actions/workflows/ci.yml/badge.svg)](https://github.com/hoangsnowy/AgentOs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -11,148 +11,212 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 <p align="center">
-  <img src="docs/images/hero-light.png" alt="The AgentOS desktop — an authentic GNOME/Adwaita shell: empty wallpaper, top panel, and the Dash of six pinned apps" width="100%">
+  <img src="docs/images/hero-light.png" alt="The AgentOS desktop — a GNOME/Adwaita shell with a top panel and a Dash of pinned apps" width="100%">
   <br>
-  <sub><em>The <strong>AgentOS</strong> desktop — a Blazor Server window manager rendering an authentic GNOME shell (empty wallpaper, Activities overview, virtual workspaces, Dash) that launches the Insights dashboard, the visual Workflow editor (where a run starts), Board, and per-tenant governance as windows.</em></sub>
+  <sub><em>The <strong>AgentOS</strong> desktop — a Blazor Server window manager with an authentic GNOME shell (Activities overview, virtual workspaces, Dash). Every capability is a window: Insights, the visual Workflow editor (where runs start), Board, Settings, Terminal, Files.</em></sub>
 </p>
 
-AgentOS turns a plain-English user story into reviewed, test-backed C# scaffolding. Five agents
-collaborate under a central orchestrator; a QA agent scores requirement–code–test consistency and
-loops until convergence or an iteration cap. The platform itself is a modular monolith — each
-feature (LLM gateway, pipeline runtime, identity, tenants, settings store, integrations, remote
-agent transport) is a self-contained `IModule` with its own DI surface, EF Core context, and
-Postgres schema, so any one of them can later ship as a standalone NuGet package.
+AgentOS turns a plain-English user story into reviewed, test-backed C# code. Five agents collaborate
+under an orchestrator; a QA agent scores requirement ↔ code ↔ test consistency and loops until the
+result converges or an iteration cap is hit. Every model call is metered (tokens, cost, latency),
+every tool call passes a policy gate and is recorded as evidence, and every setting is changed in the
+desktop — not in a config file.
 
-> **Status:** pre-1.0. The core pipeline, gateway, modular runtime, and multi-tenant identity are
-> working; public surfaces may shift before `v1.0`.
+The platform is a **modular monolith**: each feature (LLM gateway, pipeline, identity, tenants,
+settings, tools, integrations, MCP, workspaces, sessions, remote agent) is a self-contained `IModule`
+with its own DI surface, EF Core context and Postgres schema, so any one can later ship as a package.
 
-**Contents:** [Why AgentOS](#why-agentos) · [Screenshots](#screenshots) · [Concepts](#concepts) · [Architecture](#architecture) ·
-[Quick start](#quick-start) · [Modules](#modules) · [LLM gateway](#llm-gateway) ·
-[Configuration](#configuration) · [Multi-tenant](#multi-tenant) · [API](#api) ·
-[Extending](#extending) · [Deploy](#deploy) · [Contributing](#contributing)
+> **Status:** pre-1.0. The pipeline, gateway, modular runtime, multi-tenant identity and the desktop
+> are working and deployed on Azure Container Apps; public surfaces may still change before `v1.0`.
+
+**Contents:** [Quick start](#quick-start) · [Screenshots](#screenshots) · [Why AgentOS](#why-agentos) ·
+[Concepts](#concepts) · [Architecture](#architecture) · [Modules](#modules) ·
+[LLM gateway](#llm-gateway) · [Configuration](#configuration) · [Multi-tenant](#multi-tenant) ·
+[API](#api) · [Extending](#extending) · [Deploy](#deploy) · [Contributing](#contributing)
 
 ### Which doc do I read for X?
 
 | I want to… | Read |
 |---|---|
-| Understand AgentOS / architecture | [README.md](README.md) |
-| Set up & run locally | [docs/SETUP.md](docs/SETUP.md) |
-| Deploy to Azure | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) + [infra/README.md](infra/README.md) |
+| Run it locally (standalone or full stack), secrets, CI | [docs/SETUP.md](docs/SETUP.md) |
+| Know what to set at deploy vs in the UI | [docs/CONFIG.md](docs/CONFIG.md) |
+| Understand the architecture | [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/README.md) |
+| Deploy to Azure | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [infra/README.md](infra/README.md) · runbooks: [Keycloak](docs/keycloak-prod-runbook.md), [DataProtection DR](docs/dataprotection-dr-runbook.md) |
 | Contribute / conventions | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| UI / design system | [docs/design/design-system.md](docs/design/design-system.md) |
-| Agent prompts | [docs/prompts/v1/*.md](docs/prompts/v1/) |
-| Where the product is headed | [ROADMAP.md](ROADMAP.md) |
+| Build UI | [docs/design/design-system.md](docs/design/design-system.md) |
+| See where it's going | [ROADMAP.md](ROADMAP.md) · [execution plan](docs/plans/agentic-sdlc-v2.md) |
 | Report a vulnerability | [SECURITY.md](SECURITY.md) |
 
-## Why AgentOS
+## Quick start
 
-- **Modular by construction.** Every feature is an `IModule` discovered by reflection. Hosts wire
-  the whole platform with a single `services.AddModulesFromAssemblies(cfg, …)` call; no module
-  references another's runtime types — only contracts in `Domain` / `SharedKernel`.
-- **Provider-agnostic LLM gateway.** Claude (Anthropic.SDK), Azure OpenAI (`Azure.AI.OpenAI`),
-  MAF (Microsoft Agent Framework), and a remote dev-IDE agent all register as keyed
-  `ILlmClient` under their canonical name. Swap a provider in Settings → Agent profiles; no code change, no restart.
-- **Multi-tenant from day one.** Row-level isolation via EF Core global query filters; a
-  Keycloak-backed OIDC `tenant` claim drives `ITenantContext`. A Development-only `DevAutoLogin`
-  handler keeps a fixed user for standalone local runs; anonymous requests fall back to a default
-  tenant.
-- **Per-module DbContext + schema.** `pipeline.*`, `tenants.*`, `config.*` live in their own
-  schemas with their own migration histories. Each module owns its persistence end-to-end.
-- **Resilient gateway.** Multi-key round-robin with HTTP 429 cooldown / `Retry-After`, exponential
-  backoff on transient failures.
-- **Cloud-ready out of the box.** A .NET Aspire AppHost wires Postgres + Keycloak + Api + Web; an
-  `azd up` deploys to Azure Container Apps.
-- **Operator-friendly desktop.** A Blazor Server AgentOS desktop — authentic GNOME: an empty
-  wallpaper, a Dash, a GNOME Activities overview, virtual workspaces, light/dark themes, a live
-  pipeline runner, a drag-and-drop workflow editor, and runtime settings to rotate LLM keys without
-  a redeploy.
+Prerequisites: **.NET 10 SDK** (pinned in `global.json`). Docker only for the full stack.
+
+### 1 — Standalone desktop (one command, no Docker, no API keys)
+
+```bash
+git clone https://github.com/hoangsnowy/AgentOs.git
+cd AgentOs
+dotnet run --project src/AgentOs.Web
+```
+
+Open **http://localhost:5180**. You are signed in automatically as a Development user (with admin and
+platform-admin rights). Open **Workflow** → **Run**: with no API key configured, agents answer with
+canned, schema-valid output that is labelled **Offline** everywhere — the run, the chip, the Run Log —
+so you can explore the whole flow before spending a token.
+
+Standalone is the *degraded* mode: there is no database (settings and runs live in memory and reset on
+restart) and no real identity provider. Use it for UI work and first contact; use the full stack for
+anything involving persistence, sign-in or multiple tenants.
+
+### 2 — Full stack (Postgres + Keycloak + MailHog + Api + Web)
+
+```bash
+dotnet run --project infra/AgentOs.AppHost
+```
+
+| What | Where |
+|---|---|
+| Aspire dashboard | https://localhost:17050 |
+| AgentOS desktop | https://localhost:5180 — sign in as `operator` / `operator` (realm `agentic`) |
+| Api + Scalar UI | https://localhost:5080/scalar/v1 |
+
+If the first run misbehaves, it is almost always one of three known causes — a stale Docker volume
+(Postgres password or old Keycloak realm), or HTTP 431 from an overfull `localhost` cookie jar (use an
+incognito window). Fixes are in [docs/SETUP.md](docs/SETUP.md#troubleshooting-the-full-stack).
+
+### 3 — Use a real model
+
+In the desktop: **Settings → LLM & providers → API keys** — paste an Anthropic and/or Azure OpenAI
+key (stored encrypted, per tenant). Then pick each agent's model in **Settings → Agent profiles**;
+the next run uses it, no restart. Keys can also be seeded from the environment
+(`Llm__Claude__ApiKey`, user-secrets) — see [docs/CONFIG.md](docs/CONFIG.md).
+
+### 4 — Build and test
+
+```bash
+dotnet build AgentOs.slnx -c Release
+dotnet test  --solution AgentOs.slnx -c Release          # xUnit v3 on Microsoft.Testing.Platform
+dotnet test  --project tests/AgentOs.Tests --filter-class "*CostCalculatorTests"   # one class
+```
+
+UI end-to-end tests (Playwright) run against a running Web:
+
+```bash
+# terminal 1
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AgentOs.Web --urls http://localhost:5199 --no-launch-profile
+# terminal 2
+RUN_AGENTOS_E2E=true AGENTOS_URL=http://localhost:5199 dotnet test --project tests/AgentOs.E2E.Tests
+```
+
+`RUN_AGENTOS_E2E_REAL=true` runs the real-auth suite against the full Aspire stack instead.
 
 ## Screenshots
 
-A GNOME/Adwaita desktop in the browser — every capability ships as a window, not a wall of
-config. All shots are the standalone Web (`dotnet run --project src/AgentOs.Web`).
+All shots are the standalone Web (`dotnet run --project src/AgentOs.Web`).
 
-| Insights — the control plane | Terminal — runner session feed |
+| Insights — the control plane | Visual workflow editor — the run surface |
 |:---:|:---:|
-| [![Insights — runs, agent utilisation and LLM cost: KPIs, charts, budget cap](docs/images/app-insights.png)](docs/images/app-insights.png) | [![Terminal — a read-only live tail of the paired runner's session feed](docs/images/app-terminal.png)](docs/images/app-terminal.png) |
-| One screen to manage the pipeline: runs, success rate, avg QA rounds, and LLM cost — billed **plus** the *“≈ API”* would-be estimate on the $0 dev-runner path — with charts for runs over time, per-agent load, spend by model, latency + QA-round shape, and the monthly budget cap. | A read-only live tail of the paired runner's session feed (`ISessionRunFeed`) — what the remote agent is doing, streamed. |
+| [![Insights — runs, agent utilisation and LLM cost](docs/images/app-insights.png)](docs/images/app-insights.png) | [![Workflow — the agents as an editable graph](docs/images/app-workflow.png)](docs/images/app-workflow.png) |
+| Runs, success rate, QA rounds and LLM cost (billed, plus the would-be API cost on the free dev-runner path), per-agent load, spend by model, latency, and the monthly budget cap. | Build and **run** the agents as an editable graph — Agent, LLM, Tool, Evaluator, Loop, Parallel, Human nodes. Each agent node shows a character acting out its live state. |
 
-| Visual workflow editor — the run surface | Boards → Tickets → Sessions |
+| Boards → Tickets → Sessions | Settings |
 |:---:|:---:|
-| [![Workflow — the five agents as an editable Microsoft Agent Framework graph](docs/images/app-workflow.png)](docs/images/app-workflow.png) | [![Board — connect a GitHub/ADO board and drive remote repo execution](docs/images/app-board.png)](docs/images/app-board.png) |
-| Build & **run** the five agents (Orchestrator → Requirement → Coding → Testing → QA) as an editable MAF Workflow graph — drag LLM / Tool / Evaluator / Loop / Human nodes. This is where a run starts. | Connect a GitHub/ADO board, decompose an idea into tickets, drive remote repo-execution sessions. |
+| [![Board — connect a GitHub/ADO board and drive remote repo execution](docs/images/app-board.png)](docs/images/app-board.png) | [![Settings — agent profiles, providers, governance, platform](docs/images/app-settings.png)](docs/images/app-settings.png) |
+| Connect a GitHub / Azure DevOps board, decompose an idea into tickets, drive repo-execution sessions. | One hub: LLM & providers, Agent profiles, Prompts, Tool policy, Evidence, Users, MCP servers, Plugins, Platform, System. Changes apply on the next call. |
 
-| Tool-call evidence | Runtime settings |
+| Platform governance | Terminal — runner session feed |
 |:---:|:---:|
-| [![Evidence — every governed tool invocation recorded](docs/images/app-evidence.png)](docs/images/app-evidence.png) | [![Settings — provider, API keys, and persistence status](docs/images/app-settings.png)](docs/images/app-settings.png) |
-| Every tool an agent calls passes the policy gate and is recorded as auditable evidence. | Rotate provider keys and switch providers at runtime — no redeploy. |
+| [![Platform — safety switches and the build sandbox](docs/images/app-platform.png)](docs/images/app-platform.png) | [![Terminal — a read-only live tail of the paired runner's session feed](docs/images/app-terminal.png)](docs/images/app-terminal.png) |
+| Platform-admin settings for every tenant: remote auto-approve, fail-closed tool policy, allowed Git hosts, and the build sandbox (mode, image, quotas). Production pins the risky ones as read-only operator locks. | A read-only live tail of what a paired remote agent is doing. |
 
-Light and dark are first-class (system menu → toggle):
+Light and dark are first-class (top bar → appearance toggle, or System → Appearance):
 
 | Light | Dark |
 |:---:|:---:|
 | [![AgentOS desktop, light theme](docs/images/desktop-light.png)](docs/images/desktop-light.png) | [![AgentOS desktop, dark theme](docs/images/desktop-dark.png)](docs/images/desktop-dark.png) |
 
-More windows — multi-tenant **Users**, **Policy**, **Prompts**, **Plugins**, **System** — live in
-[`docs/images/`](docs/images/).
+## Why AgentOS
+
+- **Modular by construction.** Every feature is an `IModule` discovered by reflection; hosts wire the
+  whole platform with one `services.AddModulesFromAssemblies(cfg, …)` call. Modules depend on
+  `Domain` + `SharedKernel`; the few cross-module references are explicit (see
+  [Architecture](#architecture)).
+- **Provider-agnostic LLM gateway.** Claude, Azure OpenAI, Microsoft Agent Framework and a paired
+  dev-machine agent are interchangeable `ILlmClient`s. Pick per agent in the desktop — no code
+  change, no restart.
+- **Measured.** Every call records tokens in/out, cost and latency per run and agent. Prices come from
+  a built-in table of official list prices (Claude 5.x, GPT-6/5.x, o-series, incl. prompt-cache and
+  long-context tiers); an unknown model is charged at a fail-closed ceiling, never `$0`, so it cannot
+  slip past the budget gate.
+- **Governed.** Tools run only through `IToolGateway` → per-tenant policy → evidence log. Production
+  pins the riskiest switches (remote auto-approve, tool enforcement, offline fallback, build sandbox)
+  as operator locks the UI cannot flip. Third-party text in prompts is fenced as untrusted input.
+- **Multi-tenant from day one.** Keycloak OIDC `tenant` claim → `ITenantContext`; row-level isolation
+  through EF Core global query filters; per-tenant keys, settings and audit.
+- **Honest.** Canned offline output is labelled Offline end to end and never opens a PR; a standalone
+  run says what it can't persist.
+- **Resilient gateway.** Multi-key pools with round-robin, HTTP 429 cooldown honouring `Retry-After`,
+  and optional inter-provider failover chains.
+- **Cloud-ready.** A .NET Aspire AppHost runs the full stack locally; `azd up` deploys it to Azure
+  Container Apps.
 
 ## Concepts
 
 | Concept | Lives in | Notes |
 |---|---|---|
-| **Module** | `IModule` (SharedKernel) | One assembly = one module. Optional `IEndpointModule` (HTTP) + `IInitializableModule` (startup hook). Discovered + invoked by `ModuleLoader`. |
-| **Agent** | `Modules.Pipeline.Agents` | A specialist: `IRequirementAgent`, `ICodingAgent`, `ITestingAgent`, `IQaAgent`, `IOrchestratorAgent`. Consumes `ILlmClient` via `ILlmClientFactory`. |
-| **LLM client** | `Domain.Llm.ILlmClient` | One method: `SendAsync(LlmRequest, ct) → LlmResponse`. Each provider impl registers as a keyed singleton. |
-| **Tenant context** | `SharedKernel.Identity.ITenantContext` | Per-request scope: tenant id, user id, roles. DbContexts filter by `TenantId`; repos stamp on write. |
-| **App config store** | `Modules.AppConfig.IAppConfigStore` | Encrypted runtime key-value store (DataProtection). Powers per-tenant LLM key overrides and the Settings UI. |
+| **Module** | `IModule` (SharedKernel) | One assembly = one module. Optional `IEndpointModule` (HTTP), `IInitializableModule` (startup hook), `ISettingsContributor` (settings it owns). |
+| **Agent** | `Modules.Pipeline.Agents` | A specialist — Requirement, Coding, Testing, QA, Orchestrator (+ IssueWork, Decomposer). Talks to models only through `ILlmClientFactory`. |
+| **LLM client** | `Domain.Llm.ILlmClient` | `SendAsync(LlmRequest, ct) → LlmResponse`, registered as a keyed service under its provider name. |
+| **Setting** | `Domain.Configuration.SettingDescriptor` | Key, kind, scope, default, validation, UI label. Resolved lock → tenant → platform → seed → default ([ADR-0011](docs/adr/0011-ui-first-configuration.md)). |
+| **Tool** | `Domain.Tools.ITool` | Invoked by models via the gateway, always through `IToolGateway` (policy → invoke → evidence). |
+| **Tenant context** | `SharedKernel.Identity.ITenantContext` | Tenant id, user id, roles for the request. DbContexts filter by `TenantId`; repositories stamp it on write. |
 
 ## Architecture
 
 ```
 src/
-├── AgentOs.Domain/             # DTOs, ILlmClient, ILlmClientFactory, exceptions (BCL-only)
-├── AgentOs.SharedKernel/       # IModule contracts + ModuleLoader + ITenantContext + IAuthTokenProvider
-├── AgentOs.Modules.AppConfig/  # Encrypted KV store, AppConfigDbContext (schema: config)
-├── AgentOs.Modules.Llm/        # Gateway, providers, key pool, runtime overrides
-├── AgentOs.Modules.Pipeline/   # Agents + prompts + orchestrator + PipelineDbContext (schema: pipeline)
-├── AgentOs.Modules.Identity/   # Keycloak JwtAuth + HttpTenantContext + Admin/Member policies
-├── AgentOs.Modules.Tenants/    # Keycloak admin + TenantsDbContext (schema: tenants) + /tenants
-├── AgentOs.Modules.Integration/# GitHub PR + dotnet build verifier (+ BuildVerifierTool)
-├── AgentOs.Modules.Workspaces/ # Connected source workspaces + WorkspacesDbContext (schema: workspaces)
-├── AgentOs.Modules.Sessions/   # Remote-runner registry + pairing + SessionsDbContext (schema: sessions)
-├── AgentOs.Modules.Tools/      # ITool contract + IToolRegistry + IToolPolicy + IToolInvocationLog
-├── AgentOs.Modules.Mcp/        # MCP client — connects to external MCP servers, registers their tools
-├── AgentOs.Modules.RemoteAgent/# SignalR hub + transport + RemoteAgentLlmClient
-├── AgentOs.Api/                # ASP.NET Core minimal API (+ Scalar UI). Composition root only.
-├── AgentOs.Web/                # Blazor Server AgentOS desktop. Composition root only.
-├── AgentOs.RemoteAgent/        # Standalone IDE-side agent (dev machine)
-└── AgentOs.ServiceDefaults/    # OpenTelemetry, health checks, HTTP resilience
-infra/
-└── AgentOs.AppHost/            # .NET Aspire orchestration
-tests/                          # xUnit (~800 unit/integration) + Playwright E2E
+├── AgentOs.Domain/              # Provider-neutral DTOs + contracts: ILlmClient, ITool/IToolGateway, settings, pipeline artifacts
+├── AgentOs.SharedKernel/        # IModule contracts + ModuleLoader, ITenantContext, plugins (IAgentOsPlugin)
+├── AgentOs.Modules.AppConfig/   # Settings registry + encrypted per-tenant KV store (schema: config)
+├── AgentOs.Modules.Llm/         # Gateway: keyed providers, key pool + 429 failover, cost, model capabilities
+├── AgentOs.Modules.Pipeline/    # Agents, prompts, orchestrator, graph executor, run history (schema: pipeline)
+├── AgentOs.Modules.Identity/    # Keycloak JWT auth, HttpTenantContext, Admin/Member/PlatformAdmin policies
+├── AgentOs.Modules.Tenants/     # Tenant registry, Keycloak admin client, invitations, audit (schema: tenants)
+├── AgentOs.Modules.Tools/       # Tool registry, per-tenant policy, invocation evidence (schema: tools)
+├── AgentOs.Modules.Integration/ # GitHub PR service + sandboxed build verifier (exposed as tools)
+├── AgentOs.Modules.Mcp/         # MCP client: upstream MCP servers' tools join the tool registry
+├── AgentOs.Modules.Workspaces/  # Connected repos/boards + connectors (schema: workspaces)
+├── AgentOs.Modules.Sessions/    # Remote-runner registry, pairing, session-run feed (schema: sessions)
+├── AgentOs.Modules.RemoteAgent/ # SignalR hub + RemoteAgentLlmClient (work runs on a paired dev machine)
+├── AgentOs.Api/                 # Minimal API + Scalar + MCP server at /mcp — composition root
+├── AgentOs.Web.Shell/           # Desktop shell: window manager, Dash, toasts, Btn/Field/Panel/Icon UI kit
+├── AgentOs.Web/                 # Blazor Server desktop + product apps — composition root
+├── AgentOs.RemoteAgent/         # Standalone dev-machine agent that pairs to the hub
+└── AgentOs.ServiceDefaults/     # OpenTelemetry, health checks, HTTP resilience, Kestrel limits
+infra/AgentOs.AppHost/           # .NET Aspire orchestration (+ infra/keycloak realm & theme, azd hooks)
+samples/AgentOs.Plugins.Sample/  # A working out-of-tree plugin
+tests/                           # xUnit v3 (1,000+ test cases) + Playwright E2E
+tools/agentos-vscode/            # VS Code extension: pair the editor as a runner
 ```
 
-Module dependency rule: a module references **Domain + SharedKernel only**. Cross-module
-references are explicit and minimal (Llm → AppConfig for hydrated overrides; Tenants → Identity
-for the JWT scheme; RemoteAgent → Llm for the keyed registration shape; Integration → AppConfig
-and → Tools so BuildVerifierTool registers via `AddTool<>()`). Hosts ref every module.
+Cross-module references are explicit and minimal: Llm, Pipeline, Tools and Workspaces → AppConfig
+(settings + per-tenant store); Tenants → Identity (JWT scheme); Integration → Llm + Tools (its tools
+register through the tool registry). Hosts reference every module.
 
 ### Tools & MCP
 
-Agents call **tools** (build_verifier, MCP-exposed GitHub / filesystem actions, custom ITools)
-through the LLM gateway: `LlmRequest.Tools = ["build_verifier"]` causes `PooledChatLlmClient` to
-resolve each name via `IToolRegistry`, adapt the `ITool` into a `Microsoft.Extensions.AI.AIFunction`,
-and wrap the chat client with `FunctionInvokingChatClient` so the tool-call loop runs transparently
-inside `SendAsync`. Every invocation passes through `IToolPolicy` (gate) and `IToolInvocationLog`
-(evidence) so refused and successful calls alike are auditable.
+Agents call **tools** (`build_verifier`, MCP-exposed GitHub / filesystem actions, custom `ITool`s)
+through the gateway: `LlmRequest.Tools = ["build_verifier"]` makes `PooledChatLlmClient` resolve each
+name in `IToolRegistry`, adapt it into a `Microsoft.Extensions.AI.AIFunction`, and run the tool-call
+loop with `FunctionInvokingChatClient`. Every invocation passes `IToolPolicy` (gate) and
+`IToolInvocationLog` (evidence), so refused and successful calls alike are auditable.
 
-`AgentOs.Modules.Mcp` connects to upstream **MCP servers** at startup and registers their tools
-under the prefix `{server}.{tool}` — local and remote tools live in the same registry. The Api
-host also serves **MCP itself** at `/mcp` (Streamable HTTP), exposing `run_pipeline`, `list_runs`,
-and `get_run` so any MCP host (Claude Desktop, VS Code, custom orchestrator) can drive AgentOS.
-End result: a tool mesh where AgentOS is both an MCP consumer and an MCP provider.
+`AgentOs.Modules.Mcp` connects to upstream **MCP servers** and registers their tools as
+`{server}.{tool}` — local and remote tools share one registry. The Api also **serves MCP** at `/mcp`
+(Streamable HTTP) with `run_pipeline`, `list_runs` and `get_run`, so any MCP host (Claude Desktop,
+VS Code, another orchestrator) can drive AgentOS.
 
-**Pipeline dataflow:**
+### Pipeline dataflow
 
 ```
 UserStory ─► RequirementAgent ─► RequirementSpec ─► CodingAgent ─► CodeArtifact
@@ -160,256 +224,185 @@ UserStory ─► RequirementAgent ─► RequirementSpec ─► CodingAgent ─�
                                                                        ▼
                                        PipelineResult ◄── QaAgent ◄── TestingAgent
                                               │
-                                              └── PipelineRunRepository (pipeline.pipeline_runs + run_metrics)
+                                              └── run history (pipeline.pipeline_runs + run_metrics)
 ```
 
-QA scores the triple and decides "ship it" or "iterate" (capped by `NMax`).
-
-## Quick start
-
-Prerequisites: **.NET 10 SDK** (pinned via `global.json`). For the multi-tenant smoke also
-Docker (used by Aspire to run Postgres + Keycloak). An Anthropic and/or Azure OpenAI key is
-required for live runs.
-
-```bash
-git clone https://github.com/hoangsnowy/AgentOs.git
-cd AgentOs
-
-dotnet restore AgentOs.slnx
-dotnet build   AgentOs.slnx -c Release
-# xunit.v3 4.0.0 runs on Microsoft.Testing.Platform; `dotnet test` takes the solution via --solution.
-dotnet test    --solution AgentOs.slnx -c Release
-```
-
-Run the API on its own (Scalar UI at `https://localhost:5080/scalar/v1`):
-
-```bash
-dotnet run --project src/AgentOs.Api
-```
-
-Or run the whole stack — Aspire wires Postgres + Keycloak + Api + Web and forwards env vars:
-
-```bash
-dotnet run --project infra/AgentOs.AppHost
-```
-
-Drive the end-to-end pipeline from the **AgentOS desktop**: on the Aspire stack the Web is at
-`https://localhost:5180`; sign in with the seeded `operator` / `operator` credentials (a
-cookie session via `/account/login`), open the Agents app, and run a user story. The API
-endpoints below are bearer-protected — the Web obtains the token for you; for a scripted call
-against the API, attach a Keycloak-issued bearer token from the realm.
-
-> The pair `RemoteAgent` provider can dispatch LLM calls to a dev-machine agent at zero API cost
-> when a remote agent is paired (see [Modules](#modules)).
+QA scores the triple and decides "ship it" or "iterate" (capped by `NMax`, default 3). The Workflow
+editor runs the same agents as a graph, including Parallel, Merge, If/Else, Loop and Human nodes.
 
 ## Modules
 
 | Module | Schema | Endpoints | Notes |
 |---|---|---|---|
-| **AppConfig** | `config` | `/settings*` | Encrypted KV (`Microsoft.AspNetCore.DataProtection`). Per-tenant. |
-| **Llm** | — | `/llm/test` (Api shell) | Gateway, keyed `ILlmClient` per provider, multi-key pool with 429 failover. |
-| **Pipeline** | `pipeline` | `/pipeline`, `/pipeline/stream`, `/requirement`, `/code`, `/test`, `/qa`, `/runs*` | Agents + orchestrator + run history (jsonb artifact). |
-| **Identity** | — | — | `ITenantContext` (claims-based) + `Admin`/`Member` policies. The auth scheme is host-specific (Api = Keycloak JWT bearer; Web = cookie + OIDC). |
-| **Tenants** | `tenants` | `/tenants/me`, `/tenants`, `/tenants/{id}/members` | Tenant registry + Keycloak admin REST client for provisioning. |
-| **Integration** | — | — | `IGitHubPrService` + `IBuildVerifier`. Used by the Pipeline orchestrator. |
-| **Workspaces** | `workspaces` | `/workspaces*` | Connected source workspaces (repo/token registry) + `IWorkspaceConnector`. |
-| **Sessions** | `sessions` | `/sessions*`, `/runners*` | Remote-runner registry + pairing handshake + live session-run feed. |
-| **RemoteAgent** | — | `/hubs/remote-agent` (SignalR) | Dispatches LLM calls to a paired dev-machine agent (zero API tokens). |
+| **AppConfig** | `config` | `/settings*` | Settings registry (descriptors, precedence, locks, audit) over an encrypted per-tenant KV store. |
+| **Llm** | — | `/llm/test` | Keyed `ILlmClient` per provider, key pools, failover, cost calculator, model capabilities. |
+| **Pipeline** | `pipeline` | `/pipeline`, `/pipeline/stream`, `/requirement`, `/code`, `/test`, `/qa`, `/runs*` | Agents, orchestrator, graph executor, run history (jsonb artifacts). |
+| **Identity** | — | — | `ITenantContext` + `Admin`/`Member`/`PlatformAdmin` policies. Scheme per host (Api = JWT bearer, Web = cookie + OIDC). |
+| **Tenants** | `tenants` | `/tenants*`, `/invitations*` | Tenant registry, member lifecycle via the Keycloak admin API, signup + invitations, audit. |
+| **Tools** | `tools` | — | Tool registry, per-tenant policy (allowlist), invocation evidence. |
+| **Integration** | — | — | `IGitHubPrService` + `IBuildVerifier` (container sandbox), registered as tools. |
+| **Mcp** | — | `/mcp/servers` | MCP client for upstream servers; the Api also serves `/mcp`. |
+| **Workspaces** | `workspaces` | `/workspaces*` | Connected repos/boards + `IWorkspaceConnector` (GitHub, Azure DevOps). |
+| **Sessions** | `sessions` | `/sessions*`, `/runners*`, `/pair/*` | Remote-runner registry, pairing handshake, live session-run feed. |
+| **RemoteAgent** | — | `/hubs/remote-agent` (SignalR) | Dispatches work to a paired dev-machine agent (no server API tokens). |
 
 ## LLM gateway
 
-Agents depend only on `ILlmClient`; `LlmClientFactory.Create(providerName)` resolves a keyed
-implementation registered under its canonical name. Supported provider keys:
+Agents depend only on `ILlmClient`; `LlmClientFactory` resolves a keyed implementation by provider:
 
-| Key | Backend | Owning module |
+| Provider | Backend | Owning module |
 |---|---|---|
-| `Claude` | Anthropic.SDK (pooled over multi-key) | `Modules.Llm` |
-| `AzureOpenAI` | `Azure.AI.OpenAI` (pooled over multi-key) | `Modules.Llm` |
+| `Claude` (alias `Anthropic`) | Anthropic SDK, pooled over multiple keys | `Modules.Llm` |
+| `AzureOpenAI` | `Azure.AI.OpenAI`, pooled over multiple keys | `Modules.Llm` |
 | `MAF` | Microsoft Agent Framework over Azure OpenAI | `Modules.Llm` |
 | `RemoteAgent` | SignalR-dispatched dev-machine agent | `Modules.RemoteAgent` |
+| `Offline` | Keyless canned output — only at the end of a failover chain when offline fallback is on | `Modules.Llm` |
 
-`Llm:ForceProvider` (config) and the runtime overrides set from the Settings UI override the
-per-agent provider. A runtime `IRuntimeOverrides` is hydrated at startup from `AppConfig` so a
-process restart keeps the operator's last-saved keys.
+Routing per call: `Llm:ForceProvider` (if set) → the agent profile's provider → `Llm:Provider`.
+`Llm:Fallbacks` adds inter-provider failover (e.g. Claude → AzureOpenAI) above each provider's own
+key-pool failover. Keys and routing are read **per request** for the caller's tenant (short cache),
+so a key saved in Settings is used by the next call.
 
-### Default agent mapping
+**Default agent profiles** (code defaults — change them in Settings → Agent profiles):
 
-| Agent | Default provider | Default model |
+| Agent | Provider | Model |
 |---|---|---|
 | Orchestrator | Claude | `claude-haiku-4-5` |
 | Requirement | Claude | `claude-sonnet-4-6` |
 | Coding | AzureOpenAI | `gpt-4.1` |
 | Testing | AzureOpenAI | `gpt-4o-mini` |
 | QA | Claude | `claude-haiku-4-5` |
+| IssueWork / Decomposer | Claude | `claude-sonnet-4-6` |
 
-Illustrative only — reassign any agent to any provider in Settings → Agent profiles. The code defaults
-uses the provider alias `Anthropic`, which `LlmClientFactory.NormalizeKey` normalizes to `Claude`.
+The model picker lists every priced model for the chosen provider with its list price (e.g.
+`claude-haiku-5-5 · $0.1 / $0.5` per 1M tokens), plus *Custom…* for Azure deployment aliases.
 
 ## Configuration
 
-Set keys via user-secrets — never commit them:
+**UI-first** ([ADR-0011](docs/adr/0011-ui-first-configuration.md)). Everything product-related is set
+in the desktop and applies on the next call:
 
-```bash
-cd src/AgentOs.Api
-dotnet user-secrets set "Llm:Claude:ApiKey"      "sk-ant-..."
-dotnet user-secrets set "Llm:AzureOpenAi:ApiKey" "..."
-dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://<resource>.openai.azure.com"
-```
+- **Settings → LLM & providers** — API keys and key pools, endpoints, default/forced provider.
+- **Settings → Agent profiles** — per-agent provider, model, temperature, max output tokens, QA-loop cap.
+- **Settings → Platform** (`platform-admin` only) — remote auto-approve, fail-closed tool policy,
+  allowed self-hosted Git hosts, build sandbox (mode, image, quotas), offline fallback.
 
-Everything else is configured in the desktop: **Settings → Agent profiles** (per-agent provider,
-model, temperature, max output tokens, QA-loop cap), **LLM providers** (keys, endpoints, routing) and
-**Platform** (safety switches, build sandbox). Changes apply to the next call — no restart.
-`appsettings.json` holds bootstrap keys only (database, sign-in, logging, operator locks); any setting
-can still be *seeded* from the environment, e.g. `Agents__Coding__Model=gpt-5.4`. Full reference —
-what you set at deploy vs in the UI, precedence, Production locks — in [docs/CONFIG.md](docs/CONFIG.md).
-
-### Multi-key pool + 429 failover
-
-Give a provider a pool; the gateway round-robins across keys, cools any key that returns HTTP 429
-(honoring `Retry-After`), and routes to the next. One throttled key never stalls the pipeline.
-
-```json
-{
-  "Llm": {
-    "Claude":      { "ApiKeys": ["sk-ant-a", "sk-ant-b", "sk-ant-c"] },
-    "AzureOpenAi": { "ApiKeys": ["key-east",  "key-west"] }
-  }
-}
-```
-
-The effective pool combines `ApiKeys` + the single `ApiKey` + any Settings runtime override
-(deduped). Azure keys in a pool share the configured endpoint.
+`appsettings.json` holds bootstrap keys only — database, sign-in, logging, operator locks. Any setting
+can still be **seeded** from the environment (`Agents__Coding__Model=gpt-5.4`, `Llm__Claude__ApiKeys__0=…`).
+The full reference — what you set at deploy vs in the UI, precedence, Production locks — is
+[docs/CONFIG.md](docs/CONFIG.md).
 
 ### Persistence
 
-`ConnectionStrings:DefaultConnection` (Postgres) is the only required wiring; each module
-attaches its own DbContext with its own schema + migration history. The Aspire AppHost provisions
-this automatically. To run the Api standalone against an existing Postgres:
+`ConnectionStrings:DefaultConnection` (Postgres) is the only required wiring; each module owns its
+DbContext, schema and migration history and migrates at startup. Aspire provides it on the full stack.
+The Api requires a database by default; to run it alone:
 
 ```bash
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" \
-  "Host=localhost;Port=5432;Database=agentos;Username=postgres;Password=postgres"
+  "Host=localhost;Port=5432;Database=agentos;Username=postgres;Password=postgres" --project src/AgentOs.Api
+# …or boot it stateless (no-op repositories):
+export Persistence__RequireDatabase=false        # PowerShell: $env:Persistence__RequireDatabase = "false"
+dotnet run --project src/AgentOs.Api              # Scalar UI at https://localhost:5080/scalar/v1
 ```
-
-To boot stateless (no DB) — useful for unit tests or quick smoke runs:
-
-```bash
-$env:Persistence__RequireDatabase = "false"   # PowerShell
-export Persistence__RequireDatabase=false      # bash
-```
-
-…which swaps in the in-memory `Null*Repository` implementations.
 
 ## Multi-tenant
 
 | Host | Authentication | Tenant context |
 |---|---|---|
-| **Api** | Keycloak RS256 bearer — a resource server that validates the token against the realm JWKS | `HttpTenantContext` reads the `tenant` claim + realm roles |
-| **Web** | Cookie + OpenID Connect against Keycloak (seeded `operator` / `member` realm users), or `Auth:DevAutoLogin` — a Development-only fixed-user handler — for standalone runs | the same `HttpTenantContext`; anonymous requests fall back to the default tenant |
+| **Api** | Keycloak RS256 bearer, validated against the realm JWKS | `HttpTenantContext` reads the `tenant` claim + realm roles |
+| **Web** | Cookie + OpenID Connect against Keycloak; `Auth:DevAutoLogin` (Development only) for standalone runs | Same `HttpTenantContext`; anonymous requests fall back to the default tenant |
 
-There is no `Auth:Mode` switch and no operator-password form — a single claims-based
-`HttpTenantContext` is wired for both hosts. `POST /tenants` provisions a new tenant + admin user in
-Keycloak via `IKeycloakAdminClient`. The Aspire AppHost runs Keycloak with an auto-imported
-`agentic` realm (`infra/keycloak/`), so a full multi-tenant smoke is one
-`dotnet run --project infra/AgentOs.AppHost` away.
+Roles: `admin` (tenant admin), `member`, and `platform-admin` (platform-wide settings; the seeded
+`operator` has it). `POST /tenants` provisions a tenant + admin user in Keycloak. Aspire imports the
+`agentic` realm from `infra/keycloak/`, so a multi-tenant smoke test is one command away.
 
-Row-level isolation: `PipelineRun`, `RunMetric`, `Orchestration`, and `AppConfig` rows carry a
-`TenantId` column and a global EF query filter that reads `ITenantContext.TenantId`. Writes stamp
-the tenant id; reads only see your own.
+Row-level isolation: pipeline runs, run metrics and orchestrations, sessions/runners and workspaces
+carry a `TenantId` with an EF global query filter on `ITenantContext.TenantId`; writes stamp the
+tenant. Settings and keys are stored per `(tenant, key)` and always read for an explicit tenant.
 
 ## API
 
-All `/pipeline*`, `/requirement`, `/code`, `/test`, `/qa`, `/runs*`, `/settings*`, and `/tenants*`
-endpoints require an authenticated principal. The API host validates a Keycloak-issued bearer
-token in the `Authorization` header; the Web host authenticates the user via a cookie session
-(`GET /account/login` → an OIDC challenge against Keycloak). `/health`, `/alive`, and `/` are public.
+Everything except `/`, `/health`, `/alive`, `/health/llm` and `/version` requires an authenticated
+principal: the Api validates a Keycloak bearer token; the Web uses a cookie session
+(`/account/login` → OIDC). The complete, always-current list is the **Scalar UI** at `/scalar/v1`.
+The most used routes:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET`  | `/account/login` | none | Start an operator/OIDC sign-in (Web host) |
-| `GET`  | `/account/logout` | any | Sign out (Web host) |
-| `GET`  | `/tenants/me` | any | Resolved tenant + user + roles for the current request |
-| `GET`  | `/tenants` | Admin | List every tenant |
-| `POST` | `/tenants` | Admin | Provision a tenant + admin user (Keycloak) |
-| `POST` | `/tenants/{id}/members` | Admin | Invite a member into a tenant |
-| `POST` | `/requirement` | any | Run the Requirement agent on its own |
-| `POST` | `/code` | any | Run the Coding agent on its own |
-| `POST` | `/test` | any | Run the Testing agent on its own |
-| `POST` | `/qa` | any | Run the QA agent on its own |
-| `POST` | `/pipeline` | any | Run the full end-to-end flow |
-| `POST` | `/pipeline/stream` | any | Run the pipeline, streaming progress over SSE |
-| `GET`  | `/runs`, `/runs/{id}` | any | List / fetch persisted runs |
-| `GET`  | `/settings/{prefix}` | Admin | Read encrypted runtime config under a prefix |
-| `POST` | `/settings` | Admin | Set / rotate a runtime config value |
-| `DELETE` | `/settings/{key}` | Admin | Delete a runtime config value |
-| `POST` | `/llm/test` | any | Probe the configured provider with a minimal call |
-| `GET`  | `/health` | none | Readiness — self + Postgres + Keycloak (when configured) |
-| `GET`  | `/alive` | none | Liveness |
-| `GET`  | `/health/llm` | none | LLM provider-key readiness |
+| `POST` | `/pipeline` · `/pipeline/stream` | signed in | Run the full flow (SSE progress on `/stream`) |
+| `POST` | `/requirement` · `/code` · `/test` · `/qa` | signed in | Run one agent on its own |
+| `GET`  | `/runs`, `/runs/{id}` | signed in | Persisted runs |
+| `GET`  | `/tenants/me` | signed in | Resolved tenant, user, roles |
+| `GET` `POST` | `/tenants`, `/tenants/{id}/members` | Admin | Tenants and members |
+| `GET` `POST` `DELETE` | `/settings*` | Admin | Legacy runtime-config endpoint (see CONFIG.md) |
+| `POST` | `/llm/test` | signed in | Probe the configured provider with a minimal call |
+| — | `/mcp` | signed in | AgentOS as an MCP server |
+| `GET`  | `/health` · `/alive` · `/health/llm` | none | Readiness, liveness, provider-key readiness |
 
 ## Extending
 
 ### Add an LLM provider
 
 1. Implement `ILlmClient` in a module that owns the SDK reference.
-2. Register it as a keyed singleton under a canonical name:
+2. Register it as a keyed service under a canonical name:
    ```csharp
    services.AddKeyedSingleton<ILlmClient, MyProviderClient>("MyProvider");
    ```
-3. Add an alias to `LlmClientFactory.NormalizeKey` if you want a friendlier user-facing name.
+3. Add prices for its models to `CostCalculator` (unpriced models are charged at the fail-closed rate).
 
 ### Add a pipeline agent
 
 Use the bundled `agent-scaffold` skill (`/agent-scaffold {Name}`) — it generates the contract,
-implementation, DI registration, and xUnit stubs.
+implementation, DI registration and xUnit stubs. Give it an agent profile in `AgentsOptions` so it
+appears in Settings → Agent profiles.
+
+### Add a setting
+
+Declare a `SettingDescriptor` in your module's `ISettingsContributor` (key, kind, scope, default,
+validation, label) and read it with `ISettings` at the point of use. It appears in the desktop
+automatically — don't add an appsettings key.
 
 ### Add a module
 
-1. Create a new `AgentOs.Modules.X` class library; reference `Domain` + `SharedKernel` only.
-2. Implement `IModule` (+ `IEndpointModule` / `IInitializableModule` if relevant) in `XModule.cs`.
-3. If you persist state, add an `XDbContext` (schema `x`) + a design-time factory.
-4. Add the module assembly to the host's `AddModulesFromAssemblies` call.
-5. (Optional) Generate the Initial migration:
+1. Create an `AgentOs.Modules.X` class library referencing `Domain` + `SharedKernel`.
+2. Implement `IModule` (+ `IEndpointModule` / `IInitializableModule` as needed) in `XModule.cs`.
+3. If it persists state, add an `XDbContext` (schema `x`), a design-time factory and a migration:
    ```bash
    dotnet ef migrations add Initial \
      --project src/AgentOs.Modules.X --startup-project src/AgentOs.Modules.X \
      --output-dir Persistence/Migrations --context XDbContext
    ```
+4. Add the assembly to each host's `AddModulesFromAssemblies` call.
 
 ### Add a plugin
 
 For an extension that ships *outside* the solution, implement `IAgentOsPlugin`
-(`src/AgentOs.SharedKernel/Plugins/`) — a runtime-discovered module loaded from an assembly dropped
-in the host's `plugins/` folder, with no compile-time reference. A plugin has the same DI surface as
-a first-party module, so it can contribute a tool, an LLM provider, and/or a desktop window. Use the
-bundled `plugin-scaffold` skill (`/plugin-scaffold {Name}`); see `samples/AgentOs.Plugins.Sample`
-for a working example.
+(`src/AgentOs.SharedKernel/Plugins/`) and drop the assembly into the host's `plugins/` folder — no
+compile-time reference. A plugin has the same DI surface as a module (tools, LLM providers, desktop
+windows). Use `/plugin-scaffold {Name}`; `samples/AgentOs.Plugins.Sample` is a working example.
 
 ## Deploy
 
 ```bash
-azd up   # provision + deploy to Azure Container Apps via the Aspire AppHost
+azd up   # provision + deploy to Azure Container Apps from the Aspire AppHost
 ```
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full deployment guide and
-[docs/SETUP.md](docs/SETUP.md) for local secrets + CI notes.
+A post-deploy hook aligns the Keycloak realm with the cloud URLs, rotates the client secret and seed
+passwords, and ensures the `platform-admin` role. Production applies operator locks for the riskiest
+settings. Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [infra/README.md](infra/README.md).
 
 ## Contributing
 
-Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev workflow and
-[SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-- Build + test: `dotnet test --solution AgentOs.slnx -c Release`. CI runs the same on every push and PR, then
-  a **coverage gate** (fails under a line-rate floor) and a **dev-auth UI E2E** that opens every
-  desktop app to catch circuit-crash regressions. The heavy **real-auth full-stack E2E** (real
-  Keycloak + Postgres) is a **local/manual** suite — bring up the Aspire stack
-  (`dotnet run --project infra/AgentOs.AppHost`) and run `tests/AgentOs.E2E.Tests` with
-  `RUN_AGENTOS_E2E_REAL=true` (full-stack verification is user-driven, not a CI gate).
-- Style: `Nullable` + `TreatWarningsAsErrors` are on across the solution.
-- Commits: [Conventional Commits](https://www.conventionalcommits.org/).
-- The repo ships project-specific Claude Code skills under [`.claude/skills/`](.claude/skills/)
-  (`agent-scaffold`, `prompt-tune`, `cost-report`, `design-review`, `plugin-scaffold`) — they load
-  automatically when you open the project root.
+- CI (`.github/workflows/ci.yml`) runs on pushes to `main`/`develop`/`refactor/**` and on PRs to
+  `main`: Release build (warnings are errors) → tests → a coverage floor → the dev-auth UI E2E that
+  opens every desktop app. CodeQL and dependency review run alongside. The real-auth full-stack E2E
+  is a local suite (`RUN_AGENTOS_E2E_REAL=true` against the Aspire stack).
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
+- Project-specific Claude Code skills live in [`.claude/skills/`](.claude/skills/) (`agent-scaffold`,
+  `prompt-tune`, `cost-report`, `design-review`, `plugin-scaffold`).
 
 ## License
 

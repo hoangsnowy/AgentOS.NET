@@ -14,7 +14,7 @@ the code wins — fix this doc.
 | Provisioning + KC env wiring | `infra/AgentOs.AppHost/Program.cs` |
 | Custom KC image (realm + theme baked) | `infra/keycloak/Dockerfile` |
 | Realm definition (dev defaults) | `infra/keycloak/agentic-realm.json` |
-| Post-provision realm patch | `infra/hooks/postprovision.sh` / `.ps1` (wired in `azure.yaml`) |
+| Post-deploy realm patch | `infra/hooks/postdeploy.sh` / `.ps1` (wired in `azure.yaml` → `hooks.postdeploy`) |
 | azd parameters (dev defaults) | `infra/AgentOs.AppHost/appsettings.json` → `"Parameters"` |
 
 Prereqs: `azd`, `az`, .NET 10 SDK, an Azure subscription, `AZURE_ENV_NAME` + `AZURE_LOCATION` chosen.
@@ -88,9 +88,10 @@ every login fails on a secret mismatch.
 azd up        # provisions RG, ACR, ACA env, Postgres (app + keycloak DBs), KC, API, Web
 ```
 
-The post-provision hook runs automatically (`azure.yaml` → `hooks.postprovision`) but **skips silently**
-on this first pass because `KEYCLOAK_BASE_URL` / `WEB_BASE_URL` aren't set yet (`postprovision.sh:32-40`).
-That's expected — the FQDNs only exist after ingress is created. Read them back:
+The **post-deploy** hook runs automatically after the deploy (`azure.yaml` → `hooks.postdeploy`), once
+the Keycloak container app is up. It derives the public Keycloak and Web URLs from the Container Apps
+environment's default domain (`AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN`), so there is no
+manual URL step. To see the FQDNs:
 
 ```bash
 azd env get-values            # look for the web + keycloak container-app URLs
@@ -101,46 +102,37 @@ az containerapp show -n web      -g "$RG" --query properties.configuration.ingre
 
 ---
 
-## Step 3 — set the public URLs + re-run the realm patch
+## Step 3 — what the post-deploy realm patch does
 
 The realm JSON ships **dev** values that only the hook can fix in cloud: the `agentic-web` client's
-`redirectUris`/`webOrigins` are hardcoded to `https://localhost:5180` (`agentic-realm.json:81-82`), its
-`secret` is the public `agentic-web-dev-secret` (`agentic-realm.json:78`), and `verifyEmail` is `true`
-(`agentic-realm.json:11`). The post-provision hook patches all of these via the KC admin API. Set the two
-URLs and re-provision to fire the hook:
+`redirectUris`/`webOrigins` point at `https://localhost:5180`, its `secret` is the public
+`agentic-web-dev-secret`, and `verifyEmail` is `true`. The hook (`infra/hooks/postdeploy.sh` / `.ps1`)
+fixes them through the Keycloak admin API with an `admin-cli` token:
 
-```bash
-azd env set KEYCLOAK_BASE_URL "https://<KC_FQDN>"    # e.g. https://keycloak.<hash>.<region>.azurecontainerapps.io
-azd env set WEB_BASE_URL      "https://<WEB_FQDN>"
-azd provision                                        # re-runs the postprovision hook
-```
+1. **`agentic-web` client** → `redirectUris=["<web>/*"]`, `webOrigins=["<web>"]`, `secret` rotated to
+   `KeycloakWebClientSecret`.
+2. **Realm** → `verifyEmail=false` (no app SMTP wired by default — see Step 4).
+3. **Realm role `platform-admin`** → created if missing (an imported realm never gains new roles on
+   later deploys). Assign it to whoever administers platform-wide settings.
+4. **Seed users** `operator` / `member` → passwords reset to `OPERATORPASSWORD` / `MEMBERPASSWORD`
+   when set; otherwise left on the public imported password, with a warning.
 
-What the hook does (`postprovision.sh` / `.ps1`), using an `admin-cli` token:
+It is idempotent and retries while Keycloak warms up. Inputs (azd env / environment):
 
-1. **PUT `agentic-web` client** → `redirectUris=["$WEB_BASE_URL/*"]`, `webOrigins=["$WEB_BASE_URL"]`,
-   and `secret` rotated to `KEYCLOAKWEBCLIENTSECRET` (`postprovision.sh:58-75`).
-2. **PUT realm** → `verifyEmail=false` (no app SMTP wired by default — see Step 4) (`postprovision.sh:77-80`).
-3. **Reset seed-user passwords** for `operator` and `member` to `OPERATORPASSWORD` / `MEMBERPASSWORD`
-   when those are set; left on the public imported password (with a warning) otherwise
-   (`postprovision.sh:82-102`).
-
-Hook env vars (set via `azd env set`):
-
-| Env var | Required | Purpose |
+| Variable | Required | Purpose |
 |---|---|---|
-| `KEYCLOAK_BASE_URL` | yes | Public KC FQDN the hook calls |
-| `WEB_BASE_URL` | yes | Public Web FQDN written into the client |
-| `KEYCLOAKADMINPASSWORD` | yes | KC admin password (the `KeycloakAdminPassword` param) |
-| `KEYCLOAKADMINUSERNAME` | no (default `admin`) | KC admin username |
-| `KEYCLOAKWEBCLIENTSECRET` | for secret rotation | New `agentic-web` client secret |
-| `OPERATORPASSWORD` | no | New `operator` seed password (kept as-is if unset) |
-| `MEMBERPASSWORD` | no | New `member` seed password (kept as-is if unset) |
+| `AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN` | set by azd | Derives `https://keycloak.<domain>` and `https://web.<domain>` |
+| `KEYCLOAK_BASE_URL` / `WEB_BASE_URL` | no | Override the derived URLs (custom domains) |
+| `KeycloakAdminPassword` | yes | Keycloak admin password |
+| `KeycloakAdminUsername` | no (default `admin`) | Keycloak admin username |
+| `KeycloakWebClientSecret` | for secret rotation | New `agentic-web` client secret |
+| `OPERATORPASSWORD` / `MEMBERPASSWORD` | no | New seed-user passwords |
 
-Run the hook manually any time without a full provision:
+Run it by hand any time:
 
 ```bash
-bash infra/hooks/postprovision.sh      # POSIX
-pwsh infra/hooks/postprovision.ps1     # Windows
+bash infra/hooks/postdeploy.sh      # POSIX
+pwsh infra/hooks/postdeploy.ps1     # Windows
 ```
 
 > **Strip or rotate the seed users before a public env.** Either set `OPERATORPASSWORD`/`MEMBERPASSWORD`
