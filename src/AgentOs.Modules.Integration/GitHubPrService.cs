@@ -81,6 +81,15 @@ public sealed class GitHubPrService : IGitHubPrService
         string owner, string name, string baseBranch, string token, string? host,
         PipelineResult result, string title, string body, CancellationToken ct)
     {
+        // Never push canned offline output to a real repository: it is placeholder text produced without a
+        // model (no API key + Llm:OfflineFallback). Both overloads funnel here, so every caller is covered.
+        if (result.IsOffline)
+        {
+            throw new InvalidOperationException(
+                "Refusing to open a PR: this run was answered by the offline canned client (no LLM API key configured), "
+                + "so the code is placeholder output, not model-generated. Add a provider key in Settings → LLM and re-run.");
+        }
+
         var client = GitHubClientFactory.Create(token, host);
 
         // 1. Locate base branch SHA.

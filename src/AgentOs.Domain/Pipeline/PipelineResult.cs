@@ -2,7 +2,9 @@
 // Phase 3 — Output of the PipelineOrchestrator — bundles all final artifacts + the QA loop history.
 
 using System.Collections.Generic;
+using System.Linq;
 using AgentOs.Domain.Code;
+using AgentOs.Domain.Llm;
 using AgentOs.Domain.Qa;
 using AgentOs.Domain.Requirements;
 using AgentOs.Domain.Testing;
@@ -30,6 +32,14 @@ public sealed record PipelineResult(
 {
     /// <summary>Number of QA iterations that ran (length of <see cref="QaHistory"/>).</summary>
     public int IterationCount => QaHistory?.Count ?? 0;
+
+    /// <summary>True when any stage was answered by the canned offline client (no API key + offline
+    /// fallback): the artifacts are canned text, not model output, so they must never ship as a PR.</summary>
+    public bool IsOffline =>
+        LlmProviders.IsOffline(Spec?.Metrics?.Provider)
+        || LlmProviders.IsOffline(Code?.Metrics?.Provider)
+        || LlmProviders.IsOffline(Tests?.Metrics?.Provider)
+        || (QaHistory?.Any(q => LlmProviders.IsOffline(q?.Metrics?.Provider)) ?? false);
 }
 
 /// <summary>Final pipeline status.</summary>

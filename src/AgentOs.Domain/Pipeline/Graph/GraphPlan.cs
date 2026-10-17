@@ -56,8 +56,9 @@ public sealed record GraphValidationResult(
 /// <summary>Live per-node status pushed to the canvas during a run.</summary>
 public enum GraphNodePhase { Pending, Running, Done, Failed, Skipped }
 
-/// <summary>One node-status update (node-id correlated, unlike the 5-value PipelineStage).</summary>
-public sealed record GraphNodeEvent(string NodeId, GraphNodePhase Phase, string? Meta, string? Message);
+/// <summary>One node-status update (node-id correlated, unlike the 5-value PipelineStage).
+/// <paramref name="Offline"/> = the node finished on canned offline output — no model was called.</summary>
+public sealed record GraphNodeEvent(string NodeId, GraphNodePhase Phase, string? Meta, string? Message, bool Offline = false);
 
 /// <summary>A Human node is asking the operator to approve/answer before the run continues. Surfaced to the
 /// caller via the run's human callback; the run pauses at the node until a <see cref="GraphHumanReply"/> is
@@ -68,5 +69,6 @@ public sealed record GraphHumanRequest(string NodeId, string Title, string Quest
 /// stops the run at that node (rejection); <paramref name="Note"/> is an optional free-text answer/reason.</summary>
 public sealed record GraphHumanReply(bool Approved, string? Note = null);
 
-/// <summary>The outcome of a graph run.</summary>
-public sealed record GraphRunResult(bool Completed, string? FailureMessage);
+/// <summary>The outcome of a graph run. <paramref name="Offline"/> = at least one node was answered by the
+/// canned offline client, so the run is a dry run and must not be presented or counted as live output.</summary>
+public sealed record GraphRunResult(bool Completed, string? FailureMessage, bool Offline = false);

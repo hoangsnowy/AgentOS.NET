@@ -76,6 +76,7 @@
         NodeRunState.Done => "done",
         NodeRunState.Failed => "failed",
         NodeRunState.Skipped => "skipped",
+        NodeRunState.Canned => "canned",
         _ => "idle",
     };
 
@@ -87,6 +88,7 @@
         NodeRunState.Done => "✓",       // ✓
         NodeRunState.Failed => "✕",     // ✕
         NodeRunState.Skipped => "–",    // –
+        NodeRunState.Canned => "✓",     // ✓ on a grey dot — completed, but on canned output
         _ => string.Empty,
     };
 
@@ -96,6 +98,7 @@
         NodeRunState.Done => "Done",
         NodeRunState.Failed => "Failed",
         NodeRunState.Skipped => "Skipped",
+        NodeRunState.Canned => "Canned offline output — no model was called",
         _ => string.Empty,
     };
 

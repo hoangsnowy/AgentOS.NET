@@ -32,6 +32,26 @@ public sealed record LlmEffectiveConfig(
 {
     /// <summary>Terse provider label for a "Live · …" chip: the forced provider, else the default.</summary>
     public string ChipLabel => string.IsNullOrWhiteSpace(Force) ? DefaultProvider : $"{Force} (forced)";
+
+    /// <summary><c>Llm:OfflineFallback</c> — a keyless provider is answered by the canned offline client.</summary>
+    public bool OfflineFallback { get; init; }
+
+    /// <summary>The provider a run will ask for: the forced one, else the default.</summary>
+    public string EffectiveProvider => string.IsNullOrWhiteSpace(Force) ? DefaultProvider : Force;
+
+    /// <summary>True when the effective provider has no usable key and the offline fallback will answer with
+    /// canned text instead — the chip must say "Offline", not "Live".</summary>
+    public bool WillServeCanned => OfflineFallback && !HasKeyFor(EffectiveProvider);
+
+    /// <summary>Whether <paramref name="provider"/> has the credentials it needs. Providers that don't take a
+    /// key here (MAF, RemoteAgent, plugins) report true — they fail or succeed on their own terms.</summary>
+    public bool HasKeyFor(string provider) => provider.Trim().ToUpperInvariant() switch
+    {
+        "CLAUDE" or "ANTHROPIC" => AnthropicKeySet,
+        "AZUREOPENAI" or "AZURE" or "OPENAI" => AzureKeySet && !string.IsNullOrWhiteSpace(AzureEndpoint),
+        "OFFLINE" => false,
+        _ => true,
+    };
 }
 
 /// <summary>Resolves <see cref="LlmEffectiveConfig"/> for a tenant by reading <see cref="IRuntimeOverrides"/>
@@ -61,7 +81,10 @@ public sealed class LlmConfigView(IRuntimeOverrides overrides, IOptions<LlmOptio
             opts.Provider, force, source,
             AnthropicKeySet: IsSet(anthropicOverride, opts.Claude.ApiKey),
             AzureKeySet: IsSet(azureOverride, opts.AzureOpenAi.ApiKey),
-            AzureEndpoint: FirstNonBlank(endpointOverride, opts.AzureOpenAi.Endpoint));
+            AzureEndpoint: FirstNonBlank(endpointOverride, opts.AzureOpenAi.Endpoint))
+        {
+            OfflineFallback = opts.OfflineFallback,
+        };
     }
 
     /// <summary>"Set" when EITHER the tenant override OR the platform fallback has a value.</summary>
