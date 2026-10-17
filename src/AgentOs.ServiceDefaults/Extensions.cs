@@ -87,7 +87,8 @@ public static class Extensions
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
-                .AddMeter("AgentOs.Llm")) // SharedKernel.Telemetry.LlmTelemetry.SourceName — kept literal to avoid coupling this Aspire-shared project.
+                .AddMeter("AgentOs.Llm") // SharedKernel.Telemetry.LlmTelemetry.SourceName — kept literal to avoid coupling this Aspire-shared project.
+                .AddMeter("AgentOs.Tools")) // evidence health: inline writes + lost rows (BufferedToolInvocationLog.MeterName)
             .WithTracing(tracing => tracing
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
