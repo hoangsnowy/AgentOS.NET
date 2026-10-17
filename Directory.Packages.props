@@ -119,15 +119,19 @@
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
     <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.5.1" />
 
-    <!-- Aspire orchestration + service defaults (.NET 10). Stable 13.6.x for the core stack; the
-         Keycloak integration has never shipped a stable release, so it tracks the preview tag that
-         matches the core stack (Dependabot skips prereleases — bump it by hand with Aspire). -->
-    <PackageVersion Include="Aspire.Hosting" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.Azure.PostgreSQL" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.Keycloak" Version="13.6.1-preview.1.26506.6" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.1" />
+    <!-- Aspire orchestration + service defaults (.NET 10). HELD at 13.5.3: Aspire 13.6.x builds but the
+         AppHost fails at startup on this stack (DCP object creation times out after 60s in
+         KubernetesService.CreateAsync; reproduced with the 13.6.1 SDK too). 13.6 resolves DCP + the
+         dashboard from the Aspire CLI bundle (ASPIRE010 / AspireUseCliBundle) — upgrading needs that
+         migration, verified with a full AppHost run (infra/AgentOs.AppHost). Dependabot ignores
+         Aspire.* minor bumps until then (.github/dependabot.yml). The Keycloak integration has never
+         shipped a stable release; it stays on the preview tag verified against this core version. -->
+    <PackageVersion Include="Aspire.Hosting" Version="13.5.3" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.5.3" />
+    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.5.3" />
+    <PackageVersion Include="Aspire.Hosting.Azure.PostgreSQL" Version="13.5.3" />
+    <PackageVersion Include="Aspire.Hosting.Keycloak" Version="13.3.5-preview.1.26270.6" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.5.3" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
     <!-- Transitive of Aspire.Hosting — its default 2.5.192 carries GHSA-hv8m-jj95-wg3x (NU1903).
          Promoted to a direct reference in AppHost + E2E.Tests to force the patched version. 3.0.0-3.1.8
