@@ -1,7 +1,9 @@
-@* PromptsApp — admin: override the agents' system prompts for this tenant. Each agent shows its current
-   prompt (the tenant override, or the compiled-in default) in an editable box; Save stores an override,
-   Reset reverts to the default. The agents read the override at runtime via IPromptOverrides. Tenant read
-   from AuthenticationState (circuit has no HttpContext) → tenant-explicit IPromptOverrideService. *@
+@* PromptsApp — admin: shape how this tenant's agents work.
+   • Workspace rules — one block of engineering rules applied to EVERY agent of every run (pipeline agents,
+     Quick engine, Decomposer), after the agent's own prompt and before the repo's AGENTS.md / CLAUDE.md.
+   • Per-agent system prompts — override the built-in prompt; Reset reverts to it.
+   Every save is versioned (who, when, what — last 20) with one-click Restore, and lands in the audit trail.
+   Tenant read from AuthenticationState (a circuit has no HttpContext) → tenant-explicit IPromptOverrideService. *@
 
 @using Microsoft.AspNetCore.Components.Authorization
 @using AgentOs.Modules.Pipeline.Prompts
@@ -21,25 +23,42 @@ else
     <header class="page-head">
         <div>
             <h1 class="page-title">Prompts · <code>@_tenantId</code></h1>
-            <p class="page-sub">Override the agents' system prompts for this tenant. Reset reverts to the built-in default.</p>
+            <p class="page-sub">Your rules for every agent, and each agent's system prompt. Every change is versioned — restore any earlier version.</p>
         </div>
     </header>
+
+    <Panel Title="Workspace rules — every agent follows these">
+        <p class="muted prompt-hint">
+            Your engineering rules: libraries, style, structure, what never to touch. Added to every agent's prompt
+            (pipeline, Quick engine, Decomposer), before the target repo's own <code>AGENTS.md</code> / <code>CLAUDE.md</code>.
+            They shape choices — they never change an agent's role or output format.
+        </p>
+        <textarea class="prefs-input prompt-text" rows="6" aria-label="Workspace rules"
+                  placeholder="- Tests use xUnit v3 + Shouldly, never FluentAssertions.&#10;- Target .NET 10, nullable enabled.&#10;- Never modify files under /infra."
+                  value="@_rules" @onchange="e => _rules = e.Value?.ToString() ?? string.Empty"></textarea>
+        <div class="prompt-actions">
+            <Btn OnClick="SaveRules" Disabled="_saving" Variant="Btn.ButtonVariant.Primary">Save rules</Btn>
+            <span class="muted prompt-count">@_rules.Length / @WorkspaceRules.MaxLength chars</span>
+        </div>
+        <PromptHistoryList Versions="@HistoryFor(WorkspaceRules.Key)" OnRestore="v => RestoreRules(v)" />
+    </Panel>
 
     @foreach (var entry in PromptCatalog.All)
     {
         <Panel Title="@entry.DisplayName">
-            <div style="margin-bottom:var(--space-2)">
+            <div class="prompt-status">
                 <Badge Variant="@(_overridden.Contains(entry.Key) ? Badge.BadgeVariant.Warn : Badge.BadgeVariant.Ok)">
                     @(_overridden.Contains(entry.Key) ? "Overridden" : "Default")
                 </Badge>
             </div>
-            <textarea class="prefs-input" rows="8" style="width:100%;font-family:var(--font-mono, monospace)"
+            <textarea class="prefs-input prompt-text" rows="8" aria-label="@($"{entry.DisplayName} system prompt")"
                       value="@CurrentText(entry)"
                       @onchange="e => _text[entry.Key] = e.Value?.ToString() ?? string.Empty"></textarea>
-            <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">
+            <div class="prompt-actions">
                 <Btn OnClick="() => Save(entry)" Disabled="_saving" Variant="Btn.ButtonVariant.Primary">Save</Btn>
                 <Btn OnClick="() => Reset(entry)" Disabled="_saving">Reset to default</Btn>
             </div>
+            <PromptHistoryList Versions="@HistoryFor(entry.Key)" OnRestore="v => Restore(entry, v)" />
         </Panel>
     }
 }
@@ -51,8 +70,11 @@ else
     private bool _isAdmin;
     private bool _saving;
     private string _tenantId = "default";
+    private string _actor = "admin";
+    private string _rules = string.Empty;
     private readonly Dictionary<string, string> _text = new(System.StringComparer.Ordinal);
     private readonly HashSet<string> _overridden = new(System.StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<PromptVersion>> _history = new(System.StringComparer.Ordinal);
 
     protected override async Task OnInitializedAsync()
     {
@@ -61,6 +83,7 @@ else
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
             _tenantId = state.User.GetTenantId() ?? string.Empty;
+            _actor = state.User.Identity?.Name ?? "admin";
         }
         _resolved = true;
         if (_isAdmin && _tenantId.Length > 0) { await LoadAllAsync(); }
@@ -68,81 +91,55 @@ else
 
     private string CurrentText(PromptEntry entry) => _text.TryGetValue(entry.Key, out var v) ? v : entry.DefaultPrompt;
 
+    private IReadOnlyList<PromptVersion> HistoryFor(string key) => _history.TryGetValue(key, out var h) ? h : [];
+
     private async Task LoadAllAsync()
     {
+        _rules = await Prompts.GetAsync(_tenantId, WorkspaceRules.Key) ?? string.Empty;
+        _history[WorkspaceRules.Key] = await Prompts.GetHistoryAsync(_tenantId, WorkspaceRules.Key);
         foreach (var entry in PromptCatalog.All)
         {
             var ov = await Prompts.GetAsync(_tenantId, entry.Key);
             if (ov is not null) { _overridden.Add(entry.Key); } else { _overridden.Remove(entry.Key); }
             _text[entry.Key] = ov ?? entry.DefaultPrompt;
+            _history[entry.Key] = await Prompts.GetHistoryAsync(_tenantId, entry.Key);
         }
     }
 
-    private async Task Save(PromptEntry entry)
+    private Task SaveRules() => RunAsync("Workspace rules saved.", () =>
+        _rules.Length > WorkspaceRules.MaxLength
+            ? throw new System.InvalidOperationException($"Rules are limited to {WorkspaceRules.MaxLength} characters.")
+            : Prompts.SetAsync(_tenantId, WorkspaceRules.Key, _rules, _actor));
+
+    private Task RestoreRules(PromptVersion version) => RunAsync("Workspace rules restored.", () =>
+        Prompts.SetAsync(_tenantId, WorkspaceRules.Key, version.Text, _actor));
+
+    private Task Save(PromptEntry entry) => RunAsync($"{entry.DisplayName} saved.", () =>
+    {
+        var text = CurrentText(entry);
+        // Unchanged from the default → clear the override rather than storing a duplicate.
+        return string.Equals(text.Trim(), entry.DefaultPrompt.Trim(), System.StringComparison.Ordinal)
+            ? Prompts.ClearAsync(_tenantId, entry.Key, _actor)
+            : Prompts.SetAsync(_tenantId, entry.Key, text, _actor);
+    });
+
+    private Task Reset(PromptEntry entry) => RunAsync($"{entry.DisplayName} reset to default.", () => Prompts.ClearAsync(_tenantId, entry.Key, _actor));
+
+    private Task Restore(PromptEntry entry, PromptVersion version) => RunAsync($"{entry.DisplayName} restored to the version of {version.At.ToLocalTime():yyyy-MM-dd HH:mm}.", () =>
+        string.IsNullOrEmpty(version.Text) ? Prompts.ClearAsync(_tenantId, entry.Key, _actor) : Prompts.SetAsync(_tenantId, entry.Key, version.Text, _actor));
+
+    private async Task RunAsync(string done, Func<Task> action)
     {
         _saving = true;
         try
         {
-            var text = CurrentText(entry);
-            // Unchanged from the default → clear the override rather than storing a duplicate.
-            if (string.Equals(text.Trim(), entry.DefaultPrompt.Trim(), System.StringComparison.Ordinal))
-            {
-                await Prompts.ClearAsync(_tenantId, entry.Key);
-            }
-            else
-            {
-                await Prompts.SetAsync(_tenantId, entry.Key, text);
-            }
+            await action();
             await LoadAllAsync();
-            Toasts.Show("Prompts", $"{entry.DisplayName} saved.", ToastKind.Ok);
+            Toasts.Show("Prompts", done, ToastKind.Ok);
         }
-        catch (System.InvalidOperationException ex)
+        catch (Exception ex) when (ex is System.InvalidOperationException or System.Net.Http.HttpRequestException or System.Text.Json.JsonException or System.TimeoutException)
         {
-            Toasts.Show("Prompts", $"Save failed: {ex.Message}", ToastKind.Err);
-        }
-        catch (System.Net.Http.HttpRequestException ex)
-        {
-            Toasts.Show("Prompts", $"Save failed: {ex.Message}", ToastKind.Err);
-        }
-        catch (System.Text.Json.JsonException ex)
-        {
-            Toasts.Show("Prompts", $"Save failed: {ex.Message}", ToastKind.Err);
-        }
-        catch (System.TimeoutException ex)
-        {
-            Toasts.Show("Prompts", $"Save failed: {ex.Message}", ToastKind.Err);
-        }
-        finally
-        {
-            _saving = false;
-        }
-    }
-
-    private async Task Reset(PromptEntry entry)
-    {
-        _saving = true;
-        try
-        {
-            await Prompts.ClearAsync(_tenantId, entry.Key);
-            _text[entry.Key] = entry.DefaultPrompt;
-            await LoadAllAsync();
-            Toasts.Show("Prompts", $"{entry.DisplayName} reset to default.", ToastKind.Ok);
-        }
-        catch (System.InvalidOperationException ex)
-        {
-            Toasts.Show("Prompts", $"Reset failed: {ex.Message}", ToastKind.Err);
-        }
-        catch (System.Net.Http.HttpRequestException ex)
-        {
-            Toasts.Show("Prompts", $"Reset failed: {ex.Message}", ToastKind.Err);
-        }
-        catch (System.Text.Json.JsonException ex)
-        {
-            Toasts.Show("Prompts", $"Reset failed: {ex.Message}", ToastKind.Err);
-        }
-        catch (System.TimeoutException ex)
-        {
-            Toasts.Show("Prompts", $"Reset failed: {ex.Message}", ToastKind.Err);
+            Toasts.Show("Prompts", $"Failed: {ex.Message}", ToastKind.Err);
         }
         finally
         {

@@ -25,6 +25,12 @@ internal sealed class AppConfigPromptOverrides : IPromptOverrides
     /// <summary>AppConfig key holding a tenant's override of an agent's system prompt.</summary>
     internal static string Key(string agentKey) => $"prompt/{agentKey}/system";
 
+    public async Task<string?> ResolveRulesAsync(CancellationToken cancellationToken = default)
+    {
+        var rules = await ResolveAsync(WorkspaceRules.Key, string.Empty, cancellationToken).ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(rules) ? null : rules;
+    }
+
     public async Task<string> ResolveAsync(string agentKey, string defaultPrompt, CancellationToken cancellationToken = default)
     {
         if (_config is null)

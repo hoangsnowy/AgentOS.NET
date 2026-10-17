@@ -18,5 +18,6 @@ public static class PromptCatalog
         new("Coding", "Coding Agent", CodingPrompt.System),
         new("Testing", "Testing Agent", TestingPrompt.System),
         new("Qa", "QA Agent", QaPrompt.System),
+        new("Decomposer", "Decomposer (idea → tickets)", DecomposerPrompt.System),
     ];
 }

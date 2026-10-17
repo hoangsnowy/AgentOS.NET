@@ -39,13 +39,16 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
     private readonly AgentOptions _options;
     private readonly ILogger<TicketDecomposerAgent> _logger;
     private readonly IAgentProfiles? _profiles;
+    private readonly AgentOs.Modules.Pipeline.Prompts.IPromptOverrides? _prompts;
 
     public TicketDecomposerAgent(
         ILlmClientFactory factory,
         IOptions<AgentsOptions> options,
         ILogger<TicketDecomposerAgent> logger,
-        IAgentProfiles? profiles = null)
+        IAgentProfiles? profiles = null,
+        AgentOs.Modules.Pipeline.Prompts.IPromptOverrides? prompts = null)
     {
+        _prompts = prompts;
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value.Decomposer;
@@ -64,8 +67,13 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
             ? _options
             : await _profiles.ResolveAsync(nameof(AgentsOptions.Decomposer), _options, cancellationToken).ConfigureAwait(false);
         var llm = _factory.Create(profile.Provider);
+        // E1.6: the tenant may override this prompt and its workspace rules apply here too.
+        var system = _prompts is null
+            ? DecomposerPrompt.System
+            : await _prompts.ResolveAsync("Decomposer", DecomposerPrompt.System, cancellationToken).ConfigureAwait(false)
+              + AgentOs.Modules.Pipeline.Prompts.WorkspaceRules.ToPromptBlock(await _prompts.ResolveRulesAsync(cancellationToken).ConfigureAwait(false));
         var request = new LlmRequest(
-            SystemPrompt: DecomposerPrompt.System,
+            SystemPrompt: system,
             UserPrompt: DecomposerPrompt.RenderUser(spec, seed),
             Model: profile.Model,
             Temperature: profile.Temperature,
