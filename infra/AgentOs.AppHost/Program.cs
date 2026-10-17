@@ -181,6 +181,9 @@ web
     .WithEnvironment("Auth__DevAutoLogin", "false")
     .WithReference(db).WaitFor(db)
     .WithReference(keycloak).WaitFor(keycloak)
+    // services__api__* — only so System → About can show the Api's version + health. The desktop runs every
+    // module in-process and never calls the Api, so no WaitFor: the Web must not depend on the Api being up.
+    .WithReference(api)
     .WithEnvironment("Auth__Keycloak__Authority", stack.IsLab && !isPublish
         ? ReferenceExpression.Create($"{StackProfile.LabKeycloakOrigin}/realms/agentic")
         : RealmAuthority(keycloak.GetEndpoint("http")))

@@ -2112,6 +2112,98 @@ input[type=range] { accent-color: var(--accent); }
 .prefs-tbl tr:last-child th, .prefs-tbl tr:last-child td { border-bottom: 0; }
 .prefs-tbl code { background: var(--bg-3); padding: 1px 6px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
 
+/* About (System → About) — GNOME-style: centred hero, status banner, service map, Adwaita boxed list of
+   expandable service rows. Tokens only; nothing animates at rest (the Refresh icon loops only while a probe
+   runs; the hero character hops on hover like every idle mascot). */
+.about { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-4); padding-bottom: var(--space-4); }
+.about-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-1); padding: var(--space-3) 0 var(--space-1); }
+.about-hero .mascot { margin-bottom: var(--space-1); }
+.about-title { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; color: var(--txt); }
+.about-version { margin: 0; font-size: 13px; color: var(--txt-soft); }
+.about-build { font-family: var(--mono); font-size: 12px; color: var(--txt-dim); }
+.about-tagline { margin: 0; font-size: 12.5px; color: var(--txt-dim); }
+.about-links { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: center; margin-top: var(--space-2); }
+.about-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; color: var(--txt-soft); background: var(--bg-3); border: 1px solid var(--line); text-decoration: none; }
+.about-chip-link { color: var(--accent-text, var(--accent)); }
+.about-chip-link:hover { border-color: var(--accent); }
+.about-chip-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.about-status { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--r-5); border: 1px solid var(--line); background: var(--bg-3); }
+.about-status.is-healthy { background: color-mix(in srgb, var(--ok) 9%, var(--bg-2)); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.about-status.is-degraded { background: color-mix(in srgb, var(--warn) 10%, var(--bg-2)); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.about-status.is-down { background: color-mix(in srgb, var(--err) 9%, var(--bg-2)); border-color: color-mix(in srgb, var(--err) 40%, var(--line)); }
+.about-status-ic { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; flex: none; color: #fff; background: var(--txt-dim); }
+.about-status.is-healthy .about-status-ic { background: var(--ok); }
+.about-status.is-degraded .about-status-ic { background: var(--warn); }
+.about-status.is-down .about-status-ic { background: var(--err); }
+.about-status-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; font-size: 12px; color: var(--txt-dim); }
+.about-overall { font-size: 14px; color: var(--txt); }
+.about-status-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+.about-topo { margin: 0; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--r-5); background: var(--bg-3); }
+.about-topo svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; }
+.topo-edge { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-linecap: round; }
+.topo-edge.is-healthy { stroke: color-mix(in srgb, var(--ok) 55%, var(--line-strong)); }
+.topo-edge.is-degraded { stroke: var(--warn); }
+.topo-edge.is-down { stroke: var(--err); stroke-dasharray: 5 4; }
+.topo-edge.is-off { stroke: var(--line); stroke-dasharray: 2 5; }
+.topo-node rect { fill: var(--bg-2); stroke: var(--line-strong); stroke-width: 1; }
+.topo-node.is-hub rect { stroke-width: 1.5; }
+.topo-node.is-plain rect { fill: var(--bg-2); }
+.topo-node.is-healthy rect { stroke: color-mix(in srgb, var(--ok) 45%, var(--line-strong)); }
+.topo-node.is-degraded rect { fill: color-mix(in srgb, var(--warn) 8%, var(--bg-2)); stroke: var(--warn); }
+.topo-node.is-down rect { fill: color-mix(in srgb, var(--err) 8%, var(--bg-2)); stroke: var(--err); }
+.topo-node.is-off rect { fill: transparent; stroke-dasharray: 3 3; }
+.topo-node.is-off text { opacity: .6; }
+.topo-dot { fill: var(--txt-dim); }
+.topo-node.is-healthy .topo-dot { fill: var(--ok); }
+.topo-node.is-degraded .topo-dot { fill: var(--warn); }
+.topo-node.is-down .topo-dot { fill: var(--err); }
+.topo-name { fill: var(--txt); font-size: 12.5px; font-weight: 600; }
+.topo-meta { fill: var(--txt-dim); font-size: 10.5px; font-family: var(--mono); }
+
+.about-section { margin: var(--space-1) 0 calc(-1 * var(--space-2)); font-size: 12px; font-weight: 700; color: var(--txt-dim); text-transform: uppercase; letter-spacing: .04em; }
+.about-list { border: 1px solid var(--line); border-radius: var(--r-5); background: var(--bg-2); box-shadow: var(--shadow-1); overflow: hidden; }
+.about-row + .about-row { border-top: 1px solid var(--line); }
+.about-row summary { display: flex; align-items: center; gap: var(--space-3); padding: 10px var(--space-4); cursor: pointer; list-style: none; }
+.about-row summary::-webkit-details-marker { display: none; }
+.about-row summary:hover { background: var(--bg-3); }
+.about-row summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.about-row-ic { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: var(--r-4); flex: none; color: var(--txt-soft); background: var(--bg-3); }
+.about-row.is-healthy .about-row-ic { color: var(--ok-text); background: color-mix(in srgb, var(--ok) 13%, var(--bg-2)); }
+.about-row.is-degraded .about-row-ic { color: var(--warn-text); background: color-mix(in srgb, var(--warn) 15%, var(--bg-2)); }
+.about-row.is-down .about-row-ic { color: var(--err); background: color-mix(in srgb, var(--err) 13%, var(--bg-2)); }
+.about-row-title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.about-row-title strong { font-size: 13px; color: var(--txt); }
+.about-row-title span { font-size: 12px; color: var(--txt-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.about-row-meta { display: flex; align-items: center; gap: var(--space-2); flex: none; font-size: 11.5px; color: var(--txt-soft); }
+.about-ver, .about-lat { padding: 1px 7px; border-radius: var(--r-2); background: var(--bg-3); font-family: var(--mono); }
+.about-state { display: inline-flex; align-items: center; gap: 5px; min-width: 6.5rem; font-weight: 600; color: var(--txt-dim); }
+.about-row.is-healthy .about-state { color: var(--ok-text); }
+.about-row.is-degraded .about-state { color: var(--warn-text); }
+.about-row.is-down .about-state { color: var(--err); }
+.about-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--txt-dim); }
+.about-row.is-healthy .about-dot { background: var(--ok); }
+.about-row.is-degraded .about-dot { background: var(--warn); }
+.about-row.is-down .about-dot { background: var(--err); }
+.about-row.is-off .about-dot { background: transparent; border: 1.5px solid var(--txt-dim); }
+.about-chevron { display: inline-flex; color: var(--txt-dim); transition: transform var(--duration-fast, 80ms) ease-out; }
+.about-row[open] .about-chevron { transform: rotate(90deg); }
+.about-row-body { padding: 2px var(--space-4) var(--space-4) calc(var(--space-4) + 32px + var(--space-3)); }
+.about-row-role { margin: 0 0 var(--space-2); font-size: 12px; color: var(--txt-dim); }
+.about-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; }
+.about-facts > div { min-width: 0; }
+.about-facts dt { font-size: 11px; color: var(--txt-dim); }
+.about-facts dd { margin: 1px 0 0; font-size: 12.5px; color: var(--txt); overflow-wrap: anywhere; }
+.about-infra-h { display: flex; align-items: center; gap: 5px; margin: var(--space-3) 0 var(--space-2); padding-top: var(--space-2); border-top: 1px dashed var(--line); font-size: 11px; font-weight: 600; color: var(--txt-dim); text-transform: uppercase; letter-spacing: .04em; }
+.about-infra dd { font-family: var(--mono); font-size: 11.5px; }
+@media (max-width: 640px) {
+    .about-status { flex-wrap: wrap; }
+    .about-row-meta .about-ver, .about-row-meta .about-lat { display: none; }
+    .about-row-body { padding-left: var(--space-4); }
+}
+@media (prefers-reduced-motion: reduce) { .about-chevron { transition: none; } }
+
 /* Agent profiles (Settings → Agent profiles) — compact editable data-table; tokens only. */
 .agent-profiles-scroll { overflow-x: auto; }
 .agent-profiles td { vertical-align: top; }

@@ -251,6 +251,19 @@ builder.Services.AddScoped<IAuthTokenProvider>(sp => sp.GetRequiredService<AuthS
 
 builder.Services.AddHttpClient();
 
+// System → About: live status of every service (Web, Api, Keycloak, Postgres, SMTP). Probes are singletons
+// behind a cached, single-flight aggregator; the probe HttpClient has NO retry pipeline so a dead service
+// shows as Down within the probe budget instead of hiding behind retries.
+builder.Services.AddSingleton<AgentOs.Web.Services.About.ProbeHttpClient>();
+builder.Services.AddSingleton<AgentOs.Web.Services.About.CircuitCounter>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, AgentOs.Web.Services.About.CircuitCounterHandler>();
+builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.WebHostProbe>();
+builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.ApiProbe>();
+builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.KeycloakProbe>();
+builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.PostgresProbe>();
+builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.SmtpProbe>();
+builder.Services.AddSingleton<AgentOs.Web.Services.About.SystemStatusService>();
+
 var app = builder.Build();
 
 await app.Services.InitializeModulesAsync();

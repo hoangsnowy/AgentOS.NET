@@ -107,16 +107,7 @@
                 </div>
                 break;
             case "about":
-                <div class="prefs-section">
-                    <h2 class="prefs-h">About AgentOS</h2>
-                    <p class="prefs-sub">A .NET multi-agent AI framework for the SDLC.</p>
-                </div>
-                <table class="prefs-tbl">
-                    <tr><th>Version</th><td>@_version</td></tr>
-                    <tr><th>Runtime</th><td>.NET 10</td></tr>
-                    <tr><th>License</th><td>MIT</td></tr>
-                    <tr><th>Source</th><td><a href="https://github.com/hoangsnowy/AgentOs" target="_blank">github.com/hoangsnowy/AgentOs</a></td></tr>
-                </table>
+                <AboutServices />
                 break;
             case "session":
                 <div class="prefs-section">
@@ -137,10 +128,6 @@
 </div>
 
 @code {
-    // Running version (e.g. "0.6.0+sha") — the informational version stamped into the Web assembly.
-    private static readonly string _version =
-        System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(SystemApp).Assembly)?.InformationalVersion ?? "0.0.0";
-
     private string _tab = "general";
     private bool _notifs = true;
     private bool _focus;

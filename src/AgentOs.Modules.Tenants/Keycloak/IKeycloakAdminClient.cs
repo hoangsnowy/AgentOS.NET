@@ -48,6 +48,10 @@ public interface IKeycloakAdminClient
     /// tenant BEFORE a cross-tenant-capable admin operation — the realm <c>admin</c> role is realm-wide,
     /// so the route tenant alone is not sufficient authorization for acting on an arbitrary user id.</summary>
     Task<string?> GetUserTenantAsync(string userId, CancellationToken ct = default);
+
+    /// <summary>The Keycloak server version (admin <c>serverinfo</c>, needs the master-realm admin the client
+    /// already signs in as), or <c>null</c> when no Keycloak is configured. Shown on System → About.</summary>
+    Task<string?> GetServerVersionAsync(CancellationToken ct = default);
 }
 
 /// <summary>Realm-user projection returned by the admin REST list endpoint.</summary>
