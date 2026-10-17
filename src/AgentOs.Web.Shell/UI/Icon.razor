@@ -1,14 +1,15 @@
 @* Icon — single-source monochrome SVG icon. Lucide-style 24x24 viewBox, currentColor.
    Usage: <Icon Name="play" Size="16" />
    Add titles for screen readers: <Icon Name="play" Title="Run pipeline" />
-   Migration map: docs/design/icon-map.md
+   Catalog: docs/design/icon-map.md. Each icon has its own micro-animation (ic-<name> in app.css), played
+   on hover/focus of the enclosing control, or continuously with Loop="true".
 *@
 
 <svg xmlns="http://www.w3.org/2000/svg"
      width="@Size" height="@Size" viewBox="0 0 24 24"
      fill="none" stroke="currentColor" stroke-width="@StrokeWidth"
      stroke-linecap="round" stroke-linejoin="round"
-     class="icon @(ExtraClass ?? "")"
+     class="icon ic-@Name @(Loop ? "icon-loop" : "") @(ExtraClass ?? "")"
      aria-hidden="@(string.IsNullOrEmpty(Title) ? "true" : null)"
      role="@(string.IsNullOrEmpty(Title) ? null : "img")"
      focusable="false">
@@ -245,4 +246,8 @@
     [Parameter] public string? Title { get; set; }
     [Parameter] public string? ExtraClass { get; set; }
     [Parameter] public double StrokeWidth { get; set; } = 2;
+
+    /// <summary>Play the icon's motion continuously (busy/loading states). Otherwise it plays on hover/focus of
+    /// the control it sits in. Every icon has its own motion — see the "Living icons" block in app.css.</summary>
+    [Parameter] public bool Loop { get; set; }
 }

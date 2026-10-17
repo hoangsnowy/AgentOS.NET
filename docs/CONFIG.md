@@ -123,7 +123,7 @@ An unpriced model is charged at the fail-closed $15/$75 per 1M rate until added 
 - **Tool allowlist** — Policy app (`tools/allowlist`).
 - **GitHub** (`Github:Pat`, `RepoOwner`, `RepoName`, `BaseBranch`) — Settings, encrypted per tenant.
   PAT must start `ghp_`/`github_pat_`/`gho_`.
-- **Per-viewer preferences** (theme, wallpaper, glass, clock, *Animated agents*) — System → Appearance,
+- **Per-viewer preferences** (theme, wallpaper, glass, clock, *Animations*) — System → Appearance,
   stored in the browser only.
 
 ## Legacy `/settings` endpoint
