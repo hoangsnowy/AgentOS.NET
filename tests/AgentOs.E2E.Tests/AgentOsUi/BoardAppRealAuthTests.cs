@@ -53,5 +53,11 @@ public sealed class BoardAppRealAuthTests : IClassFixture<AgentOsRealAuthFixture
         await Assertions.Expect(win.Locator(".cred-readout textarea")).ToContainTextAsync("REMOTE_AGENT_TOKEN");
         // Persisted to Postgres + listed under the operator's tenant.
         await Assertions.Expect(win.Locator(".data-table")).ToContainTextAsync(label);
+
+        // Revoke what we created: this runs against a shared dev stack, and each registration mints a live
+        // pairing credential — leaving them behind piles up valid tokens. Also covers the revoke path.
+        var row = win.Locator(".data-table tbody tr", new() { HasTextString = label });
+        await row.GetByRole(AriaRole.Button, new() { Name = "Revoke" }).ClickAsync();
+        await Assertions.Expect(row).ToContainTextAsync("Revoked");
     }
 }

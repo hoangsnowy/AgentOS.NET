@@ -40,7 +40,6 @@ else
                     <th>Model</th>
                     <th title="Temperature">Temp.</th>
                     <th title="Max output tokens">Max output</th>
-                    <th>Source</th>
                     <th aria-label="Actions"></th>
                 </tr>
             </thead>
@@ -49,7 +48,12 @@ else
                 {
                     var locked = row.IsLocked;
                     <tr @key="row.Role">
-                        <td><span class="agent-profiles-who"><AgentMascot Role="@row.Role" Size="30" /><strong>@row.Role</strong></span></td>
+                        <td>
+                            <span class="agent-profiles-who">
+                                <AgentMascot Role="@row.Role" Size="30" />
+                                <span class="agent-profiles-name"><strong>@row.Role</strong><Badge Variant="@SourceVariant(row.Source)">@SourceLabel(row.Source)</Badge></span>
+                            </span>
+                        </td>
                         <td>
                             <select class="prefs-select" disabled="@locked" aria-label="@($"{row.Role} provider")"
                                     value="@row.Provider" @onchange="e => row.Provider = e.Value?.ToString() ?? string.Empty">
@@ -81,7 +85,6 @@ else
                                    disabled="@locked" aria-label="@($"{row.Role} max output tokens")"
                                    value="@row.MaxTokens" @onchange="e => row.MaxTokens = e.Value?.ToString() ?? string.Empty" />
                         </td>
-                        <td><Badge Variant="@SourceVariant(row.Source)">@SourceLabel(row.Source)</Badge></td>
                         <td>
                             <div class="agent-profiles-actions">
                                 <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@(locked || _saving)" OnClick="() => SaveRow(row)">Save</Btn>
