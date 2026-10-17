@@ -7,6 +7,9 @@
 > This is the product roadmap (milestones, positioning, risks). The engineering execution plan —
 > metrics, shared memory, ecosystem, built-in executor, UI-first configuration, software-factory
 > stations — is [docs/plans/agentic-sdlc-v2.md](docs/plans/agentic-sdlc-v2.md) (updated 2026-10).
+> **Enterprise readiness** — the scorecard (26 areas, grounded in code) and the re-baselined
+> E0 → E1 → E2 track — is [docs/plans/enterprise-readiness.md](docs/plans/enterprise-readiness.md)
+> (review 2026-10-17). It replaces the old "Q3 — Enterprise-grade operations" paragraph.
 
 ## Contents
 
@@ -99,7 +102,10 @@ deployment), **Shipped, cloud-unverified** (in code and tested, but no real clou
 | Claim | Status |
 |---|---|
 | Cloud hardening (ForwardedHeaders, DataProtection, env gating) | **Shipped+verified** — live on Azure Container Apps since 2026-06-21 (first `azd up`) |
-| Multi-tenant isolation | Shipped+verified at row level; B4 residue now closed in code — run-history tenant stamping (run + metric rows), `AuthSession` null-`HttpContext` fail-open, `OrchestrationStore` per-tenant keying ([#72](https://github.com/hoangsnowy/AgentOs/pull/72)); full-stack two-tenant E2E pending the `azd up` round-trip |
+| Multi-tenant isolation | **Shipped+verified** at application level — a real-auth E2E creates a second tenant through `/signup` and proves it sees none of the first's boards, runners, evidence or runs, on the dev stack and the lab ([#192](https://github.com/hoangsnowy/AgentOs/pull/192)); cross-tenant tenant endpoints closed ([#193](https://github.com/hoangsnowy/AgentOs/pull/193)). **Not yet DB-enforced** — Postgres RLS is E0.1 |
+| QA gate before PR | **Shipped** — a result becomes a PR only when QA passed on real model output, enforced in the PR service ([#193](https://github.com/hoangsnowy/AgentOs/pull/193)); human approval policies are E1.5 |
+| Audit trail | **Shipped** — settings + config writes (redacted), members, invitations, sign-in; Settings → Audit log + CSV ([#194](https://github.com/hoangsnowy/AgentOs/pull/194)). Tamper-evidence + SIEM are E2.2 |
+| Enterprise readiness | **Not yet** — no corporate SSO, 3 roles, no API tokens, no on-prem install, single replica; see [the review](docs/plans/enterprise-readiness.md) |
 | `build_verifier` execution | **Sandboxed** — ADR-0005 Accepted ([docs/adr/0005](docs/adr/0005-build-verifier-sandbox.md)); Layer-1 input hardening (`BuildInputSanitizer`: build-control files rejected, project synthesized, feed cut) + Layer-2 OS isolation (`docker run --network none --read-only --user --cap-drop ALL`) shipped ([#96](https://github.com/hoangsnowy/AgentOs/pull/96)). **Cloud-unverified** — only the ACA-Jobs cloud round-trip on a real `azd up` remains |
 | Scale-out (≥2 replicas) | **Unverified** — single-instance only until a 2-replica test (see Q2) |
 
@@ -184,21 +190,29 @@ the Azure deployment. PR-level slicing for the current engineering work lives in
   claim that isn't verified.
 - **Deferred:** RBAC depth, audit export, DR drill, marketplace, local models.
 
-### Q3 (Dec 2026 – Feb 2027) — Enterprise-grade operations
+### Q3 (Dec 2026 – Feb 2027) — Enterprise track, re-baselined 2026-10-17
 
-- **Goal:** every table-stakes enterprise concern is either shipped or has a recorded decision —
-  silence reads as "forgotten".
-- **Deliverables:** RBAC depth (admin / developer / viewer roles gating budget + tool-policy admin
-  actions); audit export + tamper-evident trail from `IToolInvocationLog` + Tenants audit; data
-  retention / GDPR-style deletion (or an explicit recorded deferral); backup/restore + an *executed*
-  DR drill with timings; SLO definitions + alert rules on the existing OTel metrics (budget
-  over-cap, runner disconnect, failed run); secret rotation for tenant PATs + LLM keys (built on
-  Q2's async secret provider); real SMTP (closes [D4](#4--open-architecture-decisions));
-  `docs/operations.md` + `docs/governance.md` written against the hardened state.
-- **Exit criteria:** all six enterprise rows shipped-or-decided; an alert fires on a real over-cap
-  run; a restore drill from backup is documented with timings.
-- **Deferred:** schema-per-tenant / infra-per-tenant isolation tiers, SOC 2 certification itself
-  (readiness checklist only), Okta SSO.
+The 2026-10-17 review ([docs/plans/enterprise-readiness.md](docs/plans/enterprise-readiness.md)) found the old
+Q3 list too thin to pass an enterprise security review: it had no corporate SSO, no machine access, no
+approval gates, no on-prem path and no data lifecycle. The track now runs in three stages and **starts now**,
+interleaved with the agentic-SDLC phases:
+
+- **E0 — Pilot-safe (≈2 weeks):** Postgres RLS · DataProtection keys wrapped by KMS / certificate · evidence
+  never silently dropped · Workflow *Human* node fails closed · runner command allowlist · per-tenant limits on
+  the Web host · **repo instruction files** (`AGENTS.md`, `CLAUDE.md`, Copilot instructions) · an
+  **OpenAI-compatible provider** (vLLM / Ollama / Foundry) for air-gapped tenants.
+- **E1 — Enterprise pilot (≈6 weeks):** **SSO** via Keycloak brokering (Entra ID, Okta, ADFS, SAML) · **RBAC v2**
+  (viewer / developer / approver / admin / auditor) · **API tokens + service accounts + `/v1` API** · tenant
+  **export / purge / retention** · **approval policies** (plan, diff, PR, merge; branch protection) · prompts v2
+  (all agents, versions, rollback, tenant rules) · Agent Skills · Azure DevOps boards + Jira + Teams/Slack ·
+  **Helm + docker compose on-prem** · dashboards / alerts / SLOs · SBOM + signed images · threat model + DPA.
+- **E2 — Enterprise GA (≈6 more weeks):** SCIM · tamper-evident audit + SIEM export · HA (≥2 replicas, HA
+  Postgres, geo backups, executed DR drill) · GitLab / Bitbucket / webhooks · tenant-defined custom agents ·
+  SOC 2 / ISO mapping + pen test · platform admin console + metering · WCAG 2.2 AA + i18n.
+- **Exit criteria:** E1 — a customer tenant signs in with their own Entra ID, roles come from their groups, a
+  ticket from their tracker becomes an *approved* PR under their policy, shaped by their rules and skills, on
+  Azure or their own k8s, and they can export or purge everything. E2 — SCIM, HA + DR drill, audit to their
+  SIEM, admin console + metering, SOC 2 mapping.
 
 ### Q4 (Mar–May 2027) — Open the doors: OSS launch & extensibility
 
@@ -215,8 +229,8 @@ the Azure deployment. PR-level slicing for the current engineering work lives in
 ### Beyond 12 months
 
 No dates — named horizon items: AIOps cost optimization (routing, cheaper-model fallback, measured
-against a naive always-biggest-model baseline); prompt-drift regression harness; **local models**
-(Ollama, vLLM) for fully air-gapped on-prem; RAG over the tenant's own codebase (pgvector, stays in
+against a naive always-biggest-model baseline); prompt-drift regression harness; (local models moved
+up to E0.8 — OpenAI-compatible provider); RAG over the tenant's own codebase (pgvector, stays in
 Postgres); event-sourced runs → replay + time-travel debugging; agent/prompt-pack marketplace with
 quality gating; tiered isolation (row → schema → infra) as a pricing axis.
 
@@ -287,8 +301,9 @@ a *later optional* offering, not the core bet.
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | **LLM cost explosion** | A runaway loop burns the budget in hours | ✅ per-tenant/per-run budget gate + rate limit (shipped); cheaper-model routing (beyond-12mo); prompt-keyed cache (Q2) |
-| **Agent loop / hallucination** | Confidently wrong code, infinite loops | ✅ QA gate + max-iteration cap (shipped); human-in-the-loop checkpoints; a quality benchmark in CI |
-| **Multi-tenant data leak** | Tenant A sees tenant B → trust dead, legal exposure | ✅ row-level isolation + fail-closed gates + tenant-filter freeze (shipped); B4 residue scheduled Q1; audit the tenant context on every data-access PR; tiered isolation for high-assurance tenants |
+| **Agent loop / hallucination** | Confidently wrong code, infinite loops | ✅ QA loop + max-iteration cap; ✅ no PR unless QA passed on real output ([#193](https://github.com/hoangsnowy/AgentOs/pull/193)); approval policies (E1.5); a quality benchmark in CI (plan eval harness) |
+| **Multi-tenant data leak** | Tenant A sees tenant B → trust dead, legal exposure | ✅ row-level isolation + fail-closed gates + tenant-filter freeze; ✅ two-tenant real-auth E2E ([#192](https://github.com/hoangsnowy/AgentOs/pull/192)); ✅ platform-only tenant endpoints ([#193](https://github.com/hoangsnowy/AgentOs/pull/193)); Postgres RLS (E0.1); tiered isolation for high-assurance tenants |
+| **Enterprise buyer says no** | Security review fails on SSO / RBAC / approvals / on-prem | The E0 → E1 → E2 track ([review](docs/plans/enterprise-readiness.md)); E0 items are each small and start now |
 | **Sandbox escape** | Agent-run code touches the host | ✅ ADR-0005 + two-layer sandbox shipped ([#96](https://github.com/hoangsnowy/AgentOs/pull/96)): Layer-1 input hardening + Layer-2 ephemeral no-egress container (`--network none --read-only --cap-drop ALL`) with CPU/mem/PID quotas; fail-closed tool-policy gates; ACA-Jobs cloud round-trip pending |
 | **Hard external deadline (Sep–Dec 2026)** | A slipped milestone breaks an external commitment | Q1+Q2 scope is the minimum defensible set; Q3/Q4 content is explicitly off the critical path and can slip without breaking the commitment |
 | **Prompt drift** | Yesterday's good prompt silently regresses | Version prompts v1→vN; snapshot fixtures; regression test in CI (`prompt-tune` scores variants) |
