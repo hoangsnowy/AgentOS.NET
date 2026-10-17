@@ -24,20 +24,22 @@ public sealed class AboutServicesRealAuthTests : IClassFixture<AgentOsRealAuthFi
 
         foreach (var id in new[] { "web", "api", "keycloak", "postgres", "smtp" })
         {
-            var card = win.Locator($".about-svc[data-service=\"{id}\"]");
-            await Assertions.Expect(card.Locator(".badge")).ToHaveTextAsync("Healthy", new() { Timeout = 15_000 });
+            var card = win.Locator($".about-row[data-service=\"{id}\"]");
+            await Assertions.Expect(card.Locator(".about-state")).ToHaveTextAsync("Healthy", new() { Timeout = 15_000 });
             await Assertions.Expect(card.Locator(".about-ver")).ToBeVisibleAsync();
         }
 
-        var postgres = win.Locator(".about-svc[data-service=\"postgres\"]");
+        // Healthy rows start closed; expanding one shows its facts (keyboard-reachable native <details>).
+        var postgres = win.Locator(".about-row[data-service=\"postgres\"]");
+        await Assertions.Expect(postgres).Not.ToHaveAttributeAsync("open", "");
+        await postgres.Locator("summary").ClickAsync();
+        await Assertions.Expect(postgres.Locator(".about-row-body")).ToBeVisibleAsync();
         await Assertions.Expect(postgres).ToContainTextAsync("Schema · pipeline");
         await Assertions.Expect(postgres).ToContainTextAsync("migrations · latest");
-        await Assertions.Expect(win.Locator(".about-svc[data-service=\"keycloak\"]")).ToContainTextAsync("Realm agentic");
+        await Assertions.Expect(win.Locator(".about-row[data-service=\"keycloak\"] summary")).ToContainTextAsync("Realm agentic");
 
-        // Platform admin: infrastructure details are there (closed by default) and carry no secrets.
-        var infra = postgres.Locator("details.about-infra");
-        await infra.Locator("summary").ClickAsync();
-        await Assertions.Expect(infra).ToContainTextAsync("Host");
+        // Platform admin: the infrastructure section is there and carries no secrets.
+        await Assertions.Expect(postgres.Locator(".about-infra")).ToContainTextAsync("Host");
         await Assertions.Expect(win).Not.ToContainTextAsync("Password=");
     }
 }

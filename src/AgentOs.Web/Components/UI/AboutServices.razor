@@ -1,6 +1,7 @@
-@* System → About: every service the desktop depends on, probed live — a topology map (visual) plus one
-   card per service (the accessible, detailed alternative). Infra facts (hosts, URLs, errors) only for
-   platform admins. Its own component so SystemApp's 1 Hz clock re-render never re-renders the cards. *@
+@* System → About, GNOME-style: a centred hero (the product, its version and links), a status banner tinted by
+   the overall health, a service map (visual), and an Adwaita boxed list with one expandable row per service
+   (the accessible, detailed alternative). Rows that need attention open by default. Infra facts (hosts, URLs,
+   errors) only for platform admins. Its own component so SystemApp's 1 Hz clock never re-renders it. *@
 
 @using AgentOs.Web.Services.About
 @implements IDisposable
@@ -9,135 +10,148 @@
 @inject IJSRuntime JS
 @inject ToastService Toasts
 
-<div class="about-head">
-    <div>
-        <h2 class="prefs-h">About AgentOS</h2>
-        <p class="prefs-sub">A .NET multi-agent platform for the software lifecycle — and the services it runs on, checked live.</p>
-    </div>
-    <div class="about-actions">
-        <span class="about-overall is-@StateClass(_overall)" role="status">
-            <span class="about-dot" aria-hidden="true"></span>@_headline
+<div class="about">
+    <header class="about-hero">
+        <AgentMascot Role="Orchestrator" State="AgentMascot.MascotState.Idle" Size="72" />
+        <h2 class="about-title">AgentOS</h2>
+        <p class="about-version">
+            Version @Format.ShortVersion(WebHostProbe.InformationalVersion)
+            @if (Format.Commit(WebHostProbe.InformationalVersion) is { } sha)
+            {
+                <span class="about-build">· build @sha</span>
+            }
+        </p>
+        <p class="about-tagline">A .NET multi-agent platform for the software lifecycle.</p>
+        <div class="about-links">
+            <span class="about-chip">@System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription</span>
+            <span class="about-chip">MIT licence</span>
+            <a class="about-chip about-chip-link" href="https://github.com/hoangsnowy/AgentOs" target="_blank" rel="noopener">
+                Source <Icon Name="arrow-square-out" Size="12" />
+            </a>
+        </div>
+    </header>
+
+    <section class="about-status is-@StateClass(_overall)" aria-label="Service status">
+        <span class="about-status-ic" aria-hidden="true">
+            <Icon Name="@(_overall switch { ServiceHealth.Healthy => "check", ServiceHealth.Degraded => "warning", _ => "x" })" Size="18" />
         </span>
-        <Btn Size="Btn.ButtonSize.Sm" OnClick="RefreshAsync" Disabled="_busy" Title="Probe every service again">
-            <Icon Name="arrow-clockwise" Size="13" Loop="_busy" /> Refresh
-        </Btn>
-        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="CopyAsync" Disabled="_services.Count == 0" Title="Copy a plain-text status report">
-            <Icon Name="file" Size="13" /> Copy report
-        </Btn>
-    </div>
+        <div class="about-status-text">
+            <strong class="about-overall" role="status">@_headline</strong>
+            <span>
+                @if (_services.Count == 0)
+                {
+                    <text>Checking services…</text>
+                }
+                else
+                {
+                    <text>@_services.Count services · checked @_checkedAt.ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) · shared for @((int)SystemStatusService.Ttl.TotalSeconds) s</text>
+                }
+            </span>
+        </div>
+        <div class="about-status-actions">
+            <Btn Size="Btn.ButtonSize.Sm" OnClick="RefreshAsync" Disabled="_busy" Title="Probe every service again">
+                <Icon Name="arrow-clockwise" Size="13" Loop="_busy" /> Refresh
+            </Btn>
+            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="CopyAsync" Disabled="_services.Count == 0" Title="Copy a plain-text status report">
+                <Icon Name="file" Size="13" /> Copy report
+            </Btn>
+        </div>
+    </section>
+
+    @if (_services.Count > 0)
+    {
+        <figure class="about-topo">
+            <svg viewBox="0 0 600 @TopoHeight" role="img" aria-label="@TopoLabel()" preserveAspectRatio="xMidYMin meet">
+                @{ var mid = TopoHeight / 2; }
+                <path class="topo-edge" d="M120 @mid L196 @mid" />
+                @for (var i = 0; i < Outer.Count; i++)
+                {
+                    var y = OuterY(i) + NodeH / 2;
+                    <path class="topo-edge is-@StateClass(Outer[i].Health)" d="M340 @mid C380 @mid 380 @y 420 @y" />
+                }
+                <g class="topo-node is-plain">
+                    <rect x="8" y="@(mid - NodeH / 2)" width="112" height="@NodeH" rx="10" />
+                    <text class="topo-name" x="24" y="@(mid - 3)">Browser</text>
+                    <text class="topo-meta" x="24" y="@(mid + 12)">you</text>
+                </g>
+                @if (Web is { } web)
+                {
+                    <g class="topo-node is-hub is-@StateClass(web.Health)">
+                        <rect x="196" y="@(mid - NodeH / 2 - 6)" width="144" height="@(NodeH + 12)" rx="12" />
+                        <circle class="topo-dot" cx="214" cy="@(mid - 6)" r="4.5" />
+                        <text class="topo-name" x="226" y="@(mid - 2)">@web.Name</text>
+                        <text class="topo-meta" x="214" y="@(mid + 14)">@Meta(web)</text>
+                    </g>
+                }
+                @for (var i = 0; i < Outer.Count; i++)
+                {
+                    var s = Outer[i];
+                    var y = OuterY(i);
+                    <g class="topo-node is-@StateClass(s.Health)">
+                        <rect x="420" y="@y" width="172" height="@NodeH" rx="10" />
+                        <circle class="topo-dot" cx="436" cy="@(y + 15)" r="4" />
+                        <text class="topo-name" x="447" y="@(y + 19)">@s.Name</text>
+                        <text class="topo-meta" x="436" y="@(y + 34)">@Meta(s)</text>
+                    </g>
+                }
+            </svg>
+        </figure>
+
+        <h3 class="about-section">Services</h3>
+        <div class="about-list">
+            @foreach (var s in _services)
+            {
+                <details class="about-row is-@StateClass(s.Health)" data-service="@s.Id" open="@NeedsAttention(s)">
+                    <summary aria-label="@($"{s.Name}: {AboutReport.Label(s.Health)}")">
+                        <span class="about-row-ic" aria-hidden="true"><Icon Name="@s.Icon" Size="16" /></span>
+                        <span class="about-row-title">
+                            <strong>@s.Name</strong>
+                            <span>@(s.Summary ?? s.Role)</span>
+                        </span>
+                        <span class="about-row-meta">
+                            @if (s.Version is { Length: > 0 })
+                            {
+                                <span class="about-ver">@VersionLabel(s.Version)</span>
+                            }
+                            @if (s.LatencyMs is { } ms)
+                            {
+                                <span class="about-lat">@Format.Latency(ms)</span>
+                            }
+                            <span class="about-state"><span class="about-dot" aria-hidden="true"></span>@AboutReport.Label(s.Health)</span>
+                            <span class="about-chevron" aria-hidden="true"><Icon Name="chevron-right" Size="14" /></span>
+                        </span>
+                    </summary>
+                    <div class="about-row-body">
+                        <p class="about-row-role">@s.Role</p>
+                        @if (s.Facts.Count > 0)
+                        {
+                            <dl class="about-facts">
+                                @foreach (var f in s.Facts)
+                                {
+                                    <div><dt>@f.Label</dt><dd>@f.Value</dd></div>
+                                }
+                            </dl>
+                        }
+                        @if (_platformAdmin && s.Infra.Count > 0)
+                        {
+                            <p class="about-infra-h"><Icon Name="lock" Size="12" /> Infrastructure · platform admins</p>
+                            <dl class="about-facts about-infra">
+                                @foreach (var f in s.Infra)
+                                {
+                                    <div><dt>@f.Label</dt><dd>@f.Value</dd></div>
+                                }
+                            </dl>
+                        }
+                    </div>
+                </details>
+            }
+        </div>
+    }
 </div>
 
-<table class="prefs-tbl about-product">
-    <tr><th>Version</th><td>@Format.ShortVersion(WebHostProbe.InformationalVersion)@if (Format.Commit(WebHostProbe.InformationalVersion) is { } sha) {<span class="about-dim"> · @sha</span>}</td></tr>
-    <tr><th>Runtime</th><td>@System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription</td></tr>
-    <tr><th>License</th><td>MIT</td></tr>
-    <tr><th>Source</th><td><a href="https://github.com/hoangsnowy/AgentOs" target="_blank" rel="noopener">github.com/hoangsnowy/AgentOs</a></td></tr>
-</table>
-
-@if (_services.Count == 0)
-{
-    <p class="about-dim about-checking"><Icon Name="arrow-clockwise" Size="13" Loop="true" /> Checking services…</p>
-}
-else
-{
-    <figure class="about-topo">
-        <svg viewBox="0 0 560 @TopoHeight" role="img" aria-label="@TopoLabel()" preserveAspectRatio="xMidYMin meet">
-            @{ var webY = TopoHeight / 2 - NodeH / 2; }
-            <path class="topo-edge" d="M112 @(webY + NodeH / 2) L168 @(webY + NodeH / 2)" />
-            @for (var i = 0; i < Outer.Count; i++)
-            {
-                var s = Outer[i];
-                var y = OuterY(i) + NodeH / 2;
-                <path class="topo-edge is-@StateClass(s.Health)" d="M300 @(webY + NodeH / 2) C340 @(webY + NodeH / 2) 340 @y 380 @y" />
-            }
-            <g class="topo-node is-healthy">
-                <rect x="8" y="@webY" width="104" height="@NodeH" rx="8" />
-                <text class="topo-name" x="22" y="@(webY + 17)">Browser</text>
-                <text class="topo-meta" x="22" y="@(webY + 31)">you</text>
-            </g>
-            @if (Web is { } web)
-            {
-                <g class="topo-node is-@StateClass(web.Health)">
-                    <rect x="168" y="@webY" width="132" height="@NodeH" rx="8" />
-                    <circle class="topo-dot" cx="180" cy="@(webY + 13)" r="4" />
-                    <text class="topo-name" x="190" y="@(webY + 17)">@web.Name</text>
-                    <text class="topo-meta" x="180" y="@(webY + 31)">@Meta(web)</text>
-                </g>
-            }
-            @for (var i = 0; i < Outer.Count; i++)
-            {
-                var s = Outer[i];
-                var y = OuterY(i);
-                <g class="topo-node is-@StateClass(s.Health)">
-                    <rect x="380" y="@y" width="172" height="@NodeH" rx="8" />
-                    <circle class="topo-dot" cx="392" cy="@(y + 13)" r="4" />
-                    <text class="topo-name" x="402" y="@(y + 17)">@s.Name</text>
-                    <text class="topo-meta" x="392" y="@(y + 31)">@Meta(s)</text>
-                </g>
-            }
-        </svg>
-        <figcaption class="about-dim">
-            Checked @_checkedAt.ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) · results are shared for @((int)SystemStatusService.Ttl.TotalSeconds) s
-        </figcaption>
-    </figure>
-
-    <div class="about-grid">
-        @foreach (var s in _services)
-        {
-            <article class="about-svc is-@StateClass(s.Health)" aria-label="@($"{s.Name}: {AboutReport.Label(s.Health)}")" data-service="@s.Id">
-                <header class="about-svc-head">
-                    <span class="about-svc-ic" aria-hidden="true"><Icon Name="@s.Icon" Size="16" /></span>
-                    <div class="about-svc-title">
-                        <strong>@s.Name</strong>
-                        <span class="about-dim">@s.Role</span>
-                    </div>
-                </header>
-                <div class="about-svc-meta">
-                    <span class="badge @BadgeClass(s.Health)">@AboutReport.Label(s.Health)</span>
-                    @if (s.Version is { Length: > 0 })
-                    {
-                        <span class="about-ver">@VersionLabel(s.Version)</span>
-                    }
-                    @if (s.LatencyMs is { } ms)
-                    {
-                        <span class="about-lat">@Format.Latency(ms)</span>
-                    }
-                </div>
-                @if (s.Summary is { Length: > 0 })
-                {
-                    <p class="about-svc-sum">@s.Summary</p>
-                }
-                @if (s.Facts.Count > 0)
-                {
-                    <dl class="about-facts">
-                        @foreach (var f in s.Facts)
-                        {
-                            <dt>@f.Label</dt>
-                            <dd>@f.Value</dd>
-                        }
-                    </dl>
-                }
-                @if (_platformAdmin && s.Infra.Count > 0)
-                {
-                    <details class="about-infra">
-                        <summary>Infrastructure</summary>
-                        <dl class="about-facts">
-                            @foreach (var f in s.Infra)
-                            {
-                                <dt>@f.Label</dt>
-                                <dd>@f.Value</dd>
-                            }
-                        </dl>
-                    </details>
-                }
-            </article>
-        }
-    </div>
-}
-
 @code {
-    private const int NodeH = 40;
-    private const int RowGap = 52;
+    private const int NodeH = 44;
+    private const int RowGap = 54;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
@@ -146,14 +160,14 @@ else
     private ServiceStatus? _llm;
     private DateTimeOffset _checkedAt;
     private ServiceHealth _overall = ServiceHealth.Healthy;
-    private string _headline = "Checking…";
+    private string _headline = "Checking services…";
     private bool _busy;
     private bool _platformAdmin;
 
     private ServiceStatus? Web => _services.Find(s => s.Id == "web");
     private List<ServiceStatus> Outer => _services.FindAll(s => s.Id != "web");
-    private int TopoHeight => Math.Max(NodeH + 16, Outer.Count * RowGap + 8);
-    private static int OuterY(int i) => 8 + i * RowGap;
+    private int TopoHeight => Math.Max(NodeH + 24, Outer.Count * RowGap + 6);
+    private static int OuterY(int i) => 4 + i * RowGap;
 
     protected override async Task OnInitializedAsync()
     {
@@ -214,6 +228,9 @@ else
         }
     }
 
+    /// <summary>Degraded / down rows open on load so a problem is never hidden behind a click.</summary>
+    internal static bool NeedsAttention(ServiceStatus s) => s.Health is ServiceHealth.Degraded or ServiceHealth.Down;
+
     /// <summary>"v18.3" for a numeric version, the bare name for a product ("MailHog").</summary>
     internal static string VersionLabel(string version) => char.IsAsciiDigit(version[0]) ? "v" + version : version;
 
@@ -237,14 +254,6 @@ else
         ServiceHealth.Degraded => "degraded",
         ServiceHealth.Down => "down",
         _ => "off",
-    };
-
-    private static string BadgeClass(ServiceHealth h) => h switch
-    {
-        ServiceHealth.Healthy => "ok",
-        ServiceHealth.Degraded => "warn",
-        ServiceHealth.Down => "err",
-        _ => "muted",
     };
 
     public void Dispose()

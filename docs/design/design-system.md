@@ -118,9 +118,13 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
 `Components/UI/AboutServices.razor` + the `.about-*` / `.topo-*` block in `app.css`; data from
 `Services/About` (one `IServiceProbe` per service behind the cached, single-flight `SystemStatusService`).
 
-- **Map + cards**: an SVG service map (`.about-topo`, `role="img"` with an aria-label naming every state)
-  and one card per service (`.about-svc`, the accessible table alternative): badge, version, latency,
-  summary, facts (`.about-facts` `dl`), and — for platform admins only — a closed `details.about-infra`.
+- **Layout (GNOME *About* page)**: a centred hero (`.about-hero`: the Orchestrator character, product name,
+  version + build, tagline, `.about-chip` links) → a status banner tinted by the overall health
+  (`.about-status`) → the SVG service map (`.about-topo`, `role="img"` with an aria-label naming every state)
+  → an Adwaita boxed list (`.about-list`) with one native `<details class="about-row">` per service — the
+  accessible table alternative. A row shows icon tile, name + one-line summary, version, latency and state;
+  expanding it shows the facts (`.about-facts`, label-over-value tiles) and, for platform admins only, an
+  *Infrastructure* section (`.about-infra`). Degraded / down rows open by default.
 - **States**: `is-healthy` (ok) · `is-degraded` (warn) · `is-down` (err, dashed edge) · `is-off` = *Not in
   this run* (dashed, muted — an absent optional service is not an outage and never counts in the headline).
 - **Motion**: none at rest; only the Refresh icon loops while a probe runs.

@@ -24,7 +24,7 @@ public sealed class AboutServicesTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Settings");
         await win.Locator(".prefs-cat", new() { HasTextString = "System" }).First.ClickAsync();
         await win.Locator(".prefs-cat", new() { HasTextString = "About" }).ClickAsync();
-        await Assertions.Expect(win.Locator(".about-svc[data-service=\"web\"]")).ToBeVisibleAsync(new() { Timeout = 15_000 });
+        await Assertions.Expect(win.Locator(".about-row[data-service=\"web\"]")).ToBeVisibleAsync(new() { Timeout = 15_000 });
         return win;
     }
 
@@ -36,15 +36,16 @@ public sealed class AboutServicesTests : IClassFixture<AgentOsPageFixture>
         await _fx.GotoDesktopAsync();
         var win = await OpenAboutAsync(_fx.Page);
 
-        await Assertions.Expect(win.Locator(".about-svc[data-service=\"web\"] .badge")).ToHaveTextAsync("Healthy");
+        await Assertions.Expect(win.Locator(".about-row[data-service=\"web\"] .about-state")).ToHaveTextAsync("Healthy");
         foreach (var id in new[] { "api", "keycloak", "postgres", "smtp" })
         {
-            await Assertions.Expect(win.Locator($".about-svc[data-service=\"{id}\"] .badge")).ToHaveTextAsync("Not in this run");
+            await Assertions.Expect(win.Locator($".about-row[data-service=\"{id}\"] .about-state")).ToHaveTextAsync("Not in this run");
         }
         // Offline fallback is on in Development: the gateway is degraded and says it isn't billed.
-        var llm = win.Locator(".about-svc[data-service=\"llm\"]");
-        await Assertions.Expect(llm.Locator(".badge")).ToHaveTextAsync("Degraded");
-        await Assertions.Expect(llm).ToContainTextAsync("not billed");
+        var llm = win.Locator(".about-row[data-service=\"llm\"]");
+        await Assertions.Expect(llm.Locator(".about-state")).ToHaveTextAsync("Degraded");
+        await Assertions.Expect(llm).ToHaveAttributeAsync("open", "");          // a row needing attention starts open
+        await Assertions.Expect(llm.Locator(".about-row-body")).ToContainTextAsync("not billed");
 
         // The service map is an accessible image naming each service's state.
         await Assertions.Expect(win.Locator(".about-topo svg[role=\"img\"]")).ToHaveAttributeAsync("aria-label",
@@ -53,6 +54,6 @@ public sealed class AboutServicesTests : IClassFixture<AgentOsPageFixture>
 
         // Refresh re-probes and keeps every card.
         await win.GetByRole(AriaRole.Button, new() { Name = "Refresh" }).ClickAsync();
-        await Assertions.Expect(win.Locator(".about-svc")).ToHaveCountAsync(6);
+        await Assertions.Expect(win.Locator(".about-row")).ToHaveCountAsync(6);
     }
 }
