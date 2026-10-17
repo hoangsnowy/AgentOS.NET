@@ -21,6 +21,7 @@
         @switch (_tab)
         {
             case "llm":      <Settings />;    break;
+            case "agents":   <AgentProfilesApp />; break;
             case "prompts":  <PromptsApp />;  break;
             case "policy":   <PolicyApp />;   break;
             case "evidence": <EvidenceApp />; break;
@@ -45,6 +46,7 @@
     private static readonly Cat[] Cats =
     [
         new("llm",      "LLM & providers", "gear",           AdminOnly: true, Full: true),
+        new("agents",   "Agent profiles",  "diamond",        AdminOnly: true),
         new("prompts",  "Prompts",         "lightning",      AdminOnly: true),
         new("policy",   "Tool policy",     "lock",           AdminOnly: true),
         new("evidence", "Evidence",        "lock",           AdminOnly: true),

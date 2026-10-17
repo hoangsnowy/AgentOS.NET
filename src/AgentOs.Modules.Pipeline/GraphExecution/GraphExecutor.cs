@@ -50,6 +50,7 @@ public sealed class GraphExecutor : IGraphExecutor
     private readonly IToolRegistry _toolRegistry;
     private readonly IToolGateway _toolGateway;
     private readonly AgentsOptions _agents;
+    private readonly IAgentProfiles? _profiles;
     private readonly ILogger<GraphExecutor> _logger;
     // Optional: the per-tenant spend gate. Null in no-DB/standalone (nothing to meter against).
     private readonly IBudgetGuard? _budgetGuard;
@@ -70,7 +71,8 @@ public sealed class GraphExecutor : IGraphExecutor
         ILogger<GraphExecutor> logger,
         IBudgetGuard? budgetGuard = null,
         IPipelineRunRepository? runRepository = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        IAgentProfiles? profiles = null)
     {
         _requirement = requirement ?? throw new ArgumentNullException(nameof(requirement));
         _coding = coding ?? throw new ArgumentNullException(nameof(coding));
@@ -85,7 +87,15 @@ public sealed class GraphExecutor : IGraphExecutor
         _budgetGuard = budgetGuard;
         _runRepository = runRepository;
         _clock = clock ?? TimeProvider.System;
+        _profiles = profiles;
     }
+
+    // Raw LLM + decision nodes run on the Orchestrator profile, resolved per node so an edit in
+    // Settings → Agent profiles applies to the next node without a restart.
+    private ValueTask<AgentOptions> OrchestratorProfileAsync(CancellationToken ct) =>
+        _profiles is null
+            ? ValueTask.FromResult(_agents.Orchestrator)
+            : _profiles.ResolveAsync(nameof(AgentsOptions.Orchestrator), _agents.Orchestrator, ct);
 
     /// <summary>Validate (LLM-free) then compile + run the graph as a MAF Workflow, pushing per-node status
     /// to <paramref name="onNode"/>. <paramref name="tenantId"/> + <paramref name="userId"/> are passed
@@ -624,7 +634,7 @@ public sealed class GraphExecutor : IGraphExecutor
             var question = Interpolate(string.IsNullOrWhiteSpace(node.Description) ? node.Title : node.Description, s);
             var prompt = $"{question}\n\nContext: {Truncate(ResolveInput(node.Input, s), 1500)}"
                 + $"\n\nReply with exactly one of: {string.Join(", ", routes)}";
-            var opt = _agents.Orchestrator;
+            var opt = await OrchestratorProfileAsync(ct).ConfigureAwait(false);
             var request = new LlmRequest(sys, prompt, opt.Model, opt.Temperature, opt.MaxTokens);
             request.Validate();
             var response = await _llmFactory.Create(opt.Provider).SendAsync(request, ct).ConfigureAwait(false);
@@ -747,7 +757,7 @@ public sealed class GraphExecutor : IGraphExecutor
     private async ValueTask<string?> RunLlmAsync(PlanNode node, GraphState s, CancellationToken ct)
     {
         var prompt = Interpolate(string.IsNullOrWhiteSpace(node.Description) ? node.Title : node.Description, s);
-        var opt = _agents.Orchestrator;
+        var opt = await OrchestratorProfileAsync(ct).ConfigureAwait(false);
         var request = new LlmRequest(string.Empty, prompt, opt.Model, opt.Temperature, opt.MaxTokens);
         request.Validate();
         var response = await _llmFactory.Create(opt.Provider).SendAsync(request, ct).ConfigureAwait(false);

@@ -43,6 +43,10 @@ public static class AgentsServiceCollectionExtensions
             .ValidateOnStart();
         // UI-first settings (ADR-0011): agent profiles + pipeline knobs, editable in the desktop.
         services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, AgentSettings>();
+        services.AddSingleton<IAgentProfiles>(sp =>
+            sp.GetService<AgentOs.Domain.Configuration.ISettings>() is { } settings
+                ? new SettingsAgentProfiles(settings, sp.GetService<IServiceScopeFactory>())
+                : StaticAgentProfiles.Instance);
 
         services.AddOptions<PipelineOptions>()
             .Bind(configuration.GetSection(PipelineOptions.SectionName))

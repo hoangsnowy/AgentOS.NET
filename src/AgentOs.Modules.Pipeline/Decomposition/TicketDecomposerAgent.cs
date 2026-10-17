@@ -35,20 +35,22 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
     private static readonly HashSet<string> AllowedLabels =
         new(StandardLabels.All.Select(l => l.Name), StringComparer.OrdinalIgnoreCase);
 
-    private readonly ILlmClient _llm;
+    private readonly ILlmClientFactory _factory;
     private readonly AgentOptions _options;
     private readonly ILogger<TicketDecomposerAgent> _logger;
+    private readonly IAgentProfiles? _profiles;
 
     public TicketDecomposerAgent(
         ILlmClientFactory factory,
         IOptions<AgentsOptions> options,
-        ILogger<TicketDecomposerAgent> logger)
+        ILogger<TicketDecomposerAgent> logger,
+        IAgentProfiles? profiles = null)
     {
-        ArgumentNullException.ThrowIfNull(factory);
+        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value.Decomposer;
-        _llm = factory.Create(_options.Provider);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _profiles = profiles;
     }
 
     /// <inheritdoc />
@@ -57,16 +59,21 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(seed);
 
+        // Live profile (Settings → Agent profiles), resolved per call.
+        var profile = _profiles is null
+            ? _options
+            : await _profiles.ResolveAsync(nameof(AgentsOptions.Decomposer), _options, cancellationToken).ConfigureAwait(false);
+        var llm = _factory.Create(profile.Provider);
         var request = new LlmRequest(
             SystemPrompt: DecomposerPrompt.System,
             UserPrompt: DecomposerPrompt.RenderUser(spec, seed),
-            Model: _options.Model,
-            Temperature: _options.Temperature,
-            MaxTokens: _options.MaxTokens);
+            Model: profile.Model,
+            Temperature: profile.Temperature,
+            MaxTokens: profile.MaxTokens);
 
         try
         {
-            var response = await _llm.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var response = await llm.SendAsync(request, cancellationToken).ConfigureAwait(false);
             var dto = JsonExtractor.Deserialize<DecomposedDto>(response.Content, AgentName);
 
             var tickets = (dto.Tickets ?? [])

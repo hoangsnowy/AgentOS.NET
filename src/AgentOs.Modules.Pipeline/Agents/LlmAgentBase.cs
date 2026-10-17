@@ -23,25 +23,29 @@ namespace AgentOs.Modules.Pipeline.Agents;
 /// <summary>Shared LLM-call → parse → validate → metrics → map skeleton for the specialist agents.</summary>
 public abstract class LlmAgentBase
 {
-    private readonly ILlmClient _llm;
+    private readonly ILlmClientFactory _factory;
     private readonly AgentOptions _options;
+    private readonly IAgentProfiles? _profiles;
     private readonly IMetricsCollector _collector;
     private readonly ILlmOutputValidator? _validator;
     private readonly IPromptOverrides? _prompts;
 
     /// <summary>Initializes the shared agent plumbing. <paramref name="validator"/> is required only when
-    /// <see cref="SchemaName"/> is non-null.</summary>
+    /// <see cref="SchemaName"/> is non-null. With <paramref name="profiles"/> the agent resolves its
+    /// provider/model/temperature/max tokens per call (Settings → Agent profiles, no restart);
+    /// <paramref name="options"/> is then only the fallback.</summary>
     protected LlmAgentBase(
         ILlmClientFactory factory,
         AgentOptions options,
         IMetricsCollector collector,
         ILogger logger,
         ILlmOutputValidator? validator = null,
-        IPromptOverrides? prompts = null)
+        IPromptOverrides? prompts = null,
+        IAgentProfiles? profiles = null)
     {
-        ArgumentNullException.ThrowIfNull(factory);
+        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _llm = factory.Create(_options.Provider);
+        _profiles = profiles;
         _collector = collector ?? throw new ArgumentNullException(nameof(collector));
         Logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _validator = validator;
@@ -84,13 +88,20 @@ public abstract class LlmAgentBase
             ? DefaultSystemPrompt
             : await _prompts.ResolveAsync(PromptKey, DefaultSystemPrompt, ct).ConfigureAwait(false);
 
-        var request = new LlmRequest(systemPrompt, userPrompt, _options.Model, _options.Temperature, _options.MaxTokens)
+        // Resolve the live profile per call (an edit in Settings applies to the next call) and pick the client
+        // for its provider — never frozen at construction.
+        var profile = _profiles is null
+            ? _options
+            : await _profiles.ResolveAsync(PromptKey, _options, ct).ConfigureAwait(false);
+        var llm = _factory.Create(profile.Provider);
+
+        var request = new LlmRequest(systemPrompt, userPrompt, profile.Model, profile.Temperature, profile.MaxTokens)
         {
             // Carry the fixed agent role out-of-band so providers (notably the offline one) can identify the
             // agent without parsing the system prompt — robust against per-tenant prompt overrides.
             AgentRole = PromptKey,
         };
-        var response = await _llm.SendAsync(request, ct).ConfigureAwait(false);
+        var response = await llm.SendAsync(request, ct).ConfigureAwait(false);
 
         var parsed = Parse(response, validateDto);
         var metric = RunMetricFactory.From(response, AgentName, parsed.IsSuccess, parsed.IsSuccess ? null : parsed.Error);

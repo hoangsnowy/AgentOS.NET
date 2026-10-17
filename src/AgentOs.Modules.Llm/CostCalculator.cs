@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
+using System.Collections.Generic;
 
 namespace AgentOs.Modules.Llm;
 
@@ -146,6 +147,13 @@ public static class CostCalculator
     /// <summary>True if the model (or its dated snapshot) has a real price in the table. False means
     /// <see cref="Calculate(string,int,int)"/> used the fail-closed estimate.</summary>
     public static bool IsKnown(string model) => !string.IsNullOrWhiteSpace(model) && Resolve(model) is not null;
+
+    /// <summary>Every priced model id, table order (current models first) — drives model pickers.</summary>
+    public static IReadOnlyList<string> KnownModels { get; } = Array.ConvertAll(Table, p => p.ModelId);
+
+    /// <summary>Base list price (USD per 1M input / output tokens) for a model, or null when unpriced.</summary>
+    public static (decimal InputPerMillion, decimal OutputPerMillion)? ListPrice(string model) =>
+        string.IsNullOrWhiteSpace(model) || Resolve(model) is not { } p ? null : (p.InputPerMillion, p.OutputPerMillion);
 
     /// <summary>The canonical table id a model (or dated snapshot) resolves to, or null when unpriced.
     /// Shared with <see cref="ModelCapabilities"/> so pricing and capability lookups never disagree.</summary>

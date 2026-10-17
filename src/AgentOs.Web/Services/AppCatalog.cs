@@ -33,6 +33,7 @@ public static class AppCatalog
         new("evidence", "Evidence", "lock",  "Tool-invocation audit trail",   "Admin", 960, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(EvidenceApp), Color: "#c01c28"),
         new("policy",   "Policy",   "lock",  "Per-tenant tool allowlist",     "Admin", 900, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(PolicyApp), Color: "#613583"),
         new("prompts",  "Prompts",  "lightning", "Tune the agents' prompts",   "Admin", 1000, 680, Pinned: false, AdminOnly: true, ComponentType: typeof(PromptsApp), Color: "#c061cb"),
+        new("agents",   "Agent profiles", "diamond", "Model + limits per agent",  "Admin", 1100, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(AgentProfilesApp), Color: "#1c71d8"),
         new("plugins",  "Plugins",  "squares-stack", "Installed extensions",  "System", 860, 600, Pinned: false, ComponentType: typeof(PluginsApp), Color: "#5e5c64"),
         new("mcp",      "MCP",      "arrow-square-out", "Upstream MCP tool servers", "System", 860, 600, Pinned: false, AdminOnly: true, ComponentType: typeof(McpApp), Color: "#1a5fb4"),
         new("system",   "System",   "wrench","OS appearance, themes, about",  "System", 760, 600, Pinned: false, ComponentType: typeof(SystemApp), Color: "#3d3846"),

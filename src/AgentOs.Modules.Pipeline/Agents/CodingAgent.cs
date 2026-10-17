@@ -29,8 +29,9 @@ public sealed class CodingAgent : LlmAgentBase, ICodingAgent
         ILlmOutputValidator validator,
         IMetricsCollector collector,
         ILogger<CodingAgent> logger,
-        IPromptOverrides? prompts = null)
-        : base(factory, Slice(options), collector, logger, validator, prompts)
+        IPromptOverrides? prompts = null,
+        IAgentProfiles? profiles = null)
+        : base(factory, Slice(options), collector, logger, validator, prompts, profiles)
     {
     }
 

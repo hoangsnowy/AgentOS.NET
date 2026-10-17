@@ -27,8 +27,9 @@ public sealed class RequirementAgent : LlmAgentBase, IRequirementAgent
         ILlmOutputValidator validator,
         IMetricsCollector collector,
         ILogger<RequirementAgent> logger,
-        IPromptOverrides? prompts = null)
-        : base(factory, Slice(options), collector, logger, validator, prompts)
+        IPromptOverrides? prompts = null,
+        IAgentProfiles? profiles = null)
+        : base(factory, Slice(options), collector, logger, validator, prompts, profiles)
     {
     }
 

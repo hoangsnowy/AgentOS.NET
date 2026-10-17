@@ -1,0 +1,273 @@
+@* AgentProfilesApp — admin: pick each agent's provider, model, temperature and max output tokens for this
+   tenant, plus the QA-loop cap (Phase C.4, ADR-0011). Values live in the settings registry and apply to the
+   next agent call — no restart. Each field shows where its value comes from (default / appsettings /
+   platform / this tenant / operator lock) and each model shows its list price, so cost is visible at the
+   moment of choosing. Tenant read from AuthenticationState (a circuit has no HttpContext). *@
+
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using AgentOs.Domain.Configuration
+@using AgentOs.Domain.Llm
+@using AgentOs.Modules.Llm
+@using AgentOs.Modules.Pipeline.Agents
+@inject ISettings Settings
+@inject AgentOs.Web.Shell.Services.ToastService Toasts
+
+@if (!_resolved)
+{
+    <Spinner />
+}
+else if (!_isAdmin)
+{
+    <div class="login-error">Admin role required to change agent profiles.</div>
+}
+else
+{
+    <header class="page-head">
+        <div>
+            <h1 class="page-title">Agent profiles · <code>@_tenantId</code></h1>
+            <p class="page-sub">Choose the model behind each agent. Changes apply to the next call — no restart. Reset returns a row to the inherited value.</p>
+        </div>
+    </header>
+
+    <datalist id="agentos-models">
+        @foreach (var m in CostCalculator.KnownModels)
+        {
+            <option value="@m"></option>
+        }
+    </datalist>
+
+    <Panel Title="Agents">
+        <div class="agent-profiles-scroll">
+        <table class="data-table agent-profiles">
+            <thead>
+                <tr>
+                    <th>Agent</th>
+                    <th>Provider</th>
+                    <th>Model</th>
+                    <th>Temperature</th>
+                    <th>Max output tokens</th>
+                    <th>Source</th>
+                    <th aria-label="Actions"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _rows)
+                {
+                    var locked = row.IsLocked;
+                    <tr @key="row.Role">
+                        <td><strong>@row.Role</strong></td>
+                        <td>
+                            <select class="prefs-select" disabled="@locked" aria-label="@($"{row.Role} provider")"
+                                    value="@row.Provider" @onchange="e => row.Provider = e.Value?.ToString() ?? string.Empty">
+                                @foreach (var p in LlmProviders.Selectable)
+                                {
+                                    <option value="@p">@p</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <input class="prefs-input" list="agentos-models" disabled="@locked" aria-label="@($"{row.Role} model")"
+                                   value="@row.Model" @onchange="e => row.Model = e.Value?.ToString()?.Trim() ?? string.Empty" />
+                            <div class="prefs-hint">@PriceHint(row.Model)</div>
+                        </td>
+                        <td>
+                            @if (ModelCapabilities.AcceptsSamplingParameters(row.Model))
+                            {
+                                <input class="prefs-input agent-profiles-num" type="number" min="0" max="2" step="0.1"
+                                       disabled="@locked" aria-label="@($"{row.Role} temperature")"
+                                       value="@row.Temperature" @onchange="e => row.Temperature = e.Value?.ToString() ?? string.Empty" />
+                            }
+                            else
+                            {
+                                <span class="prefs-hint" title="This model rejects sampling parameters; AgentOS omits temperature for it.">Not used by this model</span>
+                            }
+                        </td>
+                        <td>
+                            <input class="prefs-input agent-profiles-num" type="number" min="1" max="@AgentSettings.MaxOutputTokensCeiling" step="256"
+                                   disabled="@locked" aria-label="@($"{row.Role} max output tokens")"
+                                   value="@row.MaxTokens" @onchange="e => row.MaxTokens = e.Value?.ToString() ?? string.Empty" />
+                        </td>
+                        <td><Badge Variant="@SourceVariant(row.Source)">@SourceLabel(row.Source)</Badge></td>
+                        <td>
+                            <div class="agent-profiles-actions">
+                                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@(locked || _saving)" OnClick="() => SaveRow(row)">Save</Btn>
+                                <Btn Size="Btn.ButtonSize.Sm" Disabled="@(locked || _saving || row.Source != SettingSource.Tenant)" OnClick="() => ResetRow(row)">Reset</Btn>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    </Panel>
+
+    <Panel Title="Pipeline">
+        <Field Label="QA loop · max iterations" Hint="How many Coding → Testing → QA rounds before a run stops (1–10).">
+            <input class="prefs-input agent-profiles-num" type="number" min="1" max="10" step="1"
+                   disabled="@(_iterationsSource == SettingSource.Locked)" aria-label="QA loop max iterations"
+                   value="@_iterations" @onchange="e => _iterations = e.Value?.ToString() ?? string.Empty" />
+        </Field>
+        <div class="prefs-actions">
+            <Badge Variant="@SourceVariant(_iterationsSource)">@SourceLabel(_iterationsSource)</Badge>
+            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@(_saving || _iterationsSource == SettingSource.Locked)" OnClick="SaveIterations">Save</Btn>
+        </div>
+    </Panel>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private const string ProviderField = nameof(AgentOptions.Provider);
+    private const string ModelField = nameof(AgentOptions.Model);
+    private const string TemperatureField = nameof(AgentOptions.Temperature);
+    private const string MaxTokensField = nameof(AgentOptions.MaxTokens);
+
+    private bool _resolved;
+    private bool _isAdmin;
+    private bool _saving;
+    private string _tenantId = string.Empty;
+    private string _actor = "admin";
+    private List<RoleRow> _rows = [];
+    private string _iterations = string.Empty;
+    private SettingSource _iterationsSource;
+
+    private sealed class RoleRow(string role)
+    {
+        public string Role { get; } = role;
+        public string Provider { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string Temperature { get; set; } = string.Empty;
+        public string MaxTokens { get; set; } = string.Empty;
+        public SettingSource Source { get; set; }
+        public bool IsLocked { get; set; }
+        public Dictionary<string, string> Loaded { get; } = new(StringComparer.Ordinal);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _isAdmin = state.User.IsAdmin();
+            _tenantId = state.User.GetTenantId() ?? string.Empty;
+            _actor = state.User.Identity?.Name ?? "admin";
+        }
+        _resolved = true;
+        if (_isAdmin && _tenantId.Length > 0) { await LoadAsync(); }
+    }
+
+    private async Task LoadAsync()
+    {
+        var views = await Settings.ListAsync(_tenantId, AgentSettings.Category);
+        var byKey = views.ToDictionary(v => v.Descriptor.Key, StringComparer.OrdinalIgnoreCase);
+        var rows = new List<RoleRow>(AgentSettings.Roles.Count);
+        foreach (var (role, _) in AgentSettings.Roles)
+        {
+            var row = new RoleRow(role);
+            foreach (var field in new[] { ProviderField, ModelField, TemperatureField, MaxTokensField })
+            {
+                if (byKey.TryGetValue(AgentSettings.Key(role, field), out var v))
+                {
+                    row.Loaded[field] = v.DisplayValue ?? string.Empty;
+                    row.Source = Max(row.Source, v.Source);
+                    row.IsLocked |= v.Source == SettingSource.Locked;
+                }
+            }
+            row.Provider = row.Loaded.GetValueOrDefault(ProviderField, string.Empty);
+            row.Model = row.Loaded.GetValueOrDefault(ModelField, string.Empty);
+            row.Temperature = row.Loaded.GetValueOrDefault(TemperatureField, string.Empty);
+            row.MaxTokens = row.Loaded.GetValueOrDefault(MaxTokensField, string.Empty);
+            rows.Add(row);
+        }
+        _rows = rows;
+
+        var iterations = await Settings.GetAsync(AgentSettings.MaxIterations, _tenantId);
+        _iterations = iterations.Value ?? string.Empty;
+        _iterationsSource = iterations.Source;
+    }
+
+    private async Task SaveRow(RoleRow row)
+    {
+        var changes = new (string Field, string Value)[]
+        {
+            (ProviderField, row.Provider), (ModelField, row.Model),
+            (TemperatureField, row.Temperature), (MaxTokensField, row.MaxTokens),
+        };
+        await SaveAsync(row.Role, changes.Where(c => !string.Equals(c.Value, row.Loaded.GetValueOrDefault(c.Field), StringComparison.Ordinal)));
+    }
+
+    private Task ResetRow(RoleRow row) =>
+        SaveAsync(row.Role, [(ProviderField, ""), (ModelField, ""), (TemperatureField, ""), (MaxTokensField, "")]);
+
+    private async Task SaveAsync(string role, IEnumerable<(string Field, string Value)> changes)
+    {
+        _saving = true;
+        try
+        {
+            var count = 0;
+            foreach (var (field, value) in changes)
+            {
+                var result = await Settings.SetAsync(AgentSettings.Key(role, field), value, SettingScope.Tenant, _tenantId, _actor);
+                if (!result.Ok)
+                {
+                    Toasts.Show("Agent profiles", result.Error ?? "Save failed.", AgentOs.Web.Shell.Services.ToastKind.Err);
+                    return;
+                }
+                count++;
+            }
+            Toasts.Show("Agent profiles", count == 0 ? $"{role}: nothing changed." : $"{role} saved — applies to the next call.", AgentOs.Web.Shell.Services.ToastKind.Ok);
+        }
+        finally
+        {
+            _saving = false;
+            await LoadAsync();
+        }
+    }
+
+    private async Task SaveIterations()
+    {
+        _saving = true;
+        try
+        {
+            var result = await Settings.SetAsync(AgentSettings.MaxIterations, _iterations, SettingScope.Tenant, _tenantId, _actor);
+            Toasts.Show("Pipeline", result.Ok ? "QA loop cap saved." : result.Error ?? "Save failed.",
+                result.Ok ? AgentOs.Web.Shell.Services.ToastKind.Ok : AgentOs.Web.Shell.Services.ToastKind.Err);
+        }
+        finally
+        {
+            _saving = false;
+            await LoadAsync();
+        }
+    }
+
+    // The most specific source across a row's fields wins the badge (Locked > Tenant > Platform > Seed > Default).
+    private static SettingSource Max(SettingSource a, SettingSource b) => (SettingSource)Math.Max((int)a, (int)b);
+
+    private static string PriceHint(string model)
+    {
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            return string.Empty;
+        }
+        return CostCalculator.ListPrice(model) is { } p
+            ? $"${p.InputPerMillion.ToString("0.##", CultureInfo.InvariantCulture)} in · ${p.OutputPerMillion.ToString("0.##", CultureInfo.InvariantCulture)} out per 1M tokens"
+            : "Not in the price table — billed at the fail-closed estimate";
+    }
+
+    private static string SourceLabel(SettingSource s) => s switch
+    {
+        SettingSource.Tenant => "This tenant",
+        SettingSource.Platform => "Platform",
+        SettingSource.Seed => "appsettings",
+        SettingSource.Locked => "Locked",
+        _ => "Default",
+    };
+
+    private static Badge.BadgeVariant SourceVariant(SettingSource s) => s switch
+    {
+        SettingSource.Tenant => Badge.BadgeVariant.Info,
+        SettingSource.Locked => Badge.BadgeVariant.Warn,
+        _ => Badge.BadgeVariant.Default,
+    };
+}
