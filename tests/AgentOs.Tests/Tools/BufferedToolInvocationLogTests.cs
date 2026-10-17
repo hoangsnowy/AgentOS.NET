@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Tools;
@@ -140,5 +141,65 @@ public sealed class BufferedToolInvocationLogTests
         }
 
         goodPersisted.ShouldBeTrue();
+    }
+
+    // E0.3 — a flood must never evict queued evidence: past capacity, entries are persisted inline.
+    [Fact]
+    public async Task Flood_PastCapacity_PersistsInline_LosesNothing()
+    {
+        var inner = new FakeInnerLog();
+        await using var buffered = new BufferedToolInvocationLog(inner, null, capacity: 4, retryDelay: TimeSpan.Zero);
+
+        for (var i = 0; i < 10; i++)
+        {
+            await buffered.AppendAsync(Evt($"c{i}"));
+        }
+        inner.Appended.Count.ShouldBe(6);            // 4 queued, 6 written inline the moment the queue was full
+        buffered.InlineCount.ShouldBe(6);
+        await buffered.DrainPendingAsync();
+
+        inner.Appended.Select(e => e.CallId).OrderBy(c => c, StringComparer.Ordinal)
+            .ShouldBe(Enumerable.Range(0, 10).Select(i => $"c{i}").OrderBy(c => c, StringComparer.Ordinal));
+        buffered.LostCount.ShouldBe(0);
+    }
+
+    // E0.3 — a transient sink fault is retried, so the row still lands.
+    [Fact]
+    public async Task TransientSinkFault_IsRetried_AndTheRowLands()
+    {
+        var inner = new FailNTimesInnerLog(failures: 2);
+        await using var buffered = new BufferedToolInvocationLog(inner, null, capacity: 16, retryDelay: TimeSpan.Zero);
+        await buffered.AppendAsync(Evt("c1"));
+        await buffered.DrainPendingAsync();
+
+        inner.Appended.ShouldHaveSingleItem().CallId.ShouldBe("c1");
+        buffered.LostCount.ShouldBe(0);
+    }
+
+    // E0.3 — only when every attempt failed is a row lost, and then it is counted (never silent).
+    [Fact]
+    public async Task PermanentSinkFault_IsCountedAsLost_NeverThrows()
+    {
+        var inner = new FlakyInnerLog(failCallId: "bad");
+        await using var buffered = new BufferedToolInvocationLog(inner, null, capacity: 16, retryDelay: TimeSpan.Zero);
+        await buffered.AppendAsync(Evt("bad"));
+        await Should.NotThrowAsync(() => buffered.DrainPendingAsync());
+        buffered.LostCount.ShouldBe(1);
+    }
+
+    private sealed class FailNTimesInnerLog(int failures) : IToolInvocationLog
+    {
+        private int _left = failures;
+        public ConcurrentQueue<ToolInvocationEvidence> Appended { get; } = new();
+
+        public Task AppendAsync(ToolInvocationEvidence entry, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Decrement(ref _left) >= 0) { throw new InvalidOperationException("transient"); }
+            Appended.Enqueue(entry);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<ToolInvocationEvidence>> ListRecentAsync(string tenantId, int limit = 50, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<ToolInvocationEvidence>>(Appended.ToArray());
     }
 }
