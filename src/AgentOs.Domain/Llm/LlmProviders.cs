@@ -2,12 +2,16 @@
 // Provider names that callers outside the Llm module must recognise without referencing it.
 
 using System;
+using System.Collections.Generic;
 
 namespace AgentOs.Domain.Llm;
 
 /// <summary>Well-known <see cref="LlmResponse.Provider"/> values.</summary>
 public static class LlmProviders
 {
+    /// <summary>Provider names an operator can pick in Settings (Anthropic is accepted as an alias of Claude).</summary>
+    public static IReadOnlyList<string> Selectable { get; } = ["Claude", "Anthropic", "AzureOpenAI", "MAF", "RemoteAgent"];
+
     /// <summary>The keyless canned client (<c>OfflineLlmClient</c>). A response tagged with it never reached a model.</summary>
     public const string Offline = "Offline";
 

@@ -5,7 +5,9 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Configuration;
 using AgentOs.Modules.AppConfig.Endpoints;
+using AgentOs.Modules.AppConfig.Settings;
 using AgentOs.Modules.AppConfig.Persistence;
 using AgentOs.SharedKernel.Modularity;
 using Microsoft.AspNetCore.Routing;
@@ -22,6 +24,12 @@ public sealed class AppConfigModule : IModule, IEndpointModule, IInitializableMo
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+
+        // UI-first settings registry (ADR-0011): the catalog collects every module's ISettingsContributor once;
+        // ISettings resolves lock → tenant → platform → seed → default over the store registered below.
+        services.TryAddSingleton<ISettingsCatalog, SettingsCatalog>();
+        services.TryAddSingleton<ISettingsAuditSink, NullSettingsAuditSink>();
+        services.TryAddSingleton<ISettings, SettingsService>();
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
@@ -45,6 +53,10 @@ public sealed class AppConfigModule : IModule, IEndpointModule, IInitializableMo
     public async Task InitializeAsync(IServiceProvider services, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        // Build the settings catalog now so a duplicate key or an invalid default aborts startup with a named
+        // error instead of surfacing on the first Settings read.
+        _ = services.GetService<ISettingsCatalog>();
 
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetService<AppConfigDbContext>();

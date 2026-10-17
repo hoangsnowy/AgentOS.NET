@@ -41,6 +41,9 @@ public static class AgentsServiceCollectionExtensions
                     && a.MaxTokens > 0),
                 "Agents:* — every agent needs a Provider and Model, Temperature in [0, 2], and MaxTokens > 0.")
             .ValidateOnStart();
+        // UI-first settings (ADR-0011): agent profiles + pipeline knobs, editable in the desktop.
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, AgentSettings>();
+
         services.AddOptions<PipelineOptions>()
             .Bind(configuration.GetSection(PipelineOptions.SectionName))
             .Validate(o => o.MaxIterations >= 1,

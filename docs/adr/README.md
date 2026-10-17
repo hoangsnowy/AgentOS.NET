@@ -9,6 +9,7 @@ Format: Status · Context · Decision · Consequences. Keep them terse.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0005](0005-build-verifier-sandbox.md) | `build_verifier` execution sandbox | Accepted |
+| [0011](0011-ui-first-configuration.md) | UI-first configuration: settings registry, scopes, precedence | Accepted |
 
 > ADRs 0001–0004 (modular monolith, LLM gateway, multi-tenant isolation,
 > one-engine-three-surfaces) are scheduled as a back-fill in [ROADMAP.md](../../ROADMAP.md) Q2;

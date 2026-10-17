@@ -30,6 +30,8 @@ public sealed class LlmModule : IModule
             .ValidateOnStart();
 
         services.TryAddSingleton(TimeProvider.System);
+        // UI-first settings (ADR-0011): provider wiring, editable in the desktop.
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, LlmSettings>();
         services.AddSingleton<ApiKeyRouter>();
         services.AddSingleton<IRuntimeOverrides, RuntimeOverrides>();
 
