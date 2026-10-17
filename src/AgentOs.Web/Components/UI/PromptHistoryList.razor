@@ -1,0 +1,46 @@
+@* The saved versions of one prompt (newest first): when, who, size; View shows the text, Restore makes it current.
+   A closed <details> so it costs no space until needed; keyboard reachable. Empty text = "reset to default". *@
+
+@using AgentOs.Modules.Pipeline.Prompts
+
+@if (Versions.Count > 0)
+{
+    <details class="prompt-history">
+        <summary>History · @Versions.Count version@(Versions.Count == 1 ? "" : "s")</summary>
+        <ol class="prompt-history-list">
+            @for (var i = 0; i < Versions.Count; i++)
+            {
+                var v = Versions[i];
+                var index = i;
+                <li class="prompt-history-item">
+                    <span class="prompt-history-when" title="@v.At.ToString("u")">@v.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                    <span class="prompt-history-who">@v.Actor</span>
+                    <span class="muted">@(string.IsNullOrEmpty(v.Text) ? "reset to default" : $"{v.Text.Length} chars")</span>
+                    @if (index == 0)
+                    {
+                        <span class="badge ok">current</span>
+                    }
+                    else
+                    {
+                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="() => OnRestore.InvokeAsync(v)">Restore</Btn>
+                    }
+                    @if (!string.IsNullOrEmpty(v.Text))
+                    {
+                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="() => _open = _open == index ? -1 : index">@(_open == index ? "Hide" : "View")</Btn>
+                    }
+                    @if (_open == index)
+                    {
+                        <pre class="prompt-history-text">@v.Text</pre>
+                    }
+                </li>
+            }
+        </ol>
+    </details>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<PromptVersion> Versions { get; set; } = [];
+    [Parameter] public EventCallback<PromptVersion> OnRestore { get; set; }
+
+    private int _open = -1;
+}

@@ -13,4 +13,7 @@ public interface IPromptOverrides
     /// <summary>Returns the tenant's override for <paramref name="agentKey"/>, or <paramref name="defaultPrompt"/>
     /// when none is set (or on any lookup failure — never throws).</summary>
     Task<string> ResolveAsync(string agentKey, string defaultPrompt, CancellationToken cancellationToken = default);
+
+    /// <summary>The current tenant's workspace rules (applied to every agent), or null — never throws.</summary>
+    Task<string?> ResolveRulesAsync(CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
 }

@@ -35,6 +35,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
     private readonly IBudgetGuard? _budgetGuard;
     private readonly IAgentProfiles? _profiles;
     private readonly IRunAdmission? _admission;
+    private readonly Prompts.IPromptOverrides? _prompts;
 
     public IssueWorkAgent(
         ILlmClientFactory factory,
@@ -43,9 +44,11 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         ISessionRunFeed? feed = null,
         IBudgetGuard? budgetGuard = null,
         IAgentProfiles? profiles = null,
-        IRunAdmission? admission = null)
+        IRunAdmission? admission = null,
+        Prompts.IPromptOverrides? prompts = null)
     {
         _admission = admission;
+        _prompts = prompts;
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(options);
         // Resolve the LLM client lazily in RunAsync — NOT here. This agent is injected into the Board
@@ -222,9 +225,11 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         // Server-side (default): the LLM drives the paired runner via the runner_shell tool loop.
         // CLI mode (RemoteAgent): the dev-machine CLI has its own tools — send the CLI-mode prompt,
         // expose no server tools, and grant a long timeout for the full clone→build→test→push run.
+        // E1.6: the tenant's workspace rules apply to the Quick engine too (server and CLI mode).
+        var rules = _prompts is null ? string.Empty : WorkspaceRules.ToPromptBlock(await _prompts.ResolveRulesAsync(ct).ConfigureAwait(false));
         var req = cliMode
             ? new LlmRequest(
-                SystemPrompt: IssueWorkPrompt.SystemCli(request, repo),
+                SystemPrompt: IssueWorkPrompt.SystemCli(request, repo) + rules,
                 UserPrompt: IssueWorkPrompt.User(request, repo),
                 Model: opts.Model,
                 Temperature: opts.Temperature,
@@ -233,7 +238,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 Timeout: CliRunTimeout,
                 Cli: request.CliProfile)
             : new LlmRequest(
-                SystemPrompt: IssueWorkPrompt.System(request, repo),
+                SystemPrompt: IssueWorkPrompt.System(request, repo) + rules,
                 UserPrompt: IssueWorkPrompt.User(request, repo),
                 Model: opts.Model,
                 Temperature: opts.Temperature,
