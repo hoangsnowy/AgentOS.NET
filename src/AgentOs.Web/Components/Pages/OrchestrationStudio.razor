@@ -20,6 +20,7 @@
 @inject AgentOs.Web.Services.LlmConfigView LlmConfig
 @inject Microsoft.JSInterop.IJSRuntime JS
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
+@inject AgentOs.Modules.Pipeline.Agents.IAgentProfiles Profiles
 @implements IDisposable
 
 <PageTitle>Workflow — AgentOS.NET</PageTitle>
@@ -301,7 +302,7 @@
                             <label class="dock-f">out<input @bind="_selected.Data.Output" @bind:event="oninput" @bind:after="InspectorChanged" /></label>
                         </div>
                         <div class="dock-row">
-                            <label class="dock-f">max iterations<input type="number" min="0" max="10" @bind="_selected.Data.MaxIterations" @bind:after="InspectorChanged" /></label>
+                            <label class="dock-f" title="0 = use the workspace QA-loop cap (Settings → Agent profiles). A node can lower the cap, never raise it.">max iterations (0 = workspace cap)<input type="number" min="0" max="10" @bind="_selected.Data.MaxIterations" @bind:after="InspectorChanged" /></label>
                         </div>
                         @if (_selected.Data.Category == StepCategory.Evaluator)
                         {
@@ -380,6 +381,9 @@
 </div>
 
 @code {
+    // Built-in QA-loop cap when the workspace sets none (PipelineOptions.MaxIterations default).
+    private const int DefaultQaCap = 3;
+
     private List<OrchestrationGraph> _all = [];
     private OrchestrationGraph _graph = null!;
     private BlazorDiagram _diagram = null!;
@@ -657,7 +661,7 @@
             Title = StepName(type),
             X = x,
             Y = y,
-            MaxIterations = type is StepType.Loop or StepType.Agent or StepType.Evaluator ? 3 : 0,
+            MaxIterations = type is StepType.Loop ? 3 : 0,   // agents + evaluators inherit the workspace QA cap
             Routes = type is StepType.Evaluator or StepType.IfElse ? ["yes", "no"] : [],
         };
         _graph.Nodes.Add(node);
@@ -852,10 +856,9 @@
         }
 
         var story = string.IsNullOrWhiteSpace(_runInput) ? "Build the feature this workflow describes." : _runInput;
-        var nMax = _graph.Nodes
-            .Where(n => n.Type == StepType.Evaluator || string.Equals(n.AgentRole, "Qa", StringComparison.OrdinalIgnoreCase))
-            .Select(n => n.MaxIterations).FirstOrDefault();
-        if (nMax <= 0) { nMax = 3; }
+        // The workspace's QA-loop cap (Settings → Agent profiles) is the ceiling, exactly as for the classic
+        // pipeline; a node's own "max iterations" can only lower it (GraphExecutor takes the min, 0 = inherit).
+        var nMax = await Profiles.MaxIterationsAsync(DefaultQaCap);
 
         // Outcome captured by the closure below and recorded once the run settles (recent-runs list).
         var completed = false;
