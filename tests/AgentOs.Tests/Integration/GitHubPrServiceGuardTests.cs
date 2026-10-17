@@ -26,13 +26,14 @@ public sealed class GitHubPrServiceGuardTests
     private static GitHubPrService Sut(IRuntimeOverrides? overrides = null)
         => new(overrides ?? Substitute.For<IRuntimeOverrides>(), NullLogger<GitHubPrService>.Instance);
 
-    private static PipelineResult Result()
+    private static PipelineResult Result(string codingProvider = "p")
     {
         var zero = new AgentMetrics("p", "m", 0, 0, 0m, TimeSpan.Zero);
+        var coding = zero with { Provider = codingProvider };
         return new PipelineResult(
             new UserStory("s", 1, "en"),
             new RequirementSpec("T", "S", [], [], [], [], [], [], zero),
-            new CodeArtifact("n", "a", [], null, zero),
+            new CodeArtifact("n", "a", [], null, coding),
             new TestArtifact("x", [], 0, 0, 0, 0, zero),
             [new QaReport(1, true, false, [], [], zero)],
             PipelineStatus.Done, zero);
@@ -60,4 +61,14 @@ public sealed class GitHubPrServiceGuardTests
     public async Task OpenPr_NullWorkspace_Throws()
         => await Should.ThrowAsync<ArgumentNullException>(
             () => Sut().OpenPrAsync(Result(), null!, "title", "body", CancellationToken.None));
+
+    [Fact]
+    public async Task OpenPr_OfflineCannedResult_RefusesBeforeAnyNetworkCall()
+    {
+        // A GitHub workspace that would otherwise pass every guard — only the canned output stops it.
+        var ws = new WorkspaceDescriptor(Guid.NewGuid(), "t", SourceProviderKind.GitHub, "owner", "repo", null, "main", "tok");
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => Sut().OpenPrAsync(Result(codingProvider: "Offline"), ws, "title", "body", CancellationToken.None));
+        ex.Message.ShouldContain("offline canned client");
+    }
 }

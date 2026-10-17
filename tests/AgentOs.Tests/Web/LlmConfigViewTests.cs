@@ -86,4 +86,53 @@ public sealed class LlmConfigViewTests
         LlmConfigView.Combine(Opts(azureEndpoint: ""), null, null, null, "   ").AzureEndpoint
             .ShouldBeNull();
     }
+
+    private static LlmOptions Offline(LlmOptions o)
+    {
+        o.OfflineFallback = true;
+        return o;
+    }
+
+    [Fact]
+    public void WillServeCanned_OfflineFallbackOn_DefaultProviderHasNoKey_IsTrue()
+    {
+        var cfg = LlmConfigView.Combine(Offline(Opts(provider: "Anthropic")), null, null, null, null);
+
+        cfg.WillServeCanned.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void WillServeCanned_TenantKeyPresent_IsFalse()
+    {
+        var cfg = LlmConfigView.Combine(Offline(Opts(provider: "Claude")), null, "sk-ant-tenant", null, null);
+
+        cfg.WillServeCanned.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void WillServeCanned_OfflineFallbackOff_IsFalse_EvenWithoutKey()
+    {
+        // No fallback → a keyless run fails loudly instead of serving canned text, so the chip stays "Live".
+        var cfg = LlmConfigView.Combine(Opts(provider: "Claude"), null, null, null, null);
+
+        cfg.WillServeCanned.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void WillServeCanned_ForcedAzure_NeedsKeyAndEndpoint()
+    {
+        var keyOnly = LlmConfigView.Combine(Offline(Opts(provider: "Claude", anthropicKey: "sk")), "AzureOpenAI", null, "az-key", null);
+        var keyAndEndpoint = LlmConfigView.Combine(Offline(Opts(provider: "Claude")), "AzureOpenAI", null, "az-key", "https://r.openai.azure.com");
+
+        keyOnly.WillServeCanned.ShouldBeTrue();          // the forced provider wins; the Claude key is irrelevant
+        keyAndEndpoint.WillServeCanned.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void WillServeCanned_ProviderWithoutKeyConcept_IsFalse()
+    {
+        var cfg = LlmConfigView.Combine(Offline(Opts(provider: "RemoteAgent")), null, null, null, null);
+
+        cfg.WillServeCanned.ShouldBeFalse();
+    }
 }

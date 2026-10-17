@@ -20,7 +20,7 @@ namespace AgentOs.Modules.Llm;
 public sealed class OfflineLlmClient : ILlmClient
 {
     /// <summary>Canonical provider key this client registers under.</summary>
-    public const string ProviderName = "Offline";
+    public const string ProviderName = LlmProviders.Offline;
 
     /// <summary>
     /// True when <paramref name="answeredBy"/> is this canned client standing in for a DIFFERENT provider
@@ -33,7 +33,7 @@ public sealed class OfflineLlmClient : ILlmClient
     /// </para>
     /// </summary>
     public static bool IsSubstituteFor(string? requestedProvider, string? answeredBy) =>
-        string.Equals(answeredBy, ProviderName, StringComparison.OrdinalIgnoreCase)
+        LlmProviders.IsOffline(answeredBy)
         && !string.Equals(requestedProvider, ProviderName, StringComparison.OrdinalIgnoreCase);
 
     /// <inheritdoc />

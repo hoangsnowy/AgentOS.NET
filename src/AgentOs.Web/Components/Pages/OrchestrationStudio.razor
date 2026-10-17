@@ -43,7 +43,14 @@
 
             <div class="syn-spacer"></div>
 
-            <span class="syn-live-tag" title="Active LLM provider"><Icon Name="lightning" Size="11" /> Live · @ActiveProvider</span>
+            @if (ShowOffline)
+            {
+                <span class="syn-live-tag offline" title="@ChipTitle" data-testid="llm-chip-offline"><Icon Name="warning" Size="11" /> Offline · canned</span>
+            }
+            else
+            {
+                <span class="syn-live-tag" title="@ChipTitle" data-testid="llm-chip-live"><Icon Name="lightning" Size="11" /> Live · @ActiveProvider</span>
+            }
             <button class="syn-btn" @onclick="Save" title="Save workflow"><Icon Name="floppy-disk" Size="13" /> Save</button>
             <button class="syn-btn green" @onclick="Run" disabled="@_running" title="Run workflow"><Icon Name="play" Size="13" /> @(_running ? "Running…" : "Run")</button>
 
@@ -396,6 +403,14 @@
     private LlmEffectiveConfig? _llm;
     private string ActiveProvider => _llm?.ChipLabel ?? LlmOpts.Value.Provider;
 
+    // Set when the last run had at least one node answered by the canned offline client. Together with the
+    // config prediction it flips the chip to "Offline · canned" — a canned answer must never read as "Live".
+    private bool _lastRunOffline;
+    private bool ShowOffline => _lastRunOffline || (_llm?.WillServeCanned ?? false);
+    private string ChipTitle => ShowOffline
+        ? $"No usable {ActiveProvider} key — agents answer with canned offline output; no model is called. Add a key in Settings → LLM."
+        : "Active LLM provider";
+
     // The node library, grouped the way a builder reads it (Agents / Flow / Data / Control) rather than a
     // flat 14-chip strip. Drives the left rail; search filters within groups.
     private sealed record NodeGroup(string Label, StepType[] Types);
@@ -743,7 +758,9 @@
         SyncFromCanvas();
 
         Log($"▶ Run \"{_graph.Name}\"  ·  input: {(string.IsNullOrWhiteSpace(_runInput) ? "(default)" : _runInput)}");
-        Log($"mode: Live → {ActiveProvider}");
+        Log(_llm?.WillServeCanned == true
+            ? $"mode: OFFLINE — no usable {ActiveProvider} key; agents return canned output, no model is called"
+            : $"mode: Live → {ActiveProvider}");
 
         // LLM-free gate first — refuse + paint Skipped on unsupported nodes before any agent runs.
         var validation = GraphRunnerService.Validate(_graph);
@@ -791,22 +808,27 @@
                             var state = ev.Phase switch
                             {
                                 GraphNodePhase.Running => NodeRunState.Running,
-                                GraphNodePhase.Done => NodeRunState.Done,
+                                GraphNodePhase.Done => ev.Offline ? NodeRunState.Canned : NodeRunState.Done,
                                 GraphNodePhase.Failed => NodeRunState.Failed,
                                 GraphNodePhase.Skipped => NodeRunState.Skipped,
                                 _ => NodeRunState.Idle,
                             };
-                            SetNode(node, state, ev.Meta, ev.Message);
+                            // Canned token counts/cost are fabricated by the offline client — never show them.
+                            SetNode(node, state, ev.Offline ? "canned · no model called" : ev.Meta, ev.Message);
                         }
                         if (ev.Phase == GraphNodePhase.Running) { Log($"▷ {NodeTitle(ev.NodeId)}…"); }
+                        else if (ev.Phase == GraphNodePhase.Done && ev.Offline) { Log($"◌ {NodeTitle(ev.NodeId)}  ·  canned (offline — no model called)"); }
                         else if (ev.Phase == GraphNodePhase.Done) { Log($"✓ {NodeTitle(ev.NodeId)}{(string.IsNullOrEmpty(ev.Meta) ? "" : "  ·  " + ev.Meta)}"); }
                         else if (ev.Phase == GraphNodePhase.Failed) { Log($"✖ {NodeTitle(ev.NodeId)}: {ev.Message}"); }
                         StateHasChanged();
                     }), HumanPromptAsync, ct);
 
                     completed = result.Completed;
-                    detail = result.Completed ? "completed" : (result.FailureMessage ?? "stopped");
-                    Log(result.Completed ? "■ Workflow complete." : $"✖ Stopped: {result.FailureMessage}");
+                    _lastRunOffline = result.Offline;
+                    detail = result.Completed ? (result.Offline ? "completed (offline dry run)" : "completed") : (result.FailureMessage ?? "stopped");
+                    Log(!result.Completed ? $"✖ Stopped: {result.FailureMessage}"
+                        : result.Offline ? "■ Dry run complete — OFFLINE: canned output, nothing reached a model. Add an API key in Settings → LLM for a live run."
+                        : "■ Workflow complete.");
                 }
                 catch (OperationCanceledException)
                 {
@@ -984,6 +1006,7 @@
         NodeRunState.Done => "done",
         NodeRunState.Failed => "failed",
         NodeRunState.Skipped => "skipped",
+        NodeRunState.Canned => "canned",
         _ => "idle",
     };
     private static string RunLabel(NodeRunState s) => s switch
@@ -992,6 +1015,7 @@
         NodeRunState.Done => "done",
         NodeRunState.Failed => "failed",
         NodeRunState.Skipped => "skipped (unsupported node)",
+        NodeRunState.Canned => "canned (offline — no model called)",
         _ => "idle",
     };
 

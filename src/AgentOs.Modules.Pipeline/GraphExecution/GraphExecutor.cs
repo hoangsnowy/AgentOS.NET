@@ -218,7 +218,8 @@ public sealed class GraphExecutor : IGraphExecutor
             {
                 if (terminals.Contains(ce.ExecutorId)) { terminalReached = true; }
                 await onNode(new GraphNodeEvent(
-                    ce.ExecutorId, GraphNodePhase.Done, state.NodeMeta.GetValueOrDefault(ce.ExecutorId), null)).ConfigureAwait(false);
+                    ce.ExecutorId, GraphNodePhase.Done, state.NodeMeta.GetValueOrDefault(ce.ExecutorId), null,
+                    state.OfflineNodes.ContainsKey(ce.ExecutorId))).ConfigureAwait(false);
             }
             else if (evt is ExecutorFailedEvent fe && supported.Contains(fe.ExecutorId))
             {
@@ -236,7 +237,7 @@ public sealed class GraphExecutor : IGraphExecutor
         // stamping the explicit tenant so the budget gate sees it on the NEXT run — see PersistRunAsync.
         await PersistRunAsync(runGuid, state, budgetTenant, failure, startedAtUtc, ct).ConfigureAwait(false);
 
-        return new GraphRunResult(failure is null, failure);
+        return new GraphRunResult(failure is null, failure, state.AnyOffline);
     }
 
     // Persist the per-node spend collected during the run as a PipelineRunRecord (one pipeline_runs row +
@@ -952,8 +953,32 @@ public sealed class GraphExecutor : IGraphExecutor
         /// Persisted to run_metrics at the end of the run so the budget gate meters workflow spend.</summary>
         public ConcurrentBag<RunMetric> Spend { get; } = new();
 
-        /// <summary>Append one node's spend (thread-safe).</summary>
-        public void Record(RunMetric metric) => Spend.Add(metric);
+        /// <summary>Nodes answered by the canned offline client (no model reached). Keyed by node id.</summary>
+        public ConcurrentDictionary<string, bool> OfflineNodes { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>True when any node in this run was answered by the offline client.</summary>
+        public bool AnyOffline => !OfflineNodes.IsEmpty;
+
+        // The node whose body is executing on this async flow. AsyncLocal, so concurrent Parallel branches
+        // (separate Tasks) each see their own node — a shared field would mis-attribute under fan-out.
+        private readonly AsyncLocal<string?> _currentNode = new();
+
+        /// <summary>Set by <see cref="NodeExecutor"/> around a node body so spend can be attributed to it.</summary>
+        public string? CurrentNode
+        {
+            get => _currentNode.Value;
+            set => _currentNode.Value = value;
+        }
+
+        /// <summary>Append one node's spend (thread-safe), flagging the node when the answer was canned.</summary>
+        public void Record(RunMetric metric)
+        {
+            Spend.Add(metric);
+            if (LlmProviders.IsOffline(metric.Provider) && CurrentNode is { } node)
+            {
+                OfflineNodes[node] = true;
+            }
+        }
     }
 
     /// <summary>A MAF executor whose body is the node's work delegate. Returns the (mutated) state so MAF
@@ -964,7 +989,15 @@ public sealed class GraphExecutor : IGraphExecutor
     {
         public override async ValueTask<GraphState> HandleAsync(GraphState state, IWorkflowContext context, CancellationToken ct)
         {
-            state.NodeMeta[Id] = await run(state, ct).ConfigureAwait(false);
+            state.CurrentNode = Id;
+            try
+            {
+                state.NodeMeta[Id] = await run(state, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                state.CurrentNode = null;
+            }
             return state;
         }
     }
