@@ -31,6 +31,7 @@ public static class AppCatalog
         // (Workspaces + Sessions were standalone admin windows fully subsumed by Board → deleted.)
         new("users",    "Users",    "user",  "Manage tenant members + roles", "Admin", 880, 600, Pinned: false, AdminOnly: true, ComponentType: typeof(UsersApp), Color: "#e5a50a"),
         new("evidence", "Evidence", "lock",  "Tool-invocation audit trail",   "Admin", 960, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(EvidenceApp), Color: "#c01c28"),
+        new("data",     "Data", "floppy-disk", "Export this workspace; platform admins purge tenants", "Admin", 900, 600, Pinned: false, AdminOnly: true, ComponentType: typeof(DataApp), Color: "#26a269"),
         new("audit",    "Audit log", "clock-counter", "Who changed what — settings, members, sign-in", "Admin", 980, 640, Pinned: false, AdminOnly: true, ComponentType: typeof(AuditLogApp), Color: "#865e3c"),
         new("policy",   "Policy",   "lock",  "Per-tenant tool allowlist",     "Admin", 900, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(PolicyApp), Color: "#613583"),
         new("prompts",  "Prompts",  "lightning", "Tune the agents' prompts",   "Admin", 1000, 680, Pinned: false, AdminOnly: true, ComponentType: typeof(PromptsApp), Color: "#c061cb"),

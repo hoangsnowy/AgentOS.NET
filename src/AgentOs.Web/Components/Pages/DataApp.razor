@@ -1,0 +1,139 @@
+@* DataApp — Settings → Data (enterprise review E1.4). Tenant admins export everything their workspace owns as one
+   JSON document (secrets excluded). Platform admins also see every tenant, export any of them, and PURGE one:
+   every row it owns (all TenantId tables, foreign-key order, one transaction), its registry entry and its
+   Keycloak users. Purge needs the tenant id typed to confirm, is refused for the admin's own tenant, and is
+   audited under the platform scope. Tenant read from AuthenticationState (a circuit has no HttpContext). *@
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using AgentOs.Modules.Tenants
+@using AgentOs.Modules.Tenants.Data
+@inject ITenantDataService Data
+@inject ITenantsRepository Tenants
+@inject AgentOs.Web.Shell.Services.ToastService Toasts
+
+@if (!_resolved)
+{
+    <Spinner />
+}
+else if (!_isAdmin)
+{
+    <div class="login-error">Admin role required to export or purge data.</div>
+}
+else
+{
+    <header class="page-head">
+        <div>
+            <h1 class="page-title">Data · <code>@_tenantId</code></h1>
+            <p class="page-sub">Export everything this workspace owns, or (platform admins) remove a tenant entirely.</p>
+        </div>
+    </header>
+
+    @if (!Data.IsAvailable)
+    {
+        <EmptyState Icon="floppy-disk" Title="No database in this run" Hint="The standalone desktop keeps nothing — there is no tenant data to export or purge." />
+    }
+    else
+    {
+        <Panel Title="Export this workspace">
+            <p class="muted data-hint">One JSON file with every row this workspace owns — runs, metrics, sessions, boards, runners, evidence, audit, settings keys. Secret values (API keys, tokens) are never included. The export is audited.</p>
+            <a class="btn btn-primary" href="/tenant/export" download><Icon Name="file" Size="14" /> Export data</a>
+        </Panel>
+
+        @if (_isPlatformAdmin)
+        {
+            <Panel Title="Tenants (platform)">
+                @if (_tenants is null) { <Spinner /> }
+                else
+                {
+                    <table class="data-table">
+                        <thead><tr><th>Tenant</th><th>Name</th><th>Created</th><th class="actions">Actions</th></tr></thead>
+                        <tbody>
+                            @foreach (var t in _tenants)
+                            {
+                                <tr>
+                                    <td><code>@t.Id</code></td>
+                                    <td>@t.Name</td>
+                                    <td>@t.CreatedAtUtc.ToString("yyyy-MM-dd")</td>
+                                    <td class="actions">
+                                        <a class="btn btn-sm" href="@($"/tenant/export?tenant={Uri.EscapeDataString(t.Id)}")" download>Export</a>
+                                        @if (t.Id != _tenantId)
+                                        {
+                                            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="() => { _purging = t.Id; _confirm = string.Empty; }">Purge…</Btn>
+                                        }
+                                    </td>
+                                </tr>
+                                @if (_purging == t.Id)
+                                {
+                                    <tr class="data-purge-row">
+                                        <td colspan="4">
+                                            <p class="data-warn"><Icon Name="warning" Size="14" /> This permanently deletes every row of <code>@t.Id</code>, its registry entry and its users. It cannot be undone — export first.</p>
+                                            <div class="data-purge-confirm">
+                                                <input class="prefs-input" placeholder="Type @t.Id to confirm" aria-label="Type the tenant id to confirm" @bind="_confirm" @bind:event="oninput" />
+                                                <Btn Variant="Btn.ButtonVariant.Danger" Disabled="@(_busy || _confirm != t.Id)" OnClick="() => PurgeAsync(t.Id)">@(_busy ? "Purging…" : "Purge tenant")</Btn>
+                                                <Btn Variant="Btn.ButtonVariant.Ghost" OnClick="() => _purging = null">Cancel</Btn>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                }
+                @if (_lastReport is { } r)
+                {
+                    <p class="muted data-report">Purged <code>@r.TenantId</code>: @r.TotalRows rows in @r.Tables.Count tables, @r.KeycloakUsers user(s).</p>
+                }
+            </Panel>
+        }
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private bool _resolved;
+    private bool _isAdmin;
+    private bool _isPlatformAdmin;
+    private bool _busy;
+    private string _tenantId = "default";
+    private string _actor = "admin";
+    private string? _purging;
+    private string _confirm = string.Empty;
+    private IReadOnlyList<TenantRecord>? _tenants;
+    private TenantPurgeReport? _lastReport;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _isAdmin = state.User.IsAdmin();
+            _isPlatformAdmin = state.User.IsPlatformAdmin();
+            _tenantId = state.User.GetTenantId() ?? "default";
+            _actor = state.User.Identity?.Name ?? "admin";
+        }
+        _resolved = true;
+        if (_isPlatformAdmin && Data.IsAvailable) { _tenants = await Tenants.ListAsync(); }
+    }
+
+    private async Task PurgeAsync(string tenantId)
+    {
+        if (!_isPlatformAdmin || tenantId == _tenantId || _confirm != tenantId) { return; }
+        _busy = true;
+        try
+        {
+            _lastReport = await Data.PurgeAsync(tenantId, _actor);
+            _purging = null;
+            _tenants = await Tenants.ListAsync();
+            Toasts.Show("Data", $"Tenant {tenantId} purged — {_lastReport.TotalRows} rows.", ToastKind.Ok);
+        }
+        catch (Exception ex) when (ex is Npgsql.NpgsqlException or InvalidOperationException or System.Net.Http.HttpRequestException)
+        {
+            Toasts.Show("Data", $"Purge failed: {ex.Message}", ToastKind.Err);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
