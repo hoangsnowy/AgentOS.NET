@@ -1,126 +1,142 @@
 # AgentOS — Configuration Reference
 
-Every key an operator can set, where it's read, its default, and whether it can change at runtime.
-Sources merge in the usual ASP.NET Core order: `appsettings.json` → `appsettings.{Environment}.json`
-→ user-secrets (Development) → environment variables (`Section__Key`) → Aspire AppHost injection.
+AgentOS splits configuration in two (ADR-0011 — UI-first configuration):
 
-**Validated at startup** = the host refuses to boot on an invalid value (`ValidateOnStart`).
-**Runtime (Settings UI)** = admins change it per-tenant in the desktop Settings app; stored encrypted
-in `config.app_config`; the allowlist lives in `SettingsKeyRegistry`.
+1. **Set at deploy** — the few keys a host needs *before anyone can sign in*: where the database is,
+   how sign-in works, logging, secrets, and operator locks. These live in `appsettings*.json`,
+   environment variables (`Section__Key`), user-secrets (Development) or Aspire/azd injection.
+2. **Set in the desktop** — every product setting (LLM providers, agent profiles, pipeline, safety
+   switches, build sandbox). Each one is a `SettingDescriptor` declared by its module, has its default
+   **in code**, and is changed in **Settings** without a restart.
 
-## Connection / persistence
+`appsettings.json` contains bootstrap keys only — a unit test (`BootstrapConfigTests`) fails the build if
+a product section creeps back in. There is no shared seed file: code is the single source of defaults,
+so the Web and Api hosts cannot drift apart.
 
-| Key | Default | Read by | Notes |
+## How a setting value is resolved
+
+For a key read through the settings registry, first match wins:
+
+| # | Tier | Where it comes from | Who sets it |
 |---|---|---|---|
-| `ConnectionStrings:DefaultConnection` | — | every module | Postgres. Absent → modules fall back to no-op repositories (stateless boot) unless `RequireDatabase` is true. Aspire injects it on the full stack. |
-| `Persistence:RequireDatabase` | Api `true`, Web `false` (`true` in Web Production) | module loaders | Fail-loud guard: refuse to boot stateless when a DB is expected. |
+| 1 | **Lock** | `Settings:Locks:<key>` in deployment config | Operator — the UI shows it read-only with the reason |
+| 2 | **Tenant** | Settings UI, stored encrypted in `config.app_config` | Tenant admin (tenant-scope keys only) |
+| 3 | **Platform** | Settings UI (`@platform/` rows) | Platform admin (`platform-admin` realm role) |
+| 4 | **Seed** | Any configuration source at the same key (env var, user-secrets, appsettings) | Operator — optional; e.g. `Agents__Coding__Model` |
+| 5 | **Default** | The descriptor's default, in code | — |
 
-## LLM gateway (`Llm:*`)
+Every write is validated by the descriptor (kind, range, choices, custom validator) and audited
+(who, when, scope, before/after; secrets masked). Readers resolve per call, so a saved change applies
+to the next request.
 
-The LLM section is **not startup-validated**: `LlmModule` binds `LlmOptions` with `.Bind(…).ValidateOnStart()`
-but registers no `.Validate(…)` rule and `LlmOptions` carries no DataAnnotations, so `ValidateOnStart`
-is a no-op. The provider-name + `https://` shape checks run only at **runtime** when a value goes through
-the Settings UI (`POST /settings` → `SettingsKeyRegistry`); a bad value in `appsettings.json` is not rejected at boot.
-
-| Key | Default | Runtime (Settings UI) | Notes |
-|---|---|---|---|
-| `Llm:Provider` | `Claude` | — | Default provider when an agent names none. |
-| `Llm:ForceProvider` | empty | ✔ `Llm:ForceProvider` | Forces every agent to one provider: `Claude` (alias `Anthropic`) / `AzureOpenAI` / `MAF` / `RemoteAgent`. |
-| `Llm:Claude:ApiKey` / `ApiKeys` | empty | ✔ `Llm:Claude:ApiKey` | Platform fallback key(s). Per-tenant keys via Settings UI win. Set via user-secrets/env — never commit. |
-| `Llm:Claude:Endpoint` | `https://api.anthropic.com` | — | |
-| `Llm:Claude:ApiVersion` | `2023-06-01` | — | Anthropic API version header. |
-| `Llm:AzureOpenAi:ApiKey` / `ApiKeys` / `Endpoint` | empty | ✔ same keys | Endpoint must be absolute `https://` (enforced only on the Settings-UI path, not at startup). |
-| `Llm:*:TimeoutSeconds` | 60 | — | |
-| `Llm:OfflineFallback` | Web `true`, Production/Api `false` | — | When true, appends a keyless deterministic `Offline` provider to the END of every provider's failover chain (LlmClientFactory + OfflineLlmClient): a keyless run falls through to canned, schema-valid output so the pipeline + Workflow studio run on a fresh checkout with no secrets. Off in Production so a missing cloud key fails loudly. |
-| `Llm:Fallbacks` | — | — | Ordered fallback provider list (FailoverLlmClient). |
-
-## Agents (`Agents:*`) — validated at startup
-
-Per agent (`Orchestrator`, `Requirement`, `Coding`, `Testing`, `Qa`, `IssueWork`, `Decomposer`):
-`Provider` (non-empty), `Model` (non-empty), `Temperature` (0–2), `MaxTokens` (>0),
-`IssueWork.MaxParallelRepos` (fan-out bound, clamped ≥1 at use).
-Keep model ids in sync with `CostCalculator`'s price table: an unpriced model is charged at the table's ceiling rate (fail-closed) and logged as an estimate until it is added.
-
-## Pipeline (`Pipeline:*`) — validated at startup
+## Set at deploy (bootstrap)
 
 | Key | Default | Notes |
 |---|---|---|
-| `Pipeline:MaxIterations` | 3 | QA-loop cap when the story doesn't set `NMax`. Must be ≥ 1. |
-| `Pipeline:Engine` | `Classic` | `Classic` (in-process loop) or `Workflow` (MAF graph). |
-
-## Auth
-
-| Key | Default | Notes |
-|---|---|---|
-| `Auth:Keycloak:Authority` | empty | **Required outside Development.** Dev fallback `http://localhost:8080/realms/agentic` applies in Development only; production boots refuse a missing value. |
+| `ConnectionStrings:DefaultConnection` | — | Postgres. Absent → modules fall back to no-op repositories (stateless boot) unless `RequireDatabase` is true. Aspire injects it on the full stack. |
+| `Persistence:RequireDatabase` | `true` (code); Web base `false` for the standalone run, `true` in Web Production | Fail-loud guard: refuse to boot stateless when a DB is expected. |
+| `Auth:Keycloak:Authority` | empty | **Required outside Development.** Dev fallback `http://localhost:8080/realms/agentic` applies in Development only. |
 | `Auth:Keycloak:Audience` | `agentic-api` | JWT audience (Api). |
 | `Auth:Keycloak:ClientId` / `ClientSecret` | `agentic-web` / empty | Web OIDC client. Secret required outside Development; the dev default secret is rejected by `DevSecretGuard`. |
-| `Auth:Keycloak:RequireHttpsMetadata` | `true` | Explicit value always wins. Unset: defaults true, except an `http://localhost` authority in Development (otherwise every request, including probes, 500s on a standalone run). |
-| `Auth:Keycloak:Admin:BaseUrl` | empty | Keycloak admin API for member lifecycle. Empty → no-op client. Validated absolute URL at startup. |
+| `Auth:Keycloak:RequireHttpsMetadata` | `true` | Unset: true, except an `http://localhost` authority in Development. |
+| `Auth:Keycloak:Admin:BaseUrl` | empty | Keycloak admin API for member lifecycle. Empty → no-op client. |
 | `Auth:Keycloak:Admin:{Realm,Username,Password,ClientId}` | `agentic`/`admin`/`admin`/`admin-cli` | Use a service account + secrets in production. |
 | `Auth:DevAutoLogin` | `true` in Development only | Fixed-user auth for the standalone Web. Hard-throws outside Development; AppHost forces it off. |
-
-## Web split mode (`Api:*`)
-
-| Key | Default | Notes |
-|---|---|---|
-| `Api:BaseUrl` | empty | Empty = Web runs the engine in-process. Set = Web becomes a thin client of the Api host (settings, pipeline, health probes go over HTTP). Deployment-time only — not in the Settings UI. The split-mode client (`HttpPipelineClient`) forwards the user's token from `IAuthTokenProvider`; there is no static-bearer key. |
-
-## Tools & integration
-
-| Key | Default | Notes |
-|---|---|---|
-| `Tools:EnforceByDefault` | `true` in Production, else `false` | Fail-closed tool policy: deny unless on the tenant allowlist (`tools/allowlist` per-tenant config, Policy app). |
-| `Integration:BuildVerifier:Enabled` | `false` in Production | Master gate. Keep off in Production unless `Sandbox=Container` (ADR-0005, audit #10). |
-| `Integration:BuildVerifier:Sandbox` | `InProcess` | `InProcess` (host child process, Layer-1 hardening only — Dev) or `Container` (ephemeral no-egress `docker run` / ACA Job — Production-safe). |
-| `Integration:BuildVerifier:ContainerImage` | `mcr.microsoft.com/dotnet/sdk:10.0` | Image for the container runner + ACA Job. A dotnet SDK image. |
-| `Integration:BuildVerifier:CpuLimit` / `MemoryLimit` / `PidsLimit` | `2.0` / `1g` / `256` | Container resource quotas (`--cpus` / `--memory` / `--pids-limit`). |
-| `Integration:BuildVerifier:TimeoutSeconds` | `90` | Hard cap on build duration; the process tree is killed on overrun. |
-| `Github:*` (Pat/RepoOwner/RepoName/BaseBranch) | — | Runtime Settings UI only (per-tenant, encrypted). PAT must start `ghp_`/`github_pat_`/`gho_`. |
-
-## Workspaces (`Workspaces:*`)
-
-| Key | Default | Notes |
-|---|---|---|
-| `Workspaces:AllowedHosts[]` | empty | Defense-in-depth host allowlist for tenant-supplied workspace hosts (atop the connect-time `SsrfGuard`). The provider public hosts (`github.com`, `dev.azure.com`, `*.visualstudio.com`) are always allowed; add GitHub Enterprise Server / Azure DevOps Server hosts here to connect a self-hosted board. Bare host or URL; subdomains of an entry are allowed. A blank board host = the provider's public default. |
-
-## MCP (`Mcp:*`) — validated at startup
-
-| Key | Default | Notes |
-|---|---|---|
-| `Mcp:CallTimeoutSeconds` | 60 | Per `tools/call` cap. Must be > 0. |
-| `Mcp:Servers[]` | empty | Each enabled server needs `Name`; `Transport` `stdio` needs `Command` (+`Args`/`Env`), `http` needs absolute `Url`. `Enabled:false` keeps the entry without connecting. |
-
-## Email (`Email:*`) — validated at startup
-
-| Key | Default | Notes |
-|---|---|---|
-| `Email:SmtpHost` | empty | Empty → NullEmailSender (logs instead of sending). Aspire injects MailHog in dev. |
-| `Email:SmtpPort` | 1025 | 1–65535. 587 + `UseStartTls:true` for STARTTLS providers; 465 = implicit TLS. |
-| `Email:From` / `FromName` | `noreply@agentic.local` / `AgentOS` | `From` required when `SmtpHost` is set. |
-| `Email:User` / `Password` | empty | Secrets in production. |
-
-## Misc
-
-| Key | Default | Notes |
-|---|---|---|
+| `Api:BaseUrl` | empty | Empty = Web runs the engine in-process. Set = Web is a thin client of the Api host. |
+| `Settings:Locks:<key>` | Production pins 4 keys (below) | Operator locks. Change with an env var, e.g. `Settings__Locks__RemoteAgent__AutoApprove=true` — a deployment decision, not a click. |
+| `Logging:*`, `AllowedHosts` | ASP.NET defaults | |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Enable OTLP / App Insights export. |
+| `Email:*` | `SmtpHost` empty → logs instead of sending | `SmtpHost`, `SmtpPort` (1025), `From`, `FromName`, `User`, `Password`, `UseStartTls`. Validated at startup. Aspire injects MailHog in dev. |
+| `Mcp:Servers[]`, `Mcp:CallTimeoutSeconds` | empty / 60 | Upstream MCP servers. Validated at startup. Moves to a per-tenant registry in Phase 4. |
 | `Plugins:Path` | `plugins` | Folder scanned for `IAgentOsPlugin` assemblies. |
-| `Metrics:CsvPath` | — | Optional CSV export of per-run metrics. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | Enables OTLP trace/metric export when set. |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Enables App Insights (Api + Web). |
 
-## Runtime-settable keys (the `/settings` allowlist)
+**Secrets** (`Llm:Claude:ApiKey`, `Llm:AzureOpenAi:ApiKey`, …) can be seeded at deploy
+(`azd env set Llm__Claude__ApiKey …`, user-secrets) *or* entered in Settings → LLM providers, where a
+tenant key wins over the platform seed. Never commit them.
 
-`POST /settings` (admin-only) accepts exactly: `Llm:ForceProvider`, `Llm:Claude:ApiKey`,
+### Production locks (`appsettings.Production.json`, Api + Web)
+
+| Locked key | Value | Why |
+|---|---|---|
+| `RemoteAgent:AutoApprove` | `false` | Remote execution on a paired machine always needs a human approval. |
+| `Tools:EnforceByDefault` | `true` | Tool policy fails closed: a tool runs only if the tenant allowlists it. |
+| `Llm:OfflineFallback` | `false` | A missing key fails loudly instead of serving canned output. |
+| `Integration:BuildVerifier:Sandbox` | `Container` | Generated code never builds in the host process. |
+
+## Set in the desktop (Settings)
+
+Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant admin sets their own;
+*Platform* = one value for every tenant, platform admin only.
+
+### Settings → LLM providers
+
+| Key | Default | Scope | Notes |
+|---|---|---|---|
+| `Llm:Provider` | `Claude` | Tenant | Used by any agent whose profile names no provider. `Anthropic` is an alias of `Claude`. |
+| `Llm:ForceProvider` | empty | Tenant | Route every agent to one provider. |
+| `Llm:OfflineFallback` | **`true` in Development, else `false`** | Platform | Keyless provider → canned, schema-valid output, labelled Offline everywhere (runs, Workflow chip, PR refusal). Lets a fresh checkout run with no secrets. Locked off in Production. |
+| `Llm:Claude:ApiKey` / `ApiKeys` | empty | Tenant | Secret, write-only in the UI. Pool = round-robin with 429 failover. |
+| `Llm:AzureOpenAi:Endpoint` / `ApiKey` / `ApiKeys` | empty | Tenant | Endpoint must be absolute `https://`. |
+| `Llm:AzureOpenAi:Model` | `gpt-4.1` | Tenant | Default deployment. |
+| `Llm:AzureOpenAi:PricingModel` | empty | Tenant | Canonical price-table id for an aliased deployment (`gpt41-prod` → `gpt-4.1`). |
+
+Code-only (no UI yet; seed via env if you must): `Llm:Claude:Endpoint` (`https://api.anthropic.com`),
+`Llm:Claude:ApiVersion` (`2023-06-01`), `Llm:*:TimeoutSeconds` (60), `Llm:*:MaxRetries` (3),
+`Llm:Fallbacks` (inter-provider failover map).
+
+### Settings → Agent profiles
+
+Per role — `Orchestrator`, `Requirement`, `Coding`, `Testing`, `Qa`, `IssueWork`, `Decomposer` — keys
+`Agents:<Role>:Provider` / `Model` / `Temperature` / `MaxTokens`, tenant scope. The model field lists
+priced models for the chosen provider (plus *Custom…* for deployment aliases); `Temperature` is hidden
+for models that reject sampling params; `MaxTokens` ≤ 128 000.
+
+| Role | Provider | Model | Temp | Max output |
+|---|---|---|---|---|
+| Orchestrator | Anthropic | `claude-haiku-4-5` | 0.3 | 2000 |
+| Requirement | Anthropic | `claude-sonnet-4-6` | 0.1 | 2000 |
+| Coding | AzureOpenAI | `gpt-4.1` | 0.2 | 4000 |
+| Testing | AzureOpenAI | `gpt-4o-mini` | 0.2 | 3000 |
+| Qa | Anthropic | `claude-haiku-4-5` | 0.1 | 1500 |
+| IssueWork | Anthropic | `claude-sonnet-4-6` | 0.2 | 32768 |
+| Decomposer | Anthropic | `claude-sonnet-4-6` | 0.2 | 4000 |
+
+`Pipeline:MaxIterations` (QA-loop cap when a story sets no `NMax`) — default 3, range 1–10.
+An unpriced model is charged at the fail-closed $15/$75 per 1M rate until added to `CostCalculator`.
+
+### Settings → Platform (platform admins)
+
+| Key | Default | Notes |
+|---|---|---|
+| `RemoteAgent:AutoApprove` | `false` (Production locked) | Unattended remote execution. |
+| `Tools:EnforceByDefault` | `true` in Production, else `false` | Fail-closed tool policy. |
+| `Workspaces:AllowedHosts` | empty | Self-hosted GitHub Enterprise / Azure DevOps Server hosts, comma-separated (atop `SsrfGuard`; public provider hosts always allowed). |
+| `Integration:BuildVerifier:Enabled` | `false` in Production | Lets agents compile generated code. |
+| `Integration:BuildVerifier:Sandbox` | `InProcess` (Dev) | `Container` = ephemeral no-network `docker run`. Locked to `Container` in Production. |
+| `Integration:BuildVerifier:ContainerImage` | `mcr.microsoft.com/dotnet/sdk:10.0` | Allow-listed image reference — never a docker flag. |
+| `Integration:BuildVerifier:CpuLimit` / `MemoryLimit` / `PidsLimit` | `2.0` / `1g` / `256` | Container quotas. |
+| `Integration:BuildVerifier:TimeoutSeconds` | `90` | Process tree killed on overrun. |
+
+### Other per-tenant settings
+
+- **Tool allowlist** — Policy app (`tools/allowlist`).
+- **GitHub** (`Github:Pat`, `RepoOwner`, `RepoName`, `BaseBranch`) — Settings, encrypted per tenant.
+  PAT must start `ghp_`/`github_pat_`/`gho_`.
+- **Per-viewer preferences** (theme, wallpaper, glass, clock, *Animated agents*) — System → Appearance,
+  stored in the browser only.
+
+## Legacy `/settings` endpoint
+
+`POST /settings` (admin) still accepts exactly `Llm:ForceProvider`, `Llm:Claude:ApiKey`,
 `Llm:AzureOpenAi:ApiKey`, `Llm:AzureOpenAi:Endpoint`, `Github:Pat`, `Github:RepoOwner`,
-`Github:RepoName`, `Github:BaseBranch`. Anything else → 400. Values are validated (provider names,
-https URL shape, PAT prefix). An empty value clears the override back to the platform fallback.
-`GET /settings/{prefix}` reads the `Llm` and `Github` prefixes only.
+`Github:RepoName`, `Github:BaseBranch` (`SettingsKeyRegistry`); anything else → 400. It writes the same
+tenant rows the registry reads. New settings are added as descriptors, not to this allowlist.
 
 ## Notes
 
-- Environment detection for the dev-only fallbacks reads `ASPNETCORE_ENVIRONMENT` first, then
-  `DOTNET_ENVIRONMENT` (standard ASP.NET Core precedence).
-- **Removed (0.6.0):** the dead `Auth:Bearer` section (`Issuer`/`Audience`/`Secret`/`OperatorPassword`)
-  and `Pipeline:EnableHumanInTheLoop` — neither was read by any code path. Keycloak OIDC is the only
-  shipped auth mode; the human-in-the-loop gate is roadmap work and will return as a real feature.
+- Environment detection for Development-only defaults reads `ASPNETCORE_ENVIRONMENT`, then
+  `DOTNET_ENVIRONMENT`.
+- **Removed (C.6):** the `Llm`, `Agents` and `Pipeline` sections of both hosts' `appsettings.json`
+  (they duplicated the code defaults and disagreed on provider casing). An existing deployment that set
+  them via env vars keeps working — those values are now the *seed* tier.
+- **Removed (0.6.0):** `Auth:Bearer` and `Pipeline:EnableHumanInTheLoop` (never read).
