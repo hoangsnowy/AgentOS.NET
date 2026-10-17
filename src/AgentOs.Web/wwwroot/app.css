@@ -2204,6 +2204,20 @@ input[type=range] { accent-color: var(--accent); }
 }
 @media (prefers-reduced-motion: reduce) { .about-chevron { transition: none; } }
 
+/* Audit log (Settings → Audit log) — filter chips + an append-only event table. Tokens only. */
+.audit-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.audit-actions a.btn { text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+.audit-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: 0 0 var(--space-3); }
+.audit-filter { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-2); color: var(--txt-soft); font-size: 12px; cursor: pointer; }
+.audit-filter:hover { background: var(--bg-3); }
+.audit-filter.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.audit-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.audit-count { font-family: var(--mono); font-size: 11px; opacity: .8; }
+.audit-table td { vertical-align: top; }
+.audit-when { white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--txt-soft); }
+.audit-detail { overflow-wrap: anywhere; font-size: 12px; }
+.audit-foot { margin-top: var(--space-2); font-size: 12px; }
+
 /* Agent profiles (Settings → Agent profiles) — compact editable data-table; tokens only. */
 .agent-profiles-scroll { overflow-x: auto; }
 .agent-profiles td { vertical-align: top; }

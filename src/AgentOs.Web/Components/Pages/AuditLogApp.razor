@@ -1,0 +1,149 @@
+@* AuditLogApp — Settings → Audit log. The tenant's audit trail: settings changes (with old → new; secrets
+   masked, stored keys/prompts shown as "set (N chars)"), member lifecycle, invitations and sign-in events.
+   Admins see their own tenant; platform admins can switch to the platform scope (platform settings). Filter
+   by kind, export CSV (formula-safe). Tenant is read from AuthenticationState — a circuit has no HttpContext. *@
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using AgentOs.Modules.Tenants
+@inject IAuditLog Audit
+
+@if (!_resolved)
+{
+    <Spinner />
+}
+else if (!_isAdmin)
+{
+    <div class="login-error">Admin role required to view the audit log.</div>
+}
+else
+{
+    <header class="page-head">
+        <div>
+            <h1 class="page-title">Audit log · <code>@(_platformScope ? "platform" : _tenantId)</code></h1>
+            <p class="page-sub">Who changed what, and when — settings, members, invitations and sign-in. Append-only.</p>
+        </div>
+        <div class="audit-actions">
+            @if (_isPlatformAdmin)
+            {
+                <select class="prefs-select" value="@(_platformScope ? "platform" : "tenant")" @onchange="OnScopeChanged" aria-label="Scope">
+                    <option value="tenant">This tenant</option>
+                    <option value="platform">Platform settings</option>
+                </select>
+            }
+            <a class="btn btn-sm" href="@($"/audit/export?scope={(_platformScope ? "platform" : "tenant")}")" download>
+                <Icon Name="file" Size="13" /> Export CSV
+            </a>
+            <Btn Size="Btn.ButtonSize.Sm" OnClick="LoadAsync" Disabled="_loading"><Icon Name="arrow-clockwise" Size="13" Loop="_loading" /> Refresh</Btn>
+        </div>
+    </header>
+
+    <div class="audit-filters" role="group" aria-label="Filter by kind">
+        @foreach (var k in Kinds)
+        {
+            <button class="audit-filter @(_kind == k.Key ? "active" : "")" aria-pressed="@(_kind == k.Key ? "true" : "false")" @onclick="@(() => _kind = k.Key)">
+                @k.Label <span class="audit-count">@Count(k.Key)</span>
+            </button>
+        }
+    </div>
+
+    @if (_rows is null) { <Spinner /> }
+    else if (Filtered().Count == 0)
+    {
+        <EmptyState Icon="clock-counter" Title="Nothing recorded yet" Hint="Changes appear here as soon as someone edits a setting, invites a member or signs in." />
+    }
+    else
+    {
+        <Panel>
+            <table class="data-table audit-table">
+                <thead>
+                    <tr><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in Filtered())
+                    {
+                        <tr>
+                            <td class="audit-when" title="@e.TimestampUtc.ToString("u")">@e.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td>@(string.IsNullOrEmpty(e.UserId) ? "—" : e.UserId)</td>
+                            <td><span class="badge @BadgeClass(e.Action)">@e.Action</span></td>
+                            <td class="audit-detail">@(e.Target ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </Panel>
+        <p class="muted audit-foot">Showing the latest @(_rows.Count) events. Export for the full record.</p>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private const int Max = 500;
+    private bool _resolved;
+    private bool _isAdmin;
+    private bool _isPlatformAdmin;
+    private bool _platformScope;
+    private bool _loading;
+    private string _tenantId = "default";
+    private string _kind = "all";
+    private IReadOnlyList<AuditEntry>? _rows;
+
+    private sealed record Kind(string Key, string Label);
+
+    private static readonly Kind[] Kinds = [new("all", "All"), new("settings", "Settings"), new("members", "Members"), new("signin", "Sign-in")];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _isAdmin = state.User.IsAdmin();
+            _isPlatformAdmin = state.User.IsPlatformAdmin();
+            _tenantId = state.User.GetTenantId() ?? "default";
+        }
+        _resolved = true;
+        if (_isAdmin) { await LoadAsync(); }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _rows = await Audit.ListAsync(_platformScope ? AuditScopes.Platform : _tenantId, Max);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnScopeChanged(ChangeEventArgs e)
+    {
+        _platformScope = _isPlatformAdmin && e.Value?.ToString() == "platform";
+        _rows = null;
+        await LoadAsync();
+    }
+
+    /// <summary>Which filter an action belongs to.</summary>
+    internal static string KindOf(string action) => action switch
+    {
+        _ when action.StartsWith("setting.", StringComparison.Ordinal) => "settings",
+        _ when action.StartsWith("member.", StringComparison.Ordinal) || action.StartsWith("invitation.", StringComparison.Ordinal) || action == "tenant.created" => "members",
+        _ when action.StartsWith("login.", StringComparison.Ordinal) || action.StartsWith("signup.", StringComparison.Ordinal) => "signin",
+        _ => "other",
+    };
+
+    private List<AuditEntry> Filtered()
+        => _rows is null ? [] : _kind == "all" ? [.. _rows] : _rows.Where(r => KindOf(r.Action) == _kind).ToList();
+
+    private int Count(string kind) => _rows is null ? 0 : kind == "all" ? _rows.Count : _rows.Count(r => KindOf(r.Action) == kind);
+
+    private static string BadgeClass(string action) => action switch
+    {
+        "login.failed" or "member.removed" => "err",
+        _ when action.StartsWith("setting.", StringComparison.Ordinal) => "info",
+        _ when action.StartsWith("member.", StringComparison.Ordinal) || action.StartsWith("invitation.", StringComparison.Ordinal) => "warn",
+        _ => "ok",
+    };
+}

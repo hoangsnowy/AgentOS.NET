@@ -30,7 +30,11 @@ When reporting, include: affected component, reproduction steps, and impact.
   untrusted data before it reaches a prompt.
 - **Operator locks** — Production pins the riskiest settings so the Settings UI cannot change them
   ([CONFIG.md](docs/CONFIG.md#production-locks-appsettingsproductionjson-api--web)); platform-wide
-  settings require the `platform-admin` role, and every settings change is audited with secrets masked.
+  settings require the `platform-admin` role.
+- **Audit trail** — every settings change (old → new, secrets masked), every direct config write (LLM keys,
+  tokens, prompts, tool policy, budget — recorded as *set / cleared*, never the value), member lifecycle,
+  invitations and sign-in land in an append-only audit log, viewable in **Settings → Audit log** and
+  exportable as formula-safe CSV. Platform-scope changes are visible to platform admins only.
 - **Tenant isolation** — row-level EF query filters; per-tenant keys are never mixed with another
   tenant's or the platform's.
 - **SSRF guard** — tenant-supplied hosts are validated and limited to an allowlist.
