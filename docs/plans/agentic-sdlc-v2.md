@@ -29,6 +29,10 @@
    its complexity and its data structure in the PR (see §2.7 playbook), ships a BenchmarkDotNet case
    when it is on a request path, and is guarded by a perf budget in CI. No O(n²) over runs, events,
    files or memories; no unbounded in-memory collections; no per-request reflection or regex rebuilds.
+   Use the .NET 9/10 primitives built for this: `FrozenDictionary/FrozenSet`, `SearchValues<T>`,
+   `System.Threading.Lock`, `Task.WhenEach`, `HybridCache`, `TimeProvider`, `TensorPrimitives` (SIMD
+   similarity), `Microsoft.Extensions.AI`/`VectorData`, and source generators (`[LoggerMessage]`,
+   `[GeneratedRegex]`, System.Text.Json) — performance is the top non-functional requirement.
 
 ## 1. Where we start (grounded 2026-10-17)
 
@@ -228,6 +232,7 @@ Production from the UI unless the operator allows it).
 | **C.1** `docs(adr)` | ADR-0011: tiers, precedence, key naming (`area.sub.key`), secrets, locks, hot reload, audit, export/import | Reviewed |
 | **C.2** `feat(config)` | **Settings registry** in SharedKernel: `SettingDescriptor` (key, type, scope, default, validation, secret, lock, UI group/label/help, restart-required), modules register descriptors in `IModule`; typed reader `ISettings` with per-scope cache, change notifications (no restart), seed-from-appsettings importer; `IRuntimeOverrides` + `budget/*` + `tools/*` re-implemented on top of it (no behaviour change) | Unit tests for precedence, locks, validation; existing Settings screens unchanged |
 | **C.3** `feat(config)` | **Settings audit + versioning**: every change records who, when, scope, before/after (secrets redacted) into Tenants audit; JSON **export/import** (GitOps-friendly, secrets excluded) | Change a key → audit row; round-trip export/import |
+| **C.3b** `feat(llm)` | **Model catalog**: per-model context window, max output, capabilities (sampling params, thinking/effort, long-context price tier) — seeded from the price table, refreshed from the Anthropic Models API (`max_input_tokens`, `max_tokens`, `capabilities`) where a key exists. **1M-token context is supported** (Claude 5.x, GPT long-context): limits are validated against the catalog, never a hard-coded cap; 1M is a ceiling, not a default — prompts still load context under a token budget | Picking a 1M model in the UI allows MaxTokens up to its 128K output and shows its context window |
 | **C.4** `feat(web)` | **Agent profiles & models UI**: per-role provider/model/temperature/max tokens/effort, pipeline NMax, failover chain, offline fallback, timeouts, **pricing table editor**; "test connection" uses the real provider and refuses the Offline substitute | Change Coding's model in the UI → next run uses it (Aspire), no restart |
 | **C.5** `feat(web)` | **Platform/System settings UI**: security defaults (auto-approve, enforce-by-default, allowed hosts), build-sandbox limits, MCP servers (moves from `Mcp:Servers`; becomes the per-tenant registry in P4.2), feature flags | Toggle enforce-by-default in UI → policy gate reflects it immediately |
 | **C.6** `refactor(config)` | **Trim appsettings to bootstrap**: delete product sections from Api/Web appsettings (moved to seeds/defaults), one shared seed file for both hosts, fix the casing drift; docs/CONFIG.md rewritten as "what you set at deploy vs what you set in the UI" | `appsettings.json` contains only bootstrap keys; fresh standalone boot still runs with sane defaults |
