@@ -67,8 +67,22 @@ public sealed class GitHubPrServiceGuardTests
     {
         // A GitHub workspace that would otherwise pass every guard — only the canned output stops it.
         var ws = new WorkspaceDescriptor(Guid.NewGuid(), "t", SourceProviderKind.GitHub, "owner", "repo", null, "main", "tok");
-        var ex = await Should.ThrowAsync<InvalidOperationException>(
+        var ex = await Should.ThrowAsync<PrGateBlockedException>(
             () => Sut().OpenPrAsync(Result(codingProvider: "Offline"), ws, "title", "body", CancellationToken.None));
-        ex.Message.ShouldContain("offline canned client");
+        ex.Message.ShouldContain("offline fallback");
+    }
+
+    [Theory]
+    [InlineData(PipelineStatus.MaxIterationReached, 0.55)]
+    [InlineData(PipelineStatus.Done, 0.4)]
+    public async Task OpenPr_QaNotPassed_RefusedAtTheSeam(PipelineStatus status, double score)
+    {
+        // Plan 0.5: no caller can open a PR for a result QA didn't pass — the gate sits in the service itself.
+        var ws = new WorkspaceDescriptor(Guid.NewGuid(), "t", SourceProviderKind.GitHub, "owner", "repo", null, "main", "tok");
+        var zero = new AgentMetrics("p", "m", 0, 0, 0m, TimeSpan.Zero);
+        var result = Result() with { Status = status, QaHistory = [new QaReport(score, false, true, [], [], zero)] };
+        var ex = await Should.ThrowAsync<PrGateBlockedException>(
+            () => Sut().OpenPrAsync(result, ws, "title", "body", CancellationToken.None));
+        ex.Message.ShouldContain("QA did not pass");
     }
 }

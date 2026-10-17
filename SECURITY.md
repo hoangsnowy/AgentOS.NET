@@ -32,7 +32,11 @@ When reporting, include: affected component, reproduction steps, and impact.
   ([CONFIG.md](docs/CONFIG.md#production-locks-appsettingsproductionjson-api--web)); platform-wide
   settings require the `platform-admin` role, and every settings change is audited with secrets masked.
 - **Tenant isolation** — row-level EF query filters; per-tenant keys are never mixed with another
-  tenant's or the platform's.
+  tenant's or the platform's. Cross-tenant endpoints (list / provision tenants) require `platform-admin`,
+  never the per-tenant `admin` role; a real-auth E2E proves a second tenant sees none of the first's data.
+- **QA gate before every PR** — a pipeline result becomes a pull request only when QA passed on real model
+  output (`PrGate`, enforced inside the PR service itself): failed runs, the iteration cap with QA still
+  failing, and offline canned text are blocked with the reason on the session.
 - **SSRF guard** — tenant-supplied hosts are validated and limited to an allowlist.
 - **Supply chain / SAST** — Dependabot, dependency review, SHA-pinned actions, CodeQL with
   compiler-enforced twins for its query classes.
