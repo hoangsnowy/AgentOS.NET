@@ -93,7 +93,35 @@ public sealed class GitHubSourceProvider : ISourceProvider
             DefaultBranch: repo.DefaultBranch ?? workspace.DefaultBranch,
             Description: repo.Description,
             Readme: readme,
-            TopLevelPaths: topLevel);
+            TopLevelPaths: topLevel)
+        {
+            Instructions = await ReadInstructionsAsync(client, workspace, topLevel).ConfigureAwait(false),
+        };
+    }
+
+    // E0.7: fetch the known agent-instruction files in parallel. Root files are only requested when the root
+    // listing shows them (no wasted 404s); nested ones (.github/…, .agentos/…) when their folder exists.
+    private static async Task<IReadOnlyList<RepoInstructionFile>> ReadInstructionsAsync(
+        GitHubClient client, WorkspaceDescriptor workspace, IReadOnlyCollection<string> topLevel)
+    {
+        var present = new HashSet<string>(topLevel, StringComparer.OrdinalIgnoreCase);
+        var wanted = RepoInstructions.KnownPaths
+            .Where(p => present.Contains(p.Split('/')[0]))
+            .ToArray();
+        var reads = wanted.Select(async path =>
+        {
+            try
+            {
+                var bytes = await client.Repository.Content.GetRawContent(workspace.Owner, workspace.Repo, path).ConfigureAwait(false);
+                return (path, System.Text.Encoding.UTF8.GetString(bytes));
+            }
+            catch (NotFoundException)
+            {
+                return (path, string.Empty);
+            }
+        });
+        var files = await Task.WhenAll(reads).ConfigureAwait(false);   // order preserved = precedence order
+        return RepoInstructions.Budget(files);
     }
 
     // ── Boards (GitHub Projects v2, via GraphQL — Octokit REST doesn't cover Projects v2) ────────

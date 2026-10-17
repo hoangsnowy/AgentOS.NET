@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain;
 using AgentOs.Domain.Llm;
+using AgentOs.Domain.Pipeline;
 using AgentOs.Modules.Pipeline.Metrics;
 using AgentOs.Modules.Pipeline.Prompts;
 using AgentOs.Modules.Pipeline.Validation;
@@ -87,6 +88,12 @@ public abstract class LlmAgentBase
         var systemPrompt = _prompts is null
             ? DefaultSystemPrompt
             : await _prompts.ResolveAsync(PromptKey, DefaultSystemPrompt, ct).ConfigureAwait(false);
+        // E0.7: the target repo's own agent instructions (AGENTS.md, CLAUDE.md, …), when the run has a repo.
+        // Appended after the agent's prompt so its role + output contract stay first and authoritative.
+        if (RunGuidance.Current is { Length: > 0 } guidance)
+        {
+            systemPrompt += guidance;
+        }
 
         // Resolve the live profile per call (an edit in Settings applies to the next call) and pick the client
         // for its provider — never frozen at construction.

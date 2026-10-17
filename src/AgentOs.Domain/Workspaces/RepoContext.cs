@@ -17,7 +17,11 @@ public sealed record RepoContext(
     string DefaultBranch,
     string? Description,
     string Readme,
-    IReadOnlyList<string> TopLevelPaths);
+    IReadOnlyList<string> TopLevelPaths)
+{
+    /// <summary>Agent instruction files found in the repo (AGENTS.md, CLAUDE.md, …), already budgeted.</summary>
+    public IReadOnlyList<RepoInstructionFile> Instructions { get; init; } = [];
+}
 
 /// <summary>Outcome of validating a connection's credentials + repo existence.</summary>
 /// <param name="Ok">True when the token can reach the repo.</param>
