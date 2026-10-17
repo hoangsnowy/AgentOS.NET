@@ -20,13 +20,16 @@
         reset    stop and DELETE the lab's data volumes (Postgres + Keycloak) — asks unless -Force
         logs     tail the AppHost log
         test     run the lab integration tests (real GitHub / Azure DevOps) + the real-auth UI E2E against the lab
+        pair     pair THIS machine as a RemoteAgent runner (claude -p, your Claude subscription) and route the lab
+                 tenant's agents to it — real agent runs with no API key on the server (prompt mode, no YOLO)
+        unpair   stop the paired runner
 
 .EXAMPLE
     pwsh infra/lab/lab.ps1 up
     pwsh infra/lab/lab.ps1 update -Ref origin/feat/my-branch
 #>
 param(
-    [Parameter(Position = 0)][ValidateSet('up', 'update', 'down', 'status', 'reset', 'logs', 'test')][string]$Command = 'status',
+    [Parameter(Position = 0)][ValidateSet('up', 'update', 'down', 'status', 'reset', 'logs', 'test', 'pair', 'unpair')][string]$Command = 'status',
     [string]$Ref = 'origin/main',
     [string]$LabDir = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) '..\AgentOs-lab'),
     [switch]$Force
@@ -51,6 +54,14 @@ function Get-LabProcess {
     if (-not (Test-Path $PidFile)) { return $null }
     $id = [int](Get-Content $PidFile)
     return Get-Process -Id $id -ErrorAction SilentlyContinue
+}
+
+function Stop-Runner {
+    $runnerPid = Join-Path $StateDir 'runner.pid'
+    if (-not (Test-Path $runnerPid)) { return }
+    $p = Get-Process -Id ([int](Get-Content $runnerPid)) -ErrorAction SilentlyContinue
+    if ($p) { Write-Host "Stopping paired runner (pid $($p.Id))…"; Stop-Process -Id $p.Id -Force }
+    Remove-Item $runnerPid -Force
 }
 
 function Stop-Lab {
@@ -130,7 +141,25 @@ switch ($Command) {
         git -C $LabDir checkout --quiet --detach $Ref
         Start-Lab
     }
-    'down' { Stop-Lab; Write-Host 'Lab stopped.' }
+    'down' { Stop-Runner; Stop-Lab; Write-Host 'Lab stopped.' }
+    'pair' {
+        if (-not (Test-Web)) { throw "Lab is not running — start it with: pwsh infra/lab/lab.ps1 up" }
+        if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { throw 'claude CLI not on PATH — install Claude Code and sign in first.' }
+        Stop-Runner
+        Write-Host '== Building the runner + Playwright from the lab worktree'
+        dotnet build (Join-Path $LabDir 'src/AgentOs.RemoteAgent') -c Release | Out-Null
+        $pwDir = Join-Path $LabDir 'tests/AgentOs.E2E.Tests/bin/Release/net10.0/.playwright'
+        if (-not (Test-Path $pwDir)) { dotnet build (Join-Path $LabDir 'tests/AgentOs.E2E.Tests') -c Release | Out-Null }
+        $env:PW_PACKAGE = Join-Path $pwDir 'package'
+        $env:LAB_URL = $WebUrl
+        $env:RUNNER_EXE = Join-Path $LabDir 'src/AgentOs.RemoteAgent/bin/Release/net10.0/AgentOs.RemoteAgent.exe'
+        $env:STATE_DIR = $StateDir
+        & (Join-Path $pwDir 'node/win32_x64/node.exe') (Join-Path $PSScriptRoot 'pair-runner.js')
+        if ($LASTEXITCODE -ne 0) { throw 'Pairing failed — see the message above.' }
+        Start-Sleep -Seconds 4
+        Get-Content (Join-Path $StateDir 'runner.log') -Tail 3
+    }
+    'unpair' { Stop-Runner; Write-Host 'Runner stopped. (Revoke it in Board → Runners to retire its token.)' }
     'status' { Show-Status }
     'logs' { Get-Content $LogFile -Tail 80 -Wait }
     'test' {
