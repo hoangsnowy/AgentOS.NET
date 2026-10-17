@@ -134,7 +134,9 @@ var api = (stack.IsLab && !isPublish
         : builder.AddProject<Projects.AgentOs_Api>("api"))
     .WithReference(db).WaitFor(db)
     .WithReference(keycloak).WaitFor(keycloak)
-    .WithEnvironment("Auth__Keycloak__Authority", RealmAuthority(keycloak.GetEndpoint("http")))
+    .WithEnvironment("Auth__Keycloak__Authority", stack.IsLab && !isPublish
+        ? ReferenceExpression.Create($"{StackProfile.LabKeycloakOrigin}/realms/agentic")
+        : RealmAuthority(keycloak.GetEndpoint("http")))
     .WithEnvironment("Auth__Keycloak__Audience", "agentic-api")
     .WithEnvironment("Auth__Keycloak__Admin__BaseUrl", keycloak.GetEndpoint("http"))
     .WithEnvironment("Auth__Keycloak__Admin__Realm", "agentic")
@@ -179,7 +181,9 @@ web
     .WithEnvironment("Auth__DevAutoLogin", "false")
     .WithReference(db).WaitFor(db)
     .WithReference(keycloak).WaitFor(keycloak)
-    .WithEnvironment("Auth__Keycloak__Authority", RealmAuthority(keycloak.GetEndpoint("http")))
+    .WithEnvironment("Auth__Keycloak__Authority", stack.IsLab && !isPublish
+        ? ReferenceExpression.Create($"{StackProfile.LabKeycloakOrigin}/realms/agentic")
+        : RealmAuthority(keycloak.GetEndpoint("http")))
     .WithEnvironment("Auth__Keycloak__Audience", "agentic-api")
     .WithEnvironment("Auth__Keycloak__ClientId", "agentic-web")
     .WithEnvironment("Auth__Keycloak__ClientSecret", kcWebClientSecret)
@@ -200,6 +204,9 @@ if (!isPublish) { web.WaitFor(mailhog!); }
 // tier (env vars); a per-tenant key set in Settings still wins. Never set for the dev stack.
 if (stack.IsLab && !isPublish)
 {
+    // Own cookie names too (defense in depth next to the own hostnames — see StackProfile).
+    web.WithEnvironment("Auth__CookiePrefix", "agentic-lab");
+
     foreach (var (secret, env) in new[]
     {
         ("Lab:Claude:ApiKey", "Llm__Claude__ApiKey"),
@@ -243,6 +250,17 @@ static ReferenceExpression KeycloakJdbcUrl(IResourceBuilder<AzurePostgresFlexibl
 // migration for existing dev data); lab shifts every host port by +1000 and uses its own named volumes.
 internal sealed class StackProfile(string? name)
 {
+    /// <summary>
+    /// Lab hostnames. Cookies are scoped to the host, not the port, so a lab on "localhost" would share one
+    /// cookie jar with the dev stack, its Keycloak and every other local app — sessions overwrite each other
+    /// and the jar overflows (HTTP 431, lost OIDC correlation cookies). *.dev.localhost names resolve to
+    /// loopback in browsers and .NET with no hosts-file edit, and the ASP.NET dev certificate already covers
+    /// *.dev.localhost, so the lab gets its own cookie jars for both the desktop and Keycloak.
+    /// </summary>
+    public const string LabWebOrigin = "https://lab.dev.localhost:6180";
+
+    public const string LabKeycloakOrigin = "https://labkc.dev.localhost:9080";
+
     private const int LabPortOffset = 1000;
 
     public bool IsLab { get; } = string.Equals(name, "lab", StringComparison.OrdinalIgnoreCase);

@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -133,12 +134,9 @@ public sealed class UsageNormalizingChatClient(IChatClient inner) : DelegatingCh
     {
         await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
         {
-            foreach (var content in update.Contents)
+            foreach (var uc in update.Contents.OfType<UsageContent>())
             {
-                if (content is UsageContent uc)
-                {
-                    uc.Details = UsageReader.Normalize(uc.Details, update.RawRepresentation) ?? uc.Details;
-                }
+                uc.Details = UsageReader.Normalize(uc.Details, update.RawRepresentation) ?? uc.Details;
             }
             yield return update;
         }

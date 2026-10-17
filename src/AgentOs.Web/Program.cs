@@ -117,6 +117,12 @@ var oidcAuthority = keycloak["Authority"] is { Length: > 0 } configuredAuthority
         ? "http://localhost:8080/realms/agentic"
         : throw new InvalidOperationException(
             "Auth:Keycloak:Authority is required outside Development when DevAutoLogin is off.");
+// Per-instance cookie names. Cookies are scoped to the HOST, not the port, so two AgentOS instances on the
+// same host (dev + lab on localhost, or several deployments under one parent domain) would otherwise share
+// and overwrite each other's auth/correlation/antiforgery cookies. The default prefix keeps today's names.
+var cookiePrefix = AuthCookies.Prefix(builder.Configuration["Auth:CookiePrefix"]);
+builder.Services.AddAntiforgery(o => o.Cookie.Name = $"{cookiePrefix}.af");
+
 builder.Services
     .AddAuthentication(options =>
     {
@@ -125,7 +131,7 @@ builder.Services
     })
     .AddCookie(options =>
     {
-        options.Cookie.Name = "agentic.auth";
+        options.Cookie.Name = $"{cookiePrefix}.auth";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Lax;
         // Always send the cookie over HTTPS in non-Development; in dev we may run plain http://
@@ -168,8 +174,10 @@ builder.Services
         // is sent without requiring Secure; SameAsRequest keeps it Secure when the scheme really is https.
         options.CorrelationCookie.SameSite = SameSiteMode.Lax;
         options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.CorrelationCookie.Name = $"{cookiePrefix}.oidc.correlation.";
         options.NonceCookie.SameSite = SameSiteMode.Lax;
         options.NonceCookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.NonceCookie.Name = $"{cookiePrefix}.oidc.nonce.";
         // Realm `agentic-web` client attaches `tenant` + `realm-roles` + `preferred-username` +
         // `email` claims via inline protocol mappers — we only request the `openid` base scope.
         options.Scope.Clear();
@@ -182,6 +190,11 @@ builder.Services
         options.Events = new OpenIdConnectEvents
         {
             OnTokenValidated = ctx => { JwtAuthExtensions.FlattenRealmRoles(ctx.Principal); return Task.CompletedTask; },
+            OnTicketReceived = ctx => { AuthCookies.ClearRetry(ctx.HttpContext, cookiePrefix); return Task.CompletedTask; },
+            // A callback that can't be completed (correlation/nonce cookie lost or expired, a stale tab, the
+            // IdP restarted) restarts the sign-in ONCE instead of throwing an exception page; a second
+            // failure lands on a plain "couldn't sign you in" page with the reason and a retry link.
+            OnRemoteFailure = ctx => AuthCookies.HandleRemoteFailureAsync(ctx, cookiePrefix),
         };
     });
 
@@ -416,6 +429,10 @@ else
         Results.Challenge(
             new AuthenticationProperties { RedirectUri = SafeLocalReturn(returnUrl) },
             new[] { OpenIdConnectDefaults.AuthenticationScheme }));
+
+    // Shown only after a sign-in callback failed twice in a row (see AuthCookies.HandleRemoteFailureAsync).
+    app.MapGet("/account/signin-failed", (string? reason, string? returnUrl) => AuthCookies.FailedPage(reason, returnUrl))
+        .AllowAnonymous();
 
     app.MapGet("/account/logout", () =>
         Results.SignOut(
