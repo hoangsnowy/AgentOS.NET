@@ -36,6 +36,10 @@ else
     <Panel Title="LLM">
         <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@LlmKeys" />
     </Panel>
+    <Panel Title="Self-hosted models (OpenAI-compatible)">
+        <p class="muted platform-hint">vLLM, Ollama, LM Studio, Azure AI Foundry or a corporate gateway. Pick <code>OpenAICompatible</code> as an agent's provider (or force it) in LLM &amp; providers. Platform-only: AgentOS calls this endpoint from the server.</p>
+        <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@CompatKeys" />
+    </Panel>
 }
 
 @code {
@@ -49,6 +53,14 @@ else
     ];
 
     private static readonly string[] LlmKeys = [AgentOs.Modules.Llm.LlmSettings.OfflineFallback];
+    private static readonly string[] CompatKeys =
+    [
+        AgentOs.Modules.Llm.LlmSettings.CompatEndpoint,
+        AgentOs.Modules.Llm.LlmSettings.CompatApiKey,
+        AgentOs.Modules.Llm.LlmSettings.CompatModel,
+        AgentOs.Modules.Llm.LlmSettings.CompatInputPrice,
+        AgentOs.Modules.Llm.LlmSettings.CompatOutputPrice,
+    ];
     private static readonly string[] LimitKeys =
     [
         AgentOs.Modules.Pipeline.Limits.RunLimitSettings.MaxConcurrent,

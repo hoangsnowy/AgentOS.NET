@@ -2204,6 +2204,9 @@ input[type=range] { accent-color: var(--accent); }
 }
 @media (prefers-reduced-motion: reduce) { .about-chevron { transition: none; } }
 
+/* Platform settings — one-line explanation above a settings group. */
+.platform-hint { margin: 0 0 var(--space-2); font-size: 12px; }
+
 /* Audit log (Settings → Audit log) — filter chips + an append-only event table. Tokens only. */
 .audit-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .audit-actions a.btn { text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
