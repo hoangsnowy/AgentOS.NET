@@ -1556,6 +1556,27 @@ else if (_tab == Tab.Sessions)
         catch (TaskCanceledException) { return null; }
     }
 
+    // The target repo's agent-instruction files, budgeted (E0.7). Best-effort like the ticket body: a backend
+    // without repo context or an API failure means "no guidance", never a failed run.
+    private static async Task<IReadOnlyList<RepoInstructionFile>> ReadRepoGuidanceAsync(
+        IServiceScope scope, WorkspaceEntity board, string tenantId, SessionRepoEntity primary, string pat)
+    {
+        var resolver = scope.ServiceProvider.GetRequiredService<ISourceProviderResolver>();
+        if (!resolver.TryResolve(board.Kind, out var provider) || provider is null)
+        {
+            return [];
+        }
+        var repo = RepoDescriptor(board, tenantId, primary.Owner, primary.Repo, primary.DefaultBranch, pat);
+        try
+        {
+            return (await provider.ReadRepoContextAsync(repo).ConfigureAwait(false)).Instructions;
+        }
+        catch (System.Net.Http.HttpRequestException) { return []; }
+        catch (Octokit.ApiException) { return []; }
+        catch (InvalidOperationException) { return []; }
+        catch (TaskCanceledException) { return []; }
+    }
+
     // The ai:ready tickets on the board that the agent can run unattended (real issue, has a repo).
     private List<BoardTicket> ReadyTickets() => _tickets is null
         ? new List<BoardTicket>()
@@ -1846,6 +1867,15 @@ else if (_tab == Tab.Sessions)
 
         var ticketBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
         var story = IssueToStoryAdapter.ToUserStory(session.Title, ticketBody, QualityNMax());
+
+        // E0.7: the repo's own agent instructions (AGENTS.md, CLAUDE.md, Copilot instructions, …) guide every
+        // agent of this run; the session feed says which files were used so the outcome is explainable.
+        var guidance = await ReadRepoGuidanceAsync(scope, board, tenantId, primary, pat).ConfigureAwait(false);
+        Publish(SessionRunEventKind.Step, guidance.Count == 0
+            ? $"{repoLabel} — no repo agent instructions found (AGENTS.md, CLAUDE.md, …)."
+            : $"{repoLabel} — following repo instructions: {RepoInstructions.Describe(guidance)}.", repoLabel);
+        using var guidanceScope = RunGuidance.Push(RepoInstructions.ToPromptBlock(guidance));
+
         PipelineResult? result = null;
         string? error = null;
         // The pipeline runs through PersistingOrchestratorAgent, which applies the S1 per-tenant budget gate

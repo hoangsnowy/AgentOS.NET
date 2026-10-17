@@ -287,6 +287,13 @@ in the desktop and applies on the next call:
 - **Settings → Agent profiles** — per-agent provider, model, temperature, max output tokens, QA-loop cap.
 - **Settings → Platform** (`platform-admin` only) — remote auto-approve, fail-closed tool policy,
   allowed self-hosted Git hosts, build sandbox (mode, image, quotas), offline fallback.
+- **Settings → Prompts** — per-tenant system prompts for the Requirement, Coding, Testing and QA agents.
+- **Settings → Audit log** — who changed what (settings, keys — never their values —, members, sign-in), CSV export.
+
+**Your repo's own rules.** When a Board ticket runs against a repo, every agent follows the repo's agent
+instructions — `.agentos/instructions.md`, `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`,
+`.cursorrules` (budgeted to ~4k tokens, fenced below the agent's own rules); the session feed names the
+files it used.
 
 `appsettings.json` holds bootstrap keys only — database, sign-in, logging, operator locks. Any setting
 can still be **seeded** from the environment (`Agents__Coding__Model=gpt-5.4`, `Llm__Claude__ApiKeys__0=…`).

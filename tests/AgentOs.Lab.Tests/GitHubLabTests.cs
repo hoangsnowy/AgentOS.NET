@@ -60,6 +60,18 @@ public sealed class GitHubLabTests
     }
 
     [Fact]
+    public async Task ReadRepoContext_ReadsTheRepoAgentInstructions()
+    {
+        // E0.7: the sandbox repo ships an AGENTS.md; the real GitHub read must find it so every agent follows it.
+        SkipUnlessConfigured();
+        var ctx = await _github.ReadRepoContextAsync(Repo());
+        var agents = ctx.Instructions.ShouldHaveSingleItem();
+        agents.Path.ShouldBe("AGENTS.md");
+        agents.Content.ShouldContain("xUnit v3 + Shouldly");
+        RepoInstructions.ToPromptBlock(ctx.Instructions).ShouldContain("<repo_guidance path=\"AGENTS.md\">");
+    }
+
+    [Fact]
     public async Task ReadTicketBody_ReturnsTheLiveIssueDescription()
     {
         SkipUnlessConfigured();

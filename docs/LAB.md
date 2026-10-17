@@ -89,7 +89,7 @@ cleans up what it creates (labels deleted, created issues closed). What they cov
 
 | Area | Checks |
 |---|---|
-| GitHub | token + repo validation, repo listing, README grounding for the Requirement agent, live ticket body, idempotent label sync, Projects board read + ticket creation |
+| GitHub | token + repo validation, repo listing, README grounding for the Requirement agent, **repo agent instructions (the sandbox's `AGENTS.md`)**, live ticket body, idempotent label sync, Projects board read + ticket creation |
 | Azure DevOps | PAT + repo validation, repo listing |
 | Multi-tenant (real-auth UI) | a second tenant created through `/signup` sees none of tenant `default`'s boards, runners, evidence or runs, and Users lists only its own member; the tenant, its rows and its Keycloak user are removed afterwards |
 | Real-auth UI | sign-in, Users/invitation email (MailHog), budget gate, Board runners, System → About (every service healthy) |
