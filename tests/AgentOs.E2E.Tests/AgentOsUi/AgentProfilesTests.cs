@@ -30,10 +30,9 @@ internal static class AgentProfilesFlow
     {
         var win = await OpenAsync(page);
         var qaRow = win.Locator(".agent-profiles tbody tr", new() { HasTextString = "Qa" }).First;
-        var model = qaRow.Locator("input[aria-label=\"Qa model\"]");
+        var model = qaRow.Locator("select[aria-label=\"Qa model\"]");
 
-        await model.FillAsync(NewModel);
-        await model.PressAsync("Tab");   // commit (@onchange)
+        await model.SelectOptionAsync(NewModel);   // a real dropdown (ModelPicker), not a filtered datalist
         await qaRow.GetByRole(AriaRole.Button, new() { Name = "Save" }).ClickAsync();
 
         await Assertions.Expect(qaRow.Locator(".badgepill").First).ToContainTextAsync("This tenant");
@@ -45,11 +44,11 @@ internal static class AgentProfilesFlow
         await reopenDesktop();
         win = await OpenAsync(page);
         qaRow = win.Locator(".agent-profiles tbody tr", new() { HasTextString = "Qa" }).First;
-        await Assertions.Expect(qaRow.Locator("input[aria-label=\"Qa model\"]")).ToHaveValueAsync(NewModel);
+        await Assertions.Expect(qaRow.Locator("select[aria-label=\"Qa model\"]")).ToHaveValueAsync(NewModel);
 
         // Reset returns to the inherited value and clears the tenant badge (also leaves the env clean).
         await qaRow.GetByRole(AriaRole.Button, new() { Name = "Reset" }).ClickAsync();
-        await Assertions.Expect(qaRow.Locator("input[aria-label=\"Qa model\"]")).Not.ToHaveValueAsync(NewModel);
+        await Assertions.Expect(qaRow.Locator("select[aria-label=\"Qa model\"]")).Not.ToHaveValueAsync(NewModel);
         await Assertions.Expect(qaRow).Not.ToContainTextAsync("This tenant");
     }
 }

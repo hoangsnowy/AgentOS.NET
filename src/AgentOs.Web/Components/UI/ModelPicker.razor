@@ -1,0 +1,89 @@
+@* ModelPicker — a real dropdown of priced models (a datalist hides every option once the box has a value,
+   so it never looked selectable). Options are filtered to the selected provider's family (Claude → claude-*,
+   Azure/MAF → GPT/o-series; RemoteAgent/plugins → everything), each labelled with its list price, plus
+   "Custom…" for an arbitrary deployment/alias name. A value not in the list (an Azure alias) stays selected
+   as a custom entry instead of being silently replaced. *@
+
+@using System.Globalization
+@using AgentOs.Modules.Llm
+
+@if (_custom)
+{
+    <span class="model-picker">
+        <input class="prefs-input" disabled="@Disabled" aria-label="@AriaLabel" placeholder="deployment or model id"
+               value="@Value" @onchange="e => Commit(e.Value?.ToString()?.Trim() ?? string.Empty)" />
+        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" Disabled="@Disabled" OnClick="BackToList">List</Btn>
+    </span>
+}
+else
+{
+    <select class="prefs-select" disabled="@Disabled" aria-label="@AriaLabel" value="@SelectValue" @onchange="OnSelect">
+        @if (AllowInherit)
+        {
+            <option value="">— inherit —</option>
+        }
+        @if (IsUnlisted)
+        {
+            <option value="@Value">@Value (custom)</option>
+        }
+        @foreach (var m in Models)
+        {
+            <option value="@m">@Label(m)</option>
+        }
+        <option value="@CustomToken">Custom…</option>
+    </select>
+}
+
+@code {
+    private const string CustomToken = "__custom__";
+
+    /// <summary>Current model id.</summary>
+    [Parameter] public string Value { get; set; } = string.Empty;
+
+    /// <summary>Raised with the new model id.</summary>
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+
+    /// <summary>Provider whose models to list (null = all).</summary>
+    [Parameter] public string? Provider { get; set; }
+
+    /// <summary>Accessible name.</summary>
+    [Parameter] public string? AriaLabel { get; set; }
+
+    /// <summary>Read-only.</summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>Offer an empty "inherit" choice (settings that may be cleared).</summary>
+    [Parameter] public bool AllowInherit { get; set; }
+
+    private bool _custom;
+
+    private IReadOnlyList<string> Models => CostCalculator.KnownModelsFor(Provider);
+
+    private bool IsUnlisted => !string.IsNullOrWhiteSpace(Value) && !Models.Contains(Value, StringComparer.OrdinalIgnoreCase);
+
+    private string SelectValue => string.IsNullOrWhiteSpace(Value) ? string.Empty : Value;
+
+    private static string Label(string model) =>
+        CostCalculator.ListPrice(model) is { } p
+            ? $"{model}  ·  ${p.InputPerMillion.ToString("0.##", CultureInfo.InvariantCulture)} / ${p.OutputPerMillion.ToString("0.##", CultureInfo.InvariantCulture)}"
+            : model;
+
+    private async Task OnSelect(ChangeEventArgs e)
+    {
+        var v = e.Value?.ToString() ?? string.Empty;
+        if (v == CustomToken)
+        {
+            _custom = true;
+            return;
+        }
+        await Commit(v);
+    }
+
+    private async Task Commit(string v)
+    {
+        Value = v;
+        await ValueChanged.InvokeAsync(v);
+    }
+
+    private void BackToList() => _custom = false;
+}

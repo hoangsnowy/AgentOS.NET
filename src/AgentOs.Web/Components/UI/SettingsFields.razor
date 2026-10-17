@@ -1,5 +1,5 @@
 @* SettingsFields — renders registry settings (ADR-0011) as a form straight from their descriptors: the control
-   follows the kind (choice → select, boolean → Toggle, model → suggest list, secret → write-only password,
+   follows the kind (choice → select, boolean → Toggle, model → ModelPicker, secret → write-only password,
    numbers → number input), every field shows where its value comes from, and Save/Reset act per field.
    Platform-scope and operator-locked settings render read-only for a tenant admin. Reused by every
    settings surface so new settings get a UI by declaring a descriptor, not by writing markup. *@
@@ -9,13 +9,6 @@
 @inject ISettings Settings
 @inject ISettingsCatalog Catalog
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
-
-<datalist id="agentos-models-fields">
-    @foreach (var m in CostCalculator.KnownModels)
-    {
-        <option value="@m"></option>
-    }
-</datalist>
 
 @foreach (var f in _fields)
 {
@@ -68,9 +61,12 @@
                            min="@d.Min" max="@d.Max" step="@(d.Kind == SettingKind.WholeNumber ? "1" : "any")"
                            value="@f.Draft" @onchange="e => f.Draft = e.Value?.ToString() ?? string.Empty" />
                     break;
+                case SettingKind.Model:
+                    <ModelPicker Value="@f.Draft" ValueChanged="v => f.Draft = v" AllowInherit="true"
+                                 AriaLabel="@d.Label" Disabled="@readOnly" />
+                    break;
                 default:
                     <input class="prefs-input" disabled="@readOnly" aria-label="@d.Label"
-                           list="@(d.Kind == SettingKind.Model ? "agentos-models-fields" : null)"
                            value="@f.Draft" @onchange="e => f.Draft = e.Value?.ToString()?.Trim() ?? string.Empty" />
                     break;
             }
