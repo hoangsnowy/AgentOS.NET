@@ -243,7 +243,7 @@ internal static class WorkspaceEndpoints
         }
         var first = repos[0];
 
-        var token = await credentials.GetAsync(row.CredentialRef, ct).ConfigureAwait(false);
+        var token = await credentials.GetForTenantAsync(tenant.TenantId, row.CredentialRef, ct).ConfigureAwait(false);
         if (string.IsNullOrEmpty(token))
         {
             return Results.Problem(

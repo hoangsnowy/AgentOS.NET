@@ -56,7 +56,8 @@ public sealed class WorkspaceConnectorTests
         result.Workspace.ProjectNodeId.ShouldBe("PVT_node");       // cached from the validation result
         result.Workspace.CredentialRef.ShouldStartWith("workspace/"); // row keeps only the reference
         await _repo.Received(1).AddForTenantAsync(Arg.Any<WorkspaceEntity>(), Arg.Any<CancellationToken>());
-        (await _credentials.GetAsync(result.Workspace.CredentialRef)).ShouldBe("ghp_x");
+        (await _credentials.GetForTenantAsync("tenant-1", result.Workspace.CredentialRef)).ShouldBe("ghp_x");
+        (await _credentials.GetForTenantAsync("tenant-2", result.Workspace.CredentialRef)).ShouldBeNull();   // tenant-partitioned
     }
 
     [Fact]

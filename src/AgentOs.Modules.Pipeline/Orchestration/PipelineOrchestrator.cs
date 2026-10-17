@@ -34,6 +34,7 @@ public sealed class PipelineOrchestrator : IOrchestratorAgent
     private readonly ITestingAgent _testing;
     private readonly IQaAgent _qa;
     private readonly PipelineOptions _options;
+    private readonly AgentOs.Modules.Pipeline.Agents.IAgentProfiles? _profiles;
     private readonly ILogger<PipelineOrchestrator> _logger;
     private readonly IPipelineProgressSink _progress;
 
@@ -55,7 +56,8 @@ public sealed class PipelineOrchestrator : IOrchestratorAgent
         IQaAgent qa,
         IOptions<PipelineOptions> options,
         ILogger<PipelineOrchestrator> logger,
-        IPipelineProgressSink? progress = null)
+        IPipelineProgressSink? progress = null,
+        AgentOs.Modules.Pipeline.Agents.IAgentProfiles? profiles = null)
     {
         System.ArgumentNullException.ThrowIfNull(options);
         _requirement = requirement ?? throw new System.ArgumentNullException(nameof(requirement));
@@ -63,6 +65,7 @@ public sealed class PipelineOrchestrator : IOrchestratorAgent
         _testing = testing ?? throw new System.ArgumentNullException(nameof(testing));
         _qa = qa ?? throw new System.ArgumentNullException(nameof(qa));
         _options = options.Value;
+        _profiles = profiles;
         _logger = logger ?? throw new System.ArgumentNullException(nameof(logger));
         _progress = progress ?? NullPipelineProgressSink.Instance;
     }
@@ -75,7 +78,11 @@ public sealed class PipelineOrchestrator : IOrchestratorAgent
 
         // Clamp to >= 1: a non-positive NMax or MaxIterations would skip the loop entirely, leaving
         // Code/Tests null behind the non-nullable PipelineResult contract (NRE in any consumer).
-        var maxIterations = System.Math.Max(1, System.Math.Min(story.NMax, _options.MaxIterations));
+        // Live QA-loop cap (Settings → Pipeline), resolved per run.
+        var cap = _profiles is null
+            ? _options.MaxIterations
+            : await _profiles.MaxIterationsAsync(_options.MaxIterations, cancellationToken).ConfigureAwait(false);
+        var maxIterations = System.Math.Max(1, System.Math.Min(story.NMax, cap));
         _logger.LogInformation(
             "Pipeline start: story={Title}, maxIter={Max}",
             LogSafe.Scrub(Truncate(story.Description, 60)), maxIterations);

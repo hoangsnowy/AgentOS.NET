@@ -28,8 +28,9 @@ public sealed class QaAgent : LlmAgentBase, IQaAgent
         IOptions<AgentsOptions> options,
         IMetricsCollector collector,
         ILogger<QaAgent> logger,
-        IPromptOverrides? prompts = null)
-        : base(factory, Slice(options), collector, logger, validator: null, prompts)
+        IPromptOverrides? prompts = null,
+        IAgentProfiles? profiles = null)
+        : base(factory, Slice(options), collector, logger, validator: null, prompts, profiles)
     {
     }
 

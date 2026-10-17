@@ -32,13 +32,15 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
     private readonly ILogger<IssueWorkAgent> _logger;
     private readonly ISessionRunFeed? _feed;
     private readonly IBudgetGuard? _budgetGuard;
+    private readonly IAgentProfiles? _profiles;
 
     public IssueWorkAgent(
         ILlmClientFactory factory,
         IOptions<AgentsOptions> options,
         ILogger<IssueWorkAgent> logger,
         ISessionRunFeed? feed = null,
-        IBudgetGuard? budgetGuard = null)
+        IBudgetGuard? budgetGuard = null,
+        IAgentProfiles? profiles = null)
     {
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(options);
@@ -54,6 +56,8 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         // S1 — optional per-tenant budget gate. Null on the no-DB standalone path / unit tests, where
         // spend is always 0 and the gate would be a no-op anyway. Storing the ref is side-effect-free.
         _budgetGuard = budgetGuard;
+        // Live profile (Settings → Agent profiles): resolved per run, never frozen here.
+        _profiles = profiles;
     }
 
     // Best-effort publish to the live session-run feed — never throws, no-op when unsubscribed.
@@ -118,7 +122,10 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         // RemoteAgent provider = route the WHOLE agentic loop to the member's paired dev-machine CLI
         // (claude-code / codex). That CLI has its own native tools (no runner_shell), so we switch to
         // the CLI-mode prompt + a long dispatch timeout, and the run costs zero server tokens.
-        var providerName = request.ProviderOverride ?? _agentOpts.Provider;
+        var opts = _profiles is null
+            ? _agentOpts
+            : await _profiles.ResolveAsync(nameof(AgentsOptions.IssueWork), _agentOpts, ct).ConfigureAwait(false);
+        var providerName = request.ProviderOverride ?? opts.Provider;
         var cliMode = providerName.Trim().ToUpperInvariant() is "REMOTEAGENT" or "REMOTE" or "IDE";
 
         // S1 — server-token budget gate. Server-side runs spend AgentOS's OWN LLM tokens, so they pass
@@ -164,7 +171,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         // ToolCallId) so concurrent runner_shell calls are safe. A semaphore caps fan-out to keep the
         // dev machine sane; each task writes only its own slot in the outcomes array (order-stable,
         // no shared-state contention). MaxParallelRepos=1 reproduces the old sequential behaviour.
-        var maxParallel = Math.Max(1, _agentOpts.MaxParallelRepos);
+        var maxParallel = Math.Max(1, opts.MaxParallelRepos);
         var outcomes = new RepoWorkOutcome[request.Repos.Count];
         using var gate = new SemaphoreSlim(maxParallel, maxParallel);
 
@@ -176,7 +183,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             try
             {
                 Emit(request, SessionRunEventKind.RepoStarted, $"{repoLabel} — implementing…", repoLabel);
-                var outcome = await RunOneAsync(llm, request, repo, cliMode, ct).ConfigureAwait(false);
+                var outcome = await RunOneAsync(llm, opts, request, repo, cliMode, ct).ConfigureAwait(false);
                 Emit(request, SessionRunEventKind.Step,
                     outcome.Ok
                         ? $"{repoLabel} — pushed branch {outcome.BranchName}"
@@ -196,7 +203,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         return new IssueWorkResult(ok, outcomes, ok ? null : "One or more repositories failed — see per-repo errors.");
     }
 
-    private async Task<RepoWorkOutcome> RunOneAsync(ILlmClient llm, IssueWorkRequest request, WorkRepo repo, bool cliMode, CancellationToken ct)
+    private async Task<RepoWorkOutcome> RunOneAsync(ILlmClient llm, AgentOptions opts, IssueWorkRequest request, WorkRepo repo, bool cliMode, CancellationToken ct)
     {
         // Server-side (default): the LLM drives the paired runner via the runner_shell tool loop.
         // CLI mode (RemoteAgent): the dev-machine CLI has its own tools — send the CLI-mode prompt,
@@ -205,18 +212,18 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             ? new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.SystemCli(request, repo),
                 UserPrompt: IssueWorkPrompt.User(request, repo),
-                Model: _agentOpts.Model,
-                Temperature: _agentOpts.Temperature,
-                MaxTokens: _agentOpts.MaxTokens,
+                Model: opts.Model,
+                Temperature: opts.Temperature,
+                MaxTokens: opts.MaxTokens,
                 Tools: [],
                 Timeout: CliRunTimeout,
                 Cli: request.CliProfile)
             : new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.System(request, repo),
                 UserPrompt: IssueWorkPrompt.User(request, repo),
-                Model: _agentOpts.Model,
-                Temperature: _agentOpts.Temperature,
-                MaxTokens: _agentOpts.MaxTokens,
+                Model: opts.Model,
+                Temperature: opts.Temperature,
+                MaxTokens: opts.MaxTokens,
                 Tools: ["runner_shell"]);
 
         try
