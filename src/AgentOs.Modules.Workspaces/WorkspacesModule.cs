@@ -42,7 +42,8 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
         {
             services.AddDbContext<WorkspacesDbContext>(opt =>
                 opt.UseNpgsql(connectionString, npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "workspaces")));
+                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "workspaces"))
+                   .AddInterceptors(AgentOs.SharedKernel.Persistence.RowLevelSecurityInterceptor.Instance));
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
         }

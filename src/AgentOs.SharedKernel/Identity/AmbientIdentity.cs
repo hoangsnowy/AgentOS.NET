@@ -70,11 +70,24 @@ public static class AmbientIdentity
         return new Scope(previous);
     }
 
+    /// <summary>Set the ambient identity of a signed-in user, with a display name for audit trails.</summary>
+    public static IDisposable PushUser(string tenantId, string? userId, string? userName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        var previous = _current.Value;
+        _current.Value = new Identity(tenantId, userId) { UserName = userName };
+        return new Scope(previous);
+    }
+
     /// <summary>An ambient (tenant, user, session) tuple.</summary>
     /// <param name="TenantId">The tenant the work runs under. Never empty.</param>
     /// <param name="UserId">The member the work belongs to (token <c>sub</c>), or null.</param>
     /// <param name="SessionId">The running session, when the work belongs to one; else null.</param>
-    public sealed record Identity(string TenantId, string? UserId, Guid? SessionId = null);
+    public sealed record Identity(string TenantId, string? UserId, Guid? SessionId = null)
+    {
+        /// <summary>The user's display name (preferred username), when known — for audit "who" columns.</summary>
+        public string? UserName { get; init; }
+    }
 
     private sealed class Scope : IDisposable
     {

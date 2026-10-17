@@ -52,7 +52,8 @@ public sealed class ToolsModule : IModule, IInitializableModule
         {
             services.AddDbContext<ToolsDbContext>(opt =>
                 opt.UseNpgsql(connectionString, npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "tools")));
+                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "tools"))
+                   .AddInterceptors(AgentOs.SharedKernel.Persistence.RowLevelSecurityInterceptor.Instance));
             services.AddNpgsqlConnectionFactory(connectionString);
             services.TryAddSingleton<EfToolInvocationLog>();
             services.TryAddSingleton<IToolInvocationLog>(sp =>

@@ -49,7 +49,8 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
         {
             services.AddDbContext<SessionsDbContext>(opt =>
                 opt.UseNpgsql(connectionString, npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "sessions")));
+                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "sessions"))
+                   .AddInterceptors(AgentOs.SharedKernel.Persistence.RowLevelSecurityInterceptor.Instance));
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<IRunnerRepository, RunnerRepository>();
             services.AddScoped<ISessionRepository, SessionRepository>();

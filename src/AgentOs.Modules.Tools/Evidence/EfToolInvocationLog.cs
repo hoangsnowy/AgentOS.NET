@@ -109,8 +109,7 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
             LIMIT @limit
             """;
 
-        await using var conn = _connectionFactory!.Create();
-        await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var conn = await _connectionFactory!.OpenWithTenantAsync(cancellationToken).ConfigureAwait(false);
         var rows = await conn.QueryAsync<ToolInvocationEvidenceEntity>(
             new CommandDefinition(sql, new { tenantId, limit = Math.Max(1, limit) }, cancellationToken: cancellationToken))
             .ConfigureAwait(false);
