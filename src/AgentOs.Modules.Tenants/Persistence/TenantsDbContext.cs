@@ -15,6 +15,7 @@ internal sealed class TenantsDbContext : DbContext
 
     public DbSet<TenantEntity> Tenants => Set<TenantEntity>();
     public DbSet<AuditEventEntity> AuditEvents => Set<AuditEventEntity>();
+    public DbSet<ApiTokens.ApiTokenEntity> ApiTokens => Set<ApiTokens.ApiTokenEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,6 +42,21 @@ internal sealed class TenantsDbContext : DbContext
             e.Property(x => x.IpAddress).HasMaxLength(64);
             e.Property(x => x.UserAgent).HasMaxLength(512);
             e.HasIndex(x => new { x.TenantId, x.TimestampUtc });
+        });
+
+        // E1.3: API tokens — only the SHA-256 is stored; Prefix is the (unique) lookup key at authentication.
+        modelBuilder.Entity<ApiTokens.ApiTokenEntity>(e =>
+        {
+            e.ToTable("api_tokens");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Prefix).HasMaxLength(16).IsRequired();
+            e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(16).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(128).IsRequired();
+            e.HasIndex(x => x.Prefix).IsUnique();
+            e.HasIndex(x => x.TenantId);
         });
     }
 }

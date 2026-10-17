@@ -44,6 +44,8 @@ public static class AuditActions
     public const string SettingChanged = "setting.changed";
     public const string TenantPurged = "tenant.purged";
     public const string TenantExported = "tenant.exported";
+    public const string ApiTokenCreated = "apitoken.created";
+    public const string ApiTokenRevoked = "apitoken.revoked";
 }
 
 /// <summary>Audit "tenant" ids that are not tenants.</summary>

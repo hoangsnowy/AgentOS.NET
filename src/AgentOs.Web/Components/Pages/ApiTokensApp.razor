@@ -1,0 +1,174 @@
+@* ApiTokensApp — Settings → API tokens (enterprise review E1.3). Tenant admins create service-account tokens for
+   CI pipelines, scripts and MCP clients calling the Api (Authorization: Bearer aos_…). A token has a name, a role
+   (member | admin — never platform-admin) and an expiry; its secret is shown ONCE at creation (only a SHA-256 is
+   stored). Revoke takes effect on the next request. Create / revoke are audited. *@
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using AgentOs.Modules.Tenants.ApiTokens
+@inject IApiTokenService Tokens
+@inject IJSRuntime JS
+@inject AgentOs.Web.Shell.Services.ToastService Toasts
+
+@if (!_resolved)
+{
+    <Spinner />
+}
+else if (!_isAdmin)
+{
+    <div class="login-error">Admin role required to manage API tokens.</div>
+}
+else
+{
+    <header class="page-head">
+        <div>
+            <h1 class="page-title">API tokens · <code>@_tenantId</code></h1>
+            <p class="page-sub">Service-account tokens for CI, scripts and MCP clients: <code>Authorization: Bearer aos_…</code> on the Api.</p>
+        </div>
+    </header>
+
+    <Panel Title="Create a token">
+        <div class="form-grid">
+            <Field Label="Name">
+                <input @bind="_name" @bind:event="oninput" placeholder="github-actions-deploy" maxlength="128" />
+            </Field>
+            <Field Label="Role">
+                <select class="prefs-select" @bind="_role">
+                    <option value="member">Member — run pipelines, read results</option>
+                    <option value="admin">Admin — also manage this workspace</option>
+                </select>
+            </Field>
+            <Field Label="Expires in">
+                <select class="prefs-select" @bind="_days">
+                    <option value="30">30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                    <option value="365">1 year</option>
+                </select>
+            </Field>
+        </div>
+        <div class="form-actions">
+            <Btn Variant="Btn.ButtonVariant.Primary" OnClick="CreateAsync" Disabled="@(_busy || string.IsNullOrWhiteSpace(_name))">Create token</Btn>
+        </div>
+        @if (_newToken is not null)
+        {
+            <div class="cred-readout token-readout">
+                <p class="cred-readout-hint">Copy it now — this is the only time the token is shown.</p>
+                <textarea readonly rows="2" aria-label="New API token">@_newToken</textarea>
+                <div class="form-actions">
+                    <Btn Size="Btn.ButtonSize.Sm" OnClick="CopyAsync"><Icon Name="file" Size="13" /> Copy</Btn>
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="() => _newToken = null">Done</Btn>
+                </div>
+            </div>
+        }
+    </Panel>
+
+    <Panel Title="Tokens">
+        @if (_rows is null) { <Spinner /> }
+        else if (_rows.Count == 0)
+        {
+            <EmptyState Icon="tag" Title="No tokens yet" Hint="Create one above for a pipeline or a script." />
+        }
+        else
+        {
+            <table class="data-table">
+                <thead><tr><th>Name</th><th>Token</th><th>Role</th><th>Created</th><th>Expires</th><th>Last used</th><th>Status</th><th class="actions"></th></tr></thead>
+                <tbody>
+                    @foreach (var t in _rows)
+                    {
+                        var active = t.IsActive(DateTimeOffset.UtcNow);
+                        <tr>
+                            <td><strong>@t.Name</strong><br /><span class="muted">by @t.CreatedBy</span></td>
+                            <td><code>aos_@(t.Prefix)_…</code></td>
+                            <td>@t.Role</td>
+                            <td>@t.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd")</td>
+                            <td>@t.ExpiresAtUtc.ToLocalTime().ToString("yyyy-MM-dd")</td>
+                            <td>@(t.LastUsedAtUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</td>
+                            <td><span class="badge @(active ? "ok" : t.RevokedAtUtc is not null ? "err" : "warn")">@(active ? "active" : t.RevokedAtUtc is not null ? "revoked" : "expired")</span></td>
+                            <td class="actions">
+                                @if (t.RevokedAtUtc is null)
+                                {
+                                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="() => RevokeAsync(t)" Disabled="_busy">Revoke</Btn>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Panel>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private bool _resolved;
+    private bool _isAdmin;
+    private bool _busy;
+    private string _tenantId = "default";
+    private string _actor = "admin";
+    private string _name = string.Empty;
+    private string _role = "member";
+    private int _days = 90;
+    private string? _newToken;
+    private IReadOnlyList<ApiTokenInfo>? _rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _isAdmin = state.User.IsAdmin();
+            _tenantId = state.User.GetTenantId() ?? "default";
+            _actor = state.User.Identity?.Name ?? "admin";
+        }
+        _resolved = true;
+        if (_isAdmin) { _rows = await Tokens.ListAsync(_tenantId); }
+    }
+
+    private async Task CreateAsync()
+    {
+        _busy = true;
+        try
+        {
+            var (_, token) = await Tokens.CreateAsync(_tenantId, _name, _role, _days, _actor);
+            _newToken = token;
+            _name = string.Empty;
+            _rows = await Tokens.ListAsync(_tenantId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Toasts.Show("API tokens", ex.Message, ToastKind.Err);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RevokeAsync(ApiTokenInfo token)
+    {
+        _busy = true;
+        try
+        {
+            if (await Tokens.RevokeAsync(_tenantId, token.Id, _actor)) { Toasts.Show("API tokens", $"{token.Name} revoked.", ToastKind.Ok); }
+            _rows = await Tokens.ListAsync(_tenantId);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CopyAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _newToken);
+            Toasts.Show("API tokens", "Token copied.", ToastKind.Ok);
+        }
+        catch (JSException)
+        {
+            Toasts.Show("API tokens", "The browser blocked clipboard access — select and copy the token.", ToastKind.Warn);
+        }
+    }
+}

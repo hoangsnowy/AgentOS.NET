@@ -26,6 +26,7 @@ using Xunit;
 
 namespace AgentOs.E2E.Tests.AgentOsUi;
 
+[Collection(SharedTenantStateGroup.Name)]
 public sealed class BudgetGateRealAuthTests : IClassFixture<AgentOsRealAuthFixture>
 {
     private readonly AgentOsRealAuthFixture _fx;
