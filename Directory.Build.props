@@ -43,6 +43,11 @@
        so the exposed code path is not reached. No patched MailKit/MimeKit release clears the
        advisory at the pinned version — revisit when an upstream fix ships. Solution-wide because
        MailKit flows transitively into Api / Web / Tests via the Tenants module. -->
+  <!-- Banned APIs (CodeQL parity — see BannedSymbols.txt + Directory.Packages.props). -->
+  <ItemGroup>
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" Visible="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-9j88-vvj5-vhgr" />
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-g7hc-96xr-gvvx" />

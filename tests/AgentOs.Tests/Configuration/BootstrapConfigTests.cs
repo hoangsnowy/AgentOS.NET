@@ -31,7 +31,7 @@ public sealed class BootstrapConfigTests
     [InlineData("AgentOs.Api")]
     public void BaseAppSettings_ContainOnlyBootstrapSections(string host)
     {
-        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "src", host, "appsettings.json")));
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Join(RepoRoot(), "src", host, "appsettings.json")));
         var product = doc.RootElement.EnumerateObject().Select(p => p.Name).Where(n => !BootstrapSections.Contains(n)).ToArray();
         product.ShouldBeEmpty($"{host}/appsettings.json declares product settings — give them a code default + a SettingDescriptor (UI) instead");
     }
@@ -78,7 +78,7 @@ public sealed class BootstrapConfigTests
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
-            if (File.Exists(Path.Combine(dir.FullName, "AgentOs.slnx")))
+            if (File.Exists(Path.Join(dir.FullName, "AgentOs.slnx")))
             {
                 return dir.FullName;
             }

@@ -125,7 +125,7 @@ public sealed partial class AgentMascotTests
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
-            var candidate = Path.Combine(dir.FullName, "src", "AgentOs.Web", "wwwroot", "app.css");
+            var candidate = Path.Join(dir.FullName, "src", "AgentOs.Web", "wwwroot", "app.css");
             if (File.Exists(candidate))
             {
                 return candidate;

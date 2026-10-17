@@ -9,6 +9,12 @@
     <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
 
+  <!-- CodeQL parity for queries with no built-in Roslyn rule: BannedSymbols.txt bans APIs CodeQL flags
+       (e.g. cs/path-combine → Path.Combine), and RS0030 + TreatWarningsAsErrors fails the build. -->
+  <ItemGroup>
+    <GlobalPackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- LLM SDKs / Azure -->
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.1.0" />
