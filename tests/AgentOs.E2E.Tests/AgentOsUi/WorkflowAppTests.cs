@@ -67,9 +67,11 @@ public sealed class WorkflowAppTests : IClassFixture<AgentOsPageFixture>
     }
 
     // The seeded "5-Agent SDLC Pipeline" (the default graph) runs the real typed agents
-    // (Requirement→Coding→Testing→QA→End) against the keyless Offline provider — nodes light up, run completes.
+    // (Requirement→Coding→Testing→QA→End) against the keyless Offline provider. CI has no API key, so the run
+    // must be labelled for what it is: an Offline chip, the four agent nodes in the Canned state (never the
+    // green Done look), and a "Dry run complete — OFFLINE" log line instead of "Workflow complete".
     [Fact]
-    public async Task Workflow_RunSdlcPipeline_Offline_CompletesWithNodesDone()
+    public async Task Workflow_RunSdlcPipeline_Offline_CompletesAsLabelledDryRun()
     {
         if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
 
@@ -78,13 +80,17 @@ public sealed class WorkflowAppTests : IClassFixture<AgentOsPageFixture>
         // churns the canvas rebuild and can race the Run click).
         await Assertions.Expect(win.Locator(".syn-name")).ToHaveValueAsync("5-Agent SDLC Pipeline");
 
+        // Keyless → the chip says Offline before anything runs; a green "Live" chip here would be a lie.
+        await Assertions.Expect(win.GetByTestId("llm-chip-offline")).ToBeVisibleAsync();
+
         await StartRunAsync(win);
 
-        // The drawn nodes reach the Done run-state on the canvas (not a static mock) and the run completes.
-        await Assertions.Expect(win.Locator(".step-node.run-done").First).ToBeVisibleAsync(
-            new LocatorAssertionsToBeVisibleOptions { Timeout = 60_000 });
-        await Assertions.Expect(win.Locator(".syn-log")).ToContainTextAsync("Workflow complete",
+        // The drawn agent nodes reach the Canned run-state on the canvas (not a static mock) and the run
+        // completes as an explicitly labelled dry run.
+        await Assertions.Expect(win.Locator(".syn-log")).ToContainTextAsync("Dry run complete — OFFLINE",
             new LocatorAssertionsToContainTextOptions { Timeout = 60_000 });
+        await Assertions.Expect(win.Locator(".step-node.run-canned")).ToHaveCountAsync(4);
+        await Assertions.Expect(win.Locator(".syn-log")).Not.ToContainTextAsync("Workflow complete.");
     }
 
     // NOTE: a second E2E that drove the "Control-Flow Demo" (Parallel + Merge + If/Else + Human checkpoint)
