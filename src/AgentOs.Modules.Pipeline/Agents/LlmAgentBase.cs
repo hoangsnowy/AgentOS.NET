@@ -88,6 +88,11 @@ public abstract class LlmAgentBase
         var systemPrompt = _prompts is null
             ? DefaultSystemPrompt
             : await _prompts.ResolveAsync(PromptKey, DefaultSystemPrompt, ct).ConfigureAwait(false);
+        // E1.6: the tenant's workspace rules (Settings → Prompts) apply to every agent.
+        if (_prompts is not null && await _prompts.ResolveRulesAsync(ct).ConfigureAwait(false) is { } rules)
+        {
+            systemPrompt += WorkspaceRules.ToPromptBlock(rules);
+        }
         // E0.7: the target repo's own agent instructions (AGENTS.md, CLAUDE.md, …), when the run has a repo.
         // Appended after the agent's prompt so its role + output contract stay first and authoritative.
         if (RunGuidance.Current is { Length: > 0 } guidance)

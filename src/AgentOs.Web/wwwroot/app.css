@@ -2212,6 +2212,21 @@ input[type=range] { accent-color: var(--accent); }
 .data-purge-confirm .prefs-input { width: 16rem; }
 .data-report { margin-top: var(--space-2); font-size: 12px; }
 
+/* Prompts (Settings → Prompts) — rules + per-agent prompt editors with version history. Tokens only. */
+.prompt-hint { margin: 0 0 var(--space-2); font-size: 12px; }
+.prompt-text { width: 100%; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.prompt-status { margin-bottom: var(--space-2); }
+.prompt-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.prompt-count { font-size: 11.5px; font-family: var(--mono); }
+.prompt-history { margin-top: var(--space-3); }
+.prompt-history summary { cursor: pointer; font-size: 12px; color: var(--txt-dim); }
+.prompt-history summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.prompt-history-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.prompt-history-item { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: 4px 8px; border-radius: var(--r-3); background: var(--bg-3); font-size: 12px; }
+.prompt-history-when { font-family: var(--mono); font-size: 11.5px; color: var(--txt-soft); }
+.prompt-history-who { font-weight: 600; }
+.prompt-history-text { flex-basis: 100%; margin: var(--space-1) 0 0; padding: var(--space-2); max-height: 240px; overflow: auto; white-space: pre-wrap; font-family: var(--mono); font-size: 11.5px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-3); }
+
 /* Platform settings — one-line explanation above a settings group. */
 .platform-hint { margin: 0 0 var(--space-2); font-size: 12px; }
 

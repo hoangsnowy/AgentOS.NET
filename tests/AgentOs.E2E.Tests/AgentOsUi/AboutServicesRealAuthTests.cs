@@ -12,6 +12,8 @@ public sealed class AboutServicesRealAuthTests : IClassFixture<AgentOsRealAuthFi
 {
     private readonly AgentOsRealAuthFixture _fx;
 
+    private static readonly string[] ExternalServices = ["web", "api", "keycloak", "postgres", "smtp"];
+
     public AboutServicesRealAuthTests(AgentOsRealAuthFixture fx) => _fx = fx;
 
     [Fact]
@@ -22,9 +24,8 @@ public sealed class AboutServicesRealAuthTests : IClassFixture<AgentOsRealAuthFi
         await _fx.LoginAsync(); // operator — admin + platform-admin
         var win = await AboutServicesTests.OpenAboutAsync(_fx.Page);
 
-        foreach (var id in new[] { "web", "api", "keycloak", "postgres", "smtp" })
+        foreach (var card in ExternalServices.Select(id => win.Locator($".about-row[data-service=\"{id}\"]")))
         {
-            var card = win.Locator($".about-row[data-service=\"{id}\"]");
             await Assertions.Expect(card.Locator(".about-state")).ToHaveTextAsync("Healthy", new() { Timeout = 15_000 });
             await Assertions.Expect(card.Locator(".about-ver")).ToBeVisibleAsync();
         }

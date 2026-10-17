@@ -25,6 +25,8 @@ internal sealed class RunnerCommandPolicy
         "mkdir", "touch", "cp", "copy", "mv", "move", "diff", "sort", "uniq",
     ];
 
+    private static readonly string[] WindowsExtensions = [".exe", ".cmd", ".bat", ".ps1"];
+
     private readonly HashSet<string> _allowed;
 
     private RunnerCommandPolicy(HashSet<string> allowed, bool allowAll)
@@ -69,16 +71,8 @@ internal sealed class RunnerCommandPolicy
         {
             return "command substitution hides what runs";
         }
-        foreach (var segment in Segments(command))
-        {
-            var program = Program(segment);
-            if (program.Length == 0) { continue; }
-            if (!_allowed.Contains(program))
-            {
-                return $"'{program}' is not on the runner allowlist";
-            }
-        }
-        return null;
+        var refused = Segments(command).Select(Program).FirstOrDefault(p => p.Length > 0 && !_allowed.Contains(p));
+        return refused is null ? null : $"'{refused}' is not on the runner allowlist";
     }
 
     /// <summary>Split on shell chaining operators and newlines (quotes are not interpreted — conservative).</summary>
@@ -113,7 +107,7 @@ internal sealed class RunnerCommandPolicy
         }
         var slash = word.LastIndexOfAny(['/', '\\']);
         if (slash >= 0) { word = word[(slash + 1)..]; }
-        foreach (var ext in (ReadOnlySpan<string>)[".exe", ".cmd", ".bat", ".ps1"])
+        foreach (var ext in WindowsExtensions)
         {
             if (word.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) { return word[..^ext.Length]; }
         }

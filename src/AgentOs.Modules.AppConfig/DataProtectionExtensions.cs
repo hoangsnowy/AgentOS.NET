@@ -101,9 +101,11 @@ public static class DataProtectionExtensions
         return new KeyRingProtection(KeyRingProtection.Unwrapped, null);
     }
 
+    private static readonly StoreLocation[] StoreLocations = [StoreLocation.CurrentUser, StoreLocation.LocalMachine];
+
     private static X509Certificate2? FindByThumbprint(string thumbprint)
     {
-        foreach (var location in (ReadOnlySpan<StoreLocation>)[StoreLocation.CurrentUser, StoreLocation.LocalMachine])
+        foreach (var location in StoreLocations)
         {
             using var store = new X509Store(StoreName.My, location);
             store.Open(OpenFlags.ReadOnly);

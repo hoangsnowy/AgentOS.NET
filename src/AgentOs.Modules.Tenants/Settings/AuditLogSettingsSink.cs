@@ -38,9 +38,8 @@ internal sealed partial class AuditLogSettingsSink(IServiceScopeFactory scopes, 
                     change.At), cancellationToken).ConfigureAwait(false);
             }
         }
-#pragma warning disable CA1031 // The audit write is best-effort and must never fail the settings write.
-        catch (Exception ex)
-#pragma warning restore CA1031
+        // The audit write is best-effort and must never fail the settings write (cancellation still propagates).
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogFailed(logger, ex);
         }

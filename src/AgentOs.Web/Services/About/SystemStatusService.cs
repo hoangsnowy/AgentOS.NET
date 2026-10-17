@@ -109,9 +109,8 @@ public sealed class SystemStatusService
         {
             return probe.Unreachable($"Timed out after {_probeTimeout.TotalSeconds:0.#} s");
         }
-#pragma warning disable CA1031 // A probe failure of ANY kind is a status to show, never a page crash.
-        catch (Exception ex)
-#pragma warning restore CA1031
+        // A probe failure of any kind (bar cancellation) is a status to show, never a page crash.
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "About probe {Probe} failed after {Ms} ms", probe.GetType().Name,
                 (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds);

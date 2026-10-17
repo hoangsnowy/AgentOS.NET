@@ -135,9 +135,8 @@ internal sealed partial class BufferedToolInvocationLog : IToolInvocationLog, IA
                     await Task.Delay(_retryDelay * attempt * attempt).ConfigureAwait(false);
                 }
             }
-#pragma warning disable CA1031 // The last failure is counted and logged — evidence persistence must never throw into a tool call.
-            catch (Exception ex)
-#pragma warning restore CA1031
+            // The last failure is counted and logged — evidence persistence must never throw into a tool call.
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 Interlocked.Increment(ref _lost);
                 Lost.Add(1);
