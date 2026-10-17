@@ -6,6 +6,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AgentOs.Modules.Llm;
 
@@ -150,6 +151,27 @@ public static class CostCalculator
 
     /// <summary>Every priced model id, table order (current models first) — drives model pickers.</summary>
     public static IReadOnlyList<string> KnownModels { get; } = Array.ConvertAll(Table, p => p.ModelId);
+
+    // Provider family → its priced models, built once (table order). Keys are the normalised family names.
+    private static readonly FrozenDictionary<string, string[]> ByFamily = new Dictionary<string, string[]>
+    {
+        ["anthropic"] = Array.FindAll(Table, p => p.ModelId.StartsWith("claude-", StringComparison.Ordinal)).Select(p => p.ModelId).ToArray(),
+        ["openai"] = Array.FindAll(Table, p => !p.ModelId.StartsWith("claude-", StringComparison.Ordinal)).Select(p => p.ModelId).ToArray(),
+    }.ToFrozenDictionary(StringComparer.Ordinal);
+
+    /// <summary>The model family a provider serves: <c>anthropic</c> (Claude/Anthropic) or <c>openai</c>
+    /// (AzureOpenAI/MAF/OpenAI); null for providers that pick their own model (RemoteAgent, plugins).</summary>
+    public static string? FamilyOf(string? provider) => provider?.Trim().ToUpperInvariant() switch
+    {
+        "CLAUDE" or "ANTHROPIC" => "anthropic",
+        "AZUREOPENAI" or "AZURE" or "OPENAI" or "MAF" => "openai",
+        _ => null,
+    };
+
+    /// <summary>Priced models for <paramref name="provider"/>'s family (O(1) lookup), or every model when the
+    /// provider has no fixed family.</summary>
+    public static IReadOnlyList<string> KnownModelsFor(string? provider) =>
+        FamilyOf(provider) is { } family && ByFamily.TryGetValue(family, out var models) ? models : KnownModels;
 
     /// <summary>Base list price (USD per 1M input / output tokens) for a model, or null when unpriced.</summary>
     public static (decimal InputPerMillion, decimal OutputPerMillion)? ListPrice(string model) =>

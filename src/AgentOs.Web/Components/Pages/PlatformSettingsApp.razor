@@ -26,6 +26,10 @@ else
         <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@SafetyKeys" />
     </Panel>
 
+    <Panel Title="Build sandbox">
+        <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@BuildKeys" />
+    </Panel>
+
     <Panel Title="LLM">
         <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@LlmKeys" />
     </Panel>
@@ -42,6 +46,17 @@ else
     ];
 
     private static readonly string[] LlmKeys = [AgentOs.Modules.Llm.LlmSettings.OfflineFallback];
+
+    private static readonly string[] BuildKeys =
+    [
+        AgentOs.Modules.Integration.BuildVerifierSettings.Enabled,
+        AgentOs.Modules.Integration.BuildVerifierSettings.Sandbox,
+        AgentOs.Modules.Integration.BuildVerifierSettings.ContainerImage,
+        AgentOs.Modules.Integration.BuildVerifierSettings.CpuLimit,
+        AgentOs.Modules.Integration.BuildVerifierSettings.MemoryLimit,
+        AgentOs.Modules.Integration.BuildVerifierSettings.PidsLimit,
+        AgentOs.Modules.Integration.BuildVerifierSettings.TimeoutSeconds,
+    ];
 
     private bool _resolved;
     private bool _isPlatformAdmin;

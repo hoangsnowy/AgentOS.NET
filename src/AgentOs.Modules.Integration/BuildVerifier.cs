@@ -19,15 +19,24 @@ namespace AgentOs.Modules.Integration;
 public sealed class BuildVerifier : IBuildVerifier
 {
     private readonly ILogger<BuildVerifier> _logger;
-    private readonly BuildVerifierOptions _options;
-    private readonly ISandboxedBuildRunner _runner;
+    private readonly IBuildVerifierOptionsSource _options;
+    private readonly Func<BuildVerifierOptions, ISandboxedBuildRunner> _runnerFor;
 
-    /// <summary>Initializes the verifier with a logger, the enable/sandbox config, and the build runner.</summary>
+    /// <summary>Initializes the verifier with a logger, a fixed enable/sandbox config, and the build runner.</summary>
     public BuildVerifier(ILogger<BuildVerifier> logger, BuildVerifierOptions options, ISandboxedBuildRunner runner)
+        : this(logger, new StaticBuildVerifierOptionsSource(options ?? throw new ArgumentNullException(nameof(options))),
+               _ => runner ?? throw new ArgumentNullException(nameof(runner)))
+    {
+    }
+
+    /// <summary>Initializes the verifier with LIVE options (Settings → Platform → Build sandbox) and a runner
+    /// factory: each build resolves the current gate/sandbox/quotas and gets a runner for that sandbox mode.</summary>
+    public BuildVerifier(
+        ILogger<BuildVerifier> logger, IBuildVerifierOptionsSource options, Func<BuildVerifierOptions, ISandboxedBuildRunner> runnerFor)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        _runnerFor = runnerFor ?? throw new ArgumentNullException(nameof(runnerFor));
     }
 
     /// <inheritdoc />
@@ -54,7 +63,8 @@ public sealed class BuildVerifier : IBuildVerifier
 
         // Gate: refuse to run a build when disabled — the default outside Development until a sandboxed
         // runner (Sandbox=Container) is selected.
-        if (!_options.Enabled)
+        var options = await _options.CurrentAsync(ct).ConfigureAwait(false);
+        if (!options.Enabled)
         {
             _logger.LogWarning("Build verification is disabled on this host (Integration:BuildVerifier:Enabled=false); refusing to run `dotnet build`.");
             return new BuildVerifyResult(false, -1,
@@ -66,14 +76,14 @@ public sealed class BuildVerifier : IBuildVerifier
         var workDir = Path.Join(Path.GetTempPath(), "agentic-sdlc-build-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(workDir);
         var workDirFull = Path.GetFullPath(workDir);
-        _logger.LogInformation("Build verifier scratch dir: {Dir} (sandbox: {Sandbox})", workDir, _options.Sandbox);
+        _logger.LogInformation("Build verifier scratch dir: {Dir} (sandbox: {Sandbox})", workDir, options.Sandbox);
 
         try
         {
             var rejected = await PrepareWorkspaceAsync(files, workDir, workDirFull, ct).ConfigureAwait(false);
 
             // Layer 2: hand the prepared, sanitized dir to the configured isolation host.
-            var result = await _runner.RunAsync(workDir, ct).ConfigureAwait(false);
+            var result = await _runnerFor(options).RunAsync(workDir, ct).ConfigureAwait(false);
 
             if (rejected > 0)
             {

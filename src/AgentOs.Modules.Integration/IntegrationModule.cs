@@ -40,7 +40,19 @@ public sealed class IntegrationModule : IModule
         {
             services.AddSingleton<Sandbox.ISandboxedBuildRunner, Sandbox.InProcessBuildRunner>();
         }
-        services.AddBuildVerifier();
+        // UI-first (ADR-0011): the startup values above are the defaults; Settings → Platform → Build sandbox
+        // changes the gate, sandbox mode and quotas live. Each build gets a runner for the CURRENT mode.
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor>(new BuildVerifierSettings(buildVerifierOptions));
+        services.AddSingleton<IBuildVerifierOptionsSource>(sp =>
+            sp.GetService<AgentOs.Domain.Configuration.ISettings>() is { } settings
+                ? new SettingsBuildVerifierOptionsSource(settings, buildVerifierOptions)
+                : new StaticBuildVerifierOptionsSource(buildVerifierOptions));
+        services.AddTransient<IBuildVerifier>(sp => new BuildVerifier(
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<BuildVerifier>>(),
+            sp.GetRequiredService<IBuildVerifierOptionsSource>(),
+            opts => opts.Sandbox == BuildSandboxMode.Container
+                ? new Sandbox.ContainerBuildRunner(opts)
+                : new Sandbox.InProcessBuildRunner(opts)));
         services.AddTransient<IBoardTicketService, BoardTicketService>();
         services.AddTransient<IBoardWriteService, BoardWriteService>();
         services.AddTransient<AgentOs.Domain.Workspaces.IPrCreationService, GitHubPrCreationService>();

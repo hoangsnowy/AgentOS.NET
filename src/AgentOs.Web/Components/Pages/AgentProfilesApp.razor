@@ -30,13 +30,6 @@ else
         </div>
     </header>
 
-    <datalist id="agentos-models">
-        @foreach (var m in CostCalculator.KnownModels)
-        {
-            <option value="@m"></option>
-        }
-    </datalist>
-
     <Panel Title="Agents">
         <div class="agent-profiles-scroll">
         <table class="data-table agent-profiles">
@@ -67,8 +60,8 @@ else
                             </select>
                         </td>
                         <td>
-                            <input class="prefs-input" list="agentos-models" disabled="@locked" aria-label="@($"{row.Role} model")"
-                                   value="@row.Model" @onchange="e => row.Model = e.Value?.ToString()?.Trim() ?? string.Empty" />
+                            <ModelPicker Value="@row.Model" ValueChanged="v => row.Model = v" Provider="@row.Provider"
+                                         AriaLabel="@($"{row.Role} model")" Disabled="@locked" />
                             <div class="prefs-hint">@PriceHint(row.Model)</div>
                         </td>
                         <td>
@@ -122,6 +115,7 @@ else
     private const string ModelField = nameof(AgentOptions.Model);
     private const string TemperatureField = nameof(AgentOptions.Temperature);
     private const string MaxTokensField = nameof(AgentOptions.MaxTokens);
+    private static readonly string[] RoleFields = [ProviderField, ModelField, TemperatureField, MaxTokensField];
 
     private bool _resolved;
     private bool _isAdmin;
@@ -165,14 +159,14 @@ else
         foreach (var (role, _) in AgentSettings.Roles)
         {
             var row = new RoleRow(role);
-            foreach (var field in new[] { ProviderField, ModelField, TemperatureField, MaxTokensField })
+            var present = RoleFields
+                .Select(field => (Field: field, View: byKey.GetValueOrDefault(AgentSettings.Key(role, field))))
+                .Where(p => p.View is not null);
+            foreach (var (field, v) in present)
             {
-                if (byKey.TryGetValue(AgentSettings.Key(role, field), out var v))
-                {
-                    row.Loaded[field] = v.DisplayValue ?? string.Empty;
-                    row.Source = Max(row.Source, v.Source);
-                    row.IsLocked |= v.Source == SettingSource.Locked;
-                }
+                row.Loaded[field] = v!.DisplayValue ?? string.Empty;
+                row.Source = Max(row.Source, v.Source);
+                row.IsLocked |= v.Source == SettingSource.Locked;
             }
             row.Provider = row.Loaded.GetValueOrDefault(ProviderField, string.Empty);
             row.Model = row.Loaded.GetValueOrDefault(ModelField, string.Empty);
