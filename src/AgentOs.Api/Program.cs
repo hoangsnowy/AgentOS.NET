@@ -95,6 +95,13 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["APPLICATIONINSIGHTS_CONNEC
 
 // Auth scheme is host-specific: API hosts Keycloak JWT bearer (Web does cookie + OIDC).
 builder.Services.AddJwtAuth(builder.Configuration);
+// E1.3: API tokens (service accounts) next to Keycloak JWTs — "Bearer aos_…" is forwarded to the token scheme.
+builder.Services.AddAuthentication()
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, AgentOs.Modules.Tenants.ApiTokens.ApiTokenAuthenticationHandler>(
+        AgentOs.Modules.Tenants.ApiTokens.ApiTokenAuthentication.Scheme, null);
+builder.Services.PostConfigure<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>(
+    Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme,
+    o => o.ForwardDefaultSelector = AgentOs.Modules.Tenants.ApiTokens.ApiTokenAuthentication.ForwardSelector);
 
 // Module discovery: each .Assembly contributes one IModule.
 builder.Services.AddModulesFromAssemblies(builder.Configuration,

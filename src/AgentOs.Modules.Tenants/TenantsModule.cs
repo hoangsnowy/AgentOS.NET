@@ -95,9 +95,12 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<ITenantsRepository, TenantsRepository>();
             services.AddScoped<IAuditLog, EfAuditLog>();
+            services.AddScoped<ApiTokens.IApiTokenService>(sp => new ApiTokens.ApiTokenService(
+                sp.GetRequiredService<TenantsDbContext>(), sp.GetRequiredService<IAuditLog>(), sp.GetService<TimeProvider>() ?? TimeProvider.System));
         }
         else
         {
+            services.TryAddSingleton<ApiTokens.IApiTokenService, ApiTokens.NullApiTokenService>();
             services.TryAddSingleton<ITenantsRepository, NullTenantsRepository>();
             services.TryAddSingleton<IAuditLog, NullAuditLog>();
         }
