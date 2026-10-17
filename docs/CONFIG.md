@@ -39,7 +39,7 @@ the Settings UI (`POST /settings` → `SettingsKeyRegistry`); a bad value in `ap
 Per agent (`Orchestrator`, `Requirement`, `Coding`, `Testing`, `Qa`, `IssueWork`, `Decomposer`):
 `Provider` (non-empty), `Model` (non-empty), `Temperature` (0–2), `MaxTokens` (>0),
 `IssueWork.MaxParallelRepos` (fan-out bound, clamped ≥1 at use).
-Keep model ids in sync with `CostCalculator`'s price table or cost reports show the model unpriced.
+Keep model ids in sync with `CostCalculator`'s price table: an unpriced model is charged at the table's ceiling rate (fail-closed) and logged as an estimate until it is added.
 
 ## Pipeline (`Pipeline:*`) — validated at startup
 

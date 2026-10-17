@@ -35,8 +35,8 @@ public sealed class MafChatClientTests
 
         pricingModel.ShouldBe("gpt-4.1");
         CostCalculator.IsKnown(pricingModel).ShouldBeTrue();
-        // 1M in @ $2.50 + 1M out @ $10.00 = $12.50 — proves the aliased deployment prices correctly.
-        CostCalculator.Calculate(pricingModel, 1_000_000, 1_000_000).ShouldBe(12.50m);
+        // 1M in @ $2.00 + 1M out @ $8.00 = $10.00 — proves the aliased deployment prices correctly.
+        CostCalculator.Calculate(pricingModel, 1_000_000, 1_000_000).ShouldBe(10.00m);
     }
 
     [Fact]
@@ -46,8 +46,9 @@ public sealed class MafChatClientTests
         var pricingModel = MafChatClient.ResolvePricingModel(null, "gpt41-prod");
 
         pricingModel.ShouldBe("gpt41-prod");
-        // IsKnown == false is exactly the condition that drives the UNPRICED warning in SendAsync.
+        // IsKnown == false is exactly the condition that drives the UNPRICED warning in SendAsync; the cost
+        // itself fails closed at the table's ceiling rate so the spend still counts against the budget.
         CostCalculator.IsKnown(pricingModel).ShouldBeFalse();
-        CostCalculator.Calculate(pricingModel, 1_000_000, 1_000_000).ShouldBe(0m);
+        CostCalculator.Calculate(pricingModel, 1_000_000, 1_000_000).ShouldBe(90.00m);
     }
 }
