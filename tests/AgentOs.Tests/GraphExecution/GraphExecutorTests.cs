@@ -223,8 +223,9 @@ public sealed class GraphExecutorTests
     }
 
     [Fact]
-    public async Task RunAsync_HumanNode_AutoApprovesWhenNoOperatorAttached()
+    public async Task RunAsync_HumanNode_FailsClosedWhenNoOperatorAttached()
     {
+        // E0.4: a checkpoint nobody can approve must stop the run, never auto-approve.
         var (exec, _) = Build(llmReply: "ok");
         var graph = new PlanGraph("g", "human",
             [N("s", "Llm", start: true), N("h", "Human"), N("end", "End")],
@@ -234,9 +235,9 @@ public sealed class GraphExecutorTests
         var result = await exec.RunAsync(graph, "go", 3, "t", null,
             e => { if (e.Phase == GraphNodePhase.Done) { done.Add(e.NodeId); } return Task.CompletedTask; });
 
-        result.Completed.ShouldBeTrue();
-        done.ShouldContain("h");
-        done.ShouldContain("end");
+        result.Completed.ShouldBeFalse();
+        result.FailureMessage.ShouldNotBeNull().ShouldContain("needs an approver");
+        done.ShouldNotContain("end");
     }
 
     [Fact]
