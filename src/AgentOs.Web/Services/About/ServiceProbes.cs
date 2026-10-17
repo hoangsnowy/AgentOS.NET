@@ -189,10 +189,12 @@ internal sealed class WebHostProbe : ServiceProbe
 internal sealed class ApiProbe(IConfiguration config, ProbeHttpClient http)
     : ServiceProbe("api", "Api", "REST + MCP backend", "terminal", 1)
 {
+    private static readonly string[] ApiAddressKeys = ["services:api:https:0", "services:api:http:0", "Api:BaseUrl"];
+
     /// <summary>The Api base address: Aspire service discovery keys first, then an explicit override.</summary>
     internal static Uri? BaseAddress(IConfiguration config)
     {
-        foreach (var key in (ReadOnlySpan<string>)["services:api:https:0", "services:api:http:0", "Api:BaseUrl"])
+        foreach (var key in ApiAddressKeys)
         {
             if (Uri.TryCreate(config[key], UriKind.Absolute, out var uri)
                 && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp))
@@ -437,17 +439,15 @@ internal sealed class PostgresProbe(IConfiguration config)
         }
 
         var started = Stopwatch.GetTimestamp();
-        var conn = new NpgsqlConnection(cs);
-        await using (conn.ConfigureAwait(false))
-        {
+        await using var conn = new NpgsqlConnection(cs);
+                {
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
             string serverVersion, database, pgvector, maxConnections;
             long size, connections;
             var histories = new List<(string Schema, string Table)>();
-            var batch = new NpgsqlBatch(conn) { BatchCommands = { new(ServerSql), new(HistoriesSql) } };
-            await using (batch.ConfigureAwait(false))
-            {
+            await using var batch = new NpgsqlBatch(conn) { BatchCommands = { new(ServerSql), new(HistoriesSql) } };
+                        {
                 var reader = await batch.ExecuteReaderAsync(ct).ConfigureAwait(false);
                 await using (reader.ConfigureAwait(false))
                 {
@@ -503,9 +503,8 @@ internal sealed class PostgresProbe(IConfiguration config)
         if (histories.Count == 0) { return facts; }
 
         // One round-trip for all tables. Identifiers come from the catalog and are quoted (" doubled).
-        var batch = new NpgsqlBatch(conn);
-        await using (batch.ConfigureAwait(false))
-        {
+        await using var batch = new NpgsqlBatch(conn);
+                {
             foreach (var (schema, table) in histories)
             {
                 batch.BatchCommands.Add(new NpgsqlBatchCommand(
@@ -609,11 +608,13 @@ internal sealed class SmtpProbe(IOptions<EmailOptions> options)
         };
     }
 
+    private static readonly string[] KnownSmtpProducts = ["MailHog", "Mailpit", "Postfix", "Exim", "Microsoft ESMTP", "Sendmail", "Amazon SES", "SendGrid"];
+
     /// <summary>Well-known server names from the 220 greeting ("… ESMTP MailHog" → "MailHog").</summary>
     internal static string? Product(string? greeting)
     {
         if (string.IsNullOrEmpty(greeting)) { return null; }
-        foreach (var name in (ReadOnlySpan<string>)["MailHog", "Mailpit", "Postfix", "Exim", "Microsoft ESMTP", "Sendmail", "Amazon SES", "SendGrid"])
+        foreach (var name in KnownSmtpProducts)
         {
             if (greeting.Contains(name, StringComparison.OrdinalIgnoreCase)) { return name; }
         }

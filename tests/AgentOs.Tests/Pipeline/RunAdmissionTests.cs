@@ -29,8 +29,8 @@ public sealed class RunAdmissionTests
     {
         var admission = new RunAdmission(clock: new ManualClock());
         var a = admission.Admit("t1", maxConcurrent: 2, perMinute: 100);
-        var b = admission.Admit("t1", 2, 100);
-        var c = admission.Admit("t1", 2, 100);
+        using var b = admission.Admit("t1", 2, 100);
+        using var c = admission.Admit("t1", 2, 100);
 
         a.Admitted.ShouldBeTrue();
         b.Admitted.ShouldBeTrue();

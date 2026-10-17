@@ -230,13 +230,14 @@ public sealed class TenantIsolationRealAuthTests : IClassFixture<AgentOsRealAuth
         };
         using var http = new HttpClient(handler);
 
-        using var tokenResp = await http.PostAsync($"{kc}/realms/master/protocol/openid-connect/token", new FormUrlEncodedContent(new Dictionary<string, string>
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "password",
             ["client_id"] = "admin-cli",
             ["username"] = adminUser,
             ["password"] = adminPassword,
-        }));
+        });
+        using var tokenResp = await http.PostAsync($"{kc}/realms/master/protocol/openid-connect/token", form);
         tokenResp.EnsureSuccessStatusCode();
         var token = (await tokenResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString();
         http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
