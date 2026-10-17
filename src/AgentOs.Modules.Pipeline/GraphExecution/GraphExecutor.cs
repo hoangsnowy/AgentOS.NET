@@ -718,8 +718,9 @@ public sealed class GraphExecutor : IGraphExecutor
     // when the merge sits inside a loop.
     private static string RunMerge(PlanNode node, GraphState s) => $"joined {s.Bump(node.Id)}";
 
-    // Human checkpoint: pause the run and ask the operator. With no callback (headless Api / tests) it
-    // auto-approves so the workflow still terminates; a rejection stops the run at this node.
+    // Human checkpoint: pause the run and ask the operator; a rejection stops the run at this node. With no
+    // operator attached (headless Api, a scheduled run) it FAILS CLOSED — an approval nobody can give is not an
+    // approval (enterprise review E0.4; it used to auto-approve, letting a headless run skip the checkpoint).
     private static async ValueTask<string?> RunHumanAsync(
         PlanNode node, Func<GraphHumanRequest, Task<GraphHumanReply>>? onHuman, GraphState s, CancellationToken ct)
     {
@@ -730,8 +731,10 @@ public sealed class GraphExecutor : IGraphExecutor
         var context = ResolveInput(node.Input, s);
         if (onHuman is null)
         {
-            WriteOut(node, s, "approved (no operator attached)");
-            return "auto-approved";
+            WriteOut(node, s, "blocked: no operator attached to approve");
+            throw new LlmException(
+                $"Human checkpoint '{node.Title}' needs an approver, but this run has no operator attached. " +
+                "Run it from the Workflow app (where you can approve), or remove the checkpoint.");
         }
 
         var reply = await onHuman(new GraphHumanRequest(node.Id, node.Title, question, context)).ConfigureAwait(false);
