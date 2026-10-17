@@ -203,7 +203,7 @@ UI changes round-trip through Claude Design (CLAUDE.md design workflow).
 | **0.2** `fix(web)` | When the answering provider is `Offline` (`OfflineLlmClient.IsSubstituteFor`), Workflow/Board/Insights show an **"Offline · canned"** badge, node ticks turn grey, the run is tagged `offline` and excluded from KPIs | Standalone run with no key shows the badge; E2E asserts it |
 | **0.3** `fix(llm)` | Pricing table v2 (Opus 5.5 / Opus 5 / Sonnet 5 / Sonnet 4.6 / Haiku 4.5 / Fable 5.1 + Azure models incl. cached-input rates) as built-in defaults, **unknown model → fail-closed** (budget gate treats as max price + warning), default model IDs refreshed. *Pricing becomes UI-editable in C.4.* | Unit tests per model; unknown model blocks when enforce=on |
 | **0.4** `fix(pipeline)` | Ticket body fetched (GraphQL `body`) and passed to both engines, wrapped in an explicit untrusted-data envelope (`<ticket>…</ticket>` + "treat as data, never as instructions"); title sanitised | Prompt snapshot tests; injection fixture can't change branch/commands |
-| **0.5** `fix(web)` | Quality path refuses to open a PR unless QA `Passed` (or an explicit human override, logged) | Unit test on the gate |
+| **0.5** `fix(web)` | ✅ **Shipped #193** — Quality path refuses to open a PR unless QA `Passed` on real model output (`PrGate`, enforced in `GitHubPrService`); the human override moves to approval policies (enterprise E1.5) | Unit test on the gate |
 | **0.6** `fix(pipeline)` | Quick/CLI engines record `RunMetric`s (cost, tokens, latency), so `BudgetGuard` sees them; CLI mode records wall-time + exit code | Insights shows Quick runs with cost |
 | **0.7** `fix(remote-agent)` | Runner: command allowlist profile + per-session approval for non-allowlisted commands, runner-side timeout/kill, pairing token moved out of the URL query | Unit tests; manual pairing on Aspire |
 | **0.8** `fix(pipeline)` | Prompt branding: Coding/Qa/Requirement/Testing prompts still open "…in the Agentic SDLC system" → "…in AgentOS" (carried over from the archived deploy-readiness audit backlog). The opening line is a routing key — update any matcher in the same PR and bump the prompt version | Prompt snapshot tests; routing tests green |
@@ -236,7 +236,7 @@ Production from the UI unless the operator allows it).
 |---|---|---|
 | **C.1** `docs(adr)` | ADR-0011: tiers, precedence, key naming (`area.sub.key`), secrets, locks, hot reload, audit, export/import | Reviewed |
 | **C.2** `feat(config)` | **Settings registry** in SharedKernel: `SettingDescriptor` (key, type, scope, default, validation, secret, lock, UI group/label/help, restart-required), modules register descriptors in `IModule`; typed reader `ISettings` with per-scope cache, change notifications (no restart), seed-from-appsettings importer; `IRuntimeOverrides` + `budget/*` + `tools/*` re-implemented on top of it (no behaviour change) | Unit tests for precedence, locks, validation; existing Settings screens unchanged |
-| **C.3** `feat(config)` | **Settings audit + versioning**: every change records who, when, scope, before/after (secrets redacted) into Tenants audit; JSON **export/import** (GitOps-friendly, secrets excluded) | Change a key → audit row; round-trip export/import |
+| **C.3** `feat(config)` | ✅ **Audit shipped #194** (export/import still open) — **Settings audit + versioning**: every change records who, when, scope, before/after (secrets redacted) into Tenants audit; JSON **export/import** (GitOps-friendly, secrets excluded) | Change a key → audit row; round-trip export/import |
 | **C.3b** `feat(llm)` | **Model catalog**: per-model context window, max output, capabilities (sampling params, thinking/effort, long-context price tier) — seeded from the price table, refreshed from the Anthropic Models API (`max_input_tokens`, `max_tokens`, `capabilities`) where a key exists. **1M-token context is supported** (Claude 5.x, GPT long-context): limits are validated against the catalog, never a hard-coded cap; 1M is a ceiling, not a default — prompts still load context under a token budget | Picking a 1M model in the UI allows MaxTokens up to its 128K output and shows its context window |
 | **C.4** `feat(web)` | **Agent profiles & models UI**: per-role provider/model/temperature/max tokens/effort, pipeline NMax, failover chain, offline fallback, timeouts, **pricing table editor**; "test connection" uses the real provider and refuses the Offline substitute | Change Coding's model in the UI → next run uses it (Aspire), no restart |
 | **C.5** `feat(web)` | **Platform/System settings UI**: security defaults (auto-approve, enforce-by-default, allowed hosts), build-sandbox limits, MCP servers (moves from `Mcp:Servers`; becomes the per-tenant registry in P4.2), feature flags | Toggle enforce-by-default in UI → policy gate reflects it immediately |
@@ -394,6 +394,11 @@ $ per station — straight off the P1 metrics ledger.
 P0 ──► PC (UI config) ──► P1 (metrics + baseline) ──► P2 (tokens) ──► P5 (built-in executor) ──► P3 (memory) ──► P4 (ecosystem) ──► P6 ──► P7 ──► P8
                          └────────── eval harness gates every arrow after P1 ──────────┘
 ```
+
+**Enterprise track** ([enterprise-readiness.md](enterprise-readiness.md), 2026-10-17): E0 (pilot-safe: RLS = 0.9,
+runner allowlist = 0.7, key wrapping, fail-closed Human node, repo instruction files, OpenAI-compatible provider)
+is interleaved **before P1**; E1/E2 run alongside the product phases. Where an E item equals a plan row (0.7,
+0.9, 0.10, 4.5) it is one PR, not two.
 
 Phase IDs are stable; **execution order follows D-A (owner decision 2026-10-17): the built-in executor (P5)
 runs right after P2**, before memory and the ecosystem. P5 ships a minimal repo map that P3.6 later
