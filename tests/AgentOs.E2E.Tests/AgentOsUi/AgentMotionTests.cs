@@ -1,4 +1,4 @@
-// System → Appearance → "Animated agents": a viewer can switch the agent characters' motion off (enterprise
+// System → Appearance → "Animations": a viewer can switch the agent characters' and icons' motion off (enterprise
 // desktops, demos on a projector, motion sensitivity). The choice lands on <html data-agent-motion>, which the
 // stylesheet uses to stop every mascot animation, and it survives a reload. The OS reduce-motion setting is
 // honoured independently by a media query.
@@ -23,7 +23,7 @@ public sealed class AgentMotionTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Settings");
         await win.Locator(".prefs-cat", new() { HasTextString = "System" }).First.ClickAsync();
         await win.Locator(".prefs-cat", new() { HasTextString = "Appearance" }).ClickAsync();
-        return win.Locator("label.toggle[title=\"Animated agents\"]");
+        return win.Locator("label.toggle[title=\"Animations\"]");
     }
 
     [Fact]

@@ -85,6 +85,16 @@ Don't memorize values — reference these names. Full list in `app.css`; the fam
 | `ModelPicker` | Choosing an LLM model (priced, provider-filtered, `Custom…` for aliases) | A `<datalist>` input — it hides every option once the box has a value |
 | `AgentMascot` (role × `MascotState`) | Showing *which agent* and *what it is doing* (Workflow nodes, Agent profiles) | Ad-hoc agent emoji/avatars; a mascot as the **only** status signal (keep the text/badge beside it) |
 
+### Living icons
+
+Every `Icon` carries `ic-<name>` and has its **own** micro-animation (gear spins, bell rings, trash
+shakes, play nudges, house hops… — all 48, enforced by a unit test). It plays when the enclosing control
+is hovered or keyboard-focused, when a toast arrives, or continuously with `<Icon Loop="true">` for a busy
+state. Rules: declare a new icon's motion as `--ic-anim` (+ `--ic-origin`) in the "Living icons" block of
+`app.css`; animate `transform`/`opacity` only; nothing loops at rest unless `Loop` says so; Dash tiles lift
+on hover and squish on press. Same opt-outs as the mascots (`prefers-reduced-motion`, System → Appearance
+→ *Animations*).
+
 ### Agent mascots
 
 One cartoon character per role, defined once in `Components/UI/AgentMascot.razor` + the `.mascot` block
@@ -100,7 +110,7 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
   stick out past the body use mid-tones so they read on light **and** dark surfaces.
 - **Performance**: animate `transform`/`opacity` only; no `filter` on or above animated content (greying
   is a palette swap); no `<defs>`/ids, so any number can share a page.
-- **Motion off**: `prefers-reduced-motion`, or System → Appearance → *Animated agents* (per viewer,
+- **Motion off**: `prefers-reduced-motion`, or System → Appearance → *Animations* (per viewer,
   `<html data-agent-motion="off">`, restored by `theme.js` before Blazor mounts).
 
 ### Desktop shell anatomy (and who owns what)

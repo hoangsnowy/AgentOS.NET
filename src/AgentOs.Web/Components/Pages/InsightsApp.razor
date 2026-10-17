@@ -142,7 +142,7 @@ else
                     @foreach (var a in agents)
                     {
                         <div class="ins-bar-row">
-                            <div class="ins-bar-label">@AgentShort(a.Key)</div>
+                            <div class="ins-bar-label ins-bar-agent"><AgentMascot Role="@AgentShort(a.Key)" Size="22" /><span>@AgentShort(a.Key)</span></div>
                             <div class="ins-bar-track"><div class="ins-bar-fill" style="width:@(Pct(a.Calls, maxAgent))%"></div></div>
                             <div class="ins-bar-val">@Num(a.Calls) · @Money(a.CostUsd)</div>
                         </div>
@@ -199,7 +199,7 @@ else
                     @foreach (var l in lat)
                     {
                         <div class="ins-bar-row">
-                            <div class="ins-bar-label">@AgentShort(l.Agent)</div>
+                            <div class="ins-bar-label ins-bar-agent"><AgentMascot Role="@AgentShort(l.Agent)" Size="22" /><span>@AgentShort(l.Agent)</span></div>
                             <div class="ins-bar-track"><div class="ins-bar-fill alt" style="width:@(Pct((decimal)l.AvgLatencyMs, (decimal)maxLat))%"></div></div>
                             <div class="ins-bar-val">@Ms(l.AvgLatencyMs)</div>
                         </div>

@@ -454,6 +454,9 @@ button.ghost:hover { background: linear-gradient(180deg, var(--bg-3), var(--bg-s
 .ins-bars { display: flex; flex-direction: column; gap: var(--space-2); }
 .ins-bar-row { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: var(--space-2); }
 .ins-bar-label { font-size: var(--fs-xs); color: var(--txt-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ins-bar-row:has(.ins-bar-agent) { grid-template-columns: 118px 1fr auto; }
+.ins-bar-agent { display: flex; align-items: center; gap: 6px; }
+.ins-bar-agent span { overflow: hidden; text-overflow: ellipsis; }
 .ins-bar-track { height: 12px; background: var(--bg-3); border-radius: var(--r-2); overflow: hidden; }
 .ins-bar-fill { height: 100%; min-width: 2px; background: var(--accent); border-radius: var(--r-2);
     transition: width var(--duration-base) var(--ease-standard); }
@@ -2515,7 +2518,7 @@ input[type=range] { accent-color: var(--accent); }
    A cartoon character per agent role that acts out its run state. Only transform/opacity are animated
    (compositor-only — dozens on a canvas stay cheap). transform-box:view-box puts every transform-origin
    in the 64x64 viewBox's own units. Motion stops under prefers-reduced-motion or the viewer's
-   System → Appearance → "Animated agents" = off (data-agent-motion="off"); the face still shows state. */
+   System → Appearance → "Animations" = off (data-agent-motion="off"); the face still shows state. */
 .mascot { display: inline-block; flex: none; overflow: visible; vertical-align: middle; }
 .mascot * { transform-box: view-box; }
 .mascot.role-orchestrator { --m-c: var(--mascot-orchestrator); --m-d: var(--mascot-orchestrator-dark); --m-b: var(--mascot-orchestrator-belly); }
@@ -2635,3 +2638,104 @@ input[type=range] { accent-color: var(--accent); }
 }
 :root[data-agent-motion="off"] .mascot,
 :root[data-agent-motion="off"] .mascot * { animation: none !important; }
+
+/* ===== Living icons =====
+   Every Icon (Icon.razor → class "icon ic-<name>") has its own micro-animation, declared once below as
+   --ic-anim (+ --ic-origin). It plays when the enclosing control is hovered or keyboard-focused, on toast
+   arrival, and continuously with <Icon Loop="true"> for busy states. Only transform/opacity animate, and
+   nothing runs at rest, so the cost is zero until someone interacts. Motion stops under
+   prefers-reduced-motion or System → Appearance → Animations = off (data-agent-motion="off"). */
+.icon { transform-origin: var(--ic-origin, 50% 50%); }
+:where(button, a, summary, label, [role="button"], [role="tab"], .dock-item, .prefs-cat, .board-tab, .syn-btn):hover .icon,
+:where(button, a, summary, label, [role="button"], [role="tab"], .dock-item, .prefs-cat, .board-tab, .syn-btn):focus-visible .icon,
+.toast .toast-ic .icon {
+    animation: var(--ic-anim, none);
+}
+.icon.icon-loop { animation: var(--ic-anim, none); animation-iteration-count: infinite; }
+
+/* Per-icon motion (all 48). Durations use the motion tokens' feel: quick, springy, never blocking. */
+.ic-play            { --ic-anim: ic-nudge-r .45s var(--ease-emphasized); }
+.ic-stop            { --ic-anim: ic-pop .4s var(--ease-emphasized); }
+.ic-pause           { --ic-anim: ic-pulse .6s var(--ease-standard); }
+.ic-gear            { --ic-anim: ic-spin .8s var(--ease-standard); }
+.ic-wrench          { --ic-anim: ic-wiggle .5s var(--ease-standard); --ic-origin: 30% 70%; }
+.ic-hammer          { --ic-anim: ic-hammer .5s var(--ease-standard); --ic-origin: 20% 80%; }
+.ic-graph           { --ic-anim: ic-pop .45s var(--ease-emphasized); }
+.ic-terminal        { --ic-anim: ic-blink .7s steps(2, jump-none); }
+.ic-folder          { --ic-anim: ic-hop .5s var(--ease-emphasized); }
+.ic-file            { --ic-anim: ic-lift .45s var(--ease-emphasized); }
+.ic-chevron-right   { --ic-anim: ic-nudge-r .4s var(--ease-emphasized); }
+.ic-git-pull-request { --ic-anim: ic-wiggle .5s var(--ease-standard); }
+.ic-arrow-square-out { --ic-anim: ic-nudge-diag .45s var(--ease-emphasized); }
+.ic-clock           { --ic-anim: ic-spin 1s linear; }
+.ic-lock            { --ic-anim: ic-shake .45s var(--ease-standard); }
+.ic-bell            { --ic-anim: ic-ring .8s var(--ease-standard); --ic-origin: 50% 8%; }
+.ic-info            { --ic-anim: ic-hop .5s var(--ease-emphasized); }
+.ic-warning         { --ic-anim: ic-shake .45s var(--ease-standard); }
+.ic-power           { --ic-anim: ic-pulse .6s var(--ease-standard); }
+.ic-palette         { --ic-anim: ic-tilt .55s var(--ease-emphasized); }
+.ic-squares-four    { --ic-anim: ic-pop .45s var(--ease-emphasized); }
+.ic-house           { --ic-anim: ic-hop .5s var(--ease-emphasized); }
+.ic-arrow-clockwise { --ic-anim: ic-spin .7s var(--ease-standard); }
+.ic-arrow-uturn-left  { --ic-anim: ic-swing-l .5s var(--ease-emphasized); }
+.ic-arrow-uturn-right { --ic-anim: ic-swing-r .5s var(--ease-emphasized); }
+.ic-diamond         { --ic-anim: ic-flip .7s var(--ease-standard); }
+.ic-circle-fill     { --ic-anim: ic-pulse .6s var(--ease-standard); }
+.ic-moon            { --ic-anim: ic-tilt .6s var(--ease-emphasized); }
+.ic-sun             { --ic-anim: ic-spin 1.2s var(--ease-standard); }
+.ic-floppy-disk     { --ic-anim: ic-press .35s var(--ease-standard); }
+.ic-trash           { --ic-anim: ic-shake .45s var(--ease-standard); --ic-origin: 50% 100%; }
+.ic-lightning       { --ic-anim: ic-flicker .55s steps(4, jump-none); }
+.ic-question        { --ic-anim: ic-wiggle .5s var(--ease-standard); }
+.ic-device-mobile   { --ic-anim: ic-vibrate .4s linear; }
+.ic-minus           { --ic-anim: ic-press .3s var(--ease-standard); }
+.ic-square          { --ic-anim: ic-pop .35s var(--ease-emphasized); }
+.ic-squares-stack   { --ic-anim: ic-lift .45s var(--ease-emphasized); }
+.ic-x               { --ic-anim: ic-quarter .35s var(--ease-standard); }
+.ic-search          { --ic-anim: ic-wiggle .5s var(--ease-standard); --ic-origin: 40% 40%; }
+.ic-user            { --ic-anim: ic-hop .5s var(--ease-emphasized); }
+.ic-clock-counter   { --ic-anim: ic-spin-back 1s var(--ease-standard); }
+.ic-tag             { --ic-anim: ic-ring .7s var(--ease-standard); --ic-origin: 80% 20%; }
+.ic-arrow-right     { --ic-anim: ic-nudge-r .4s var(--ease-emphasized); }
+.ic-arrow-left      { --ic-anim: ic-nudge-l .4s var(--ease-emphasized); }
+.ic-check           { --ic-anim: ic-pop .4s var(--ease-emphasized); }
+.ic-wifi            { --ic-anim: ic-pulse .6s var(--ease-standard); --ic-origin: 50% 90%; }
+.ic-speaker-high    { --ic-anim: ic-pulse .5s var(--ease-standard); }
+.ic-battery         { --ic-anim: ic-charge .7s var(--ease-standard); }
+
+@keyframes ic-spin      { to { transform: rotate(360deg); } }
+@keyframes ic-spin-back { to { transform: rotate(-360deg); } }
+@keyframes ic-quarter   { to { transform: rotate(90deg); } }
+@keyframes ic-nudge-r   { 0%, 100% { transform: none; } 45% { transform: translateX(3px); } 70% { transform: translateX(-1px); } }
+@keyframes ic-nudge-l   { 0%, 100% { transform: none; } 45% { transform: translateX(-3px); } 70% { transform: translateX(1px); } }
+@keyframes ic-nudge-diag { 0%, 100% { transform: none; } 45% { transform: translate(2px, -2px); } }
+@keyframes ic-pop       { 0%, 100% { transform: scale(1); } 45% { transform: scale(1.22); } 70% { transform: scale(.95); } }
+@keyframes ic-pulse     { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.14); opacity: .75; } }
+@keyframes ic-hop       { 0%, 100% { transform: none; } 30% { transform: translateY(1px) scale(1.08, .9); } 55% { transform: translateY(-4px) scale(.95, 1.06); } 80% { transform: translateY(0) scale(1.03, .97); } }
+@keyframes ic-lift      { 0%, 100% { transform: none; } 50% { transform: translateY(-3px) scale(1.06); } }
+@keyframes ic-shake     { 0%, 100% { transform: none; } 20% { transform: translateX(-2px) rotate(-6deg); } 40% { transform: translateX(2px) rotate(6deg); } 60% { transform: translateX(-1.5px) rotate(-3deg); } 80% { transform: translateX(1.5px) rotate(3deg); } }
+@keyframes ic-wiggle    { 0%, 100% { transform: none; } 25% { transform: rotate(-14deg); } 50% { transform: rotate(10deg); } 75% { transform: rotate(-5deg); } }
+@keyframes ic-ring      { 0%, 100% { transform: none; } 15% { transform: rotate(16deg); } 30% { transform: rotate(-14deg); } 45% { transform: rotate(10deg); } 60% { transform: rotate(-6deg); } 75% { transform: rotate(3deg); } }
+@keyframes ic-tilt      { 0%, 100% { transform: none; } 50% { transform: rotate(-18deg) scale(1.05); } }
+@keyframes ic-swing-l   { 0%, 100% { transform: none; } 50% { transform: rotate(-40deg); } }
+@keyframes ic-swing-r   { 0%, 100% { transform: none; } 50% { transform: rotate(40deg); } }
+@keyframes ic-flip      { to { transform: rotateY(360deg); } }
+@keyframes ic-press     { 0%, 100% { transform: none; } 45% { transform: translateY(1px) scale(.84); } }
+@keyframes ic-hammer    { 0%, 100% { transform: none; } 35% { transform: rotate(-28deg); } 60% { transform: rotate(10deg); } 80% { transform: rotate(-3deg); } }
+@keyframes ic-blink     { 0% { opacity: 1; } 100% { opacity: .35; } }
+@keyframes ic-flicker   { 0% { opacity: 1; } 33% { opacity: .3; } 66% { opacity: 1; } 100% { opacity: .55; } }
+@keyframes ic-vibrate   { 0%, 100% { transform: none; } 20% { transform: translateX(-1.5px); } 40% { transform: translateX(1.5px); } 60% { transform: translateX(-1px); } 80% { transform: translateX(1px); } }
+@keyframes ic-charge    { 0%, 100% { opacity: 1; } 50% { opacity: .45; transform: scaleX(1.06); } }
+
+/* Dash: the app tile lifts on hover and squishes on press (the icon inside plays its own motion). */
+.dock-item .di-ic { transition: transform var(--duration-base) var(--ease-emphasized); }
+.dock-item:hover .di-ic { transform: translateY(-3px); }
+.dock-item:active .di-ic { transform: scale(.9); transition-duration: var(--duration-fast); }
+
+@media (prefers-reduced-motion: reduce) {
+    .icon, .icon.icon-loop { animation: none !important; }
+    .dock-item .di-ic { transition: none; transform: none !important; }
+}
+:root[data-agent-motion="off"] .icon,
+:root[data-agent-motion="off"] .icon.icon-loop { animation: none !important; }
+:root[data-agent-motion="off"] .dock-item .di-ic { transition: none; transform: none !important; }

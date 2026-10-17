@@ -22,12 +22,13 @@
     </header>
 
     <section class="catalog-section">
-        <h2 class="catalog-section-h">Icon (mono SVG, 30 names)</h2>
+        <h2 class="catalog-section-h">Icon — living icons (hover any control, or play all)</h2>
+        <div class="catalog-row" style="margin-bottom:var(--space-2);"><Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => _loopIcons = !_loopIcons)"><Icon Name="@(_loopIcons ? "pause" : "play")" Size="13" /> @(_loopIcons ? "Stop motions" : "Play all motions")</Btn></div>
         <div class="catalog-icon-grid">
             @foreach (var name in _iconNames)
             {
                 <div class="catalog-icon-cell" title="@name">
-                    <Icon Name="@name" Size="24" />
+                    <Icon Name="@name" Size="24" Loop="@_loopIcons" />
                     <span>@name</span>
                 </div>
             }
@@ -256,6 +257,8 @@
         new TabStrip.TabDef("history", "History"),
     };
 
+    private bool _loopIcons;
+
     private static readonly string[] _mascotRoles = ["Orchestrator", "Requirement", "Coding", "Testing", "Qa", "Plugin"];
 
     private readonly string[] _iconNames = new[]
@@ -264,7 +267,9 @@
         "arrow-square-out","clock","lock","bell","info","power","palette",
         "squares-four","arrow-clockwise","diamond","circle-fill","moon","sun",
         "floppy-disk","trash","lightning","question","device-mobile","minus",
-        "square","squares-stack","x"
+        "square","squares-stack","x","terminal","folder","file","chevron-right","warning","house",
+        "arrow-uturn-left","arrow-uturn-right","search","user","clock-counter","tag","arrow-right",
+        "arrow-left","check","wifi","speaker-high","battery"
     };
 
     private Task SetTheme(string t) => JS.InvokeVoidAsync("agenticTheme.applyTheme", t).AsTask();
