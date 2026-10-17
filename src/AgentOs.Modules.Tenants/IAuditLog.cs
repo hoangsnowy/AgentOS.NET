@@ -42,6 +42,8 @@ public static class AuditActions
     public const string InvitationMinted = "invitation.minted";
     public const string LoginFailed = "login.failed";
     public const string SettingChanged = "setting.changed";
+    public const string TenantPurged = "tenant.purged";
+    public const string TenantExported = "tenant.exported";
 }
 
 /// <summary>Audit "tenant" ids that are not tenants.</summary>

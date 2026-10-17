@@ -27,6 +27,7 @@
             case "policy":   <PolicyApp />;   break;
             case "evidence": <EvidenceApp />; break;
             case "audit":    <AuditLogApp />; break;
+            case "data":     <DataApp />;     break;
             case "users":    <UsersApp />;    break;
             case "plugins":  <PluginsApp />;  break;
             case "mcp":      <McpApp />;      break;
@@ -54,6 +55,7 @@
         new("policy",   "Tool policy",     "lock",           AdminOnly: true),
         new("evidence", "Evidence",        "lock",           AdminOnly: true),
         new("audit",    "Audit log",       "clock-counter",  AdminOnly: true),
+        new("data",     "Data",            "floppy-disk",    AdminOnly: true),
         new("users",    "Users",           "user",           AdminOnly: true),
         new("mcp",      "MCP servers",     "arrow-square-out", AdminOnly: true),
         new("plugins",  "Plugins",         "squares-stack"),

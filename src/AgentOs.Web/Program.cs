@@ -397,6 +397,24 @@ app.MapGet("/cost/export", async (HttpContext http, AgentOs.Modules.Pipeline.Per
     return Results.File(bytes, "text/csv", "agentos-cost.csv");
 }).RequireAuthorization();
 
+// Tenant data export (Settings → Data, E1.4): one JSON document of every row the tenant owns, secrets excluded,
+// streamed. A tenant admin exports their own tenant; ?tenant= another one needs platform-admin. Audited.
+app.MapGet("/tenant/export", async (HttpContext http, AgentOs.Modules.Tenants.Data.ITenantDataService data,
+    AgentOs.Modules.Tenants.IAuditLog audit, string? tenant) =>
+{
+    if (!http.User.IsAdmin()) { return Results.Forbid(); }
+    var own = http.User.GetTenantId() ?? "default";
+    var target = string.IsNullOrWhiteSpace(tenant) ? own : tenant;
+    if (!string.Equals(target, own, StringComparison.Ordinal) && !http.User.IsPlatformAdmin()) { return Results.Forbid(); }
+    if (!data.IsAvailable) { return Results.NotFound("No database in this run — nothing to export."); }
+    await audit.WriteAsync(new AgentOs.Modules.Tenants.AuditEntry(Guid.NewGuid(), target, http.User.Identity?.Name,
+        AgentOs.Modules.Tenants.AuditActions.TenantExported, $"export of {target}", null, null, DateTimeOffset.UtcNow), http.RequestAborted);
+    http.Response.ContentType = "application/json";
+    http.Response.Headers.ContentDisposition = $"attachment; filename=\"agentos-{target}-{DateTime.UtcNow:yyyyMMdd}.json\"";
+    await data.ExportAsync(target, http.Response.Body, http.RequestAborted);
+    return Results.Empty;
+}).RequireAuthorization();
+
 // Audit CSV export (Settings → Audit log). Same-origin cookie-authed download like /cost/export. A tenant admin
 // exports their own tenant; scope=platform (platform settings changes) needs platform-admin.
 app.MapGet("/audit/export", async (HttpContext http, AgentOs.Modules.Tenants.IAuditLog audit, string? scope) =>

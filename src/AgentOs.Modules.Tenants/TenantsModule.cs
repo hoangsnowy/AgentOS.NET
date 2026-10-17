@@ -78,6 +78,14 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
         // AppConfig module's no-op default whichever module loads first (last registration wins on resolve).
         services.AddSingleton<AgentOs.Domain.Configuration.ISettingsAuditSink, Settings.AuditLogSettingsSink>();
 
+        // E1.4: tenant export + purge (catalog-driven; a no-DB host reports it unavailable).
+        services.AddScoped<Data.ITenantDataService>(sp => new Data.TenantDataService(
+            configuration.GetConnectionString("DefaultConnection"),
+            sp.GetRequiredService<Keycloak.IKeycloakAdminClient>(),
+            sp.GetRequiredService<IAuditLog>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Data.TenantDataService>>()));
+
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
