@@ -20,7 +20,7 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
         var input = _fx.Page.Locator(".ko-search-input");
         await Assertions.Expect(input).ToBeVisibleAsync();
         await input.FillAsync(query);
-        return _fx.Page.Locator(".ko-row", new() { HasTextString = "Model keys" }).First;
+        return _fx.Page.Locator(".ko-row:has(.ko-row-title:text-is(\"Model keys\"))").First;
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
         await _fx.GotoDesktopAsync();
 
         var hit = await SearchAsync("gemini key");
-        await Assertions.Expect(hit).ToContainTextAsync("LLM & providers");
+        await Assertions.Expect(hit).ToContainTextAsync("Settings › AI");
         await hit.ClickAsync();
 
         var win = _fx.Page.Locator(".appwin.focused");

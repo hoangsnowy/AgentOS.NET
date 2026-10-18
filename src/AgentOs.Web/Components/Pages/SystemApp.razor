@@ -8,7 +8,7 @@
 @inject NavigationManager Nav
 @inject AuthSession Auth
 
-<div class="prefs">
+<div class="prefs @(Section is null ? "" : "prefs-embedded")">
     <aside class="prefs-side">
         <div class="prefs-side-head">System</div>
         <button class="prefs-cat @(_tab == "general"    ? "active" : "")" @onclick="@(() => _tab = "general")"><span class="prefs-cat-ic"><Icon Name="gear"     Size="14" /></span> General</button>
@@ -145,18 +145,13 @@
     private string _timeZone = "";
     private System.Threading.Timer? _clockTimer;
 
-    private SettingsTabRequest? _appliedRequest;
-
-    /// <summary>A deep-link sub-tab from the Settings hub (SettingsLinks), applied once per request.</summary>
-    [Parameter] public SettingsTabRequest? TabRequest { get; set; }
+    /// <summary>The page the Settings hub shows (general | appearance | datetime | notifs | about | session). When
+    /// set, the hub owns navigation and this component's own rail is hidden; standalone launches keep it.</summary>
+    [Parameter] public string? Section { get; set; }
 
     protected override void OnParametersSet()
     {
-        if (TabRequest is not null && !ReferenceEquals(TabRequest, _appliedRequest))
-        {
-            _tab = TabRequest.Tab;
-            _appliedRequest = TabRequest;
-        }
+        if (Section is not null) { _tab = Section; }
     }
 
     protected override void OnInitialized()

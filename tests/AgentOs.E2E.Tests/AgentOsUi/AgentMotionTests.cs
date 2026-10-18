@@ -21,7 +21,6 @@ public sealed class AgentMotionTests : IClassFixture<AgentOsPageFixture>
         await _fx.Page.Locator(".dock-item[title=\"Settings\"]").First.ClickAsync();
         var win = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Settings");
-        await win.Locator(".prefs-cat", new() { HasTextString = "System" }).First.ClickAsync();
         await win.Locator(".prefs-cat", new() { HasTextString = "Appearance" }).ClickAsync();
         return win.Locator("label.toggle[title=\"Animations\"]");
     }

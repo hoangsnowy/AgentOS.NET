@@ -37,7 +37,7 @@ public sealed class RoleIsolationRealAuthTests : IClassFixture<AgentOsRealAuthFi
         // role signal — every admin app is unpinned for all users now.)
         await _fx.Page.Locator(".dock-item[title=\"Settings\"]").First.ClickAsync();
         var settings = _fx.Page.Locator(".appwin.focused");
-        await Assertions.Expect(settings.Locator(".prefs-cat", new() { HasTextString = "System" })).ToBeVisibleAsync();
+        await Assertions.Expect(settings.Locator(".prefs-cat", new() { HasTextString = "Appearance" })).ToBeVisibleAsync();
 
         // Platform (platform-admin only) and Agent profiles (tenant admin) must be hidden too.
         foreach (var adminCat in new[] { "Users", "Evidence", "LLM & providers", "Agent profiles", "Prompts", "Tool policy", "MCP servers", "Platform" })

@@ -22,7 +22,6 @@ public sealed class AboutServicesTests : IClassFixture<AgentOsPageFixture>
         await page.Locator(".dock-item[title=\"Settings\"]").First.ClickAsync();
         var win = page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Settings");
-        await win.Locator(".prefs-cat", new() { HasTextString = "System" }).First.ClickAsync();
         await win.Locator(".prefs-cat", new() { HasTextString = "About" }).ClickAsync();
         await Assertions.Expect(win.Locator(".about-row[data-service=\"web\"]")).ToBeVisibleAsync(new() { Timeout = 15_000 });
         return win;
