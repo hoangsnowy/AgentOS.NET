@@ -1,41 +1,53 @@
-@* SettingsHub — one window that collects every admin/system surface behind a single category rail,
-   so the desktop dock stays at five pinned apps instead of a scatter of one-off admin windows. Each
-   category renders an existing app component inline in the content pane (they remain independently
-   launchable + deep-linkable). The two "full" categories (LLM, System) bring their own prefs rail, so
-   their pane runs edge-to-edge (.flush). Categories the signed-in user can't access are hidden. *@
+@* SettingsHub — every setting behind ONE rail (UX phase 1, docs/plans/ux-simplification.md). It used to nest a
+   second rail inside two categories (LLM & providers: 5 tabs, System: 6), three levels of disclosure; now each
+   page is a rail item under a group heading (GNOME Settings style) and the rail has its own search. Pages are
+   existing components rendered inline (they stay independently launchable + deep-linkable); Settings (LLM) and
+   SystemApp render a single Section without their own rail. Items the signed-in user can't access are hidden. *@
 
 @using Microsoft.AspNetCore.Components.Authorization
 @implements IDisposable
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
+@inject IServiceProvider Services
 
 <div class="prefs">
-    <aside class="prefs-side">
-        <div class="prefs-side-head">Settings</div>
-        @foreach (var c in VisibleCats())
+    <aside class="prefs-side" aria-label="Settings pages">
+        <input class="prefs-input prefs-side-search" type="search" placeholder="Search settings…" aria-label="Search settings"
+               value="@_filter" @oninput="@(e => _filter = e.Value?.ToString() ?? string.Empty)" />
+        @foreach (var group in VisibleItems().GroupBy(i => i.Group))
         {
-            <button class="prefs-cat @(_tab == c.Key ? "active" : "")" @onclick="@(() => { _tab = c.Key; _request = null; })">
-                <span class="prefs-cat-ic"><Icon Name="@c.Icon" Size="14" /></span> @c.Label
-            </button>
+            <div class="prefs-side-head">@group.Key</div>
+            @foreach (var item in group)
+            {
+                <button class="prefs-cat @(_tab == item.Key ? "active" : "")" @onclick="@(() => _tab = item.Key)"
+                        aria-current="@(_tab == item.Key ? "page" : null)">
+                    <span class="prefs-cat-ic"><Icon Name="@item.Icon" Size="14" /></span> @item.Label
+                </button>
+            }
+        }
+        @if (!VisibleItems().Any())
+        {
+            <p class="prefs-hint prefs-side-empty">No settings match “@_filter”.</p>
         }
     </aside>
 
     <div class="@ContentClass">
         @switch (_tab)
         {
-            case "llm":      <Settings TabRequest="_request" />;    break;
+            case "keys" or "routing" or "github" or "diagnostics":
+                <Settings Section="@SettingsSection(_tab)" />
+                break;
             case "agents":   <AgentProfilesApp />; break;
-            case "platform": <PlatformSettingsApp />; break;
             case "prompts":  <PromptsApp />;  break;
+            case "mcp":      <McpApp />;      break;
+            case "plugins":  <PluginsApp />;  break;
             case "policy":   <PolicyApp />;   break;
             case "evidence": <EvidenceApp />; break;
             case "audit":    <AuditLogApp />; break;
-            case "data":     <DataApp />;     break;
-            case "tokens":   <ApiTokensApp />; break;
             case "users":    <UsersApp />;    break;
-            case "plugins":  <PluginsApp />;  break;
-            case "mcp":      <McpApp />;      break;
-            case "system":   <SystemApp TabRequest="_request" />;   break;
-            default:         <SystemApp />;   break;
+            case "tokens":   <ApiTokensApp />; break;
+            case "data":     <DataApp />;     break;
+            case "platform": <PlatformSettingsApp />; break;
+            default:         <SystemApp Section="@_tab" />; break;
         }
     </div>
 </div>
@@ -45,27 +57,37 @@
 
     private bool _isAdmin;
     private bool _isPlatformAdmin;
-    private string _tab = "system";
-    private SettingsTabRequest? _request;
+    private string _tab = "general";
+    private string _filter = string.Empty;
 
-    private sealed record Cat(string Key, string Label, string Icon, bool AdminOnly = false, bool Full = false, bool PlatformOnly = false);
+    private enum Access { Everyone, Admin, Platform }
 
-    // Order = rail order. "Full" categories host a component that owns its own prefs rail.
-    private static readonly Cat[] Cats =
+    // Rail order, grouped. "Host" pages are components with their own padded .prefs-content (Settings, System).
+    private sealed record Item(string Key, string Group, string Label, string Icon, Access Access, bool Host = false);
+
+    private static readonly Item[] Items =
     [
-        new("llm",      "LLM & providers", "gear",           AdminOnly: true, Full: true),
-        new("agents",   "Agent profiles",  "diamond",        AdminOnly: true),
-        new("prompts",  "Prompts",         "lightning",      AdminOnly: true),
-        new("policy",   "Tool policy",     "shield",         AdminOnly: true),
-        new("evidence", "Evidence",        "scroll",         AdminOnly: true),
-        new("audit",    "Audit log",       "clock-counter",  AdminOnly: true),
-        new("data",     "Data",            "floppy-disk",    AdminOnly: true),
-        new("tokens",   "API tokens",      "tag",            AdminOnly: true),
-        new("users",    "Users",           "user",           AdminOnly: true),
-        new("mcp",      "MCP servers",     "arrow-square-out", AdminOnly: true),
-        new("plugins",  "Plugins",         "squares-stack"),
-        new("platform", "Platform",        "server",         PlatformOnly: true),
-        new("system",   "System",          "wrench",         Full: true),
+        new("keys",        "AI",            "Model keys",     "key",              Access.Admin, Host: true),
+        new("routing",     "AI",            "Routing",        "lightning",        Access.Admin, Host: true),
+        new("agents",      "AI",            "Agent profiles", "diamond",          Access.Admin),
+        new("prompts",     "AI",            "Prompts",        "file",             Access.Admin),
+        new("github",      "Connections",   "GitHub",         "git-pull-request", Access.Admin, Host: true),
+        new("mcp",         "Connections",   "MCP servers",    "arrow-square-out", Access.Admin),
+        new("plugins",     "Connections",   "Plugins",        "squares-stack",    Access.Everyone),
+        new("policy",      "Governance",    "Tool policy",    "shield",           Access.Admin),
+        new("evidence",    "Governance",    "Evidence",       "scroll",           Access.Admin),
+        new("audit",       "Governance",    "Audit log",      "clock-counter",    Access.Admin),
+        new("users",       "People & data", "Users",          "user",             Access.Admin),
+        new("tokens",      "People & data", "API tokens",     "tag",              Access.Admin),
+        new("data",        "People & data", "Data",           "floppy-disk",      Access.Admin),
+        new("general",     "Personal",      "General",        "gear",             Access.Everyone, Host: true),
+        new("appearance",  "Personal",      "Appearance",     "palette",          Access.Everyone, Host: true),
+        new("datetime",    "Personal",      "Date & time",    "clock",            Access.Everyone, Host: true),
+        new("notifs",      "Personal",      "Notifications",  "bell",             Access.Everyone, Host: true),
+        new("session",     "Personal",      "Session",        "power",            Access.Everyone, Host: true),
+        new("about",       "System",        "About",          "info",             Access.Everyone, Host: true),
+        new("diagnostics", "System",        "Diagnostics",    "circle-fill",      Access.Admin, Host: true),
+        new("platform",    "System",        "Platform",       "server",           Access.Platform),
     ];
 
     protected override async Task OnInitializedAsync()
@@ -76,9 +98,8 @@
             _isAdmin = state.User.IsAdmin();
             _isPlatformAdmin = state.User.IsPlatformAdmin();
         }
-        // Land on a sensible default per role (admins → LLM config, members → System prefs) —
-        // explicit so it doesn't silently depend on the Cats array order.
-        _tab = _isAdmin ? "llm" : "system";
+        // Admins land on Model keys (the first thing a new workspace needs); members on their own preferences.
+        _tab = _isAdmin ? "keys" : "general";
         Apply(WM.ConsumeLaunchTab(SettingsLinks.AppKey));
         WM.Changed += OnWindowsChanged;
     }
@@ -90,23 +111,41 @@
         if (target is not null) { _ = InvokeAsync(() => { Apply(target); StateHasChanged(); }); }
     }
 
-    // "category[/sub-tab]" → the category (when this user may see it) + a fresh sub-tab request for it.
     private void Apply(string? target)
     {
         if (string.IsNullOrWhiteSpace(target)) { return; }
-        var (category, sub) = SettingsLinks.Parse(target);
-        if (!VisibleCats().Any(c => c.Key == category)) { return; }
-        _tab = category;
-        _request = sub is null ? null : new SettingsTabRequest(sub);
+        var key = SettingsLinks.Normalize(target);
+        if (!Allowed().Any(i => i.Key == key)) { return; }
+        _tab = key;
+        _filter = string.Empty;
     }
 
     public void Dispose() => WM.Changed -= OnWindowsChanged;
 
-    private IEnumerable<Cat> VisibleCats() =>
-        Cats.Where(c => (_isAdmin || !c.AdminOnly) && (_isPlatformAdmin || !c.PlatformOnly));
+    private IEnumerable<Item> Allowed() => Items.Where(i => i.Access switch
+    {
+        Access.Admin => _isAdmin,
+        Access.Platform => _isPlatformAdmin,
+        _ => true,
+    });
 
-    private Cat? ActiveCat() => Cats.FirstOrDefault(c => c.Key == _tab);
+    // The rail filter matches a page's label, or any setting / keyword SettingsSearch maps to that page.
+    private IEnumerable<Item> VisibleItems()
+    {
+        var q = _filter.Trim();
+        if (q.Length == 0) { return Allowed(); }
+        var catalog = Services.GetService<AgentOs.Domain.Configuration.ISettingsCatalog>();
+        var targets = SettingsSearch.Find(q, catalog?.All ?? [], _isAdmin, _isPlatformAdmin, max: 50)
+            .Select(h => h.Target).ToHashSet(StringComparer.Ordinal);
+        return Allowed().Where(i => targets.Contains(i.Key) || i.Label.Contains(q, StringComparison.OrdinalIgnoreCase));
+    }
 
-    // "Full" categories host a component with its own prefs rail → run the pane edge-to-edge.
-    private string ContentClass => ActiveCat() is { Full: true } ? "prefs-content flush" : "prefs-content";
+    private static string SettingsSection(string key) => key switch
+    {
+        "routing" => "providers",
+        "diagnostics" => "status",
+        _ => key,
+    };
+
+    private string ContentClass => Items.FirstOrDefault(i => i.Key == _tab) is { Host: true } ? "prefs-content flush" : "prefs-content";
 }

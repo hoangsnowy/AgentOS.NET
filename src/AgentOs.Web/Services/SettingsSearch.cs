@@ -14,8 +14,8 @@ namespace AgentOs.Web.Services;
 
 /// <summary>One settings search hit.</summary>
 /// <param name="Title">What matched (a page or a setting label).</param>
-/// <param name="Path">Where it lives, e.g. <c>Settings › LLM &amp; providers › Model keys</c>.</param>
-/// <param name="Target">The deep-link target (<c>hub-category[/sub-tab]</c>) for <see cref="SettingsLinks.Open"/>.</param>
+/// <param name="Path">Where it lives, e.g. <c>Settings › AI</c>.</param>
+/// <param name="Target">The hub page key for <see cref="SettingsLinks.Open"/>.</param>
 /// <param name="Icon">The page's icon.</param>
 public sealed record SettingsHit(string Title, string Path, string Target, string Icon);
 
@@ -26,34 +26,37 @@ public static class SettingsSearch
 
     private sealed record Page(string Target, string Title, string Path, string Icon, string Keywords, Access Access);
 
-    private const string Llm = "Settings › LLM & providers";
+    private const string Ai = "Settings › AI";
+    private const string Conn = "Settings › Connections";
+    private const string Gov = "Settings › Governance";
+    private const string People = "Settings › People & data";
+    private const string Personal = "Settings › Personal";
     private const string Sys = "Settings › System";
 
-    // Rail order. Keywords are the words people type for the page, not only the words on it.
+    // Rail order (SettingsHub.Items). Keywords are the words people type for the page, not only the words on it.
     private static readonly Page[] Pages =
     [
-        new("llm/keys", "Model keys", Llm, "key", "api key apikey secret byok anthropic claude azure openai gpt gemini google xai grok endpoint", Access.Admin),
-        new("llm/providers", "Providers & routing", Llm, "lightning", "force provider default provider routing test connection offline fallback remoteagent remote agent paired", Access.Admin),
-        new("llm/status", "LLM status", Llm, "circle-fill", "status effective configuration which provider", Access.Admin),
-        new("llm/github", "GitHub (pipeline PRs)", Llm, "arrow-square-out", "github token pat pull request repo owner", Access.Admin),
-        new("llm/data", "Storage", Llm, "floppy-disk", "storage persistence database postgres stateless", Access.Admin),
-        new("agents", "Agent profiles", "Settings", "diamond", "agent model per agent temperature max tokens output qa loop iterations cap profile coding testing requirement orchestrator", Access.Admin),
-        new("prompts", "Prompts", "Settings", "lightning", "prompt system prompt workspace rules instructions version history rollback", Access.Admin),
-        new("policy", "Tool policy", "Settings", "shield", "tool allowlist policy permissions governance", Access.Admin),
-        new("evidence", "Evidence", "Settings", "scroll", "evidence tool calls invocations trail governance", Access.Admin),
-        new("audit", "Audit log", "Settings", "clock-counter", "audit log who changed history sign-in login members csv", Access.Admin),
-        new("data", "Data", "Settings", "floppy-disk", "export purge delete tenant workspace data download gdpr", Access.Admin),
-        new("tokens", "API tokens", "Settings", "tag", "api token service account ci pipeline script machine bearer mcp client", Access.Admin),
-        new("users", "Users", "Settings", "user", "users members invite invitation roles people team", Access.Admin),
-        new("mcp", "MCP servers", "Settings", "arrow-square-out", "mcp model context protocol tool servers upstream", Access.Admin),
-        new("plugins", "Plugins", "Settings", "squares-stack", "plugins extensions add-ons", Access.Everyone),
-        new("platform", "Platform", "Settings", "server", "platform safety run limits concurrency sandbox docker openai-compatible self-hosted ollama vllm foundry", Access.Platform),
-        new("system/general", "General", Sys, "gear", "general preferences", Access.Everyone),
-        new("system/appearance", "Appearance", Sys, "palette", "appearance theme dark light mode wallpaper accent glass motion animation", Access.Everyone),
-        new("system/datetime", "Date & time", Sys, "clock", "date time clock time zone 24-hour", Access.Everyone),
-        new("system/notifs", "Notifications", Sys, "bell", "notifications toasts alerts", Access.Everyone),
-        new("system/about", "About", Sys, "info", "about version build health services status", Access.Everyone),
-        new("system/session", "Session", Sys, "power", "session sign out logout", Access.Everyone),
+        new("keys", "Model keys", Ai, "key", "api key apikey secret byok anthropic claude azure openai gpt gemini google xai grok endpoint", Access.Admin),
+        new("routing", "Routing", Ai, "lightning", "force provider default provider routing test connection offline fallback remoteagent remote agent paired", Access.Admin),
+        new("agents", "Agent profiles", Ai, "diamond", "agent model per agent temperature max tokens output qa loop iterations cap profile coding testing requirement orchestrator", Access.Admin),
+        new("prompts", "Prompts", Ai, "file", "prompt system prompt workspace rules instructions version history rollback", Access.Admin),
+        new("github", "GitHub", Conn, "git-pull-request", "github token pat pull request repo owner pipeline", Access.Admin),
+        new("mcp", "MCP servers", Conn, "arrow-square-out", "mcp model context protocol tool servers upstream", Access.Admin),
+        new("plugins", "Plugins", Conn, "squares-stack", "plugins extensions add-ons", Access.Everyone),
+        new("policy", "Tool policy", Gov, "shield", "tool allowlist policy permissions governance", Access.Admin),
+        new("evidence", "Evidence", Gov, "scroll", "evidence tool calls invocations trail governance", Access.Admin),
+        new("audit", "Audit log", Gov, "clock-counter", "audit log who changed history sign-in login members csv", Access.Admin),
+        new("users", "Users", People, "user", "users members invite invitation roles people team", Access.Admin),
+        new("tokens", "API tokens", People, "tag", "api token service account ci pipeline script machine bearer mcp client", Access.Admin),
+        new("data", "Data", People, "floppy-disk", "export purge delete tenant workspace data download gdpr", Access.Admin),
+        new("general", "General", Personal, "gear", "general preferences", Access.Everyone),
+        new("appearance", "Appearance", Personal, "palette", "appearance theme dark light mode wallpaper accent glass motion animation", Access.Everyone),
+        new("datetime", "Date & time", Personal, "clock", "date time clock time zone 24-hour", Access.Everyone),
+        new("notifs", "Notifications", Personal, "bell", "notifications toasts alerts", Access.Everyone),
+        new("session", "Session", Personal, "power", "session sign out logout", Access.Everyone),
+        new("about", "About", Sys, "info", "about version build health services status", Access.Everyone),
+        new("diagnostics", "Diagnostics", Sys, "circle-fill", "status diagnostics effective configuration which provider storage persistence database postgres stateless", Access.Admin),
+        new("platform", "Platform", Sys, "server", "platform safety run limits concurrency sandbox docker openai-compatible self-hosted ollama vllm foundry", Access.Platform),
     ];
 
     private static readonly Dictionary<string, Page> ByTarget = Pages.ToDictionary(p => p.Target, StringComparer.Ordinal);
@@ -74,7 +77,7 @@ public static class SettingsSearch
         _ when NoEditor.Contains(d.Key) => null,
         { Scope: SettingScope.Platform } => "platform",
         { Category: "Agent profiles" or "Pipeline" } => "agents",
-        { Category: "LLM providers" } => ModelKeySettings.Contains(d.Key) ? "llm/keys" : "llm/providers",
+        { Category: "LLM providers" } => ModelKeySettings.Contains(d.Key) ? "keys" : "routing",
         { Category: "Build sandbox" or "Platform" } => "platform",
         _ => null,
     };

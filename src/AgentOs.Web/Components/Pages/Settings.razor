@@ -27,22 +27,14 @@ else if (!_isAdmin)
 else
 {
 <div class="prefs">
-    <aside class="prefs-side">
-        <div class="prefs-side-head">Settings</div>
-        <button class="prefs-cat @(_tab == "status"   ? "active" : "")" @onclick="@(() => _tab = "status")"><span class="prefs-cat-ic"><Icon Name="circle-fill"        Size="12" /></span> Status</button>
-        <button class="prefs-cat @(_tab == "providers"? "active" : "")" @onclick="@(() => _tab = "providers")"><span class="prefs-cat-ic"><Icon Name="lightning"        Size="14" /></span> Providers</button>
-        <button class="prefs-cat @(_tab == "keys"     ? "active" : "")" @onclick="@(() => _tab = "keys")"><span class="prefs-cat-ic"><Icon Name="key"              Size="14" /></span> Model keys</button>
-        <button class="prefs-cat @(_tab == "github"   ? "active" : "")" @onclick="@(() => _tab = "github")"><span class="prefs-cat-ic"><Icon Name="arrow-square-out" Size="14" /></span> GitHub</button>
-        <button class="prefs-cat @(_tab == "data"     ? "active" : "")" @onclick="@(() => _tab = "data")"><span class="prefs-cat-ic"><Icon Name="floppy-disk"      Size="14" /></span> Storage</button>
-    </aside>
 
     <div class="prefs-content">
         @switch (_tab)
         {
             case "status":
                 <div class="prefs-section">
-                    <h2 class="prefs-h">Status</h2>
-                    <p class="prefs-sub">Current effective configuration.</p>
+                    <h2 class="prefs-h">Diagnostics</h2>
+                    <p class="prefs-sub">The effective LLM configuration for this workspace, and where its data lives.</p>
                 </div>
                 <table class="prefs-tbl">
                     <tr><th>Default provider</th><td><code>@LlmOpts.Value.Provider</code></td></tr>
@@ -52,12 +44,28 @@ else
                     <tr><th>Azure OpenAI endpoint</th><td>@EffectiveEndpointLabel()</td></tr>
                     <tr><th>Persistence</th><td>@(_dbConnected ? "Postgres connected" : "Stateless (no DB)")</td></tr>
                 </table>
+                <div class="prefs-section" style="margin-top:var(--space-5)">
+                    <h2 class="prefs-h">Storage</h2>
+                    <p class="prefs-sub">Where data lives.</p>
+                </div>
+                <ul class="prefs-list">
+                    <li><strong>Runs, metrics, workflows</strong>: in memory unless <code>ConnectionStrings:DefaultConnection</code> is set → Postgres, isolated per workspace by row-level security.</li>
+                    <li><strong>Model keys</strong>: encrypted (DataProtection) and stored <strong>per workspace</strong> in <code>config.app_config</code>. A platform key from env / user-secrets is only a dev fallback when a workspace sets none.</li>
+                    <li><strong>Generated code and pull requests</strong>: in the run; a PR is opened against the repo on the GitHub page once QA passes.</li>
+                </ul>
+                <details class="prefs-details">
+                    <summary>CLI setup</summary>
+                    <pre class="code">cd src/AgentOs.Api
+dotnet user-secrets set "Llm:Claude:ApiKey"      "sk-ant-..."
+dotnet user-secrets set "Llm:AzureOpenAi:ApiKey" "..."
+dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai.azure.com"</pre>
+                </details>
                 break;
 
             case "providers":
                 <div class="prefs-section">
-                    <h2 class="prefs-h">Providers</h2>
-                    <p class="prefs-sub">Force a single provider for every agent at runtime.</p>
+                    <h2 class="prefs-h">Routing</h2>
+                    <p class="prefs-sub">Which provider the agents use. Per-agent choices live in <strong>Agent profiles</strong>; Force overrides them all.</p>
                 </div>
                 <div class="prefs-row">
                     <div class="prefs-label"><strong>Force provider</strong><br /><span class="prefs-hint">Overrides per-agent configuration.</span></div>
@@ -150,7 +158,7 @@ else
 
                 <div class="prefs-section" style="margin-top:var(--space-5)">
                     <h2 class="prefs-h">OpenAI · Gemini · xAI</h2>
-                    <p class="prefs-sub">Bring your own key. Pick the provider per agent in <strong>Agent profiles</strong>, or force it under Providers. Costs use each vendor's published rates.</p>
+                    <p class="prefs-sub">Bring your own key. Pick the provider per agent in <strong>Agent profiles</strong>, or force it under <strong>Routing</strong>. Costs use each vendor's published rates.</p>
                 </div>
                 <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
                                 Keys="@(AgentOs.Modules.Llm.VendorProviders.All.SelectMany(v => new[] { v.KeySetting, v.ModelSetting }).ToArray())" />
@@ -205,25 +213,6 @@ else
                 }
                 break;
 
-            case "data":
-                <div class="prefs-section">
-                    <h2 class="prefs-h">Storage</h2>
-                    <p class="prefs-sub">Where pipeline data lives.</p>
-                </div>
-                <ul class="prefs-list">
-                    <li><strong>Pipeline results</strong>: in-memory unless <code>ConnectionStrings:DefaultConnection</code> is set → Postgres tables <code>pipeline_runs</code> / <code>run_metrics</code> / <code>orchestrations</code>.</li>
-                    <li><strong>API keys</strong>: keys you enter on the "API keys" tab are encrypted (DataProtection) and stored <strong>per-tenant</strong> in <code>config.app_config</code> — durable across restarts, isolated to your workspace. The platform-wide key in <code>appsettings</code>/env is only a dev/demo fallback when a tenant sets none.</li>
-                    <li><strong>Generated code / tests</strong>: returned inline in the pipeline response. Use the <em>Verify build</em> card on the Pipeline app to compile them in a temp dir.</li>
-                    <li><strong>GitHub PR</strong>: <em>Open PR</em> on the Pipeline app commits the generated files + opens a PR against the repo configured on the GitHub tab.</li>
-                </ul>
-                <details class="prefs-details">
-                    <summary>CLI setup</summary>
-                    <pre class="code">cd src/AgentOs.Api
-dotnet user-secrets set "Llm:Claude:ApiKey"      "sk-ant-..."
-dotnet user-secrets set "Llm:AzureOpenAi:ApiKey" "..."
-dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai.azure.com"</pre>
-                </details>
-                break;
         }
     </div>
 </div>
@@ -232,20 +221,15 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
 @code {
     // Land on Model keys: adding a key is the first thing a new admin has to do (docs/plans/ux-simplification.md).
     private string _tab = "keys";
-    private SettingsTabRequest? _appliedRequest;
 
-    private static readonly string[] Tabs = ["status", "providers", "keys", "github", "data"];
+    private static readonly string[] Tabs = ["status", "providers", "keys", "github"];
 
-    /// <summary>A deep-link sub-tab from the Settings hub (SettingsLinks), applied once per request.</summary>
-    [Parameter] public SettingsTabRequest? TabRequest { get; set; }
+    /// <summary>The page the Settings hub shows (status | providers | keys | github). The hub owns navigation.</summary>
+    [Parameter] public string? Section { get; set; }
 
     protected override void OnParametersSet()
     {
-        if (TabRequest is not null && !ReferenceEquals(TabRequest, _appliedRequest) && Tabs.Contains(TabRequest.Tab))
-        {
-            _tab = TabRequest.Tab;
-            _appliedRequest = TabRequest;
-        }
+        if (Section is not null && Tabs.Contains(Section)) { _tab = Section; }
     }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }

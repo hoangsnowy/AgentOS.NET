@@ -31,9 +31,9 @@ public sealed class ShellActionsTests
     [Fact]
     public void SettingsTargets_AreHubCategories()
     {
-        string[] hub = ["llm", "users", "tokens", "data"];
+        string[] hub = ["keys", "users", "tokens", "data"];
         new[] { ShellActions.AddKey, ShellActions.Invite, ShellActions.Token, ShellActions.Export }
-            .Select(id => SettingsLinks.Parse(ShellActions.SettingsTarget(id)!).Category)
+            .Select(id => SettingsLinks.Normalize(ShellActions.SettingsTarget(id)!))
             .ShouldAllBe(c => hub.Contains(c));
         ShellActions.SettingsTarget(ShellActions.Run).ShouldBeNull();
     }

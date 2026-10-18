@@ -18,10 +18,11 @@ public sealed class SettingsSearchTests
         [.. new LlmSettings().Describe(), .. new AgentSettings().Describe()];
 
     [Theory]
-    [InlineData("gemini key", "llm/keys")]
-    [InlineData("anthropic", "llm/keys")]
-    [InlineData("force provider", "llm/providers")]
-    [InlineData("dark mode", "system/appearance")]
+    [InlineData("gemini key", "keys")]
+    [InlineData("anthropic", "keys")]
+    [InlineData("force provider", "routing")]
+    [InlineData("dark mode", "appearance")]
+    [InlineData("postgres", "diagnostics")]
     [InlineData("who changed", "audit")]
     [InlineData("service account", "tokens")]
     [InlineData("qa loop", "agents")]
@@ -33,7 +34,7 @@ public sealed class SettingsSearchTests
     {
         SettingsSearch.Find("key", Descriptors, isAdmin: false, isPlatformAdmin: false).ShouldBeEmpty();
         SettingsSearch.Find("theme", Descriptors, isAdmin: false, isPlatformAdmin: false)
-            .ShouldHaveSingleItem().Target.ShouldBe("system/appearance");
+            .ShouldHaveSingleItem().Target.ShouldBe("appearance");
     }
 
     [Fact]
@@ -48,7 +49,7 @@ public sealed class SettingsSearchTests
     public void Find_SettingLabels_DeepLinkToTheirPage_WithoutDuplicates()
     {
         var hits = SettingsSearch.Find("xai", Descriptors, isAdmin: true, isPlatformAdmin: false, max: 10);
-        hits.ShouldContain(h => h.Title == "xAI API key" && h.Target == "llm/keys");
+        hits.ShouldContain(h => h.Title == "xAI API key" && h.Target == "keys");
         hits.Select(h => h.Title).ShouldBeUnique();
         SettingsSearch.Find("", Descriptors, true, true).ShouldBeEmpty();
         SettingsSearch.Find("zzzz-nothing", Descriptors, true, true).ShouldBeEmpty();
@@ -62,13 +63,19 @@ public sealed class SettingsSearchTests
         Descriptors.Where(d => d.Scope != SettingScope.Platform && !d.Key.EndsWith("ApiKeys", System.StringComparison.Ordinal))
             .ShouldAllBe(d => SettingsSearch.TargetOf(d) != null);
         SettingsSearch.Find("anthropic api key", Descriptors, true, false, max: 10)
-            .ShouldContain(h => h.Title == "Anthropic API key" && h.Target == "llm/keys");
+            .ShouldContain(h => h.Title == "Anthropic API key" && h.Target == "keys");
         SettingsSearch.Find("key pool", Descriptors, true, false).ShouldBeEmpty();
     }
 
     [Theory]
-    [InlineData("llm/keys", "llm", "keys")]
-    [InlineData("audit", "audit", null)]
-    public void Parse_SplitsCategoryAndSubTab(string target, string category, string? sub)
-        => SettingsLinks.Parse(target).ShouldBe((category, sub));
+    [InlineData("keys", "keys")]
+    [InlineData("llm/keys", "keys")]            // pre-flattening links keep working
+    [InlineData("llm", "keys")]
+    [InlineData("llm/providers", "routing")]
+    [InlineData("llm/data", "diagnostics")]
+    [InlineData("system/appearance", "appearance")]
+    [InlineData("system", "general")]
+    [InlineData("audit", "audit")]
+    public void Normalize_MapsLegacyTargetsToFlatPages(string target, string page)
+        => SettingsLinks.Normalize(target).ShouldBe(page);
 }

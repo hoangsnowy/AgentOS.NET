@@ -179,15 +179,15 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
   thumbnail strip.
 - **Windows** (`AppFrame` ← `WindowHost` ← `WindowManagerService`) — one entry per open app; z-order
   on focus; CSD drag/resize/maximize; grab a maximized window's titlebar to restore it under the cursor.
-- **Settings hub** (`SettingsHub.razor`, pinned "Settings") — one window collecting every admin/system
-  surface behind a category rail (LLM & providers, Agent profiles, Prompts, Tool policy, Evidence, Audit
-  log, Data, API tokens, Users, MCP, Plugins, Platform, **System**). Deep-link with
-  `SettingsLinks.Open(WM, "category[/sub-tab]")` (e.g. `llm/keys`) — works whether or not the hub is
-  open. Every "you need to configure X" message is a **fix-it button** to the exact page, never prose.
-- **System category** (`SystemApp.razor`, the System tab inside the hub — unpinned standalone) — OS
-  preferences: General, Appearance, **Date & time**, Notifications, About, Session. **Device/shell
-  preferences live here**; admin governance lives in the hub's other categories. (The clock dropdown
-  *deep-links* here via `WM.RequestLaunchTab("system","datetime")`.)
+- **Settings hub** (`SettingsHub.razor`, pinned "Settings") — every setting behind **one rail** (GNOME
+  Settings style, never a rail inside a rail): a search field, then pages under group headings — **AI**
+  (Model keys, Routing, Agent profiles, Prompts) · **Connections** (GitHub, MCP servers, Plugins) ·
+  **Governance** (Tool policy, Evidence, Audit log) · **People & data** (Users, API tokens, Data) ·
+  **Personal** (General, Appearance, Date & time, Notifications, Session) · **System** (About, Diagnostics,
+  Platform). Deep-link with `SettingsLinks.Open(WM, "<page>")` (e.g. `keys`; legacy `llm/keys` still
+  works) — open or not. Every "you need to configure X" message is a **fix-it button** to the exact page.
+- **System app** (`SystemApp.razor`, unpinned standalone) — the Personal pages + About with its own rail
+  when launched on its own; inside the hub it renders one `Section` and no rail of its own. (The clock dropdown *deep-links* here via `WM.RequestLaunchTab("system","datetime")`.)
 
 ## Rules (the part that keeps it coherent)
 
