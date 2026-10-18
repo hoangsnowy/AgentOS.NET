@@ -145,6 +145,20 @@
     private string _timeZone = "";
     private System.Threading.Timer? _clockTimer;
 
+    private SettingsTabRequest? _appliedRequest;
+
+    /// <summary>A deep-link sub-tab from the Settings hub (SettingsLinks), applied once per request.</summary>
+    [Parameter] public SettingsTabRequest? TabRequest { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (TabRequest is not null && !ReferenceEquals(TabRequest, _appliedRequest))
+        {
+            _tab = TabRequest.Tab;
+            _appliedRequest = TabRequest;
+        }
+    }
+
     protected override void OnInitialized()
     {
         // Deep-link: the TopBar clock requests System → "datetime". One-shot, self-clears.

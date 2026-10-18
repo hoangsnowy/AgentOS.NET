@@ -15,7 +15,11 @@ live gallery is on `/_/components`. Adding one: add a `case` to `Icon.razor` and
 | `terminal` | Terminal, runner output |
 | `folder` / `file` | Files app, repository tree |
 | `user` | Users, account |
-| `lock` | Policy, evidence, platform/security settings |
+| `lock` | Locked / restricted state, sign-in |
+| `key` | Model keys (LLM provider keys) |
+| `shield` | Tool policy |
+| `scroll` | Evidence (tool-call trail) |
+| `server` | Platform settings |
 | `diamond` | Agent profiles, agent nodes |
 | `lightning` | Prompts, quick actions |
 | `squares-stack` | Plugins |

@@ -31,7 +31,7 @@ else
         <div class="prefs-side-head">Settings</div>
         <button class="prefs-cat @(_tab == "status"   ? "active" : "")" @onclick="@(() => _tab = "status")"><span class="prefs-cat-ic"><Icon Name="circle-fill"        Size="12" /></span> Status</button>
         <button class="prefs-cat @(_tab == "providers"? "active" : "")" @onclick="@(() => _tab = "providers")"><span class="prefs-cat-ic"><Icon Name="lightning"        Size="14" /></span> Providers</button>
-        <button class="prefs-cat @(_tab == "keys"     ? "active" : "")" @onclick="@(() => _tab = "keys")"><span class="prefs-cat-ic"><Icon Name="lock"             Size="14" /></span> API keys</button>
+        <button class="prefs-cat @(_tab == "keys"     ? "active" : "")" @onclick="@(() => _tab = "keys")"><span class="prefs-cat-ic"><Icon Name="key"              Size="14" /></span> Model keys</button>
         <button class="prefs-cat @(_tab == "github"   ? "active" : "")" @onclick="@(() => _tab = "github")"><span class="prefs-cat-ic"><Icon Name="arrow-square-out" Size="14" /></span> GitHub</button>
         <button class="prefs-cat @(_tab == "data"     ? "active" : "")" @onclick="@(() => _tab = "data")"><span class="prefs-cat-ic"><Icon Name="floppy-disk"      Size="14" /></span> Storage</button>
     </aside>
@@ -111,13 +111,6 @@ else
                 }
 
                 <div class="prefs-section" style="margin-top:var(--space-5)">
-                    <h2 class="prefs-h">OpenAI · Gemini · xAI</h2>
-                    <p class="prefs-sub">Bring your own key. Pick the provider per agent in <strong>Agent profiles</strong>, or force it under Providers. Costs use each vendor's published rates.</p>
-                </div>
-                <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
-                                Keys="@(AgentOs.Modules.Llm.VendorProviders.All.SelectMany(v => new[] { v.KeySetting, v.ModelSetting }).ToArray())" />
-
-                <div class="prefs-section" style="margin-top:var(--space-5)">
                     <h2 class="prefs-h">Routing &amp; deployment</h2>
                     <p class="prefs-sub">Applied live to the next call — no restart. Per-agent models live in <strong>Agent profiles</strong>.</p>
                 </div>
@@ -127,7 +120,7 @@ else
 
             case "keys":
                 <div class="prefs-section">
-                    <h2 class="prefs-h">API keys</h2>
+                    <h2 class="prefs-h">Model keys</h2>
                     <p class="prefs-sub">Your workspace's own keys — encrypted + stored per-tenant. Used only by <code>@_tenantId</code>; other tenants never see or spend them. Leave blank to fall back to the platform key (dev/demo only).</p>
                 </div>
                 <div class="prefs-row">
@@ -154,6 +147,13 @@ else
                 {
                     <div class="prefs-saved"><Chip Variant="Chip.ChipVariant.Ok">Saved</Chip> @SaveScopeLabel()</div>
                 }
+
+                <div class="prefs-section" style="margin-top:var(--space-5)">
+                    <h2 class="prefs-h">OpenAI · Gemini · xAI</h2>
+                    <p class="prefs-sub">Bring your own key. Pick the provider per agent in <strong>Agent profiles</strong>, or force it under Providers. Costs use each vendor's published rates.</p>
+                </div>
+                <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
+                                Keys="@(AgentOs.Modules.Llm.VendorProviders.All.SelectMany(v => new[] { v.KeySetting, v.ModelSetting }).ToArray())" />
                 break;
 
             case "github":
@@ -230,7 +230,23 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
 }
 
 @code {
-    private string _tab = "status";
+    // Land on Model keys: adding a key is the first thing a new admin has to do (docs/plans/ux-simplification.md).
+    private string _tab = "keys";
+    private SettingsTabRequest? _appliedRequest;
+
+    private static readonly string[] Tabs = ["status", "providers", "keys", "github", "data"];
+
+    /// <summary>A deep-link sub-tab from the Settings hub (SettingsLinks), applied once per request.</summary>
+    [Parameter] public SettingsTabRequest? TabRequest { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (TabRequest is not null && !ReferenceEquals(TabRequest, _appliedRequest) && Tabs.Contains(TabRequest.Tab))
+        {
+            _tab = TabRequest.Tab;
+            _appliedRequest = TabRequest;
+        }
+    }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
     private bool _resolved;

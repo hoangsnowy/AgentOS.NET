@@ -5,13 +5,15 @@
    their pane runs edge-to-edge (.flush). Categories the signed-in user can't access are hidden. *@
 
 @using Microsoft.AspNetCore.Components.Authorization
+@implements IDisposable
+@inject AgentOs.Web.Shell.Services.WindowManagerService WM
 
 <div class="prefs">
     <aside class="prefs-side">
         <div class="prefs-side-head">Settings</div>
         @foreach (var c in VisibleCats())
         {
-            <button class="prefs-cat @(_tab == c.Key ? "active" : "")" @onclick="@(() => _tab = c.Key)">
+            <button class="prefs-cat @(_tab == c.Key ? "active" : "")" @onclick="@(() => { _tab = c.Key; _request = null; })">
                 <span class="prefs-cat-ic"><Icon Name="@c.Icon" Size="14" /></span> @c.Label
             </button>
         }
@@ -20,7 +22,7 @@
     <div class="@ContentClass">
         @switch (_tab)
         {
-            case "llm":      <Settings />;    break;
+            case "llm":      <Settings TabRequest="_request" />;    break;
             case "agents":   <AgentProfilesApp />; break;
             case "platform": <PlatformSettingsApp />; break;
             case "prompts":  <PromptsApp />;  break;
@@ -32,7 +34,7 @@
             case "users":    <UsersApp />;    break;
             case "plugins":  <PluginsApp />;  break;
             case "mcp":      <McpApp />;      break;
-            case "system":   <SystemApp />;   break;
+            case "system":   <SystemApp TabRequest="_request" />;   break;
             default:         <SystemApp />;   break;
         }
     </div>
@@ -44,6 +46,7 @@
     private bool _isAdmin;
     private bool _isPlatformAdmin;
     private string _tab = "system";
+    private SettingsTabRequest? _request;
 
     private sealed record Cat(string Key, string Label, string Icon, bool AdminOnly = false, bool Full = false, bool PlatformOnly = false);
 
@@ -53,15 +56,15 @@
         new("llm",      "LLM & providers", "gear",           AdminOnly: true, Full: true),
         new("agents",   "Agent profiles",  "diamond",        AdminOnly: true),
         new("prompts",  "Prompts",         "lightning",      AdminOnly: true),
-        new("policy",   "Tool policy",     "lock",           AdminOnly: true),
-        new("evidence", "Evidence",        "lock",           AdminOnly: true),
+        new("policy",   "Tool policy",     "shield",         AdminOnly: true),
+        new("evidence", "Evidence",        "scroll",         AdminOnly: true),
         new("audit",    "Audit log",       "clock-counter",  AdminOnly: true),
         new("data",     "Data",            "floppy-disk",    AdminOnly: true),
         new("tokens",   "API tokens",      "tag",            AdminOnly: true),
         new("users",    "Users",           "user",           AdminOnly: true),
         new("mcp",      "MCP servers",     "arrow-square-out", AdminOnly: true),
         new("plugins",  "Plugins",         "squares-stack"),
-        new("platform", "Platform",        "lock",           PlatformOnly: true),
+        new("platform", "Platform",        "server",         PlatformOnly: true),
         new("system",   "System",          "wrench",         Full: true),
     ];
 
@@ -76,7 +79,28 @@
         // Land on a sensible default per role (admins → LLM config, members → System prefs) —
         // explicit so it doesn't silently depend on the Cats array order.
         _tab = _isAdmin ? "llm" : "system";
+        Apply(WM.ConsumeLaunchTab(SettingsLinks.AppKey));
+        WM.Changed += OnWindowsChanged;
     }
+
+    // A deep link (SettingsLinks.Open) to an already-open hub arrives as a window-manager change.
+    private void OnWindowsChanged()
+    {
+        var target = WM.ConsumeLaunchTab(SettingsLinks.AppKey);
+        if (target is not null) { _ = InvokeAsync(() => { Apply(target); StateHasChanged(); }); }
+    }
+
+    // "category[/sub-tab]" → the category (when this user may see it) + a fresh sub-tab request for it.
+    private void Apply(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target)) { return; }
+        var (category, sub) = SettingsLinks.Parse(target);
+        if (!VisibleCats().Any(c => c.Key == category)) { return; }
+        _tab = category;
+        _request = sub is null ? null : new SettingsTabRequest(sub);
+    }
+
+    public void Dispose() => WM.Changed -= OnWindowsChanged;
 
     private IEnumerable<Cat> VisibleCats() =>
         Cats.Where(c => (_isAdmin || !c.AdminOnly) && (_isPlatformAdmin || !c.PlatformOnly));

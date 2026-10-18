@@ -20,6 +20,7 @@
 @inject AgentOs.Web.Services.LlmConfigView LlmConfig
 @inject Microsoft.JSInterop.IJSRuntime JS
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
+@inject AgentOs.Modules.Pipeline.Agents.IAgentProfiles Profiles
 @implements IDisposable
 
 <PageTitle>Workflow — AgentOS.NET</PageTitle>
@@ -45,7 +46,15 @@
 
             @if (ShowOffline)
             {
-                <span class="syn-live-tag offline" title="@ChipTitle" data-testid="llm-chip-offline"><Icon Name="warning" Size="11" /> Offline · canned</span>
+                @if (_isAdmin)
+                {
+                    <button type="button" class="syn-live-tag offline" title="@ChipTitle" data-testid="llm-chip-offline"
+                            @onclick="@(() => SettingsLinks.Open(WM, SettingsLinks.ModelKeys))"><Icon Name="warning" Size="11" /> Offline · Add a key</button>
+                }
+                else
+                {
+                    <span class="syn-live-tag offline" title="@ChipTitle" data-testid="llm-chip-offline"><Icon Name="warning" Size="11" /> Offline · canned</span>
+                }
             }
             else
             {
@@ -301,7 +310,7 @@
                             <label class="dock-f">out<input @bind="_selected.Data.Output" @bind:event="oninput" @bind:after="InspectorChanged" /></label>
                         </div>
                         <div class="dock-row">
-                            <label class="dock-f">max iterations<input type="number" min="0" max="10" @bind="_selected.Data.MaxIterations" @bind:after="InspectorChanged" /></label>
+                            <label class="dock-f" title="0 = use the workspace QA-loop cap (Settings → Agent profiles). A node can lower the cap, never raise it.">max iterations (0 = workspace cap)<input type="number" min="0" max="10" @bind="_selected.Data.MaxIterations" @bind:after="InspectorChanged" /></label>
                         </div>
                         @if (_selected.Data.Category == StepCategory.Evaluator)
                         {
@@ -380,6 +389,11 @@
 </div>
 
 @code {
+    // Built-in QA-loop cap when the workspace sets none (PipelineOptions.MaxIterations default).
+    private const int DefaultQaCap = 3;
+
+    private bool _isAdmin;
+
     private List<OrchestrationGraph> _all = [];
     private OrchestrationGraph _graph = null!;
     private BlazorDiagram _diagram = null!;
@@ -476,7 +490,7 @@
     private bool _lastRunOffline;
     private bool ShowOffline => _lastRunOffline || (_llm?.WillServeCanned ?? false);
     private string ChipTitle => ShowOffline
-        ? $"No usable {ActiveProvider} key — agents answer with canned offline output; no model is called. Add a key in Settings → LLM."
+        ? $"No usable {ActiveProvider} key — agents answer with canned offline output; no model is called. Add a key in Settings → LLM & providers → Model keys (click the Offline chip)."
         : "Active LLM provider";
 
     // The node library, grouped the way a builder reads it (Agents / Flow / Data / Control) rather than a
@@ -560,6 +574,7 @@
         if (AuthState is null) { return string.Empty; }
         var user = (await AuthState).User;
         _userId = user.GetUserId();
+        _isAdmin = user.IsAdmin();
         return user.GetTenantId() ?? string.Empty;
     }
 
@@ -657,7 +672,7 @@
             Title = StepName(type),
             X = x,
             Y = y,
-            MaxIterations = type is StepType.Loop or StepType.Agent or StepType.Evaluator ? 3 : 0,
+            MaxIterations = type is StepType.Loop ? 3 : 0,   // agents + evaluators inherit the workspace QA cap
             Routes = type is StepType.Evaluator or StepType.IfElse ? ["yes", "no"] : [],
         };
         _graph.Nodes.Add(node);
@@ -852,10 +867,9 @@
         }
 
         var story = string.IsNullOrWhiteSpace(_runInput) ? "Build the feature this workflow describes." : _runInput;
-        var nMax = _graph.Nodes
-            .Where(n => n.Type == StepType.Evaluator || string.Equals(n.AgentRole, "Qa", StringComparison.OrdinalIgnoreCase))
-            .Select(n => n.MaxIterations).FirstOrDefault();
-        if (nMax <= 0) { nMax = 3; }
+        // The workspace's QA-loop cap (Settings → Agent profiles) is the ceiling, exactly as for the classic
+        // pipeline; a node's own "max iterations" can only lower it (GraphExecutor takes the min, 0 = inherit).
+        var nMax = await Profiles.MaxIterationsAsync(DefaultQaCap);
 
         // Outcome captured by the closure below and recorded once the run settles (recent-runs list).
         var completed = false;
@@ -896,7 +910,7 @@
                     _lastRunOffline = result.Offline;
                     detail = result.Completed ? (result.Offline ? "completed (offline dry run)" : "completed") : (result.FailureMessage ?? "stopped");
                     Log(!result.Completed ? $"✖ Stopped: {result.FailureMessage}"
-                        : result.Offline ? "■ Dry run complete — OFFLINE: canned output, nothing reached a model. Add an API key in Settings → LLM for a live run."
+                        : result.Offline ? "■ Dry run complete — OFFLINE: canned output, nothing reached a model. Add a key in Settings → LLM & providers → Model keys for a live run."
                         : "■ Workflow complete.");
                     _lastUsage = result.Usage;
                     LogUsage(result.Usage);
