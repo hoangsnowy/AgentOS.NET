@@ -8,16 +8,20 @@
 @inject NavigationManager Nav
 @inject AuthSession Auth
 
-<div class="prefs @(Section is null ? "" : "prefs-embedded")">
-    <aside class="prefs-side">
-        <div class="prefs-side-head">System</div>
-        <button class="prefs-cat @(_tab == "general"    ? "active" : "")" @onclick="@(() => _tab = "general")"><span class="prefs-cat-ic"><Icon Name="gear"     Size="14" /></span> General</button>
-        <button class="prefs-cat @(_tab == "appearance" ? "active" : "")" @onclick="@(() => _tab = "appearance")"><span class="prefs-cat-ic"><Icon Name="palette"  Size="14" /></span> Appearance</button>
-        <button class="prefs-cat @(_tab == "datetime"   ? "active" : "")" @onclick="@(() => _tab = "datetime")"><span class="prefs-cat-ic"><Icon Name="clock"    Size="14" /></span> Date &amp; time</button>
-        <button class="prefs-cat @(_tab == "notifs"     ? "active" : "")" @onclick="@(() => _tab = "notifs")"><span class="prefs-cat-ic"><Icon Name="bell"     Size="14" /></span> Notifications</button>
-        <button class="prefs-cat @(_tab == "about"      ? "active" : "")" @onclick="@(() => _tab = "about")"><span class="prefs-cat-ic"><Icon Name="info"     Size="14" /></span> About</button>
-        <button class="prefs-cat @(_tab == "session"    ? "active" : "")" @onclick="@(() => _tab = "session")"><span class="prefs-cat-ic"><Icon Name="power"    Size="14" /></span> Session</button>
-    </aside>
+<div class="prefs">
+    @* Own rail only when launched standalone; inside the Settings hub the hub's rail is the navigation. *@
+    @if (Section is null)
+    {
+        <aside class="prefs-side">
+            <div class="prefs-side-head">System</div>
+            <button class="prefs-cat @(_tab == "general"    ? "active" : "")" @onclick="@(() => _tab = "general")"><span class="prefs-cat-ic"><Icon Name="gear"     Size="14" /></span> General</button>
+            <button class="prefs-cat @(_tab == "appearance" ? "active" : "")" @onclick="@(() => _tab = "appearance")"><span class="prefs-cat-ic"><Icon Name="palette"  Size="14" /></span> Appearance</button>
+            <button class="prefs-cat @(_tab == "datetime"   ? "active" : "")" @onclick="@(() => _tab = "datetime")"><span class="prefs-cat-ic"><Icon Name="clock"    Size="14" /></span> Date &amp; time</button>
+            <button class="prefs-cat @(_tab == "notifs"     ? "active" : "")" @onclick="@(() => _tab = "notifs")"><span class="prefs-cat-ic"><Icon Name="bell"     Size="14" /></span> Notifications</button>
+            <button class="prefs-cat @(_tab == "about"      ? "active" : "")" @onclick="@(() => _tab = "about")"><span class="prefs-cat-ic"><Icon Name="info"     Size="14" /></span> About</button>
+            <button class="prefs-cat @(_tab == "session"    ? "active" : "")" @onclick="@(() => _tab = "session")"><span class="prefs-cat-ic"><Icon Name="power"    Size="14" /></span> Session</button>
+        </aside>
+    }
 
     <div class="prefs-content">
         @switch (_tab)

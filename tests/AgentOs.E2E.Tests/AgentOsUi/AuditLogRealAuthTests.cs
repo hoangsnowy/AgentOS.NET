@@ -30,6 +30,8 @@ public sealed class AuditLogRealAuthTests : IClassFixture<AgentOsRealAuthFixture
             await _fx.Page.Locator(".dock-item[title=\"Settings\"]").First.ClickAsync();
             var win = _fx.Page.Locator(".appwin.focused");
             await win.Locator(".prefs-cat", new() { HasTextString = "Tool policy" }).ClickAsync();
+            // Wait for the page to switch: the Settings landing page (Model keys) has Save buttons of its own.
+            await Assertions.Expect(win.Locator(".page-title", new() { HasTextString = "Tool Policy" })).ToBeVisibleAsync();
             await win.GetByRole(AriaRole.Button, new() { Name = "Save", Exact = true }).ClickAsync();
             await Assertions.Expect(_fx.Page.Locator(".toast").Last).ToContainTextAsync("Policy");
 

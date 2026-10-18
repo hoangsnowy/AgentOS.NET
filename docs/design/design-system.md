@@ -187,8 +187,7 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
   Platform). Deep-link with `SettingsLinks.Open(WM, "<page>")` (e.g. `keys`; legacy `llm/keys` still
   works) — open or not. Every "you need to configure X" message is a **fix-it button** to the exact page.
 - **System app** (`SystemApp.razor`, unpinned standalone) — the Personal pages + About with its own rail
-  when launched on its own; inside the hub it renders one `Section` and its rail is hidden
-  (`.prefs-embedded`). (The clock dropdown *deep-links* here via `WM.RequestLaunchTab("system","datetime")`.)
+  when launched on its own; inside the hub it renders one `Section` and no rail of its own. (The clock dropdown *deep-links* here via `WM.RequestLaunchTab("system","datetime")`.)
 
 ## Rules (the part that keeps it coherent)
 

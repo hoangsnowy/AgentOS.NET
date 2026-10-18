@@ -2030,8 +2030,6 @@ select {
 /* A hosted category that owns its own prefs rail (LLM, System) runs edge-to-edge: no outer padding
    or scroll, so the embedded component's two-pane shell fills the content area. */
 .prefs-content.flush { padding: 0; overflow: hidden; }
-/* A page hosted by the Settings hub: the hub's rail is the only navigation (no second rail). */
-.prefs-embedded > .prefs-side { display: none; }
 /* Group headings after the first one get breathing room; the rail search sits above them. */
 .prefs-side > .prefs-side-head ~ .prefs-side-head { margin-top: var(--space-2); }
 .prefs-side-search { width: 100%; margin: 2px 0 4px; font-size: 12.5px; }
