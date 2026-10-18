@@ -9,6 +9,9 @@ window.agentosWorkflowKeys = {
         this._handler = function (e) {
             var mod = e.ctrlKey || e.metaKey;
             if (!mod) { return; }
+            // Only while the Workflow window is the focused one: otherwise Ctrl+K belongs to the shell's search
+            // (shell-keys.js) and Ctrl+Z/Y to whatever field has focus elsewhere.
+            if (!document.querySelector('.appwin.focused .syn-toolbar')) { return; }
             var k = e.key.toLowerCase();
             if (k === 'k') {
                 e.preventDefault();

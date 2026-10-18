@@ -170,7 +170,9 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
   thumbnail strip** (each thumb previews its windows as app-colour dots, active outlined white), a
   **window exposé** of the active workspace, **every app the user may open grouped by category**, and
   recents. Search matches apps **and settings** (every Settings page + every setting label,
-  `SettingsSearch`), and a settings hit deep-links to its page (`SettingsLinks.Open`).
+  `SettingsSearch`), and a settings hit deep-links to its page (`SettingsLinks.Open`). It also lists **actions**
+  (`ShellActions`: run the pipeline, add a model key, invite a member, switch theme, sign out). **Ctrl/⌘+K
+  opens it from anywhere** (`shell-keys.js`) — except while Workflow is focused, where Ctrl+K stays "Add a node".
 - **Virtual workspaces** (`WindowManagerService`: `WorkspaceCount` / `ActiveWorkspace` / `SwitchWorkspace`
   / `WindowsOn`) — N GNOME workspaces. A window belongs to a workspace; `WindowHost` renders only the
   active workspace's windows, and the TopBar title + dock pill reflect it. Switch from the Activities

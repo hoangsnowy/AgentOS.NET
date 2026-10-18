@@ -45,6 +45,30 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
     }
 
     [Fact]
+    public async Task CtrlK_OpensSearch_EnterRunsTheTopAction_WorkflowKeepsItsOwnCtrlK()
+    {
+        if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
+        await _fx.GotoDesktopAsync();
+
+        await _fx.Page.Keyboard.PressAsync("Control+k");
+        var input = _fx.Page.Locator(".ko-search-input");
+        await Assertions.Expect(input).ToBeFocusedAsync();
+        await input.PressSequentiallyAsync("add key");
+        await Assertions.Expect(_fx.Page.Locator(".ko-row", new() { HasTextString = "Add a model key" })).ToBeVisibleAsync();
+        await input.PressAsync("Enter");
+        var win = _fx.Page.Locator(".appwin.focused");
+        await Assertions.Expect(win.Locator(".prefs-h", new() { HasTextString = "Model keys" })).ToBeVisibleAsync();
+
+        // With the Workflow window focused, Ctrl+K is the builder's "Add a node" palette, not the shell search.
+        await _fx.Page.Locator(".dock-item[title=\"Workflow\"]").First.ClickAsync();
+        await Assertions.Expect(_fx.Page.Locator(".appwin.focused .syn-toolbar")).ToBeVisibleAsync();
+        await _fx.Page.Keyboard.PressAsync("Control+k");
+        await Assertions.Expect(_fx.Page.Locator(".syn-palette")).ToBeVisibleAsync();
+        await Assertions.Expect(input).Not.ToBeVisibleAsync();
+        await _fx.Page.Keyboard.PressAsync("Escape");
+    }
+
+    [Fact]
     public async Task Activities_ListsEveryApp_NotOnlyThePinnedOnes()
     {
         if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
