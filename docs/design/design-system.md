@@ -12,7 +12,7 @@ GDM lock/sign-in. Every feature is an **app** you launch into a window, not a ro
 
 **The desktop boots to a clean EMPTY wallpaper — no desktop icons, no widgets, no auto-opened
 window.** Apps live only in the Dash + the Activities overview; the glanceable control plane is the
-**Overview app** (pinned first), NOT a desktop widget. (DesktopWidgets was tried and removed — GNOME
+**Insights app** (pinned first; becomes the task-first **Home** in UX phase 2), NOT a desktop widget. (DesktopWidgets was tried and removed — GNOME
 has no desktop widgets. **Do not re-add them.**)
 
 Three feelings, in priority order:
@@ -160,14 +160,17 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
   a GNOME system menu (aggregated network/sound/battery + gateway health dot + avatar → quick settings).
   Dark in both themes. No brand mark, no standalone workspace item.
 - **Dash (dock)** (`Taskbar.razor` in `AgentOs.Web.Shell/UI`) — flat translucent GNOME Dash, no Start
-  button, no magnify. **Seven pinned apps**: Overview · Agents (5-agent pipeline) · Workflow · Board ·
-  Settings (hub) · Terminal · Files. Running apps show a dot; the focused app's dot widens to an accent
-  pill. Unpinned admin/system apps (Users, Evidence, Cost, Policy, Prompts, Plugins, MCP, System) are
-  reached via the Settings hub + Activities search. Reads `AppCatalog` (respect `AdminOnly`).
+  button, no magnify. **Six pinned apps**: Insights · Workflow · Board · Settings (hub) · Terminal · Files
+  (the target is five — [docs/plans/ux-simplification.md](../plans/ux-simplification.md)). Running apps
+  show a dot; the focused app's dot widens to an accent pill. Unpinned admin/system apps (Users, Evidence,
+  API tokens, Data, Audit log, Policy, Prompts, Agent profiles, Plugins, MCP, System) are reached via the
+  Settings hub + Activities. Reads `AppCatalog` (respect `AdminOnly`).
 - **Activities overview** (`AppShellLayout.razor`, `.ko-overview` — the old `.kickoff` selector) —
   full-screen launcher opened from the top-bar Activities button: a search field, a **virtual-workspace
   thumbnail strip** (each thumb previews its windows as app-colour dots, active outlined white), a
-  **window exposé** of the active workspace, the pinned-app grid, and recents.
+  **window exposé** of the active workspace, **every app the user may open grouped by category**, and
+  recents. Search matches apps **and settings** (every Settings page + every setting label,
+  `SettingsSearch`), and a settings hit deep-links to its page (`SettingsLinks.Open`).
 - **Virtual workspaces** (`WindowManagerService`: `WorkspaceCount` / `ActiveWorkspace` / `SwitchWorkspace`
   / `WindowsOn`) — N GNOME workspaces. A window belongs to a workspace; `WindowHost` renders only the
   active workspace's windows, and the TopBar title + dock pill reflect it. Switch from the Activities
@@ -175,8 +178,10 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
 - **Windows** (`AppFrame` ← `WindowHost` ← `WindowManagerService`) — one entry per open app; z-order
   on focus; CSD drag/resize/maximize; grab a maximized window's titlebar to restore it under the cursor.
 - **Settings hub** (`SettingsHub.razor`, pinned "Settings") — one window collecting every admin/system
-  surface behind a category rail (LLM & providers, Prompts, Tool policy, Cost, Evidence, Users, MCP,
-  Plugins, **System**). Each category is also independently launchable + deep-linkable.
+  surface behind a category rail (LLM & providers, Agent profiles, Prompts, Tool policy, Evidence, Audit
+  log, Data, API tokens, Users, MCP, Plugins, Platform, **System**). Deep-link with
+  `SettingsLinks.Open(WM, "category[/sub-tab]")` (e.g. `llm/keys`) — works whether or not the hub is
+  open. Every "you need to configure X" message is a **fix-it button** to the exact page, never prose.
 - **System category** (`SystemApp.razor`, the System tab inside the hub — unpinned standalone) — OS
   preferences: General, Appearance, **Date & time**, Notifications, About, Session. **Device/shell
   preferences live here**; admin governance lives in the hub's other categories. (The clock dropdown
@@ -184,8 +189,10 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
 
 ## Rules (the part that keeps it coherent)
 
-1. **New feature = new app, in a window.** Register it in `AppCatalog`, render it in `WindowHost`,
-   gate with `AdminOnly` if needed. Don't add top-level routes/pages.
+1. **New capability = a page in an existing app, a settings group, or an Activities action — not a new
+   app.** A new app (registered in `AppCatalog`, rendered in `WindowHost`, `AdminOnly` if needed) is
+   only for a *daily primary task*; the old "new feature = new app" rule caused the sprawl
+   [ux-simplification.md](../plans/ux-simplification.md) undoes. Never add top-level routes/pages.
 2. **Settings live in the Settings hub.** Device/shell preferences go in the **System** category
    (`SystemApp`); admin/governance config goes in its own hub category — never scattered into a
    feature page or a top-bar dropdown. Surfaces may *deep-link* to the right category, but the control
@@ -215,7 +222,8 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
 - [ ] One accent; state colors only for state.
 - [ ] Keyboard-reachable; `:focus-visible` ring on every control; a11y names on icon-only buttons.
 - [ ] Legible in light+dark × light+dark wallpaper; glass stays readable.
-- [ ] Settings (if any) live in the System app, deep-linked — not inline.
+- [ ] Settings (if any) live in the Settings hub (device prefs → System category), deep-linked — not inline; each is a `SettingDescriptor`, so Activities search finds it.
+- [ ] No new app unless it is a daily primary task (Rule 1); expert fields go behind "Advanced".
 - [ ] Motion via tokens, `prefers-reduced-motion` respected.
 
 ## Known debt (don't widen it)

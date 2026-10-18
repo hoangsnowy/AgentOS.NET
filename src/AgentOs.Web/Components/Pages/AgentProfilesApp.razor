@@ -59,6 +59,8 @@ else
                                     value="@row.Provider" @onchange="e => row.Provider = e.Value?.ToString() ?? string.Empty">
                                 @foreach (var p in LlmProviders.Selectable)
                                 {
+                                    @* "Anthropic" is an alias of "Claude": still accepted (and shown if a profile already uses it). *@
+                                    if (p == "Anthropic" && row.Provider != "Anthropic") { continue; }
                                     <option value="@p">@p</option>
                                 }
                             </select>

@@ -6,6 +6,7 @@
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 @inject AgentOs.Web.Services.AuthSession Auth
+@inject IServiceProvider Services
 
 <TopBar />
 
@@ -30,7 +31,7 @@
 
         <div class="ko-search">
             <span class="ko-search-ic"><Icon Name="search" Size="15" /></span>
-            <input class="ko-search-input" type="text" placeholder="Search apps…"
+            <input class="ko-search-input" type="text" placeholder="Search apps and settings…"
                    autocomplete="off" spellcheck="false"
                    value="@_query" @oninput="OnSearch" @onkeydown="OnSearchKey" @ref="_searchRef" />
             @if (!string.IsNullOrEmpty(_query))
@@ -82,18 +83,22 @@
                         }
                     </div>
                 }
-                <div class="ko-section-row">
-                    <span class="ko-section">All apps</span>
-                </div>
-                <div class="ko-grid">
-                    @foreach (var app in AppCatalog.VisiblePinned(_isAdmin))
-                    {
-                        <button class="ko-tile" @onclick="@(() => Launch(app))" title="@app.Caption">
-                            <span class="ko-tile-ic" style="background:@app.Color;color:#fff"><Icon Name="@app.Icon" Size="22" /></span>
-                            <span class="ko-tile-label">@app.Title</span>
-                        </button>
-                    }
-                </div>
+                @* Every app this user may open, grouped by category (pinned first within each group). *@
+                @foreach (var group in AppCatalog.VisibleAll(_isAdmin).GroupBy(a => a.Category))
+                {
+                    <div class="ko-section-row">
+                        <span class="ko-section">@group.Key</span>
+                    </div>
+                    <div class="ko-grid">
+                        @foreach (var app in group.OrderByDescending(a => a.Pinned))
+                        {
+                            <button class="ko-tile" @onclick="@(() => Launch(app))" title="@app.Caption">
+                                <span class="ko-tile-ic" style="background:@app.Color;color:#fff"><Icon Name="@app.Icon" Size="22" /></span>
+                                <span class="ko-tile-label">@app.Title</span>
+                            </button>
+                        }
+                    </div>
+                }
 
                 @if (_recents.Count > 0)
                 {
@@ -117,14 +122,14 @@
             else
             {
                 <div class="ko-section-row">
-                    <span class="ko-section">Results</span>
+                    <span class="ko-section">Apps</span>
                     <span class="ko-section-count">@_results.Count</span>
                 </div>
-                @if (_results.Count == 0)
+                @if (_results.Count == 0 && _settingHits.Count == 0)
                 {
                     <div class="ko-empty">
                         <Icon Name="search" Size="22" />
-                        <span>No apps match “@_query”.</span>
+                        <span>Nothing matches “@_query”.</span>
                     </div>
                 }
                 else
@@ -142,6 +147,25 @@
                             </button>
                         }
                     </div>
+                    @if (_settingHits.Count > 0)
+                    {
+                        <div class="ko-section-row">
+                            <span class="ko-section">Settings</span>
+                            <span class="ko-section-count">@_settingHits.Count</span>
+                        </div>
+                        <div class="ko-list">
+                            @foreach (var hit in _settingHits)
+                            {
+                                <button class="ko-row" @onclick="@(() => OpenSetting(hit))">
+                                    <span class="ko-row-ic"><Icon Name="@hit.Icon" Size="16" /></span>
+                                    <span class="ko-row-text">
+                                        <span class="ko-row-title">@hit.Title</span>
+                                        <span class="ko-row-cap">@hit.Path</span>
+                                    </span>
+                                </button>
+                            }
+                        </div>
+                    }
                 }
             }
         </div>
@@ -203,6 +227,7 @@
         {
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
+            _isPlatformAdmin = state.User.IsPlatformAdmin();
         }
     }
 
@@ -219,6 +244,8 @@
 
     private List<DesktopApp> _recents = new();
     private List<DesktopApp> _results = new();
+    private IReadOnlyList<SettingsHit> _settingHits = [];
+    private bool _isPlatformAdmin;
 
     private Task ToggleStart()
     {
@@ -298,6 +325,11 @@
                          || a.Caption.Contains(q, StringComparison.OrdinalIgnoreCase)
                          || a.Category.Contains(q, StringComparison.OrdinalIgnoreCase))
                 .ToList();
+        // Settings are searchable too: every page + every setting label, deep-linked (SettingsSearch).
+        var catalog = Services.GetService<AgentOs.Domain.Configuration.ISettingsCatalog>();
+        _settingHits = string.IsNullOrEmpty(q)
+            ? []
+            : SettingsSearch.Find(q, catalog?.All ?? [], _isAdmin, _isPlatformAdmin);
     }
 
     private void OnSearchKey(KeyboardEventArgs e)
@@ -307,13 +339,21 @@
         {
             var first = !string.IsNullOrWhiteSpace(_query) ? _results.FirstOrDefault() : AppCatalog.VisiblePinned(_isAdmin).FirstOrDefault();
             if (first is not null) { Launch(first); }
+            else if (!string.IsNullOrWhiteSpace(_query) && _settingHits.Count > 0) { OpenSetting(_settingHits[0]); }
         }
+    }
+
+    private void OpenSetting(SettingsHit hit)
+    {
+        CloseStart();
+        SettingsLinks.Open(WM, hit.Target);
     }
 
     private void ClearSearch()
     {
         _query = "";
         _results = new();
+        _settingHits = [];
         _focusOnRender = true;
     }
 
