@@ -14,7 +14,7 @@
 <div class="topbar">
     <div class="tb-left">
         <button class="tb-activities @(WM.Open.Count == 0 ? "" : "")" @onclick="ToggleActivities"
-                @onclick:stopPropagation="true" title="Activities — show all apps" aria-label="Activities">
+                @onclick:stopPropagation="true" title="Activities — apps, settings and actions (Ctrl+K)" aria-label="Activities" aria-keyshortcuts="Control+K Meta+K">
             Activities
         </button>
         <span class="tb-appname">@ActiveTitle</span>

@@ -31,7 +31,7 @@
 
         <div class="ko-search">
             <span class="ko-search-ic"><Icon Name="search" Size="15" /></span>
-            <input class="ko-search-input" type="text" placeholder="Search apps and settings…"
+            <input class="ko-search-input" type="text" placeholder="Search apps, settings and actions…  (Ctrl K)"
                    autocomplete="off" spellcheck="false"
                    value="@_query" @oninput="OnSearch" @onkeydown="OnSearchKey" @ref="_searchRef" />
             @if (!string.IsNullOrEmpty(_query))
@@ -125,7 +125,7 @@
                     <span class="ko-section">Apps</span>
                     <span class="ko-section-count">@_results.Count</span>
                 </div>
-                @if (_results.Count == 0 && _settingHits.Count == 0)
+                @if (_results.Count == 0 && _actionHits.Count == 0 && _settingHits.Count == 0)
                 {
                     <div class="ko-empty">
                         <Icon Name="search" Size="22" />
@@ -147,6 +147,25 @@
                             </button>
                         }
                     </div>
+                    @if (_actionHits.Count > 0)
+                    {
+                        <div class="ko-section-row">
+                            <span class="ko-section">Actions</span>
+                            <span class="ko-section-count">@_actionHits.Count</span>
+                        </div>
+                        <div class="ko-list">
+                            @foreach (var action in _actionHits)
+                            {
+                                <button class="ko-row" @onclick="@(() => RunActionAsync(action))">
+                                    <span class="ko-row-ic"><Icon Name="@action.Icon" Size="16" /></span>
+                                    <span class="ko-row-text">
+                                        <span class="ko-row-title">@action.Title</span>
+                                        <span class="ko-row-cap">@action.Caption</span>
+                                    </span>
+                                </button>
+                            }
+                        </div>
+                    }
                     @if (_settingHits.Count > 0)
                     {
                         <div class="ko-section-row">
@@ -238,13 +257,19 @@
         StateHasChanged();
     });
 
-    public void Dispose() => WM.StartMenuToggleRequested -= OnStartMenuToggle;
+    public void Dispose()
+    {
+        WM.StartMenuToggleRequested -= OnStartMenuToggle;
+        _selfRef?.Dispose();
+    }
 
     private string AvatarLetter => string.IsNullOrEmpty(_user) ? "O" : _user[..1].ToUpperInvariant();
 
     private List<DesktopApp> _recents = new();
     private List<DesktopApp> _results = new();
     private IReadOnlyList<SettingsHit> _settingHits = [];
+    private IReadOnlyList<ShellAction> _actionHits = [];
+    private DotNetObjectReference<AppShellLayout>? _selfRef;
     private bool _isPlatformAdmin;
 
     private Task ToggleStart()
@@ -267,6 +292,12 @@
         if (firstRender)
         {
             await RestorePreferencesAsync();
+            try
+            {
+                _selfRef = DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("agentosShellKeys.register", _selfRef);
+            }
+            catch (JSException ex) { _ = ex.Message; }   // shortcut unavailable; Activities still works
             // Authentic GNOME: nothing auto-opens — the desktop boots to a clean empty wallpaper.
             // The glanceable control plane is the Overview app, pinned first in the Dash (one click)
             // and reachable from the Activities overview.
@@ -330,6 +361,7 @@
         _settingHits = string.IsNullOrEmpty(q)
             ? []
             : SettingsSearch.Find(q, catalog?.All ?? [], _isAdmin, _isPlatformAdmin);
+        _actionHits = string.IsNullOrEmpty(q) ? [] : ShellActions.Find(q, _isAdmin);
     }
 
     private void OnSearchKey(KeyboardEventArgs e)
@@ -339,8 +371,43 @@
         {
             var first = !string.IsNullOrWhiteSpace(_query) ? _results.FirstOrDefault() : AppCatalog.VisiblePinned(_isAdmin).FirstOrDefault();
             if (first is not null) { Launch(first); }
+            else if (!string.IsNullOrWhiteSpace(_query) && _actionHits.Count > 0) { _ = RunActionAsync(_actionHits[0]); }
             else if (!string.IsNullOrWhiteSpace(_query) && _settingHits.Count > 0) { OpenSetting(_settingHits[0]); }
         }
+    }
+
+    // Ctrl/⌘+K from anywhere (shell-keys.js): open Activities with the search focused, or refocus it.
+    [JSInvokable]
+    public Task OnCommandKey() => InvokeAsync(async () =>
+    {
+        if (!_startOpen) { await ToggleStart(); }
+        else { _focusOnRender = true; }
+        StateHasChanged();
+    });
+
+    private async Task RunActionAsync(ShellAction action)
+    {
+        CloseStart();
+        if (ShellActions.SettingsTarget(action.Id) is { } target) { SettingsLinks.Open(WM, target); return; }
+        switch (action.Id)
+        {
+            case ShellActions.Run: OpenAppByKey("workflow"); break;
+            case ShellActions.Idea: OpenAppByKey("board"); break;
+            case ShellActions.SignOut: Nav.NavigateTo("/account/logout", forceLoad: true); break;
+            case ShellActions.Theme:
+                try
+                {
+                    await JS.InvokeAsync<string>("agenticTheme.toggleAppearance");
+                    WM.NotifyThemeChanged();
+                }
+                catch (JSException ex) { _ = ex.Message; }   // JS unavailable — leave the theme as is
+                break;
+        }
+    }
+
+    private void OpenAppByKey(string key)
+    {
+        if (AppCatalog.Find(key) is { } app) { Launch(app); }
     }
 
     private void OpenSetting(SettingsHit hit)
@@ -354,6 +421,7 @@
         _query = "";
         _results = new();
         _settingHits = [];
+        _actionHits = [];
         _focusOnRender = true;
     }
 
