@@ -34,10 +34,10 @@ public sealed class WindowLifecycleTests : IClassFixture<AgentOsPageFixture>
         await _fx.GotoDesktopAsync();
 
         // Open Insights + Settings.
-        await LaunchFromDockAsync("Insights");
+        await LaunchFromDockAsync("Home");
         await LaunchFromDockAsync("Settings");
 
-        var pipeline = AppWindow("Insights");
+        var pipeline = AppWindow("Home");
         var settings = AppWindow("Settings");
         await Assertions.Expect(pipeline).ToBeVisibleAsync();
         await Assertions.Expect(settings).ToBeVisibleAsync();
@@ -59,11 +59,11 @@ public sealed class WindowLifecycleTests : IClassFixture<AgentOsPageFixture>
         await pipeline.Locator(".appwin-btn[title=\"Minimize\"]").ClickAsync();
         await Assertions.Expect(pipeline).ToBeHiddenAsync();
 
-        var dockDot = _fx.Page.Locator(".dock-item[title=\"Insights\"] .di-dot");
+        var dockDot = _fx.Page.Locator(".dock-item[title=\"Home\"] .di-dot");
         await Assertions.Expect(dockDot).ToBeVisibleAsync();
 
         // Restore by clicking the dock icon again (OpenApp focuses an existing entry).
-        await _fx.Page.Locator(".dock-item[title=\"Insights\"]").ClickAsync();
+        await _fx.Page.Locator(".dock-item[title=\"Home\"]").ClickAsync();
         await Assertions.Expect(pipeline).ToBeVisibleAsync();
 
         // Maximize toggle (□ → ❐).
@@ -115,7 +115,7 @@ public sealed class WindowLifecycleTests : IClassFixture<AgentOsPageFixture>
         await _fx.GotoDesktopAsync();
 
         // 6 pinned apps in the Dash (GNOME Dash — no Start button).
-        foreach (var t in new[] { "Insights", "Workflow", "Board", "Settings", "Terminal", "Files" })
+        foreach (var t in new[] { "Home", "Workflow", "Board", "Settings", "Terminal", "Files" })
         {
             await Assertions.Expect(_fx.Page.Locator($".dock-item[title=\"{t}\"]")).ToBeVisibleAsync();
         }
@@ -124,8 +124,8 @@ public sealed class WindowLifecycleTests : IClassFixture<AgentOsPageFixture>
         Assert.Equal(0, await _fx.Page.Locator(".dock-item .di-dot").CountAsync());
 
         // Launch Insights; dot appears on its dock item.
-        await LaunchFromDockAsync("Insights");
-        var dot = _fx.Page.Locator(".dock-item[title=\"Insights\"] .di-dot");
+        await LaunchFromDockAsync("Home");
+        var dot = _fx.Page.Locator(".dock-item[title=\"Home\"] .di-dot");
         await Assertions.Expect(dot).ToBeVisibleAsync();
     }
 
@@ -141,15 +141,15 @@ public sealed class WindowLifecycleTests : IClassFixture<AgentOsPageFixture>
         var center = _fx.Page.Locator(".topbar .tb-appname");
         await Assertions.Expect(center).ToContainTextAsync("AgentOS.NET — Desktop");
 
-        await LaunchFromDockAsync("Insights");
-        await Assertions.Expect(center).ToContainTextAsync("Insights");
+        await LaunchFromDockAsync("Home");
+        await Assertions.Expect(center).ToContainTextAsync("Home");
 
         await LaunchFromDockAsync("Settings");
         await Assertions.Expect(center).ToContainTextAsync("Settings");
 
         // Click Insights titlebar → it becomes top-most → topbar updates.
-        await AppWindow("Insights").Locator(".appwin-titlebar").ClickAsync();
-        await Assertions.Expect(center).ToContainTextAsync("Insights");
+        await AppWindow("Home").Locator(".appwin-titlebar").ClickAsync();
+        await Assertions.Expect(center).ToContainTextAsync("Home");
     }
 
     // Scenario 10: toast container is anchored top-right (top: 42px) + each toast has × dismiss.

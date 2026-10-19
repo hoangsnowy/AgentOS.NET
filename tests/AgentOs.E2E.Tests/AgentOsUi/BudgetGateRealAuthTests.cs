@@ -126,7 +126,8 @@ public sealed class BudgetGateRealAuthTests : IClassFixture<AgentOsRealAuthFixtu
 
         // Open the Insights dashboard from the dock — the budget cap control lives there now (the old
         // standalone Cost window was folded into Insights).
-        await _fx.Page.Locator(".dock-item[title=\"Insights\"]").First.ClickAsync();
+        await _fx.Page.Locator(".tb-activities").ClickAsync();   // Insights is unpinned (Home holds the dock slot)
+        await _fx.Page.Locator(".ko-tile", new() { HasTextString = "Insights" }).First.ClickAsync();
         var ins = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(ins).ToBeVisibleAsync(
             new LocatorAssertionsToBeVisibleOptions { Timeout = 15_000 });

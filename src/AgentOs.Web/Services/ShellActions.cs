@@ -42,7 +42,7 @@ public static class ShellActions
 
     private static readonly ShellAction[] All =
     [
-        new(Run, "Run the agent pipeline", "Workflow · run the 5 agents on a story", "play") { Keywords = "run start execute pipeline workflow agents build story" },
+        new(Run, "Run the agent pipeline", "Home · describe a change, the 5 agents build it", "play") { Keywords = "run start execute pipeline workflow agents build story" },
         new(Idea, "Start from an idea", "Board · turn an idea into tickets and sessions", "git-pull-request") { Keywords = "new idea ticket story issue plan board decompose" },
         new(AddKey, "Add a model key", "Settings › AI › Model keys", "key") { Keywords = "add api key connect model llm provider anthropic openai gemini xai azure", AdminOnly = true },
         new(Invite, "Invite a member", "Settings › People & data › Users", "user") { Keywords = "invite add user member people team", AdminOnly = true },

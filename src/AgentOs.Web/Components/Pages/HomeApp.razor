@@ -1,0 +1,256 @@
+@* HomeApp — the task-first landing (UX phase 2, docs/plans/ux-simplification.md). A composer ("What should the
+   agents build?") that starts a run in one click (Workflow, auto-run) or plans it as tickets (Board), the recent
+   runs, three headline numbers, and — for admins — a setup checklist computed from real state with a fix-it
+   button per step. It replaces "open Workflow and find the Run button" as the first thing people do. Members see
+   the same composer + runs; the checklist and budget are admin-only. Tenant from AuthenticationState. *@
+
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Web
+@using AgentOs.Modules.Pipeline.Persistence
+@inject IPipelineRunRepository Runs
+@inject AgentOs.Modules.Pipeline.Cost.IBudgetService Budgets
+@inject AgentOs.Modules.Workspaces.Persistence.IWorkspaceRepository Workspaces
+@inject AgentOs.Modules.Sessions.Persistence.IRunnerRepository Runners
+@inject LlmConfigView LlmConfig
+@inject AgentOs.Web.Shell.Services.WindowManagerService WM
+@inject IJSRuntime JS
+
+<header class="page-head">
+    <div>
+        <h1 class="page-title">What should the agents build?</h1>
+        <p class="page-sub">Describe a change. The five agents take it from requirement to tested code, and QA checks they agree.</p>
+    </div>
+</header>
+
+<Panel Title="New run">
+    <textarea class="prefs-input home-composer" rows="3" maxlength="4000" @ref="_composer"
+              placeholder="e.g. Add a /health endpoint that reports whether the database is reachable"
+              aria-label="What should the agents build?"
+              @bind="_story" @bind:event="oninput" @onkeydown="OnComposerKey"></textarea>
+    @if (_offline)
+    {
+        <p class="home-note" role="note">
+            <Icon Name="warning" Size="13" /> No model key yet — a run now answers with canned output and no model is called.
+            @if (_isAdmin)
+            {
+                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => SettingsLinks.Open(WM, SettingsLinks.ModelKeys))">Add a model key</Btn>
+            }
+        </p>
+    }
+    <div class="form-actions">
+        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RunNow" Disabled="@(string.IsNullOrWhiteSpace(_story))"><Icon Name="play" Size="13" /> Run now</Btn>
+        <Btn OnClick="PlanAsTickets" Disabled="@(string.IsNullOrWhiteSpace(_story))"><Icon Name="git-pull-request" Size="13" /> Plan as tickets</Btn>
+        <span class="prefs-hint home-kbd-hint">Ctrl+Enter runs</span>
+    </div>
+</Panel>
+
+@if (_isAdmin && _steps is not null && !SetupChecklist.IsComplete(_steps) && !_checklistHidden)
+{
+    var (done, total) = SetupChecklist.Progress(_steps);
+    <Panel Title="@($"Set up your workspace · {done} of {total}")">
+        <ul class="home-steps">
+            @foreach (var step in _steps)
+            {
+                <li class="home-step @(step.Done ? "done" : "")" data-step="@step.Id">
+                    <span class="home-step-ic" aria-hidden="true"><Icon Name="@(step.Done ? "check" : "circle-fill")" Size="@(step.Done ? 14 : 8)" /></span>
+                    <span class="home-step-text">
+                        <span><strong>@step.Title</strong>@(step.Optional ? " · optional" : "")</span>
+                        <span class="prefs-hint">@step.Hint</span>
+                    </span>
+                    @if (!step.Done)
+                    {
+                        <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => GoAsync(step.Action))">@step.ActionLabel</Btn>
+                    }
+                    else
+                    {
+                        <span class="sr-only">Done</span>
+                    }
+                </li>
+            }
+        </ul>
+        <div class="form-actions">
+            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="HideChecklistAsync">Hide this list</Btn>
+        </div>
+    </Panel>
+}
+
+<div class="home-kpis" role="list" aria-label="This workspace at a glance">
+    <div class="home-kpi" role="listitem"><span class="home-kpi-v">@(_runs?.Count.ToString(CultureInfo.InvariantCulture) ?? "—")</span><span class="home-kpi-l">recent runs</span></div>
+    <div class="home-kpi" role="listitem"><span class="home-kpi-v">@SuccessLabel()</span><span class="home-kpi-l">completed</span></div>
+    <div class="home-kpi" role="listitem">
+        <span class="home-kpi-v">@(_budget is null ? "—" : Money(_budget.SpentUsd))</span>
+        <span class="home-kpi-l">@(_budget is { CapUsd: > 0m } ? $"of {Money(_budget.CapUsd)} this month" : "spent this month")</span>
+    </div>
+</div>
+
+<Panel Title="Recent runs">
+    @if (_runs is null)
+    {
+        <Spinner />
+    }
+    else if (_runs.Count == 0)
+    {
+        <EmptyState Icon="graph" Title="No runs yet" Hint="Describe a change above and press Run now — the run shows up here when it finishes." />
+    }
+    else
+    {
+        <ul class="home-runs">
+            @foreach (var r in _runs)
+            {
+                <li class="home-run">
+                    <Badge Variant="@StatusVariant(r.Status)">@StatusLabel(r.Status)</Badge>
+                    <span class="home-run-story" title="@r.UserStoryPreview">@r.UserStoryPreview</span>
+                    <span class="prefs-hint">@Money(r.TotalCostUsd) · @When(r.CreatedAtUtc)</span>
+                </li>
+            }
+        </ul>
+        <div class="form-actions">
+            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => Open("insights"))"><Icon Name="graph" Size="13" /> Open Insights</Btn>
+        </div>
+    }
+</Panel>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private const int RecentRuns = 8;
+
+    private ElementReference _composer;
+    private string _story = string.Empty;
+    private string _tenantId = string.Empty;
+    private bool _isAdmin;
+    private bool _offline;
+    private bool _checklistHidden;
+    private IReadOnlyList<PipelineRunSummary>? _runs;
+    private IReadOnlyList<SetupStep>? _steps;
+    private AgentOs.Domain.Cost.BudgetStatus? _budget;
+
+    private string HiddenKey => $"home-checklist-hidden:{_tenantId}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var user = (await AuthState).User;
+            _isAdmin = user.IsAdmin();
+            _tenantId = user.GetTenantId() ?? string.Empty;
+        }
+        var cfg = LlmConfig.Resolve(_tenantId);
+        _offline = cfg.WillServeCanned;
+        var tenant = _tenantId.Length == 0 ? "default" : _tenantId;
+        _runs = await Runs.ListForTenantAsync(tenant, RecentRuns);
+        if (_isAdmin)
+        {
+            _budget = await Budgets.GetAsync(tenant);
+            var repos = await Workspaces.ListForTenantAsync(tenant);
+            var runners = await Runners.ListForTenantAsync(tenant);
+            var hasKey = cfg.AnthropicKeySet || cfg.AzureKeySet || cfg.VendorKeys.Count > 0 || !string.IsNullOrWhiteSpace(cfg.CompatEndpoint);
+            _steps = SetupChecklist.Build(new SetupFacts(hasKey, _runs.Count > 0, repos.Count > 0, _budget.CapUsd > 0m, runners.Count > 0));
+        }
+        else
+        {
+            _budget = null;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !_isAdmin) { return; }
+        // Per-viewer convenience only: the list comes back when storage is unavailable (private window, etc.).
+        try
+        {
+            if (await JS.InvokeAsync<string?>("localStorage.getItem", HiddenKey) == "1")
+            {
+                _checklistHidden = true;
+                StateHasChanged();
+            }
+        }
+        catch (JSException ex) { _ = ex.Message; }
+        catch (InvalidOperationException ex) { _ = ex.Message; }
+    }
+
+    // Run now = the Workflow app, prefilled with the story and told to start (one click to a running pipeline).
+    private void RunNow()
+    {
+        if (string.IsNullOrWhiteSpace(_story)) { return; }
+        WM.RequestLaunchPayload("workflow", _story.Trim());
+        WM.RequestLaunchTab("workflow", WorkflowAutoRun);
+        Open("workflow");
+    }
+
+    /// <summary>The Workflow launch-tab value that makes it start the prefilled run on open.</summary>
+    public const string WorkflowAutoRun = "run";
+
+    private void PlanAsTickets()
+    {
+        if (string.IsNullOrWhiteSpace(_story)) { return; }
+        WM.RequestLaunchPayload("board", _story.Trim());
+        Open("board");
+    }
+
+    private void OnComposerKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && (e.CtrlKey || e.MetaKey)) { RunNow(); }
+    }
+
+    private async Task GoAsync(SetupAction action)
+    {
+        switch (action)
+        {
+            case SetupAction.ModelKeys: SettingsLinks.Open(WM, SettingsLinks.ModelKeys); break;
+            case SetupAction.Board: Open("board"); break;
+            case SetupAction.Insights: Open("insights"); break;
+            case SetupAction.Composer:
+                try { await _composer.FocusAsync(); }
+                catch (JSException ex) { _ = ex.Message; }
+                break;
+        }
+    }
+
+    private async Task HideChecklistAsync()
+    {
+        _checklistHidden = true;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", HiddenKey, "1"); }
+        catch (JSException ex) { _ = ex.Message; }
+    }
+
+    private void Open(string key)
+    {
+        if (AppCatalog.Find(key) is { } app) { WM.OpenApp(app.Key, app.Title, app.Icon, app.W, app.H); }
+    }
+
+    private string SuccessLabel()
+    {
+        if (_runs is null || _runs.Count == 0) { return "—"; }
+        var done = _runs.Count(r => r.Status == "Done");
+        return (int)Math.Round(100.0 * done / _runs.Count) + "%";
+    }
+
+    private static Badge.BadgeVariant StatusVariant(string status) => status switch
+    {
+        "Done" => Badge.BadgeVariant.Ok,
+        "MaxIterationReached" => Badge.BadgeVariant.Warn,
+        "Failed" => Badge.BadgeVariant.Err,
+        _ => Badge.BadgeVariant.Default,
+    };
+
+    private static string StatusLabel(string status) => status switch
+    {
+        "Done" => "Complete",
+        "MaxIterationReached" => "Iteration limit",
+        "Failed" => "Failed",
+        _ => status,
+    };
+
+    private static string Money(decimal v) => "$" + v.ToString("0.00", CultureInfo.InvariantCulture);
+
+    private static string When(DateTimeOffset at)
+    {
+        var ago = DateTimeOffset.UtcNow - at;
+        return ago.TotalMinutes < 1 ? "just now"
+            : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes} min ago"
+            : ago.TotalDays < 1 ? $"{(int)ago.TotalHours} h ago"
+            : at.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+}

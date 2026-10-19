@@ -2045,6 +2045,29 @@ select {
 .provider-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 .provider-card-title { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
 .provider-card .prefs-hint { margin: 2px 0 0; }
+
+/* Screen-reader-only text (visible state already conveyed visually). */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ===== Home (task-first landing, UX phase 2) ===== */
+.prefs-input.home-composer { width: 100%; max-width: none; min-height: 76px; resize: vertical; font-size: var(--fs-md); line-height: 1.45; }
+.home-note { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0 0; color: var(--warn-text); font-size: var(--fs-sm); }
+.home-kbd-hint { margin-left: auto; }
+.home-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.home-step { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--line); }
+.home-step:last-child { border-bottom: 0; }
+.home-step-ic { width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--bg-3); color: var(--txt-faint); }
+.home-step.done .home-step-ic { background: var(--accent-soft); color: var(--accent-text); }
+.home-step.done .home-step-text strong { color: var(--txt-soft); text-decoration: line-through; }
+.home-step-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.home-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); margin: var(--space-3) 0; }
+.home-kpi { display: flex; flex-direction: column; gap: 2px; padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-2); }
+.home-kpi-v { font-size: var(--fs-xl); font-weight: var(--fw-semibold); color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.home-kpi-l { font-size: var(--fs-sm); color: var(--text-tertiary); }
+.home-runs { list-style: none; margin: 0; padding: 0; }
+.home-run { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--line); }
+.home-run:last-child { border-bottom: 0; }
+.home-run-story { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Stack label above control when the content pane is too narrow for both. */
 @container prefs (max-width: 380px) {
     .prefs-row { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-2); }
@@ -2842,7 +2865,7 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 }
 .icon.icon-loop { animation: var(--ic-anim, none); animation-iteration-count: infinite; }
 
-/* Per-icon motion (all 52). Durations use the motion tokens' feel: quick, springy, never blocking. */
+/* Per-icon motion (all 53). Durations use the motion tokens' feel: quick, springy, never blocking. */
 .ic-play            { --ic-anim: ic-nudge-r .45s var(--ease-emphasized); }
 .ic-stop            { --ic-anim: ic-pop .4s var(--ease-emphasized); }
 .ic-pause           { --ic-anim: ic-pulse .6s var(--ease-standard); }
@@ -2895,6 +2918,7 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 .ic-shield          { --ic-anim: ic-pop .45s var(--ease-emphasized); }
 .ic-scroll          { --ic-anim: ic-lift .45s var(--ease-emphasized); }
 .ic-server          { --ic-anim: ic-pulse .6s var(--ease-standard); }
+.ic-chart           { --ic-anim: ic-hop .5s var(--ease-emphasized); }
 
 @keyframes ic-spin      { to { transform: rotate(360deg); } }
 @keyframes ic-spin-back { to { transform: rotate(-360deg); } }

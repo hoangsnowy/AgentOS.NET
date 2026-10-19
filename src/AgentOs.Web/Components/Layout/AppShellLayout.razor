@@ -391,7 +391,7 @@
         if (ShellActions.SettingsTarget(action.Id) is { } target) { SettingsLinks.Open(WM, target); return; }
         switch (action.Id)
         {
-            case ShellActions.Run: OpenAppByKey("workflow"); break;
+            case ShellActions.Run: OpenAppByKey("home"); break;
             case ShellActions.Idea: OpenAppByKey("board"); break;
             case ShellActions.SignOut: Nav.NavigateTo("/account/logout", forceLoad: true); break;
             case ShellActions.Theme:

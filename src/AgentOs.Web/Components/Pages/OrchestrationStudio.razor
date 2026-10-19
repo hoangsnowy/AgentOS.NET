@@ -435,6 +435,7 @@
     private string _runInput = string.Empty;
     private readonly List<string> _runLog = [];
     private bool _running;
+    private bool _autoRun;
     // Recent runs for this tenant, read from the (session-scoped) store so the list survives closing and
     // reopening the Workflow window — the old int counter reset on every dispose.
     private IReadOnlyList<OrchestrationRunRecord> _recent = [];
@@ -565,6 +566,8 @@
         {
             _runInput = prefill;
         }
+        // Home's "Run now" also asks to start: one click from a story to a running pipeline.
+        _autoRun = WM.ConsumeLaunchTab("workflow") == HomeApp.WorkflowAutoRun && !string.IsNullOrWhiteSpace(_runInput);
         BuildDiagram();
     }
 
@@ -1190,6 +1193,11 @@
     // Register the document-level ⌘K listener once (workflow-keys.js routes it back to OnQuickAddKey).
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (_autoRun && !_running)
+        {
+            _autoRun = false;
+            await Run();
+        }
         // The run panel is re-created each time it opens, so attach the splitter to the new element once.
         if (_bottomOpen && !_splitterAttached)
         {
