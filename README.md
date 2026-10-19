@@ -293,7 +293,8 @@ in the desktop and applies on the next call:
 
 - **Settings → AI → Model keys** — one card per provider: key, endpoint / default model, and a Test button.
 - **Settings → AI → Routing** — default and forced provider, offline fallback.
-- **Settings → Agent profiles** — per-agent provider, model, temperature, max output tokens, QA-loop cap.
+- **Settings → AI → Agent profiles** — the model per agent (the provider follows the model) and the QA-loop cap;
+  provider, temperature and max output tokens under **Show advanced**.
 - **Settings → Platform** (`platform-admin` only) — remote auto-approve, fail-closed tool policy,
   allowed self-hosted Git hosts, build sandbox (mode, image, quotas), offline fallback.
 - **Settings → Prompts** — per-tenant system prompts for the Requirement, Coding, Testing and QA agents.

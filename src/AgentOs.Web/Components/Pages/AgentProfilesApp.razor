@@ -26,8 +26,11 @@ else
     <header class="page-head">
         <div>
             <h1 class="page-title">Agent profiles · <code>@_tenantId</code></h1>
-            <p class="page-sub">Choose the model behind each agent. Changes apply to the next call — no restart. Reset returns a row to the inherited value.</p>
+            <p class="page-sub">Choose the model behind each agent — the provider follows the model. Changes apply to the next call; Reset returns a row to the inherited value.</p>
         </div>
+        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => _advanced = !_advanced)">
+            @(_advanced ? "Hide advanced" : "Show advanced")
+        </Btn>
     </header>
 
     <Panel Title="Agents">
@@ -36,10 +39,13 @@ else
             <thead>
                 <tr>
                     <th>Agent</th>
-                    <th>Provider</th>
+                    @if (_advanced) { <th>Provider</th> }
                     <th>Model</th>
-                    <th title="Temperature">Temp.</th>
-                    <th title="Max output tokens">Max output</th>
+                    @if (_advanced)
+                    {
+                        <th title="Temperature">Temp.</th>
+                        <th title="Max output tokens">Max output</th>
+                    }
                     <th aria-label="Actions"></th>
                 </tr>
             </thead>
@@ -54,6 +60,8 @@ else
                                 <span class="agent-profiles-name"><strong>@row.Role</strong><Badge Variant="@SourceVariant(row.Source)">@SourceLabel(row.Source)</Badge></span>
                             </span>
                         </td>
+                        @if (_advanced)
+                        {
                         <td>
                             <select class="prefs-select" disabled="@locked" aria-label="@($"{row.Role} provider")"
                                     value="@row.Provider" @onchange="e => row.Provider = e.Value?.ToString() ?? string.Empty">
@@ -65,11 +73,15 @@ else
                                 }
                             </select>
                         </td>
+                        }
                         <td>
-                            <ModelPicker Value="@row.Model" ValueChanged="v => row.Model = v" Provider="@row.Provider"
+                            @* Simple view: every priced model, the provider inferred from the choice (ModelRouting). *@
+                            <ModelPicker Value="@row.Model" ValueChanged="v => PickModel(row, v)" Provider="@(_advanced ? row.Provider : null)"
                                          AriaLabel="@($"{row.Role} model")" Disabled="@locked" />
-                            <div class="prefs-hint">@PriceHint(row.Model)</div>
+                            <div class="prefs-hint">@PriceHint(row.Model)@(_advanced ? "" : $" · via {(row.Provider == "Anthropic" ? "Claude" : row.Provider)}")</div>
                         </td>
+                        @if (_advanced)
+                        {
                         <td>
                             @if (ModelCapabilities.AcceptsSamplingParameters(row.Model))
                             {
@@ -87,6 +99,7 @@ else
                                    disabled="@locked" aria-label="@($"{row.Role} max output tokens")"
                                    value="@row.MaxTokens" @onchange="e => row.MaxTokens = e.Value?.ToString() ?? string.Empty" />
                         </td>
+                        }
                         <td>
                             <div class="agent-profiles-actions">
                                 <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@(locked || _saving)" OnClick="() => SaveRow(row)">Save</Btn>
@@ -123,6 +136,14 @@ else
     private static readonly string[] RoleFields = [ProviderField, ModelField, TemperatureField, MaxTokensField];
 
     private bool _resolved;
+    private bool _advanced;   // provider, temperature and max output — expert fields, hidden by default
+
+    // Simple view: picking a model also picks the provider that serves it (kept when the current one does).
+    private void PickModel(RoleRow row, string model)
+    {
+        row.Model = model;
+        if (!_advanced) { row.Provider = ModelRouting.ProviderFor(row.Provider, model); }
+    }
     private bool _isAdmin;
     private bool _saving;
     private string _tenantId = string.Empty;
