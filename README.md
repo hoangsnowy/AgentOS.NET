@@ -91,8 +91,9 @@ incognito window). Fixes are in [docs/SETUP.md](docs/SETUP.md#troubleshooting-th
 
 ### 3 — Use a real model
 
-In the desktop: **Settings → LLM & providers → API keys** — paste an Anthropic and/or Azure OpenAI
-key — or an OpenAI, Gemini or xAI key under **OpenAI · Gemini · xAI** (stored encrypted, per tenant). Then pick each agent's model in **Settings → Agent profiles**;
+In the desktop: **Settings → AI → Model keys** (or press **Ctrl+K** and type "add key") — one card per
+provider (Anthropic, Azure OpenAI, OpenAI, Gemini, xAI): paste the key, Save, then **Test** (stored
+encrypted, per tenant). Then pick each agent's model in **Settings → Agent profiles**;
 the next run uses it, no restart. Keys can also be seeded from the environment
 (`Llm__Claude__ApiKey`, user-secrets) — see [docs/CONFIG.md](docs/CONFIG.md).
 
@@ -127,7 +128,7 @@ All shots are the standalone Web (`dotnet run --project src/AgentOs.Web`).
 | Boards → Tickets → Sessions | Settings |
 |:---:|:---:|
 | [![Board — connect a GitHub/ADO board and drive remote repo execution](docs/images/app-board.png)](docs/images/app-board.png) | [![Settings — agent profiles, providers, governance, platform](docs/images/app-settings.png)](docs/images/app-settings.png) |
-| Connect a GitHub / Azure DevOps board, decompose an idea into tickets, drive repo-execution sessions. | One hub: LLM & providers, Agent profiles, Prompts, Tool policy, Evidence, Users, MCP servers, Plugins, Platform, System. Changes apply on the next call. |
+| Connect a GitHub / Azure DevOps board, decompose an idea into tickets, drive repo-execution sessions. | One searchable rail: AI (Model keys, Routing, Agent profiles, Prompts) · Connections · Governance · People & data · Personal · System. Ctrl+K finds any setting. Changes apply on the next call. |
 
 | Platform governance | Terminal — runner session feed |
 |:---:|:---:|
@@ -290,7 +291,8 @@ The model picker lists every priced model for the chosen provider with its list 
 **UI-first** ([ADR-0011](docs/adr/0011-ui-first-configuration.md)). Everything product-related is set
 in the desktop and applies on the next call:
 
-- **Settings → LLM & providers** — API keys and key pools, endpoints, default/forced provider.
+- **Settings → AI → Model keys** — one card per provider: key, endpoint / default model, and a Test button.
+- **Settings → AI → Routing** — default and forced provider, offline fallback.
 - **Settings → Agent profiles** — per-agent provider, model, temperature, max output tokens, QA-loop cap.
 - **Settings → Platform** (`platform-admin` only) — remote auto-approve, fail-closed tool policy,
   allowed self-hosted Git hosts, build sandbox (mode, image, quotas), offline fallback.

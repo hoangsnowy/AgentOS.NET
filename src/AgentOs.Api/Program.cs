@@ -237,15 +237,25 @@ app.MapModuleEndpoints();
 // tenant's runs — every sibling REST route is gated, this one must be too.
 app.MapMcp("/mcp").RequireAuthorization();
 
-// Settings "Test connection" — probe the configured provider with a minimal call.
-app.MapPost("/llm/test", async (ILlmClientFactory factory, IConfiguration cfg, CancellationToken ct) =>
+// Settings "Test" — probe one provider (?provider=, from the Model keys cards; allow-listed by LlmProbe) or, with
+// none named, the Orchestrator's configured provider, with a minimal call.
+app.MapPost("/llm/test", async ([Microsoft.AspNetCore.Mvc.FromQuery(Name = "provider")] string? requested,
+    ILlmClientFactory factory, IConfiguration cfg, ITenantContext tenant,
+    Microsoft.Extensions.Options.IOptions<LlmOptions> llmOptions, IServiceProvider services, CancellationToken ct) =>
 {
-    var provider = cfg["Agents:Orchestrator:Provider"] ?? "Anthropic";
-    var model = cfg["Agents:Orchestrator:Model"] ?? "claude-haiku-4-5";
+    if (requested is not null && !LlmProbe.CanProbe(requested))
+    {
+        return Results.BadRequest(new { ok = false, error = "Unknown provider." });
+    }
+    var provider = requested?.Trim() ?? cfg["Agents:Orchestrator:Provider"] ?? "Anthropic";
+    var azureDeployment = LlmProbe.AzureDeployment(services.GetService<AgentOs.Domain.Configuration.ISettings>(), tenant.TenantId, llmOptions.Value);
+    var model = requested is null ? cfg["Agents:Orchestrator:Model"] ?? "claude-haiku-4-5" : LlmProbe.ModelFor(provider, azureDeployment);
     try
     {
         var client = factory.Create(provider);
-        var probe = new LlmRequest("You are a connectivity probe.", "Reply with the single word: OK", model, 0.0, 5);
+        var probe = requested is null
+            ? new LlmRequest("You are a connectivity probe.", "Reply with the single word: OK", model, 0.0, 5)
+            : LlmProbe.Request(provider, azureDeployment);
         var resp = await client.SendAsync(probe, ct).ConfigureAwait(false);
         // Report the provider that ANSWERED (client.Provider is the chain's primary, which is wrong under
         // failover), and refuse to call it ok when the canned Offline safety net stood in for the provider

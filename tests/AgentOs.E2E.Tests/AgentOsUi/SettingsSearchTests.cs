@@ -36,7 +36,7 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
         var win = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Settings");
         await Assertions.Expect(win.Locator(".prefs-h", new() { HasTextString = "Model keys" })).ToBeVisibleAsync();
-        await Assertions.Expect(win.Locator(".prefs-h", new() { HasTextString = "OpenAI · Gemini · xAI" })).ToBeVisibleAsync();
+        await Assertions.Expect(win.Locator(".provider-card[data-provider=\"Gemini\"]")).ToBeVisibleAsync();
 
         // Already open on another category → the link still navigates (consumed on the window-manager change).
         await win.Locator(".prefs-cat", new() { HasTextString = "Audit log" }).ClickAsync();

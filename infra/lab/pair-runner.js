@@ -3,7 +3,7 @@
 //
 //   1. signs in to the lab desktop as the seeded operator (lab-only test credentials, local .localhost host);
 //   2. Board → Runners → registers a runner, reads the one-time pairing token from the readout;
-//   3. Settings → LLM & providers → Providers → Force provider = RemoteAgent;
+//   3. Settings → AI → Routing → Force provider = RemoteAgent;
 //   4. starts the runner DETACHED with the token in its environment only — the token is never printed or
 //      written to disk; its console output goes to .lab/runner.log, its pid to .lab/runner.pid.
 // The runner runs in prompt→answer mode (no --dangerously-skip-permissions): agents get model output; any
@@ -28,14 +28,21 @@ async function signIn(page) {
   await page.locator('.dock').waitFor({ timeout: 30000 });
 }
 
-// Settings → LLM & providers → Providers → Force provider (empty = per-agent configuration).
+// Settings → AI → Routing → Force provider (empty = per-agent configuration). Each setting row saves on its own:
+// pick + Save to force, Reset to drop the workspace's value.
 async function setForceProvider(page, value) {
   await page.locator('.dock-item[title="Settings"]').first().click();
   const win = page.locator('.appwin.focused');
-  await win.locator('.prefs-cat', { hasText: 'LLM & providers' }).first().click();
-  await win.locator('.prefs-cat', { hasText: 'Providers' }).last().click();
-  await win.locator('select.prefs-select').first().selectOption(value);
-  await win.getByRole('button', { name: 'Save', exact: true }).first().click();
+  await win.locator('.prefs-cat', { hasText: 'Routing' }).first().click();
+  const select = win.locator('select[aria-label="Force provider"]');
+  await select.waitFor();
+  const row = win.locator('.prefs-row', { has: page.locator('select[aria-label="Force provider"]') });
+  if (value) {
+    await select.selectOption(value);
+    await row.getByRole('button', { name: 'Save', exact: true }).click();
+  } else if (await row.getByRole('button', { name: 'Reset', exact: true }).isEnabled()) {
+    await row.getByRole('button', { name: 'Reset', exact: true }).click();
+  }
   await page.waitForTimeout(1500);
 }
 
