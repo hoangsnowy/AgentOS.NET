@@ -62,6 +62,8 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
         // With the Workflow window focused, Ctrl+K is the builder's "Add a node" palette, not the shell search.
         await _fx.Page.Locator(".dock-item[title=\"Workflow\"]").First.ClickAsync();
         await Assertions.Expect(_fx.Page.Locator(".appwin.focused .syn-toolbar")).ToBeVisibleAsync();
+        // The builder registers its key handler after its first render — wait for it, not just for the toolbar.
+        await _fx.Page.WaitForFunctionAsync("() => !!(window.agentosWorkflowKeys && window.agentosWorkflowKeys._handler)");
         await _fx.Page.Keyboard.PressAsync("Control+k");
         await Assertions.Expect(_fx.Page.Locator(".syn-palette")).ToBeVisibleAsync();
         await Assertions.Expect(input).Not.ToBeVisibleAsync();

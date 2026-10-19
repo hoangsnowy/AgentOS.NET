@@ -47,12 +47,18 @@ public sealed class AgentOsPageFixture : IAsyncLifetime
         string.Equals(Environment.GetEnvironmentVariable("RUN_AGENTOS_E2E"), "true",
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Expect timeout for every E2E assertion: 15 s on CI (GITHUB_ACTIONS), 5 s locally.</summary>
+    public static float ExpectTimeoutMs { get; } = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true" ? 15_000 : 5_000;
+
     public async ValueTask InitializeAsync()
     {
         if (!IsEnabled)
         {
             return; // tests will Skip; no Playwright install needed.
         }
+        // CI runners are several times slower than a dev box: a cross-window step (open Settings, render a page)
+        // can exceed Playwright's 5 s expect default there. One budget for the whole suite, not per assertion.
+        Assertions.SetDefaultExpectTimeout(ExpectTimeoutMs);
 
         // Microsoft.Playwright.Program.Main returns non-zero if browsers already exist — that's fine.
         Microsoft.Playwright.Program.Main(PlaywrightInstallArgs);
