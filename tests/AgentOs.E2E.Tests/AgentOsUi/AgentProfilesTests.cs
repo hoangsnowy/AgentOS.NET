@@ -36,7 +36,12 @@ internal static class AgentProfilesFlow
         await qaRow.GetByRole(AriaRole.Button, new() { Name = "Save" }).ClickAsync();
 
         await Assertions.Expect(qaRow.Locator(".badgepill").First).ToContainTextAsync("This tenant");
+        await Assertions.Expect(qaRow).ToContainTextAsync("via Claude");   // simple view: provider follows the model
+        // Temperature is an expert field: hidden until "Show advanced".
+        await Assertions.Expect(qaRow).Not.ToContainTextAsync("Not used by this model");
+        await win.GetByRole(AriaRole.Button, new() { Name = "Show advanced" }).ClickAsync();
         await Assertions.Expect(qaRow).ToContainTextAsync("Not used by this model");
+        await win.GetByRole(AriaRole.Button, new() { Name = "Hide advanced" }).ClickAsync();
         await Assertions.Expect(qaRow).ToContainTextAsync("$0.1 in");
 
         // Survives a reload — the value comes back from the settings registry, not component state.

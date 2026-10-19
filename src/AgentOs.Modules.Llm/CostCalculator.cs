@@ -194,11 +194,13 @@ public static class CostCalculator
         ["xai"] = IdsOf("xai"),
     }.ToFrozenDictionary(StringComparer.Ordinal);
 
-    private static string[] IdsOf(string family) => Array.FindAll(Table, p => FamilyOfModel(p.ModelId) == family).Select(p => p.ModelId).ToArray();
+    private static string[] IdsOf(string family) => Array.FindAll(Table, p => ModelFamily(p.ModelId) == family).Select(p => p.ModelId).ToArray();
 
-    // The family a priced model id belongs to (by its vendor prefix; everything else is OpenAI's).
-    private static string FamilyOfModel(string id) =>
-        id.StartsWith("claude-", StringComparison.Ordinal) ? "anthropic"
+    /// <summary>The family a model id belongs to, by its vendor prefix: <c>anthropic</c>, <c>gemini</c>, <c>xai</c>,
+    /// else <c>openai</c> (GPT / o-series).</summary>
+    public static string ModelFamily(string id) =>
+        string.IsNullOrEmpty(id) ? "openai"
+        : id.StartsWith("claude-", StringComparison.Ordinal) ? "anthropic"
         : id.StartsWith("gemini-", StringComparison.Ordinal) ? "gemini"
         : id.StartsWith("grok-", StringComparison.Ordinal) ? "xai"
         : "openai";
