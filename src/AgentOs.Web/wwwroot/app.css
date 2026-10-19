@@ -2034,6 +2034,17 @@ select {
 .prefs-side > .prefs-side-head ~ .prefs-side-head { margin-top: var(--space-2); }
 .prefs-side-search { width: 100%; margin: 2px 0 4px; font-size: 12.5px; }
 .prefs-side-empty { padding: 8px 10px; }
+/* Settings → Model keys: one card per provider (its fields + its own Test). */
+.provider-card {
+    margin-top: var(--space-4);
+    padding: var(--space-3) var(--space-4) var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--bg-2);
+}
+.provider-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.provider-card-title { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.provider-card .prefs-hint { margin: 2px 0 0; }
 /* Stack label above control when the content pane is too narrow for both. */
 @container prefs (max-width: 380px) {
     .prefs-row { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-2); }

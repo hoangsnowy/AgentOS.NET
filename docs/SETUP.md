@@ -90,8 +90,8 @@ curl -k -s -o /dev/null -w "%{http_code} %{redirect_url}\n" https://localhost:51
 
 ## 5. Use a real model
 
-The primary path is the desktop: **Settings → LLM & providers → API keys** (stored encrypted, per
-tenant), then **Settings → Agent profiles** to pick each agent's model. Applies on the next call.
+The primary path is the desktop: **Settings → AI → Model keys** — one card per provider, Save then
+**Test** (stored encrypted, per tenant) — then **Settings → Agent profiles** to pick each agent's model. Applies on the next call.
 
 To seed a platform-wide fallback key for local runs instead, use user-secrets (the projects already
 carry a `UserSecretsId`, so no `init` is needed):

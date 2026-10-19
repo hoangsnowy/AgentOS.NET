@@ -15,6 +15,7 @@
 @inject ILlmClientFactory LlmFactory
 @inject AuthSession Auth
 @inject ISourceProviderResolver SourceProviders
+@inject LlmConfigView LlmConfig
 
 @if (!_resolved)
 {
@@ -32,16 +33,21 @@ else
         @switch (_tab)
         {
             case "status":
+                var cfg = LlmConfig.Resolve(_tenantId, _userId);
                 <div class="prefs-section">
                     <h2 class="prefs-h">Diagnostics</h2>
                     <p class="prefs-sub">The effective LLM configuration for this workspace, and where its data lives.</p>
                 </div>
                 <table class="prefs-tbl">
-                    <tr><th>Default provider</th><td><code>@LlmOpts.Value.Provider</code></td></tr>
-                    <tr><th>Effective force provider</th><td>@EffectiveForceLabel()</td></tr>
-                    <tr><th>Anthropic API key</th><td>@KeyState(EffectiveCfg().AnthropicKeySet)</td></tr>
-                    <tr><th>Azure OpenAI API key</th><td>@KeyState(EffectiveCfg().AzureKeySet)</td></tr>
-                    <tr><th>Azure OpenAI endpoint</th><td>@EffectiveEndpointLabel()</td></tr>
+                    <tr><th>Default provider</th><td><code>@cfg.DefaultProvider</code></td></tr>
+                    <tr><th>Force provider</th><td>@ForceLabel(cfg)</td></tr>
+                    <tr><th>Anthropic key</th><td>@KeyState(cfg.AnthropicKeySet)</td></tr>
+                    <tr><th>Azure OpenAI key</th><td>@KeyState(cfg.AzureKeySet)</td></tr>
+                    <tr><th>Azure OpenAI endpoint</th><td>@(cfg.AzureEndpoint ?? "— not set —")</td></tr>
+                    @foreach (var v in VendorProviders.All)
+                    {
+                        <tr><th>@v.Name key</th><td>@KeyState(cfg.VendorKeys.Contains(v.Name))</td></tr>
+                    }
                     <tr><th>Persistence</th><td>@(_dbConnected ? "Postgres connected" : "Stateless (no DB)")</td></tr>
                 </table>
                 <div class="prefs-section" style="margin-top:var(--space-5)">
@@ -65,103 +71,47 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
             case "providers":
                 <div class="prefs-section">
                     <h2 class="prefs-h">Routing</h2>
-                    <p class="prefs-sub">Which provider the agents use. Per-agent choices live in <strong>Agent profiles</strong>; Force overrides them all.</p>
-                </div>
-                <div class="prefs-row">
-                    <div class="prefs-label"><strong>Force provider</strong><br /><span class="prefs-hint">Overrides per-agent configuration.</span></div>
-                    <select @bind="_forceProvider" class="prefs-select">
-                        <option value="">— per-agent config —</option>
-                        <option value="Claude">Claude (Anthropic)</option>
-                        <option value="AzureOpenAI">Azure OpenAI</option>
-                        <option value="OpenAI">OpenAI (your key)</option>
-                        <option value="Gemini">Google Gemini (your key)</option>
-                        <option value="xAI">xAI Grok (your key)</option>
-                        <option value="MAF">MAF (Azure OpenAI via SDK)</option>
-                        <option value="OpenAICompatible">OpenAI-compatible (self-hosted: vLLM, Ollama, Foundry)</option>
-                        @* The paired dev machine's CLI. Listed because it is a first-class keyed
-                           provider (LlmClientFactory: Claude | AzureOpenAI | MAF | RemoteAgent) and the
-                           only one that costs no server API tokens — omitting it made the zero-token
-                           path reachable solely by editing config. Requires a runner in Board →
-                           Runners; with none connected, dispatch fails loudly rather than silently. *@
-                        <option value="RemoteAgent">RemoteAgent (paired dev machine CLI — 0 server tokens)</option>
-                    </select>
-                </div>
-                <div class="prefs-actions">
-                    <Btn Variant="Btn.ButtonVariant.Primary" OnClick="Save" Disabled="_saving">@(_saving ? "Saving…" : "Save")</Btn>
-                    <Btn Variant="Btn.ButtonVariant.Ghost" OnClick="Clear" Disabled="_saving">Reset</Btn>
-                </div>
-                @if (_saveError is not null)
-                {
-                    <div class="prefs-saved"><Chip Variant="Chip.ChipVariant.Err">Not saved</Chip> @_saveError</div>
-                }
-                else if (_saved)
-                {
-                    <div class="prefs-saved"><Chip Variant="Chip.ChipVariant.Ok">Saved</Chip> @SaveScopeLabel()</div>
-                }
-
-                <div class="prefs-row" style="margin-top:var(--space-5)">
-                    <div class="prefs-label"><strong>Test connection</strong><br /><span class="prefs-hint">Send a minimal probe to the configured provider.</span></div>
-                    <Btn OnClick="TestConnection" Disabled="_testing">@(_testing ? "Testing…" : "Test")</Btn>
-                </div>
-                @if (_testResult is not null)
-                {
-                    <div class="prefs-saved">
-                        @if (_testOk)
-                        {
-                            <Chip Variant="Chip.ChipVariant.Ok">OK</Chip>
-                        }
-                        else
-                        {
-                            <Chip Variant="Chip.ChipVariant.Err">Failed</Chip>
-                        }
-                        @_testResult
-                    </div>
-                }
-
-                <div class="prefs-section" style="margin-top:var(--space-5)">
-                    <h2 class="prefs-h">Routing &amp; deployment</h2>
-                    <p class="prefs-sub">Applied live to the next call — no restart. Per-agent models live in <strong>Agent profiles</strong>.</p>
+                    <p class="prefs-sub">Which provider answers. Each agent's own choice lives in <strong>Agent profiles</strong>; <strong>Force provider</strong> overrides them all — pick <em>RemoteAgent</em> to run on a paired dev machine with no server tokens. Applied to the next call, no restart.</p>
                 </div>
                 <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
-                                Keys="@(new[] { AgentOs.Modules.Llm.LlmSettings.Provider, AgentOs.Modules.Llm.LlmSettings.AzureModel, AgentOs.Modules.Llm.LlmSettings.AzurePricingModel, AgentOs.Modules.Llm.LlmSettings.OfflineFallback })" />
+                                Keys="@(new[] { AppConfigKeys.LlmForceProvider, LlmSettings.Provider, LlmSettings.OfflineFallback })" />
                 break;
 
             case "keys":
                 <div class="prefs-section">
                     <h2 class="prefs-h">Model keys</h2>
-                    <p class="prefs-sub">Your workspace's own keys — encrypted + stored per-tenant. Used only by <code>@_tenantId</code>; other tenants never see or spend them. Leave blank to fall back to the platform key (dev/demo only).</p>
+                    <p class="prefs-sub">One card per provider. Keys are encrypted and stored for <code>@(_tenantId.Length == 0 ? "this workspace" : _tenantId)</code> only — other workspaces never see or spend them. Save a key, then <strong>Test</strong>. Which provider each agent uses is set in <strong>Agent profiles</strong>.</p>
                 </div>
-                <div class="prefs-row">
-                    <div class="prefs-label"><strong>Anthropic API key</strong></div>
-                    <input type="password" @bind="_anthropicKey" placeholder="sk-ant-..." class="prefs-input" />
-                </div>
-                <div class="prefs-row">
-                    <div class="prefs-label"><strong>Azure OpenAI API key</strong></div>
-                    <input type="password" @bind="_azureKey" placeholder="(Azure key)" class="prefs-input" />
-                </div>
-                <div class="prefs-row">
-                    <div class="prefs-label"><strong>Azure OpenAI endpoint</strong></div>
-                    <input type="text" @bind="_azureEndpoint" placeholder="https://your-resource.openai.azure.com" class="prefs-input" />
-                </div>
-                <div class="prefs-actions">
-                    <Btn Variant="Btn.ButtonVariant.Primary" OnClick="Save" Disabled="_saving">@(_saving ? "Saving…" : "Save")</Btn>
-                    <Btn Variant="Btn.ButtonVariant.Ghost" OnClick="Clear" Disabled="_saving">Reset</Btn>
-                </div>
-                @if (_saveError is not null)
+                @foreach (var card in ProviderCards)
                 {
-                    <div class="prefs-saved"><Chip Variant="Chip.ChipVariant.Err">Not saved</Chip> @_saveError</div>
+                    <section class="provider-card" data-provider="@card.Provider" aria-labelledby="@($"pc-{card.Provider}")">
+                        <div class="provider-card-head">
+                            <div>
+                                <h3 class="provider-card-title" id="@($"pc-{card.Provider}")">@card.Title</h3>
+                                <p class="prefs-hint">@card.Blurb</p>
+                            </div>
+                            <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => TestAsync(card.Provider))" Disabled="@(_testing is not null)">
+                                @(_testing == card.Provider ? "Testing…" : "Test")
+                            </Btn>
+                        </div>
+                        <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")" Keys="@card.Keys" />
+                        @if (_tests.TryGetValue(card.Provider, out var result))
+                        {
+                            <div class="prefs-saved" role="status">
+                                <Chip Variant="@(result.Ok ? Chip.ChipVariant.Ok : Chip.ChipVariant.Err)">@(result.Ok ? "Connected" : "Failed")</Chip>
+                                @result.Text
+                            </div>
+                        }
+                    </section>
                 }
-                else if (_saved)
-                {
-                    <div class="prefs-saved"><Chip Variant="Chip.ChipVariant.Ok">Saved</Chip> @SaveScopeLabel()</div>
-                }
-
-                <div class="prefs-section" style="margin-top:var(--space-5)">
-                    <h2 class="prefs-h">OpenAI · Gemini · xAI</h2>
-                    <p class="prefs-sub">Bring your own key. Pick the provider per agent in <strong>Agent profiles</strong>, or force it under <strong>Routing</strong>. Costs use each vendor's published rates.</p>
-                </div>
-                <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
-                                Keys="@(AgentOs.Modules.Llm.VendorProviders.All.SelectMany(v => new[] { v.KeySetting, v.ModelSetting }).ToArray())" />
+                <section class="provider-card" data-provider="RemoteAgent">
+                    <div class="provider-card-head">
+                        <div>
+                            <h3 class="provider-card-title">Paired dev machine</h3>
+                            <p class="prefs-hint">No key here: agents run on a developer's own Claude Code / Copilot CLI and spend no server tokens. Pair a machine in <strong>Board → Runners</strong>, then choose <em>RemoteAgent</em> in Routing or Agent profiles.</p>
+                        </div>
+                    </div>
+                </section>
                 break;
 
             case "github":
@@ -238,13 +188,6 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
     private string _tenantId = string.Empty;
     private string? _userId;
 
-    private string _forceProvider = "";
-    private string _anthropicKey = "";
-    private string _azureKey = "";
-    private string _azureEndpoint = "";
-    private bool _saved;
-    private bool _saving;
-    private string? _saveError;
     private bool _dbConnected;
 
     private string _githubPat = "";
@@ -263,9 +206,24 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
     private string? _apiBase;
     private bool Split => !string.IsNullOrWhiteSpace(_apiBase);
 
-    private bool _testing;
-    private bool _testOk;
-    private string? _testResult;
+    // Model keys cards: one per provider (its settings in order), each with its own Test.
+    private sealed record ProviderCard(string Provider, string Title, string Blurb, string[] Keys);
+
+    private static readonly ProviderCard[] ProviderCards =
+    [
+        new("Claude", "Anthropic · Claude", "Claude Opus, Sonnet, Haiku — the default for every agent.", [AppConfigKeys.LlmClaudeApiKey]),
+        new("AzureOpenAI", "Azure OpenAI", "Your Azure resource: endpoint, key, and the deployment agents use by default.",
+            [AppConfigKeys.LlmAzureEndpoint, AppConfigKeys.LlmAzureApiKey, LlmSettings.AzureModel, LlmSettings.AzurePricingModel]),
+        .. VendorProviders.All.Select(v => new ProviderCard(v.Name, v.Name switch
+        {
+            "OpenAI" => "OpenAI",
+            "Gemini" => "Google Gemini",
+            _ => "xAI Grok",
+        }, "Bring your own key. Priced at the vendor's published rates.", [v.KeySetting, v.ModelSetting])),
+    ];
+
+    private string? _testing;   // the provider being probed, if any
+    private readonly Dictionary<string, (bool Ok, string Text)> _tests = new(StringComparer.Ordinal);
 
     protected override async Task OnInitializedAsync()
     {
@@ -290,10 +248,6 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
         if (!Split)
         {
             using var _ = TenantScope();
-            _forceProvider = Overrides.ForceProvider ?? "";
-            _anthropicKey = Overrides.AnthropicApiKey ?? "";
-            _azureKey = Overrides.AzureApiKey ?? "";
-            _azureEndpoint = Overrides.AzureEndpoint ?? "";
             _githubPat = Overrides.GitHubPat ?? "";
             _repoOwner = Overrides.GitHubRepoOwner ?? "";
             _repoName = Overrides.GitHubRepoName ?? "";
@@ -313,15 +267,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
             try
             {
                 using var client = ApiClient();
-                var llm = await client.GetFromJsonAsync<Dictionary<string, string?>>("settings/Llm");
                 var gh = await client.GetFromJsonAsync<Dictionary<string, string?>>("settings/Github");
-                if (llm is not null)
-                {
-                    _forceProvider = llm.GetValueOrDefault(AppConfigKeys.LlmForceProvider) ?? "";
-                    _anthropicKey = llm.GetValueOrDefault(AppConfigKeys.LlmClaudeApiKey) ?? "";
-                    _azureKey = llm.GetValueOrDefault(AppConfigKeys.LlmAzureApiKey) ?? "";
-                    _azureEndpoint = llm.GetValueOrDefault(AppConfigKeys.LlmAzureEndpoint) ?? "";
-                }
                 if (gh is not null)
                 {
                     _githubPat = gh.GetValueOrDefault(AppConfigKeys.GithubPat) ?? "";
@@ -365,16 +311,6 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
 
     // Mirrors the server-side SettingsKeyRegistry checks so an invalid value never round-trips
     // (the API enforces the same rules — this is feedback, not the gate).
-    private string? ValidateLlmFields()
-    {
-        if (!string.IsNullOrWhiteSpace(_azureEndpoint)
-            && (!Uri.TryCreate(_azureEndpoint, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps))
-        {
-            return "Azure OpenAI endpoint must be an absolute https:// URL.";
-        }
-        return null;
-    }
-
     private string? ValidateGithubFields()
     {
         if (!string.IsNullOrWhiteSpace(_githubPat)
@@ -422,77 +358,6 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
             // Non-JSON error body — fall through to the status line.
         }
         return $"HTTP {(int)resp.StatusCode}";
-    }
-
-    private async Task Save()
-    {
-        _saved = false;
-        _saveError = ValidateLlmFields();
-        if (_saveError is not null)
-        {
-            return;
-        }
-        _saving = true;
-        // User action: surface ANY save failure (HTTP timeout, DataProtection, raw provider errors)
-        // as an error string — never tear down the circuit (see CircuitSafe).
-        await CircuitSafe.RunAsync(
-            async () =>
-            {
-                if (Split)
-                {
-                    using var client = ApiClient();
-                    // _saveError is null here (the validation guard above returned otherwise) — the first
-                    // write assigns, the rest short-circuit on the first error.
-                    _saveError = await SetRemoteAsync(client, AppConfigKeys.LlmForceProvider, _forceProvider);
-                    _saveError ??= await SetRemoteAsync(client, AppConfigKeys.LlmClaudeApiKey, _anthropicKey);
-                    _saveError ??= await SetRemoteAsync(client, AppConfigKeys.LlmAzureApiKey, _azureKey);
-                    _saveError ??= await SetRemoteAsync(client, AppConfigKeys.LlmAzureEndpoint, _azureEndpoint);
-                }
-                else
-                {
-                    using var _ = TenantScope();
-                    Overrides.ForceProvider = string.IsNullOrWhiteSpace(_forceProvider) ? null : _forceProvider;
-                    Overrides.AnthropicApiKey = string.IsNullOrWhiteSpace(_anthropicKey) ? null : _anthropicKey;
-                    Overrides.AzureApiKey = string.IsNullOrWhiteSpace(_azureKey) ? null : _azureKey;
-                    Overrides.AzureEndpoint = string.IsNullOrWhiteSpace(_azureEndpoint) ? null : _azureEndpoint;
-                }
-                _saved = _saveError is null;
-            },
-            ex => _saveError = ex.Message);
-        _saving = false;
-    }
-
-    private async Task Clear()
-    {
-        _forceProvider = _anthropicKey = _azureKey = _azureEndpoint = "";
-        _saved = false;
-        _saveError = null;
-        _saving = true;
-        // User action: surface ANY save failure (HTTP timeout, DataProtection, raw provider errors)
-        // as an error string — never tear down the circuit (see CircuitSafe).
-        await CircuitSafe.RunAsync(
-            async () =>
-            {
-                if (Split)
-                {
-                    using var client = ApiClient();
-                    _saveError = await SetRemoteAsync(client, AppConfigKeys.LlmForceProvider, "");
-                    _saveError ??= await SetRemoteAsync(client, AppConfigKeys.LlmClaudeApiKey, "");
-                    _saveError ??= await SetRemoteAsync(client, AppConfigKeys.LlmAzureApiKey, "");
-                    _saveError ??= await SetRemoteAsync(client, AppConfigKeys.LlmAzureEndpoint, "");
-                }
-                else
-                {
-                    using var _ = TenantScope();
-                    Overrides.ForceProvider = null;
-                    Overrides.AnthropicApiKey = null;
-                    Overrides.AzureApiKey = null;
-                    Overrides.AzureEndpoint = null;
-                }
-                _saved = _saveError is null;
-            },
-            ex => _saveError = ex.Message);
-        _saving = false;
     }
 
     private async Task SaveGithub()
@@ -585,79 +450,45 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
         _ghTesting = false;
     }
 
-    private async Task TestConnection()
+    // Probe ONE provider (the card's Test). Split mode asks the Api (it holds the platform keys too); in-process
+    // probes here. Never green over canned output: the Offline net standing in for the provider is a failure.
+    private async Task TestAsync(string provider)
     {
-        _testing = true;
-        _testResult = null;
-        // UI probe: surface ANY failure (LlmException, raw provider/Azure SDK errors, timeouts) as a
-        // message — never let it escape and tear down the Blazor circuit (see CircuitSafe).
+        _testing = provider;
+        _tests.Remove(provider);
         await CircuitSafe.RunAsync(
             async () =>
             {
                 if (Split)
                 {
                     using var client = ApiClient();
-                    using var resp = await client.PostAsync("llm/test", null);
+                    using var resp = await client.PostAsync($"llm/test?provider={Uri.EscapeDataString(provider)}", null);
                     var body = await resp.Content.ReadFromJsonAsync<LlmTestResult>();
-                    _testOk = body?.Ok ?? false;
-                    _testResult = body is { Ok: true }
-                        ? $"{body.Provider} · {body.Model}"
-                        : (body?.Error ?? $"HTTP {(int)resp.StatusCode}");
+                    _tests[provider] = body is { Ok: true }
+                        ? (true, $"{body.Provider} answered{(string.IsNullOrEmpty(body.Model) ? "" : $" · {body.Model}")}.")
+                        : (false, body?.Error ?? $"HTTP {(int)resp.StatusCode}");
                 }
                 else
                 {
                     using var _scope = TenantScope();
-                    // Honor the just-selected (possibly unsaved) Force provider from the form, not just the
-                    // Orchestrator's per-agent provider — the Providers tab exists to set Force.
-                    var force = EffectiveCfg().Force;
-                    var provider = string.IsNullOrWhiteSpace(force)
-                        ? (Config["Agents:Orchestrator:Provider"] ?? "Anthropic")
-                        : force;
-                    var model = Config["Agents:Orchestrator:Model"] ?? "claude-haiku-4-5";
-                    var probe = new LlmRequest("You are a connectivity probe.", "Reply with the single word: OK", model, 0.0, 5);
-                    var resp = await LlmFactory.Create(provider).SendAsync(probe);
-                    // Label with the provider that actually answered (correct even under 429 failover), not
-                    // the request value — and do NOT call it OK when the answer came from the canned Offline
-                    // safety net standing in for the provider being probed. The point of the probe is to
-                    // prove the configured provider is reachable; a green chip over canned text asserts the
-                    // opposite of what happened.
-                    var substituted = AgentOs.Modules.Llm.OfflineLlmClient.IsSubstituteFor(provider, resp.Provider);
-                    _testOk = !substituted;
-                    _testResult = substituted
-                        ? $"{provider} did not answer — canned {resp.Provider} output was served instead "
-                          + "(Llm:OfflineFallback is on). Nothing reached a real model."
-                        : $"{resp.Provider} · {model}";
+                    var resp = await LlmFactory.Create(provider).SendAsync(LlmProbe.Request(provider));
+                    _tests[provider] = OfflineLlmClient.IsSubstituteFor(provider, resp.Provider)
+                        ? (false, $"{provider} did not answer — canned {resp.Provider} output was served instead (offline fallback is on). Nothing reached a real model.")
+                        : (true, $"{resp.Provider} answered · {resp.Model}.");
                 }
             },
-            ex => { _testOk = false; _testResult = ex.Message; });
-        _testing = false;
+            ex => _tests[provider] = (false, ex.Message));
+        _testing = null;
     }
-
-    private string SaveScopeLabel()
-        => Split
-            ? "Saved to the API (encrypted, per-tenant store)."
-            : $"Saved for tenant {(_tenantId.Length == 0 ? "(local)" : _tenantId)} — encrypted, applied to subsequent LLM calls.";
 
     private sealed record LlmTestResult(bool Ok, string? Provider, string? Model, string? Sample, string? Error);
 
-    // Status reads the EFFECTIVE config via the same shared precedence (per-tenant override → appsettings)
-    // the studios + an actual LLM call use. The override values come from this tab's seeded fields, which
-    // hold the in-process override OR the API-fetched value (split mode) — so Status is correct in both.
-    private LlmEffectiveConfig EffectiveCfg()
-        => LlmConfigView.Combine(LlmOpts.Value, _forceProvider, _anthropicKey, _azureKey, _azureEndpoint);
-
-    private string EffectiveForceLabel()
+    private static string ForceLabel(LlmEffectiveConfig cfg) => cfg.ForceSource switch
     {
-        var cfg = EffectiveCfg();
-        return cfg.ForceSource switch
-        {
-            ForceSource.RuntimeOverride => $"{cfg.Force} (runtime override)",
-            ForceSource.AppSettings     => $"{cfg.Force} (appsettings)",
-            _                           => "— none (per-agent config) —",
-        };
-    }
-
-    private string EffectiveEndpointLabel() => EffectiveCfg().AzureEndpoint ?? "— not set —";
+        ForceSource.RuntimeOverride => $"{cfg.Force} (this workspace)",
+        ForceSource.AppSettings => $"{cfg.Force} (platform default)",
+        _ => "— none (per-agent config) —",
+    };
 
     private static MarkupString KeyState(bool isSet)
         => isSet
