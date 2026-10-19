@@ -85,7 +85,7 @@ explicit Save on their card.
 |---|---|---|
 | **0 — Quick wins** | "All apps" lists every app, grouped · settings in Activities search · Workflow inherits the tenant QA cap (bug) · no "Anthropic" duplicate in the provider list · fix-it buttons · admin Settings lands on Providers · relabel and re-icon · unpin Terminal / Files · fix design-system drift and amend Rule 1 | In progress |
 | **1 — Find & simplify** | ✅ Ctrl/⌘+K search with actions ([#218]) · global command palette with a command-source contract · ✅ flat Settings (one rail, pages + groups, rail search) ([#219]) · ✅ provider cards with per-provider Test ([#220]) · merged routing · ✅ Agents page: model-first, provider inferred, expert fields under Advanced ([#221]) · ✅ one Activity log (changes & sign-in | tool calls) ([#225]) · one save model | Planned |
-| **2 — Task-first** | ✅ Home composer (Run now = one click to a running pipeline) + recent runs + setup checklist ([#222]) · Board's "Start from idea" folded into the composer · Log / Files tabs in Board · role-based Dash | Planned |
+| **2 — Task-first** | ✅ Home composer (Run now = one click to a running pipeline) + recent runs + setup checklist ([#222]) · Board's "Start from idea" folded into the composer · ✅ Log / Files tabs in Board — dock is four apps ([#224]) · role-based Dash | Planned |
 | **3 — Validate** | About 5 users per persona (member developer, tenant admin) on scripted tasks | Ongoing |
 
 **Rule going forward:** a new capability is a page in an existing app, a palette command or a settings group.

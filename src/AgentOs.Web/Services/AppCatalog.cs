@@ -12,8 +12,8 @@ namespace AgentOs.Web.Services;
 /// <summary>The catalog of apps the AgentOS.NET shell can launch — built-ins plus any registered by plugins.</summary>
 public static class AppCatalog
 {
-    // Six apps are Pinned (the GNOME Dash + pinned grid): Home · Workflow · Board · Settings ·
-    // Terminal · Files. Everything else is unpinned — still launchable via Activities search / deep
+    // Four apps are Pinned (the GNOME Dash): Home · Workflow · Board · Settings. Terminal and Files are tabs of
+    // Board (Log, Files) and stay launchable on their own from Activities. Everything else is unpinned — still launchable via Activities search / deep
     // links, and the admin/system surfaces are collected behind the Settings hub. Pinned defaults to
     // true on the DesktopApp record, so unpinned apps MUST say Pinned: false explicitly.
     private static readonly List<DesktopApp> _builtIn = new()
@@ -27,8 +27,8 @@ public static class AppCatalog
         new("workflow", "Workflow", "graph", "Build & run the agent pipeline as a visual graph", "Agents", 1320, 840, Pinned: true, ComponentType: typeof(OrchestrationStudio), Color: "#9141ac"),
         new("board",    "Board",    "git-pull-request", "Boards → tickets → AI sessions → PRs", "Agents", 1000, 660, Pinned: true, ComponentType: typeof(BoardApp), Color: "#2ec27e"),
         new("settings", "Settings", "gear",  "Model keys, agents, governance, people and personal preferences",   "System", 1060, 700, Pinned: true, ComponentType: typeof(SettingsHub), Color: "#5e5c64"),
-        new("terminal", "Terminal", "terminal", "Live read-only tail of the runner's session feed", "Agents", 780, 520, Pinned: true, ComponentType: typeof(TerminalApp), Color: "#2b2b2e"),
-        new("files",    "Files",    "folder", "Browse a connected repo's files (read-only)", "Agents", 880, 600, Pinned: true, ComponentType: typeof(FilesApp), Color: "#4a86d8"),
+        new("terminal", "Terminal", "terminal", "Live read-only tail of the runner's session feed", "Agents", 780, 520, Pinned: false, ComponentType: typeof(TerminalApp), Color: "#2b2b2e"),
+        new("files",    "Files",    "folder", "Browse a connected repo's files (read-only)", "Agents", 880, 600, Pinned: false, ComponentType: typeof(FilesApp), Color: "#4a86d8"),
         // ── unpinned: reachable via the Settings hub, Activities search, or in-app deep links ──
         // (Workspaces + Sessions were standalone admin windows fully subsumed by Board → deleted.)
         new("users",    "Users",    "user",  "Manage tenant members + roles", "Admin", 880, 600, Pinned: false, AdminOnly: true, ComponentType: typeof(UsersApp), Color: "#e5a50a"),

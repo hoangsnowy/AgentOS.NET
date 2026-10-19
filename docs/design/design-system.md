@@ -160,7 +160,7 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
   a GNOME system menu (aggregated network/sound/battery + gateway health dot + avatar → quick settings).
   Dark in both themes. No brand mark, no standalone workspace item.
 - **Dash (dock)** (`Taskbar.razor` in `AgentOs.Web.Shell/UI`) — flat translucent GNOME Dash, no Start
-  button, no magnify. **Six pinned apps**: Home · Workflow · Board · Settings (hub) · Terminal · Files
+  button, no magnify. **Four pinned apps**: Home · Workflow · Board · Settings (hub); Terminal and Files are Board tabs (**Log**, **Files**)
   (the target is five — [docs/plans/ux-simplification.md](../plans/ux-simplification.md)). Running apps
   show a dot; the focused app's dot widens to an accent pill. Unpinned admin/system apps (Users, Evidence,
   API tokens, Data, Audit log, Policy, Prompts, Agent profiles, Plugins, MCP, System) are reached via the
