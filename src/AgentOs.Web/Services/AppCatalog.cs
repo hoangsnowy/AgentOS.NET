@@ -26,7 +26,7 @@ public static class AppCatalog
         new("insights", "Insights", "chart", "Runs, agent utilisation and LLM cost — analytics + budget", "Agents", 1180, 760, Pinned: false, ComponentType: typeof(InsightsApp), Color: "#1c71d8"),
         new("workflow", "Workflow", "graph", "Build & run the agent pipeline as a visual graph", "Agents", 1320, 840, Pinned: true, ComponentType: typeof(OrchestrationStudio), Color: "#9141ac"),
         new("board",    "Board",    "git-pull-request", "Boards → tickets → AI sessions → PRs", "Agents", 1000, 660, Pinned: true, ComponentType: typeof(BoardApp), Color: "#2ec27e"),
-        new("settings", "Settings", "gear",  "LLM keys, governance, users, system",   "System", 1060, 700, Pinned: true, ComponentType: typeof(SettingsHub), Color: "#5e5c64"),
+        new("settings", "Settings", "gear",  "Model keys, agents, governance, people and personal preferences",   "System", 1060, 700, Pinned: true, ComponentType: typeof(SettingsHub), Color: "#5e5c64"),
         new("terminal", "Terminal", "terminal", "Live read-only tail of the runner's session feed", "Agents", 780, 520, Pinned: true, ComponentType: typeof(TerminalApp), Color: "#2b2b2e"),
         new("files",    "Files",    "folder", "Browse a connected repo's files (read-only)", "Agents", 880, 600, Pinned: true, ComponentType: typeof(FilesApp), Color: "#4a86d8"),
         // ── unpinned: reachable via the Settings hub, Activities search, or in-app deep links ──
