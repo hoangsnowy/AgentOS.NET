@@ -291,6 +291,8 @@ The model picker lists every priced model for the chosen provider with its list 
 **UI-first** ([ADR-0011](docs/adr/0011-ui-first-configuration.md)). Everything product-related is set
 in the desktop and applies on the next call:
 
+- **Home → Schedule…** — run a story once or on a schedule (every day / weekdays / weekly / cron, UTC; at most every
+  15 minutes). Scheduled runs go through the same budget gate and run limits as any run, and every change is audited.
 - **Settings → AI → Model keys** — one card per provider: key, endpoint / default model, and a Test button.
 - **Settings → AI → Routing** — default and forced provider, offline fallback.
 - **Settings → AI → Agent profiles** — the model per agent (the provider follows the model) and the QA-loop cap;

@@ -38,7 +38,7 @@ public static partial class RowLevelSecurity
     /// <summary>Tenant tables under RLS in stage 1 (schema, table).</summary>
     public static IReadOnlyList<(string Schema, string Table)> Tables { get; } =
     [
-        ("pipeline", "pipeline_runs"), ("pipeline", "run_metrics"), ("pipeline", "orchestrations"),
+        ("pipeline", "pipeline_runs"), ("pipeline", "run_metrics"), ("pipeline", "orchestrations"), ("pipeline", "scheduled_runs"),
         ("sessions", "sessions"), ("sessions", "session_repos"), ("sessions", "runners"),
         ("tools", "tool_invocations"),
         ("workspaces", "workspaces"), ("workspaces", "workspace_repos"),

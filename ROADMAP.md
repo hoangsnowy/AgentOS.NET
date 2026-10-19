@@ -213,7 +213,7 @@ interleaved with the agentic-SDLC phases:
   Postgres, geo backups, executed DR drill) · GitLab / Bitbucket / webhooks · tenant-defined custom agents ·
   SOC 2 / ISO mapping + pen test · platform admin console + metering · WCAG 2.2 AA + i18n.
 - **Parity track** (alongside E1, [docs/plans/competitive-parity.md](docs/plans/competitive-parity.md)): BYOK
-  OpenAI / Gemini / xAI ✅ · scheduled runs · Mission Control · chat notifications + chat-started runs · agent
+  OpenAI / Gemini / xAI ✅ · scheduled runs ✅ · Mission Control · chat notifications + chat-started runs · agent
   chat · custom agents + SDLC templates · one-click deploy · plans / quotas / retention.
 - **Exit criteria:** E1 — a customer tenant signs in with their own Entra ID, roles come from their groups, a
   ticket from their tracker becomes an *approved* PR under their policy, shaped by their rules and skills, on

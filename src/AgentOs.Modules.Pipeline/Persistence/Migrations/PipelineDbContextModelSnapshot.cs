@@ -185,6 +185,64 @@ namespace AgentOs.Modules.Pipeline.Persistence.Migrations
                     b.ToTable("run_metrics", "pipeline");
                 });
 
+            modelBuilder.Entity("AgentOs.Modules.Pipeline.Persistence.Entities.ScheduledRunEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Cron")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTimeOffset?>("LastRunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastStatus")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("NextRunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("RunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Story")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("Enabled", "NextRunAtUtc");
+
+                    b.ToTable("scheduled_runs", "pipeline");
+                });
+
             modelBuilder.Entity("AgentOs.Modules.Pipeline.Persistence.Entities.RunMetricEntity", b =>
                 {
                     b.HasOne("AgentOs.Modules.Pipeline.Persistence.Entities.PipelineRunEntity", null)

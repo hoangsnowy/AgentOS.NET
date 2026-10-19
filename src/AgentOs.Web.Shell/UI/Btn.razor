@@ -7,6 +7,7 @@
         disabled="@(Disabled || Loading)"
         aria-busy="@(Loading ? "true" : null)"
         title="@Title"
+        @attributes="AdditionalAttributes"
         @onclick="OnClick"
         @onclick:stopPropagation="StopPropagation">
     @if (Loading)
@@ -35,6 +36,9 @@
     [Parameter] public string? ExtraClass { get; set; }
     [Parameter] public EventCallback<MouseEventArgs> OnClick { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Extra attributes passed through to the &lt;button&gt; (aria-label, aria-pressed, data-*).</summary>
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
 
     private string VariantClass => Variant switch
     {

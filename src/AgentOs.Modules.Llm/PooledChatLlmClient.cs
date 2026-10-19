@@ -119,7 +119,7 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         if (keys.Count == 0)
         {
             throw new LlmException(
-                $"No {Provider} API key configured for your workspace. Open Settings → API keys and add your " +
+                $"No {Provider} API key configured for your workspace. Open Settings → AI → Model keys and add your " +
                 $"{Provider} key (or ask a workspace admin). Keys are stored per-tenant and used only by your workspace.",
                 Provider);
         }
