@@ -55,7 +55,7 @@ public sealed class TenantIsolationRealAuthTests : IClassFixture<AgentOsRealAuth
             await _fx.LoginAsync();
             await Assertions.Expect(await OpenBoardAsync()).ToContainTextAsync(marker, new() { Timeout = 15_000 });
             await Assertions.Expect(await OpenBoardRunnersAsync()).ToContainTextAsync(marker);
-            await Assertions.Expect(await OpenSettingsTabAsync("Evidence")).ToContainTextAsync(marker, new() { Timeout = 15_000 });
+            await Assertions.Expect(await OpenToolCallsAsync()).ToContainTextAsync(marker, new() { Timeout = 15_000 });
 
             // ── tenant B through the public signup saga ──────────────────────────────────────────────
             await _fx.Context.ClearCookiesAsync();
@@ -79,7 +79,7 @@ public sealed class TenantIsolationRealAuthTests : IClassFixture<AgentOsRealAuth
             var runners = await OpenBoardRunnersAsync();
             await Assertions.Expect(runners).Not.ToContainTextAsync(marker);
 
-            var evidence = await OpenSettingsTabAsync("Evidence");
+            var evidence = await OpenToolCallsAsync();
             await Assertions.Expect(evidence).Not.ToContainTextAsync(marker);
 
             var users = await OpenSettingsTabAsync("Users");
@@ -115,6 +115,14 @@ public sealed class TenantIsolationRealAuthTests : IClassFixture<AgentOsRealAuth
         var win = _fx.Page.Locator(".appwin.focused");
         await win.Locator(".board-tab", new() { HasTextString = "Runners" }).ClickAsync();
         await Assertions.Expect(win.Locator(".data-table").First).ToBeVisibleAsync(new() { Timeout = 15_000 });
+        return win;
+    }
+
+    // Evidence is the "Tool calls" view of Settings → Activity log.
+    private async Task<ILocator> OpenToolCallsAsync()
+    {
+        var win = await OpenSettingsTabAsync("Activity log");
+        await win.Locator(".board-tab", new() { HasTextString = "Tool calls" }).ClickAsync();
         return win;
     }
 

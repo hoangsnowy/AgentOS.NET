@@ -18,8 +18,9 @@
             <div class="prefs-side-head">@group.Key</div>
             @foreach (var item in group)
             {
-                <button class="prefs-cat @(_tab == item.Key ? "active" : "")" @onclick="@(() => _tab = item.Key)"
-                        aria-current="@(_tab == item.Key ? "page" : null)">
+                var active = IsActive(item);
+                <button class="prefs-cat @(active ? "active" : "")" @onclick="@(() => _tab = item.Key)"
+                        aria-current="@(active ? "page" : null)">
                     <span class="prefs-cat-ic"><Icon Name="@item.Icon" Size="14" /></span> @item.Label
                 </button>
             }
@@ -41,8 +42,9 @@
             case "mcp":      <McpApp />;      break;
             case "plugins":  <PluginsApp />;  break;
             case "policy":   <PolicyApp />;   break;
-            case "evidence": <EvidenceApp />; break;
-            case "audit":    <AuditLogApp />; break;
+            case "audit" or "evidence":
+                <ActivityLog View="@(_tab == "evidence" ? ActivityLog.Tools : ActivityLog.Changes)" />
+                break;
             case "users":    <UsersApp />;    break;
             case "tokens":   <ApiTokensApp />; break;
             case "data":     <DataApp />;     break;
@@ -63,7 +65,8 @@
     private enum Access { Everyone, Admin, Platform }
 
     // Rail order, grouped. "Host" pages are components with their own padded .prefs-content (Settings, System).
-    private sealed record Item(string Key, string Group, string Label, string Icon, Access Access, bool Host = false);
+    // "Hidden" pages stay routable (deep links, search) but have no rail entry of their own.
+    private sealed record Item(string Key, string Group, string Label, string Icon, Access Access, bool Host = false, bool Hidden = false);
 
     private static readonly Item[] Items =
     [
@@ -75,8 +78,8 @@
         new("mcp",         "Connections",   "MCP servers",    "arrow-square-out", Access.Admin),
         new("plugins",     "Connections",   "Plugins",        "squares-stack",    Access.Everyone),
         new("policy",      "Governance",    "Tool policy",    "shield",           Access.Admin),
-        new("evidence",    "Governance",    "Evidence",       "scroll",           Access.Admin),
-        new("audit",       "Governance",    "Audit log",      "clock-counter",    Access.Admin),
+        new("audit",       "Governance",    "Activity log",   "clock-counter",    Access.Admin),
+        new("evidence",    "Governance",    "Tool calls",     "scroll",           Access.Admin, Hidden: true),   // a view of Activity log
         new("users",       "People & data", "Users",          "user",             Access.Admin),
         new("tokens",      "People & data", "API tokens",     "tag",              Access.Admin),
         new("data",        "People & data", "Data",           "floppy-disk",      Access.Admin),
@@ -133,12 +136,16 @@
     private IEnumerable<Item> VisibleItems()
     {
         var q = _filter.Trim();
-        if (q.Length == 0) { return Allowed(); }
+        if (q.Length == 0) { return Allowed().Where(i => !i.Hidden); }
         var catalog = Services.GetService<AgentOs.Domain.Configuration.ISettingsCatalog>();
         var targets = SettingsSearch.Find(q, catalog?.All ?? [], _isAdmin, _isPlatformAdmin, max: 50)
             .Select(h => h.Target).ToHashSet(StringComparer.Ordinal);
-        return Allowed().Where(i => targets.Contains(i.Key) || i.Label.Contains(q, StringComparison.OrdinalIgnoreCase));
+        return Allowed().Where(i => !i.Hidden && (targets.Contains(i.Key) || i.Label.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || (i.Key == "audit" && targets.Contains("evidence"))));
     }
+
+    // Activity log's rail entry stays lit while its "Tool calls" view (the evidence key) is open.
+    private bool IsActive(Item item) => _tab == item.Key || (item.Key == "audit" && _tab == "evidence");
 
     private static string SettingsSection(string key) => key switch
     {

@@ -39,7 +39,7 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(win.Locator(".provider-card[data-provider=\"Gemini\"]")).ToBeVisibleAsync();
 
         // Already open on another category → the link still navigates (consumed on the window-manager change).
-        await win.Locator(".prefs-cat", new() { HasTextString = "Audit log" }).ClickAsync();
+        await win.Locator(".prefs-cat", new() { HasTextString = "Activity log" }).ClickAsync();
         await (await SearchAsync("anthropic")).ClickAsync();
         await Assertions.Expect(win.Locator(".prefs-h", new() { HasTextString = "Model keys" })).ToBeVisibleAsync();
     }
