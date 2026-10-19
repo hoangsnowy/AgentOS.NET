@@ -30,7 +30,10 @@ public sealed class ActivityLogTests : IClassFixture<AgentOsPageFixture>
         // Search hit for the tool-call trail → Tool calls view, rail entry still "Activity log".
         await win.Locator(".prefs-cat", new() { HasTextString = "Model keys" }).ClickAsync();
         await _fx.Page.Keyboard.PressAsync("Control+k");
-        await _fx.Page.Locator(".ko-search-input").PressSequentiallyAsync("tool calls");
+        var search = _fx.Page.Locator(".ko-search-input");
+        await Assertions.Expect(search).ToBeFocusedAsync();   // type only once Activities owns focus
+        await search.PressSequentiallyAsync("tool calls");
+        await Assertions.Expect(_fx.Page.Locator(".ko-row-title", new() { HasTextString = "Tool calls" }).First).ToBeVisibleAsync();
         await _fx.Page.Locator(".ko-row:has(.ko-row-title:text-is(\"Tool calls\"))").First.ClickAsync();
         await Assertions.Expect(win.Locator(".page-title", new() { HasTextString = "Evidence" })).ToBeVisibleAsync();
         await Assertions.Expect(win.Locator(".prefs-cat.active")).ToContainTextAsync("Activity log");
