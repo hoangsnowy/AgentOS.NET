@@ -182,7 +182,7 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
 - **Settings hub** (`SettingsHub.razor`, pinned "Settings") — every setting behind **one rail** (GNOME
   Settings style, never a rail inside a rail): a search field, then pages under group headings — **AI**
   (Model keys, Routing, Agent profiles, Prompts) · **Connections** (GitHub, MCP servers, Plugins) ·
-  **Governance** (Tool policy, Evidence, Audit log) · **People & data** (Users, API tokens, Data) ·
+  **Governance** (Tool policy, Activity log — changes & sign-in | tool calls) · **People & data** (Users, API tokens, Data) ·
   **Personal** (General, Appearance, Date & time, Notifications, Session) · **System** (About, Diagnostics,
   Platform). Deep-link with `SettingsLinks.Open(WM, "<page>")` (e.g. `keys`; legacy `llm/keys` still
   works) — open or not. Every "you need to configure X" message is a **fix-it button** to the exact page.

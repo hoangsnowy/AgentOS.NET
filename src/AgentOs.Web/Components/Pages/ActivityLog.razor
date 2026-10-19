@@ -1,0 +1,48 @@
+@* ActivityLog — Settings → Governance → Activity log (UX phase 1, docs/plans/ux-simplification.md). One place to
+   answer "what happened here?": the audit trail (settings changes, members, invitations, sign-in) and the tool-call
+   evidence (every governed agent side-effect) used to be two rail items with near-identical names and icons. They
+   are two views of one page now; each view is the existing component, so its data access, CSV export and role
+   checks are unchanged. The standalone Audit log / Evidence apps stay launchable from Activities. *@
+
+<div class="board-tabs" role="tablist" aria-label="Activity log view">
+    <button class="board-tab @(_view == Changes ? "active" : "")" role="tab" aria-selected="@(_view == Changes ? "true" : "false")"
+            @onclick="@(() => _view = Changes)">
+        <Icon Name="clock-counter" Size="13" /> Changes &amp; sign-in
+    </button>
+    <button class="board-tab @(_view == Tools ? "active" : "")" role="tab" aria-selected="@(_view == Tools ? "true" : "false")"
+            @onclick="@(() => _view = Tools)">
+        <Icon Name="scroll" Size="13" /> Tool calls
+    </button>
+</div>
+
+@if (_view == Tools)
+{
+    <EvidenceApp />
+}
+else
+{
+    <AuditLogApp />
+}
+
+@code {
+    /// <summary>The audit-trail view.</summary>
+    public const string Changes = "changes";
+
+    /// <summary>The tool-call evidence view.</summary>
+    public const string Tools = "tools";
+
+    /// <summary>The view to open on (the hub passes "tools" for an <c>evidence</c> deep link).</summary>
+    [Parameter] public string View { get; set; } = Changes;
+
+    private string _view = Changes;
+    private string? _appliedView;
+
+    protected override void OnParametersSet()
+    {
+        if (View != _appliedView)
+        {
+            _view = View == Tools ? Tools : Changes;
+            _appliedView = View;
+        }
+    }
+}

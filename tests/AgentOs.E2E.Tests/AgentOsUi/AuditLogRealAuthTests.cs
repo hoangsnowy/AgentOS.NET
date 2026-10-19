@@ -35,7 +35,7 @@ public sealed class AuditLogRealAuthTests : IClassFixture<AgentOsRealAuthFixture
             await win.GetByRole(AriaRole.Button, new() { Name = "Save", Exact = true }).ClickAsync();
             await Assertions.Expect(_fx.Page.Locator(".toast").Last).ToContainTextAsync("Policy");
 
-            await win.Locator(".prefs-cat", new() { HasTextString = "Audit log" }).ClickAsync();
+            await win.Locator(".prefs-cat", new() { HasTextString = "Activity log" }).ClickAsync();
             await win.Locator(".audit-filter", new() { HasTextString = "Settings" }).ClickAsync();
             var table = win.Locator(".audit-table");
             await Assertions.Expect(table).ToContainTextAsync("tools/enforce", new() { Timeout = 15_000 });
