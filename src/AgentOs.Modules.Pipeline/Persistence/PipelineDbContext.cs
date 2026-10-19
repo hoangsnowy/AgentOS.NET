@@ -1,6 +1,6 @@
-// EF Core DbContext for the Pipeline module. Owns 3 tables under schema `pipeline`:
+// EF Core DbContext for the Pipeline module. Owns 4 tables under schema `pipeline`:
 // pipeline_runs (run + artifact jsonb), run_metrics (1 LLM call), orchestrations (AgentOS.NET
-// orchestration state). Every entity carries a TenantId column + a global query filter (reads ITenantContext)
+// orchestration state), scheduled_runs (cron / one-off pipeline runs). Every entity carries a TenantId column + a global query filter (reads ITenantContext)
 // so each request only ever sees rows owned by its own tenant.
 
 using AgentOs.Modules.Pipeline.Persistence.Entities;
@@ -24,6 +24,8 @@ internal sealed class PipelineDbContext : DbContext
     public DbSet<RunMetricEntity> RunMetrics => Set<RunMetricEntity>();
 
     public DbSet<OrchestrationEntity> Orchestrations => Set<OrchestrationEntity>();
+
+    public DbSet<ScheduledRunEntity> ScheduledRuns => Set<ScheduledRunEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -78,6 +80,22 @@ internal sealed class PipelineDbContext : DbContext
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
             e.Property(x => x.DefinitionJson).HasColumnType("jsonb").IsRequired();
             e.HasIndex(x => x.TenantId);
+            e.HasQueryFilter(x => x.TenantId == _tenant.TenantId);
+        });
+
+        modelBuilder.Entity<ScheduledRunEntity>(e =>
+        {
+            e.ToTable("scheduled_runs");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Story).HasMaxLength(4000).IsRequired();
+            e.Property(x => x.Kind).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Cron).HasMaxLength(128);
+            e.Property(x => x.LastStatus).HasMaxLength(256);
+            e.Property(x => x.CreatedBy).HasMaxLength(256).IsRequired();
+            e.HasIndex(x => x.TenantId);
+            // The scheduler's due-scan: enabled rows ordered by the next fire time.
+            e.HasIndex(x => new { x.Enabled, x.NextRunAtUtc });
             e.HasQueryFilter(x => x.TenantId == _tenant.TenantId);
         });
     }

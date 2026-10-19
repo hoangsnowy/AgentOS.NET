@@ -61,8 +61,8 @@ unless the IA plan says so.** Items ship one PR each, verified in the running ap
 |---|---|---|
 | 1 | ~~Installable PWA~~ | Dropped by the owner (2026-10-18) |
 | 2 | BYOK OpenAI · Gemini · xAI | ✅ [#214](https://github.com/hoangsnowy/AgentOS.NET/pull/214) |
-| 3 | Scheduled runs (cron / interval / one-off) | Next |
-| 4 | Mission Control — one live screen of every running agent / run | Planned |
+| 3 | Scheduled runs (cron / interval / one-off) | ✅ [#226](https://github.com/hoangsnowy/AgentOS.NET/pull/226) — Home → Schedule…; UTC cron presets, ≥ 15-min cadence, atomic claim per occurrence |
+| 4 | Mission Control — one live screen of every running agent / run | Next |
 | 5 | Notifications to Slack / Discord / Telegram / Teams, then start runs from chat | Planned |
 | 6 | Chat with an agent (ask / steer a run) | Planned |
 | 7 | Custom agents + SDLC templates | Planned (E2 "tenant-defined custom agents") |

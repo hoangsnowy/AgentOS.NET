@@ -15,6 +15,8 @@
 @inject LlmConfigView LlmConfig
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @inject IJSRuntime JS
+@inject AgentOs.Modules.Pipeline.Scheduling.IScheduledRunService Schedules
+@using AgentOs.Modules.Pipeline.Scheduling
 
 <header class="page-head">
     <div>
@@ -41,8 +43,62 @@
     <div class="form-actions">
         <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RunNow" Disabled="@(string.IsNullOrWhiteSpace(_story))"><Icon Name="play" Size="13" /> Run now</Btn>
         <Btn OnClick="PlanAsTickets" Disabled="@(string.IsNullOrWhiteSpace(_story))"><Icon Name="git-pull-request" Size="13" /> Plan as tickets</Btn>
+        @if (_isAdmin)
+        {
+            <Btn OnClick="@(() => { _scheduling = !_scheduling; _scheduleError = null; })" Disabled="@(string.IsNullOrWhiteSpace(_story))">
+                <Icon Name="clock" Size="13" /> Schedule…
+            </Btn>
+        }
         <span class="prefs-hint home-kbd-hint">Ctrl+Enter runs</span>
     </div>
+    @if (_scheduling && _isAdmin)
+    {
+        @* Scheduled runs (parity item 3): presets are cron underneath; times are UTC and labelled so. *@
+        <div class="home-schedule" role="group" aria-label="Schedule this run">
+            <Field Label="When">
+                <select class="prefs-select" @bind="_when" aria-label="When">
+                    <option value="once">Once</option>
+                    <option value="daily">Every day</option>
+                    <option value="weekdays">Weekdays (Mon–Fri)</option>
+                    <option value="weekly">Every week</option>
+                    <option value="cron">Custom (cron)</option>
+                </select>
+            </Field>
+            @if (_when == "once")
+            {
+                <Field Label="Date (UTC)"><input class="prefs-input" type="date" @bind="_date" aria-label="Date (UTC)" /></Field>
+            }
+            @if (_when == "weekly")
+            {
+                <Field Label="Day">
+                    <select class="prefs-select" @bind="_day" aria-label="Day">
+                        @foreach (var d in Enum.GetValues<DayOfWeek>())
+                        {
+                            <option value="@d">@d</option>
+                        }
+                    </select>
+                </Field>
+            }
+            @if (_when == "cron")
+            {
+                <Field Label="Cron (UTC)" Hint="5 fields: minute hour day month weekday — e.g. 0 */6 * * *. At most every 15 minutes.">
+                    <input class="prefs-input" @bind="_cron" @bind:event="oninput" placeholder="0 9 * * 1-5" aria-label="Cron (UTC)" />
+                </Field>
+            }
+            else
+            {
+                <Field Label="Time (UTC)"><input class="prefs-input" type="time" @bind="_time" aria-label="Time (UTC)" /></Field>
+            }
+            <div class="form-actions">
+                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="SaveScheduleAsync" Disabled="_savingSchedule">Save schedule</Btn>
+                <Btn Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => _scheduling = false)">Cancel</Btn>
+            </div>
+            @if (_scheduleError is not null)
+            {
+                <p class="home-note" role="alert"><Icon Name="warning" Size="13" /> @_scheduleError</p>
+            }
+        </div>
+    }
 </Panel>
 
 @if (_isAdmin && _steps is not null && !SetupChecklist.IsComplete(_steps) && !_checklistHidden)
@@ -84,6 +140,24 @@
     </div>
 </div>
 
+@if (_isAdmin && _schedules is { Count: > 0 })
+{
+    <Panel Title="@($"Scheduled · {_schedules.Count}")">
+        <ul class="home-runs">
+            @foreach (var s in _schedules)
+            {
+                <li class="home-run" data-schedule="@s.Id">
+                    <Badge Variant="@(s.Enabled ? Badge.BadgeVariant.Ok : Badge.BadgeVariant.Default)">@(s.Enabled ? "Active" : "Paused")</Badge>
+                    <span class="home-run-story" title="@s.Story">@s.Story</span>
+                    <span class="prefs-hint">@s.Spec.Describe()@NextLabel(s)@(s.LastStatus is null ? "" : $" · last: {s.LastStatus}")</span>
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => ToggleScheduleAsync(s))">@(s.Enabled ? "Pause" : "Resume")</Btn>
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => DeleteScheduleAsync(s))" aria-label="@($"Delete schedule: {s.Story}")">Delete</Btn>
+                </li>
+            }
+        </ul>
+    </Panel>
+}
+
 <Panel Title="Recent runs">
     @if (_runs is null)
     {
@@ -120,6 +194,18 @@
     private string _story = string.Empty;
     private string _tenantId = string.Empty;
     private bool _isAdmin;
+    private string _actor = "admin";
+
+    // Schedule form.
+    private bool _scheduling;
+    private bool _savingSchedule;
+    private string? _scheduleError;
+    private string _when = "daily";
+    private DateOnly _date = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
+    private TimeOnly _time = new(9, 0);
+    private DayOfWeek _day = DayOfWeek.Monday;
+    private string _cron = string.Empty;
+    private IReadOnlyList<ScheduledRunInfo>? _schedules;
     private bool _offline;
     private bool _checklistHidden;
     private IReadOnlyList<PipelineRunSummary>? _runs;
@@ -134,6 +220,7 @@
         {
             var user = (await AuthState).User;
             _isAdmin = user.IsAdmin();
+            _actor = user.Identity?.Name ?? "admin";
             _tenantId = user.GetTenantId() ?? string.Empty;
         }
         var cfg = LlmConfig.Resolve(_tenantId);
@@ -147,6 +234,7 @@
             var runners = await Runners.ListForTenantAsync(tenant);
             var hasKey = cfg.AnthropicKeySet || cfg.AzureKeySet || cfg.VendorKeys.Count > 0 || !string.IsNullOrWhiteSpace(cfg.CompatEndpoint);
             _steps = SetupChecklist.Build(new SetupFacts(hasKey, _runs.Count > 0, repos.Count > 0, _budget.CapUsd > 0m, runners.Count > 0));
+            _schedules = await Schedules.ListAsync(tenant);
         }
         else
         {
@@ -181,6 +269,50 @@
 
     /// <summary>The Workflow launch-tab value that makes it start the prefilled run on open.</summary>
     public const string WorkflowAutoRun = "run";
+
+    private string Tenant => _tenantId.Length == 0 ? "default" : _tenantId;
+
+    private ScheduleSpec BuildSpec() => _when switch
+    {
+        "once" => ScheduleSpec.At(new DateTimeOffset(_date.ToDateTime(_time), TimeSpan.Zero)),
+        "weekdays" => ScheduleSpec.Weekdays(_time),
+        "weekly" => ScheduleSpec.Weekly(_day, _time),
+        "cron" => ScheduleSpec.Every(_cron),
+        _ => ScheduleSpec.Daily(_time),
+    };
+
+    private async Task SaveScheduleAsync()
+    {
+        _savingSchedule = true;
+        try
+        {
+            var result = await Schedules.CreateAsync(Tenant, _story, BuildSpec(), _actor);
+            if (!result.Ok) { _scheduleError = result.Error; return; }
+            _scheduling = false;
+            _scheduleError = null;
+            _story = string.Empty;
+            _schedules = await Schedules.ListAsync(Tenant);
+        }
+        finally
+        {
+            _savingSchedule = false;
+        }
+    }
+
+    private async Task ToggleScheduleAsync(ScheduledRunInfo s)
+    {
+        await Schedules.SetEnabledAsync(Tenant, s.Id, !s.Enabled, _actor);
+        _schedules = await Schedules.ListAsync(Tenant);
+    }
+
+    private async Task DeleteScheduleAsync(ScheduledRunInfo s)
+    {
+        await Schedules.DeleteAsync(Tenant, s.Id, _actor);
+        _schedules = await Schedules.ListAsync(Tenant);
+    }
+
+    private static string NextLabel(ScheduledRunInfo s) =>
+        s.NextRunAtUtc is { } next ? $" · next {next.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC" : "";
 
     private void PlanAsTickets()
     {

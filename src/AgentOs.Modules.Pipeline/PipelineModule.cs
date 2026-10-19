@@ -69,6 +69,7 @@ public sealed class PipelineModule : IModule, IEndpointModule, IInitializableMod
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<IPipelineRunRepository, PipelineRunRepository>();
             services.AddScoped<IOrchestrationRepository, OrchestrationRepository>();
+            services.AddScoped<Scheduling.IScheduledRunStore, Scheduling.EfScheduledRunStore>();
         }
         else
         {
@@ -82,7 +83,14 @@ public sealed class PipelineModule : IModule, IEndpointModule, IInitializableMod
             }
             services.AddSingleton<IPipelineRunRepository, NullPipelineRunRepository>();
             services.AddSingleton<IOrchestrationRepository, NullOrchestrationRepository>();
+            services.AddSingleton<Scheduling.IScheduledRunStore, Scheduling.InMemoryScheduledRunStore>();
         }
+
+        // Scheduled runs: the tenant-explicit service the Home app uses + the 30 s scheduler (claims are atomic per
+        // occurrence, so the Api and the Web both running it never double-run).
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddScoped<Scheduling.IScheduledRunService, Scheduling.ScheduledRunService>();
+        services.AddHostedService<Scheduling.ScheduledRunWorker>();
 
         services.TryAddSingleton<IAuthTokenProvider>(NullAuthTokenProvider.Instance);
     }

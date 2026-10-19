@@ -51,6 +51,7 @@
          hot projections/aggregations/pagination run as hand-tuned SQL; EF still owns writes, migrations,
          change-tracking, and entity-graph loads. See INpgsqlConnectionFactory (SharedKernel). -->
     <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <PackageVersion Include="Cronos" Version="0.13.0" />
     <PackageVersion Include="Dapper" Version="2.1.89" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.13" />
