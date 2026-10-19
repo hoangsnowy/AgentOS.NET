@@ -200,6 +200,10 @@
         {
             case SetupAction.ModelKeys: SettingsLinks.Open(WM, SettingsLinks.ModelKeys); break;
             case SetupAction.Board: Open("board"); break;
+            case SetupAction.Runners:
+                WM.RequestLaunchTab("board", BoardApp.LaunchTabs.Runners);
+                Open("board");
+                break;
             case SetupAction.Insights: Open("insights"); break;
             case SetupAction.Composer:
                 try { await _composer.FocusAsync(); }

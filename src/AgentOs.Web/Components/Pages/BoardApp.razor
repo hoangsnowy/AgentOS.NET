@@ -38,7 +38,7 @@
 <header class="page-head">
     <div>
         <h1 class="page-title">Board · <code>@_tenantId</code></h1>
-        <p class="page-sub">Boards → Tickets → AI sessions. Remote repo-execution path.</p>
+        <p class="page-sub">Tickets your agents work on — boards, sessions on paired machines, their live log and the repo files.</p>
     </div>
     <Btn OnClick="ReloadAll" Disabled="_loading">
         <Icon Name="arrow-clockwise" Size="14" /> Refresh
@@ -57,6 +57,14 @@
     </button>
     <button class="board-tab @(_tab == Tab.Sessions ? "active" : "")" @onclick="@(() => _tab = Tab.Sessions)">
         Sessions <Badge>@(_sessions?.Count ?? 0)</Badge>
+    </button>
+    @* Was the standalone Terminal app: the runner's live session feed lives next to the sessions it tails. *@
+    <button class="board-tab @(_tab == Tab.Log ? "active" : "")" @onclick="@(() => _tab = Tab.Log)">
+        <Icon Name="terminal" Size="13" /> Log
+    </button>
+    @* Was the standalone Files app: browse the connected repos the tickets live in. *@
+    <button class="board-tab @(_tab == Tab.Files ? "active" : "")" @onclick="@(() => _tab = Tab.Files)">
+        <Icon Name="folder" Size="13" /> Files
     </button>
 </div>
 
@@ -589,6 +597,14 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
 }
 
 @* ── SESSIONS TAB ──────────────────────────────────────────────────────────────────────────── *@
+else if (_tab == Tab.Log)
+{
+    <div class="board-embed"><TerminalApp /></div>
+}
+else if (_tab == Tab.Files)
+{
+    <div class="board-embed"><FilesApp /></div>
+}
 else if (_tab == Tab.Sessions)
 {
     @if (_sessions is null) { <Spinner /> }
@@ -745,7 +761,18 @@ else if (_tab == Tab.Sessions)
 </Dialog>
 
 @code {
-    private enum Tab { Boards, Idea, Runners, Sessions }
+    private enum Tab { Boards, Idea, Runners, Sessions, Log, Files }
+
+    /// <summary>Board deep-link tabs (WM.RequestLaunchTab("board", …)): the setup checklist's "Pair" → runners, etc.</summary>
+    public static class LaunchTabs
+    {
+        /// <summary>Runners (pair a machine).</summary>
+        public const string Runners = "runners";
+        /// <summary>The runner's live log (was the Terminal app).</summary>
+        public const string Log = "log";
+        /// <summary>Repo files (was the Files app).</summary>
+        public const string Files = "files";
+    }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
@@ -861,6 +888,13 @@ else if (_tab == Tab.Sessions)
         }
         _resolved = true;
         // Deep-link from the Home app's "Start from idea": prefill the wizard's idea + open the Idea tab.
+        _tab = WM.ConsumeLaunchTab("board") switch
+        {
+            LaunchTabs.Runners => Tab.Runners,
+            LaunchTabs.Log => Tab.Log,
+            LaunchTabs.Files => Tab.Files,
+            _ => _tab,
+        };
         var ideaPayload = WM.ConsumeLaunchPayload("board");
         if (!string.IsNullOrWhiteSpace(ideaPayload))
         {

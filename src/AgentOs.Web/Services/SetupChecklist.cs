@@ -18,8 +18,10 @@ public enum SetupAction
     ModelKeys,
     /// <summary>Focus the Home composer.</summary>
     Composer,
-    /// <summary>The Board app (connect a repo / pair a machine).</summary>
+    /// <summary>The Board app (connect a repo).</summary>
     Board,
+    /// <summary>Board → Runners (pair a machine).</summary>
+    Runners,
     /// <summary>The Insights app (budget).</summary>
     Insights,
 }
@@ -40,7 +42,7 @@ public static class SetupChecklist
             new("run", "Run the agents once", "Describe a small change above and press Run now.", facts.HasRun, false, SetupAction.Composer, "Write a story"),
             new("repo", "Connect a repository", "So the agents can open pull requests on your code.", facts.HasRepository, false, SetupAction.Board, "Open Board"),
             new("budget", "Set a monthly budget", "A cap the agents can't spend past.", facts.HasBudget, false, SetupAction.Insights, "Set budget"),
-            new("pair", "Pair a dev machine", "Run on your own Claude Code / Copilot CLI with no server tokens.", facts.HasPairedMachine, true, SetupAction.Board, "Pair"),
+            new("pair", "Pair a dev machine", "Run on your own Claude Code / Copilot CLI with no server tokens.", facts.HasPairedMachine, true, SetupAction.Runners, "Pair"),
         ];
     }
 
