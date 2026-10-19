@@ -1587,6 +1587,7 @@ select {
 .appwin-body > .page-head { padding: 14px 18px 4px; margin-bottom: 6px; }
 .appwin-body > .card,
 .appwin-body > .panel { margin: 8px 14px; }
+.appwin-body > .home-kpis { margin: 8px 14px; }
 .appwin-body > .desktop { padding-top: 14px; }
 /* Canvas pages (orchestration) take the full appwin body. */
 .appwin-body:has(.syn-root) { padding: 0; }
