@@ -41,6 +41,7 @@ public sealed class AgentOsRealAuthFixture : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         if (!IsEnabled) { return; }
+        Assertions.SetDefaultExpectTimeout(AgentOsPageFixture.ExpectTimeoutMs);
 
         Microsoft.Playwright.Program.Main(PlaywrightInstallArgs);
         Playwright = await Microsoft.Playwright.Playwright.CreateAsync();
