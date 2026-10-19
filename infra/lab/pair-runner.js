@@ -36,7 +36,7 @@ async function setForceProvider(page, value) {
   await win.locator('.prefs-cat', { hasText: 'Routing' }).first().click();
   const select = win.locator('select[aria-label="Force provider"]');
   await select.waitFor();
-  const row = win.locator('.prefs-row', { has: select });
+  const row = win.locator('.prefs-row', { has: page.locator('select[aria-label="Force provider"]') });
   if (value) {
     await select.selectOption(value);
     await row.getByRole('button', { name: 'Save', exact: true }).click();

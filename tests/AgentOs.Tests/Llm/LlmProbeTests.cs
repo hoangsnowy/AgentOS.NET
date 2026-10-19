@@ -26,13 +26,17 @@ public sealed class LlmProbeTests
     public void CanProbe_IsAnAllowList(string provider, bool expected) => LlmProbe.CanProbe(provider).ShouldBe(expected);
 
     [Fact]
-    public void Request_IsTinyAndUsesTheCheapestModel()
+    public void Request_IsTinyValidAndUsesTheCheapestModel()
     {
-        var claude = LlmProbe.Request("Claude");
+        var claude = LlmProbe.Request("Claude", azureDeployment: null);
         claude.Model.ShouldBe(LlmProbe.ClaudeProbeModel);
         claude.MaxTokens.ShouldBe(5);
+        claude.Validate();                                        // the Api validates: an empty model was rejected
         CostCalculator.IsKnown(LlmProbe.ClaudeProbeModel).ShouldBeTrue();
-        LlmProbe.Request(LlmProviders.Gemini).Model.ShouldBeEmpty();   // → the tenant's Gemini default model
-        VendorProviders.Gemini.ResolveModel(LlmProbe.Request(LlmProviders.Gemini).Model, null).ShouldBe(VendorProviders.Gemini.DefaultModel);
+        // BYOK vendors map the Claude id to the tenant's own default model; Azure probes its deployment.
+        VendorProviders.Gemini.ResolveModel(LlmProbe.Request(LlmProviders.Gemini, null).Model, null).ShouldBe(VendorProviders.Gemini.DefaultModel);
+        LlmProbe.Request("AzureOpenAI", "gpt41-prod").Model.ShouldBe("gpt41-prod");
+        LlmProbe.Request("AzureOpenAI", null).Model.ShouldBe(LlmProbe.ClaudeProbeModel);   // no deployment known → still valid
+        LlmProbe.AzureDeployment(null, "t1", new LlmOptions()).ShouldBe(new LlmOptions().AzureOpenAi.Model);
     }
 }

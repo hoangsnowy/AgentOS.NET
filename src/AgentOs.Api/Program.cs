@@ -240,20 +240,22 @@ app.MapMcp("/mcp").RequireAuthorization();
 // Settings "Test" — probe one provider (?provider=, from the Model keys cards; allow-listed by LlmProbe) or, with
 // none named, the Orchestrator's configured provider, with a minimal call.
 app.MapPost("/llm/test", async ([Microsoft.AspNetCore.Mvc.FromQuery(Name = "provider")] string? requested,
-    ILlmClientFactory factory, IConfiguration cfg, CancellationToken ct) =>
+    ILlmClientFactory factory, IConfiguration cfg, ITenantContext tenant,
+    Microsoft.Extensions.Options.IOptions<LlmOptions> llmOptions, IServiceProvider services, CancellationToken ct) =>
 {
-    if (requested is not null && !AgentOs.Modules.Llm.LlmProbe.CanProbe(requested))
+    if (requested is not null && !LlmProbe.CanProbe(requested))
     {
         return Results.BadRequest(new { ok = false, error = "Unknown provider." });
     }
     var provider = requested?.Trim() ?? cfg["Agents:Orchestrator:Provider"] ?? "Anthropic";
-    var model = requested is null ? cfg["Agents:Orchestrator:Model"] ?? "claude-haiku-4-5" : AgentOs.Modules.Llm.LlmProbe.ModelFor(provider);
+    var azureDeployment = LlmProbe.AzureDeployment(services.GetService<AgentOs.Domain.Configuration.ISettings>(), tenant.TenantId, llmOptions.Value);
+    var model = requested is null ? cfg["Agents:Orchestrator:Model"] ?? "claude-haiku-4-5" : LlmProbe.ModelFor(provider, azureDeployment);
     try
     {
         var client = factory.Create(provider);
         var probe = requested is null
             ? new LlmRequest("You are a connectivity probe.", "Reply with the single word: OK", model, 0.0, 5)
-            : AgentOs.Modules.Llm.LlmProbe.Request(provider);
+            : LlmProbe.Request(provider, azureDeployment);
         var resp = await client.SendAsync(probe, ct).ConfigureAwait(false);
         // Report the provider that ANSWERED (client.Provider is the chain's primary, which is wrong under
         // failover), and refuse to call it ok when the canned Offline safety net stood in for the provider

@@ -33,5 +33,7 @@ public sealed class ModelKeysTests : IClassFixture<AgentOsPageFixture>
         await gemini.GetByRole(AriaRole.Button, new() { Name = "Test", Exact = true }).ClickAsync();
         var result = gemini.Locator(".prefs-saved");
         await Assertions.Expect(result).ToContainTextAsync("Failed", new() { Timeout = 30_000 });
+        // …because nothing reached a model — not because the probe request itself was malformed.
+        await Assertions.Expect(result).ToContainTextAsync("did not answer");
     }
 }

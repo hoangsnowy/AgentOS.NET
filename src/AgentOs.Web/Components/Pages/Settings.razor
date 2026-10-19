@@ -16,6 +16,7 @@
 @inject AuthSession Auth
 @inject ISourceProviderResolver SourceProviders
 @inject LlmConfigView LlmConfig
+@inject IServiceProvider Services
 
 @if (!_resolved)
 {
@@ -471,7 +472,8 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 else
                 {
                     using var _scope = TenantScope();
-                    var resp = await LlmFactory.Create(provider).SendAsync(LlmProbe.Request(provider));
+                    var deployment = LlmProbe.AzureDeployment(Services.GetService<ISettings>(), _tenantId, LlmOpts.Value);
+                    var resp = await LlmFactory.Create(provider).SendAsync(LlmProbe.Request(provider, deployment));
                     _tests[provider] = OfflineLlmClient.IsSubstituteFor(provider, resp.Provider)
                         ? (false, $"{provider} did not answer — canned {resp.Provider} output was served instead (offline fallback is on). Nothing reached a real model.")
                         : (true, $"{resp.Provider} answered · {resp.Model}.");
