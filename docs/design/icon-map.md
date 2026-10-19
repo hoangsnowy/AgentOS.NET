@@ -20,6 +20,7 @@ live gallery is on `/_/components`. Adding one: add a `case` to `Icon.razor` and
 | `shield` | Tool policy |
 | `scroll` | Evidence (tool-call trail) |
 | `server` | Platform settings |
+| `chart` | Insights (analytics) |
 | `diamond` | Agent profiles, agent nodes |
 | `lightning` | Prompts, quick actions |
 | `squares-stack` | Plugins |

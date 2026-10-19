@@ -12,7 +12,7 @@ GDM lock/sign-in. Every feature is an **app** you launch into a window, not a ro
 
 **The desktop boots to a clean EMPTY wallpaper — no desktop icons, no widgets, no auto-opened
 window.** Apps live only in the Dash + the Activities overview; the glanceable control plane is the
-**Insights app** (pinned first; becomes the task-first **Home** in UX phase 2), NOT a desktop widget. (DesktopWidgets was tried and removed — GNOME
+**Home app** (pinned first: a composer that starts a run in one click, recent runs, and an admin setup checklist computed from real state), NOT a desktop widget. Analytics + budget live in **Insights** (unpinned, one click from Home). (DesktopWidgets was tried and removed — GNOME
 has no desktop widgets. **Do not re-add them.**)
 
 Three feelings, in priority order:
@@ -160,7 +160,7 @@ in `app.css`; the gallery of every role × state is on `/_/components`.
   a GNOME system menu (aggregated network/sound/battery + gateway health dot + avatar → quick settings).
   Dark in both themes. No brand mark, no standalone workspace item.
 - **Dash (dock)** (`Taskbar.razor` in `AgentOs.Web.Shell/UI`) — flat translucent GNOME Dash, no Start
-  button, no magnify. **Six pinned apps**: Insights · Workflow · Board · Settings (hub) · Terminal · Files
+  button, no magnify. **Six pinned apps**: Home · Workflow · Board · Settings (hub) · Terminal · Files
   (the target is five — [docs/plans/ux-simplification.md](../plans/ux-simplification.md)). Running apps
   show a dot; the focused app's dot widens to an accent pill. Unpinned admin/system apps (Users, Evidence,
   API tokens, Data, Audit log, Policy, Prompts, Agent profiles, Plugins, MCP, System) are reached via the

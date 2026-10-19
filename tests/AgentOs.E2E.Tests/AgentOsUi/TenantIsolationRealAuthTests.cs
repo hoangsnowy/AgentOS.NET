@@ -86,7 +86,8 @@ public sealed class TenantIsolationRealAuthTests : IClassFixture<AgentOsRealAuth
             await Assertions.Expect(users).ToContainTextAsync(userB, new() { Timeout = 15_000 });
             await Assertions.Expect(users).Not.ToContainTextAsync("operator");
 
-            await _fx.Page.Locator(".dock-item[title=\"Insights\"]").First.ClickAsync();
+            await _fx.Page.Locator(".tb-activities").ClickAsync();   // Insights is unpinned (Home holds the dock slot)
+            await _fx.Page.Locator(".ko-tile", new() { HasTextString = "Insights" }).First.ClickAsync();
             var insights = _fx.Page.Locator(".appwin.focused");
             await Assertions.Expect(insights.Locator(".appwin-title")).ToHaveTextAsync("Insights");
             await Assertions.Expect(insights).Not.ToContainTextAsync(marker);
