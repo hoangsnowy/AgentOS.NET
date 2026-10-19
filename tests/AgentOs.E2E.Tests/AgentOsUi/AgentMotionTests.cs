@@ -44,6 +44,8 @@ public sealed class AgentMotionTests : IClassFixture<AgentOsPageFixture>
 
         // Turn it back on (also leaves the shared browser profile clean for other tests).
         toggle = await OpenAppearanceAsync();
+        // Wait for the restored (off) state before clicking — a click on the not-yet-restored toggle is a no-op flip.
+        await Assertions.Expect(toggle).Not.ToHaveClassAsync(new System.Text.RegularExpressions.Regex(@"on"));
         await toggle.ClickAsync();
         await Assertions.Expect(html).ToHaveAttributeAsync("data-agent-motion", "on");
     }

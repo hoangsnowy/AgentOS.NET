@@ -11,8 +11,9 @@
 
 <div class="prefs">
     <aside class="prefs-side" aria-label="Settings pages">
-        <input class="prefs-input prefs-side-search" type="search" placeholder="Search settings…" aria-label="Search settings"
-               value="@_filter" @oninput="@(e => _filter = e.Value?.ToString() ?? string.Empty)" />
+        @* Uncontrolled (see the Activities search): a deep link clears it by swapping in a fresh element. *@
+        <input @key="_filterGeneration" class="prefs-input prefs-side-search" type="search" placeholder="Search settings…" aria-label="Search settings"
+               @oninput="@(e => _filter = e.Value?.ToString() ?? string.Empty)" />
         @foreach (var group in VisibleItems().GroupBy(i => i.Group))
         {
             <div class="prefs-side-head">@group.Key</div>
@@ -61,6 +62,7 @@
     private bool _isPlatformAdmin;
     private string _tab = "general";
     private string _filter = string.Empty;
+    private int _filterGeneration;
 
     private enum Access { Everyone, Admin, Platform }
 
@@ -120,7 +122,7 @@
         var key = SettingsLinks.Normalize(target);
         if (!Allowed().Any(i => i.Key == key)) { return; }
         _tab = key;
-        _filter = string.Empty;
+        if (_filter.Length > 0) { _filter = string.Empty; _filterGeneration++; }
     }
 
     public void Dispose() => WM.Changed -= OnWindowsChanged;

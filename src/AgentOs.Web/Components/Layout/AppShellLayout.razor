@@ -31,9 +31,12 @@
 
         <div class="ko-search">
             <span class="ko-search-ic"><Icon Name="search" Size="15" /></span>
-            <input class="ko-search-input" type="text" placeholder="Search apps, settings and actions…  (Ctrl K)"
-                   autocomplete="off" spellcheck="false"
-                   value="@_query" @oninput="OnSearch" @onkeydown="OnSearchKey" @ref="_searchRef" />
+            @* Uncontrolled: the server never writes value back while the user types. With value="@_query" a slow
+               round-trip re-rendered a stale value over keys typed meanwhile ("add key" arrived as "ay" on CI).
+               Clearing / reopening swaps in a fresh element (@key) instead of resetting the value. *@
+            <input @key="_searchGeneration" class="ko-search-input" type="text" placeholder="Search apps, settings and actions…  (Ctrl K)"
+                   autocomplete="off" spellcheck="false" aria-label="Search apps, settings and actions"
+                   @oninput="OnSearch" @onkeydown="OnSearchKey" @ref="_searchRef" />
             @if (!string.IsNullOrEmpty(_query))
             {
                 <button class="ko-search-clear" @onclick="ClearSearch" title="Clear" aria-label="Clear search">
@@ -234,6 +237,7 @@
     private bool _startOpen;
     private bool _aboutOpen;
     private string _query = "";
+    private int _searchGeneration;   // bump to get an empty search box (the input is uncontrolled)
     private string? _user;
     private bool _isAdmin;
     private ElementReference _searchRef;
@@ -278,6 +282,7 @@
         if (_startOpen)
         {
             _query = "";
+            _searchGeneration++;
             RefreshRecents();
             _focusOnRender = true;
             _user ??= Auth.Username;
@@ -419,6 +424,7 @@
     private void ClearSearch()
     {
         _query = "";
+        _searchGeneration++;
         _results = new();
         _settingHits = [];
         _actionHits = [];
