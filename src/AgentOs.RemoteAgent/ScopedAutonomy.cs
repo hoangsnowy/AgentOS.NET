@@ -6,7 +6,8 @@
 // needs, with history-rewriting and credential-touching git commands denied outright.
 //
 //   REMOTE_AGENT_AUTONOMY   "scoped" to opt in (REMOTE_AGENT_YOLO / REMOTE_AGENT_ARGS still win when set)
-//   REMOTE_AGENT_WORKROOT   where the per-run directories live (default %LOCALAPPDATA%/AgentOS.NET/runs)
+//   REMOTE_AGENT_WORKROOT   where the per-run directories live (default %LOCALAPPDATA%/AgentOS.NET/runs on
+//                           Windows, ~/.cache/agentos-net/runs elsewhere)
 //   REMOTE_AGENT_KEEP_RUNS  "1" keeps each run directory afterwards (debugging); default deletes it
 
 using System;
@@ -67,7 +68,8 @@ internal static class ScopedAutonomy
     /// its own workspace-write sandbox (it already confines writes to the working directory).</summary>
     internal static string[] ArgsFor(string command)
     {
-        var name = Path.GetFileNameWithoutExtension(command);
+        // Either separator: a Windows path must resolve the same on any OS (Path only splits on '/' off Windows).
+        var name = Path.GetFileNameWithoutExtension(command[(command.LastIndexOfAny(['/', '\\']) + 1)..]);
         if (string.Equals(name, "codex", StringComparison.OrdinalIgnoreCase))
         {
             return ["--sandbox", "workspace-write"];
@@ -80,9 +82,20 @@ internal static class ScopedAutonomy
         ];
     }
 
-    /// <summary>Default root for run directories: <c>%LOCALAPPDATA%/AgentOS.NET/runs</c> (XDG data home elsewhere).</summary>
-    internal static string DefaultRoot() =>
-        Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentOS.NET", "runs");
+    /// <summary>Default root for run directories: <c>%LOCALAPPDATA%/AgentOS.NET/runs</c> on Windows, the XDG cache
+    /// (<c>~/.cache/agentos-net/runs</c>) elsewhere — NOT LocalApplicationData there, which is ~/.local/share, a
+    /// credential store the Read deny rules cover.</summary>
+    internal static string DefaultRoot()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentOS.NET", "runs");
+        }
+        var cache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+        return Path.Join(string.IsNullOrWhiteSpace(cache)
+            ? Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache")
+            : cache, "agentos-net", "runs");
+    }
 
     /// <summary>Create a fresh, empty directory for one run. The name comes from the server's request id only
     /// when it is a plain token (letters, digits, '-'), so a crafted id can't climb out of <paramref name="root"/>.</summary>
