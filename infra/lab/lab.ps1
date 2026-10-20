@@ -168,7 +168,7 @@ switch ($Command) {
             & (Join-Path $pwDir 'node/win32_x64/node.exe') (Join-Path $PSScriptRoot 'pair-runner.js')
             Remove-Item Env:UNPAIR
         }
-        Write-Host 'Runner stopped. (Revoke it in Board → Runners to retire its token.)'
+        Write-Host 'Runner stopped. (Disconnect it in Board → Computers to retire its token.)'
     }
     'status' { Show-Status }
     'logs' { Get-Content $LogFile -Tail 80 -Wait }

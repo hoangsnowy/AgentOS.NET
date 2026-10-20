@@ -14,12 +14,12 @@ non-technical user against effort.
 | 2 | **"Connect this computer" with a code** — download the helper, open it, type a short code; the page turns "Connected ✓" live. Reuses the existing one-time-code exchange (`/runner/pair/exchange`). | Claude Code Remote Control, `gh auth login` device codes | M | |
 | 3 | **Plain-language progress** — fixed steps (Understanding → Planning → Writing the code → Checking it builds → Testing → Ready for you) instead of a timestamped log; *Stop* and *Tell the agent something*; raw log one click away. | Copilot session logs, Replit checkpoints | M | |
 | 4 | **Plan first by default** — Home's main action is "Show me a plan" → "Looks good — build it"; auto-pick the board/repo when there is one. | Replit / Lovable Plan mode | M | |
-| 5 | **Hide engine/CLI choices** — one question "Where should the AI work? On our servers / On my computer"; the CLI is detected from the paired computer; engine under *Advanced* as Fast / Thorough; "Create session" → "Start working". | — | S | |
+| 5 | **Hide engine/CLI choices** — one question "Where should the AI work? On our servers / On my computer"; the CLI is detected from the paired computer; engine under *Advanced* as Fast / Thorough; "Create session" → "Start working". | — | S | Shipped (#229); CLI auto-detect open |
 | 6 | **Review a preview, not a PR** — summary + screenshots from the test run + preview link; "Looks good — publish" (merges) / "Ask for changes"; the PR link under *Developer details*. | Cursor cloud agents, v0 Deploy, Lovable preview | L | |
 | 7 | **"Connect GitHub" (GitHub App) instead of the PAT form**, repo picker, "Start a new app" creates the repo. | Claude Code on the web, Lovable | L | |
 | 8 | **Cost before and after** — "≈ $0.40–1.20, about 10 min (estimate)" before starting, actual per task, "You've used $18 of $20 this month". Estimates always carry ≈. | Replit per-checkpoint cost | M | |
 | 9 | **Undo + "Needs your OK"** — undo a change (close/revert the PR, delete the branch) with a confirm listing what is affected; a badge + notification when the agent needs a decision. | Replit rollback, Devin confidence | M | |
-| 10 | **Onboarding copy + sample project** — workspace display name instead of the tenant id; plain checklist titles; a read-only sample project with a finished run; a real-world composer example. | Lovable 2026 onboarding | S | |
+| 10 | **Onboarding copy + sample project** — workspace display name instead of the tenant id; plain checklist titles; a read-only sample project with a finished run; a real-world composer example. | Lovable 2026 onboarding | S | Copy shipped (#229); sample project open |
 
 ## Vocabulary
 
