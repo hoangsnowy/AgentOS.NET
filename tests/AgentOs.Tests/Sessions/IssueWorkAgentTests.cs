@@ -253,6 +253,7 @@ public class IssueWorkAgentTests
         captured.Tools!.ShouldContain("runner_shell");
         captured.Timeout.ShouldBeNull();
         captured.Cli.ShouldBeNull(); // server mode never sets a CLI profile
+        captured.Autonomy.ShouldBeNull(); // nor asks a runner CLI for hands
     }
 
     [Fact]
@@ -267,6 +268,7 @@ public class IssueWorkAgentTests
         await MakeAgent(llm).RunAsync(request);
 
         captured!.Cli.ShouldBe("codex"); // the runner picks the Codex CLI for this run
+        captured.Autonomy.ShouldBe(WorkspaceAutonomy.Scoped); // clone/edit/push in a per-run directory
     }
 
     [Fact]

@@ -17,9 +17,11 @@
 //   REMOTE_AGENT_YOLO   "1" to append the profile's autonomous flags (claude --dangerously-skip-permissions,
 //                       codex --full-auto) — the "Run on my machine" opt-in for non-interactive tool use.
 //   REMOTE_AGENT_CMD    override the profile's command (advanced)
-//   REMOTE_AGENT_AUTONOMY  "scoped" — the middle ground between the two: each CLI run gets its own empty
-//                       working directory, edits are auto-approved only inside it, and the shell is limited to
-//                       build / test / VCS commands (no force-push, no git config/remote, no gh auth). See
+//   REMOTE_AGENT_AUTONOMY  what a session may ask for. Default: honour "scoped" requests — the server asks for
+//                       them only for a Board "Run on my machine" session (the member's own click): the CLI gets
+//                       its own empty working directory, edits are auto-approved only inside it, and the shell is
+//                       limited to build / test / VCS commands (no force-push, no git config/remote, no gh auth).
+//                       Every other request stays answer-only. "off" refuses scoped runs on this machine. See
 //                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live.
 //   REMOTE_AGENT_ARGS   override the profile's args entirely (advanced; wins over the profile + YOLO + scoped)
 //   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
@@ -32,9 +34,9 @@
 //
 // "Run on my machine" (issue-work routed to the local CLI): the server sends a full agentic prompt
 // that expects the CLI to clone, edit, build, and `git push` on its own. For that the CLI must
-//   (a) be allowed to run tools non-interactively — REMOTE_AGENT_AUTONOMY=scoped (recommended: a per-run
-//       directory + an allowlist), or REMOTE_AGENT_YOLO / a permission flag in REMOTE_AGENT_ARGS (this lets the
-//       agent run arbitrary shell on THIS machine — your own box + an explicit per-session opt-in), and
+//   (a) be allowed to run tools non-interactively — the session asks for scoped autonomy (a per-run directory
+//       + an allowlist; on by default, REMOTE_AGENT_AUTONOMY=off refuses it), or REMOTE_AGENT_YOLO / a permission
+//       flag in REMOTE_AGENT_ARGS (this lets the agent run arbitrary shell on THIS machine), and
 //   (b) already have git/gh authenticated to push the target repo — the clone URL carries no token.
 
 using System.Diagnostics;
@@ -101,7 +103,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
     var cmd = Environment.GetEnvironmentVariable("REMOTE_AGENT_CMD") ?? profile.Command;
     var argsEnv = Environment.GetEnvironmentVariable("REMOTE_AGENT_ARGS");
     var yolo = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_YOLO"));
-    var scoped = AgentOs.RemoteAgent.ScopedAutonomy.IsEnabled(Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"));
+    var scoped = AgentOs.RemoteAgent.ScopedAutonomy.Grants(request.Autonomy, Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"));
     // REMOTE_AGENT_ARGS overrides everything; otherwise the profile's flags + (when opted in) its auto flags
     // (YOLO) or the scoped allowlist.
     var args = argsEnv is not null
@@ -351,7 +353,7 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
 
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
-internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null);
+internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null);
 internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error);
 internal sealed record RunnerToolCall(string RequestId, string ToolCallId, string ToolName, string JsonInput);
 internal sealed record RunnerToolResult(string RequestId, string ToolCallId, bool Ok, string JsonOutput, string? Error);

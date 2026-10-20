@@ -237,6 +237,11 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 Tools: [],
                 Timeout: CliRunTimeout,
                 Cli: request.CliProfile)
+            {
+                // The only request that asks the runner for hands: clone → edit → build → test → push in its own
+                // per-run directory. Every other remote call stays answer-only.
+                Autonomy = WorkspaceAutonomy.Scoped,
+            }
             : new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.System(request, repo) + rules,
                 UserPrompt: IssueWorkPrompt.User(request, repo),

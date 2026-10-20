@@ -9,14 +9,17 @@ namespace AgentOs.Tests.Sessions;
 
 public sealed class ScopedAutonomyTests
 {
+    // The server asks per request; the machine's owner can refuse ("off") or grant every request ("scoped").
     [Theory]
-    [InlineData("scoped", true)]
-    [InlineData(" SCOPED ", true)]
-    [InlineData("yolo", false)]
-    [InlineData("", false)]
-    [InlineData(null, false)]
-    public void IsEnabled_Setting_OnlyScopedOptsIn(string? setting, bool expected) =>
-        ScopedAutonomy.IsEnabled(setting).ShouldBe(expected);
+    [InlineData("scoped", null, true)]
+    [InlineData(" SCOPED ", "", true)]
+    [InlineData(null, null, false)]
+    [InlineData("full", null, false)]
+    [InlineData("scoped", "off", false)]
+    [InlineData("scoped", " OFF ", false)]
+    [InlineData(null, "scoped", true)]
+    public void Grants_RequestAndMachineSetting_MachineOwnerHasTheLastWord(string? requested, string? machine, bool expected) =>
+        ScopedAutonomy.Grants(requested, machine).ShouldBe(expected);
 
     [Fact]
     public void ArgsFor_Claude_AcceptsEditsWithAllowAndDenyLists_NeverBypasses()
@@ -71,7 +74,7 @@ public sealed class ScopedAutonomyTests
     [InlineData("codex")]
     [InlineData("C:\\tools\\codex.cmd")]
     public void ArgsFor_Codex_UsesWorkspaceWriteSandbox(string command) =>
-        ScopedAutonomy.ArgsFor(command).ShouldBe(["--sandbox", "workspace-write"]);
+        ScopedAutonomy.ArgsFor(command).ShouldBe(["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]);
 
     [Fact]
     public void CreateRunDirectory_PlainId_CreatesEmptyDirUnderRoot()

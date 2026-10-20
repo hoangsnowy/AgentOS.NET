@@ -23,8 +23,10 @@ using System.Threading.Tasks;
 namespace AgentOs.Modules.RemoteAgent;
 
 /// <summary>A codegen task sent to a remote runner. <paramref name="Cli"/> selects which subscription
-/// CLI the runner invokes (e.g. "claude", "codex"); null = the runner's configured default.</summary>
-public sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null);
+/// CLI the runner invokes (e.g. "claude", "codex"); null = the runner's configured default.
+/// <paramref name="Autonomy"/> is what the CLI may do on that machine (null = answer only; "scoped" = work in a
+/// fresh per-run directory) — see <c>LlmRequest.Autonomy</c>.</summary>
+public sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null);
 
 /// <summary>A remote runner's reply for a <see cref="RemoteExecRequest"/>.</summary>
 public sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error);

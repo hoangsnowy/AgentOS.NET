@@ -21,8 +21,8 @@
         logs     tail the AppHost log
         test     run the lab integration tests (real GitHub / Azure DevOps) + the real-auth UI E2E against the lab
         pair     pair THIS machine as a RemoteAgent runner (claude -p, your Claude subscription) and route the lab
-                 tenant's agents to it — real agent runs with no API key on the server (prompt mode, no YOLO).
-                 -Scoped lets Board sessions clone/edit/build/push: own dir per run + a tool allowlist (no YOLO)
+                 tenant's agents to it — real agent runs with no API key on the server (prompt mode, no YOLO;
+                 Board "Run on my machine" sessions get scoped autonomy: own dir per run + a tool allowlist)
         unpair   stop the paired runner
 
 .EXAMPLE
@@ -33,8 +33,7 @@ param(
     [Parameter(Position = 0)][ValidateSet('up', 'update', 'down', 'status', 'reset', 'logs', 'test', 'pair', 'unpair')][string]$Command = 'status',
     [string]$Ref = 'origin/main',
     [string]$LabDir = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) '..\AgentOs-lab'),
-    [switch]$Force,
-    [switch]$Scoped
+    [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -156,8 +155,6 @@ switch ($Command) {
         $env:LAB_URL = $WebUrl
         $env:RUNNER_EXE = Join-Path $LabDir 'src/AgentOs.RemoteAgent/bin/Release/net10.0/AgentOs.RemoteAgent.exe'
         $env:STATE_DIR = $StateDir
-        if ($Scoped) { $env:REMOTE_AGENT_AUTONOMY = 'scoped'; Write-Host '== Scoped autonomy: per-run directory + tool allowlist' }
-        else { Remove-Item Env:REMOTE_AGENT_AUTONOMY -ErrorAction SilentlyContinue }
         & (Join-Path $pwDir 'node/win32_x64/node.exe') (Join-Path $PSScriptRoot 'pair-runner.js')
         if ($LASTEXITCODE -ne 0) { throw 'Pairing failed — see the message above.' }
         Start-Sleep -Seconds 4

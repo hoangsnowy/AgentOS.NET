@@ -82,7 +82,6 @@ the lab can never overspend.
 
 ```powershell
 pwsh infra/lab/lab.ps1 pair     # pair THIS machine as a runner; lab agents run on your local `claude -p`
-pwsh infra/lab/lab.ps1 pair -Scoped  # same, but "Run on my machine" sessions may clone/build/test/push (scoped)
 pwsh infra/lab/lab.ps1 unpair   # stop it (revoke it in Board → Runners to retire the token)
 ```
 
@@ -92,15 +91,16 @@ straight into the runner's environment — it is never printed or written to dis
 subscription through `claude -p` in prompt mode (no `--dangerously-skip-permissions`); a server-driven shell
 command outside the runner allowlist is denied.
 
-Prompt mode can't do a Board session ("Work on this" → *Run on my machine*): the CLI has to clone, edit, build
-and push, and every one of those tools needs an approval nobody can give non-interactively — the agent stops
-with *"this session needs approval to clone"*. `pair -Scoped` sets `REMOTE_AGENT_AUTONOMY=scoped`: each CLI
-run starts in its own empty directory under `%LOCALAPPDATA%AgentOS.NETuns` (deleted afterwards), file edits
+A Board session ("Work on this" → *Run on my machine*) needs more than prompt mode — the CLI has to clone,
+edit, build and push, and in prompt mode every one of those tools needs an approval nobody can give
+non-interactively. So that request (and only that one) asks the runner for **scoped autonomy**: each such CLI
+run starts in its own empty directory under `%LOCALAPPDATA%\AgentOS.NET\runs` (deleted afterwards), file edits
 are auto-approved only inside it (`--permission-mode acceptEdits`), and the shell is an allowlist of git /
 gh pr / dotnet / npm / read-only commands with force-push, branch deletion, `git config`/`remote`,
 `gh auth`/`api` and web access denied (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`). Pushes use the
-machine's own git credentials. It is still code from a ticket running on your box — pair scoped only for repos
-you own. With the runner paired, `RUN_AGENTOS_E2E_REAL=true AGENTOS_REAL_URL=https://lab.dev.localhost:6180 AGENTOS_E2E_RUN_TIMEOUT_SECONDS=1200 dotnet test --project tests/AgentOs.E2E.Tests --filter-class "*WorkflowAppRealAuthTests"` runs the full 5-agent pipeline live.
+machine's own git credentials. Every other request (spec generation, the 5-agent pipeline) stays
+answer-only. It is still code from a ticket running on your box; the machine's owner can refuse scoped runs
+with `REMOTE_AGENT_AUTONOMY=off`. With the runner paired, `RUN_AGENTOS_E2E_REAL=true AGENTOS_REAL_URL=https://lab.dev.localhost:6180 AGENTOS_E2E_RUN_TIMEOUT_SECONDS=1200 dotnet test --project tests/AgentOs.E2E.Tests --filter-class "*WorkflowAppRealAuthTests"` runs the full 5-agent pipeline live.
 
 ## Run the lab tests
 

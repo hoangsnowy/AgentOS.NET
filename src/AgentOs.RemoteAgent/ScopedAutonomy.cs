@@ -5,7 +5,10 @@
 // are auto-approved only inside it, and the shell is limited to the build / test / VCS commands a coding agent
 // needs, with history-rewriting and credential-touching git commands denied outright.
 //
-//   REMOTE_AGENT_AUTONOMY   "scoped" to opt in (REMOTE_AGENT_YOLO / REMOTE_AGENT_ARGS still win when set)
+//   The server asks for it per request (RemoteExecRequest.Autonomy = "scoped") only for a Board "Run on my
+//   machine" session; every other request runs answer-only.
+//   REMOTE_AGENT_AUTONOMY   "off" refuses scoped runs on this machine (default: honour them).
+//                           REMOTE_AGENT_YOLO / REMOTE_AGENT_ARGS still win when set.
 //   REMOTE_AGENT_WORKROOT   where the per-run directories live (default %LOCALAPPDATA%/AgentOS.NET/runs on
 //                           Windows, ~/.cache/agentos-net/runs elsewhere)
 //   REMOTE_AGENT_KEEP_RUNS  "1" keeps each run directory afterwards (debugging); default deletes it
@@ -60,9 +63,16 @@ internal static class ScopedAutonomy
         "Read(~/.gnupg/**)", "Read(**/.env)", "Read(**/secrets.json)",
     ];
 
-    /// <summary>True when the operator opted in via <c>REMOTE_AGENT_AUTONOMY=scoped</c>.</summary>
-    internal static bool IsEnabled(string? setting) =>
-        string.Equals(setting?.Trim(), "scoped", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Whether this run gets scoped autonomy: the request asked for it, and the machine's owner did not
+    /// switch it off (<c>REMOTE_AGENT_AUTONOMY=off</c>). <c>REMOTE_AGENT_AUTONOMY=scoped</c> grants it to every
+    /// request, including answer-only ones (the old opt-in, kept for scripts).</summary>
+    internal static bool Grants(string? requested, string? machineSetting)
+    {
+        var setting = machineSetting?.Trim();
+        if (string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase)) { return false; }
+        if (string.Equals(setting, "scoped", StringComparison.OrdinalIgnoreCase)) { return true; }
+        return string.Equals(requested?.Trim(), "scoped", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>The flags appended to the profile's defaults: claude gets an explicit allow/deny list, codex
     /// its own workspace-write sandbox (it already confines writes to the working directory).</summary>
@@ -72,7 +82,9 @@ internal static class ScopedAutonomy
         var name = Path.GetFileNameWithoutExtension(command[(command.LastIndexOfAny(['/', '\\']) + 1)..]);
         if (string.Equals(name, "codex", StringComparison.OrdinalIgnoreCase))
         {
-            return ["--sandbox", "workspace-write"];
+            // workspace-write blocks the network by default, and the run must clone and push. Not yet exercised
+            // live on a Codex machine (the lab pairs Claude Code).
+            return ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"];
         }
         return
         [

@@ -494,6 +494,7 @@ else if (_tab == Tab.Idea)
                         <option value="codex">Codex</option>
                     </select>
                 </label>
+                @MachineScopeHint
             }
             @if (_runOnMachine && !HasRunner())
             {
@@ -748,6 +749,7 @@ else if (_tab == Tab.Sessions)
                     <option value="codex">Codex</option>
                 </select>
             </label>
+            @MachineScopeHint
         }
         @if (_runOnMachine && !HasRunner())
         {
@@ -842,6 +844,13 @@ else if (_tab == Tab.Sessions)
     private IReadOnlyList<WorkspaceRepoEntity>? _ideaRepos;
     private bool _ideaBusy;
     private string? _ideaError;
+    // What "Run on my machine" lets the agent do, in words a non-developer can weigh before clicking: the runner
+    // grants scoped autonomy for this session only (src/AgentOs.RemoteAgent/ScopedAutonomy.cs).
+    private static readonly RenderFragment MachineScopeHint = @<p class="muted board-form-hint" data-testid="machine-scope-hint">
+        Your computer does this ticket in a private folder made just for it: it downloads the repository, edits the code,
+        builds, tests and pushes a branch for you to review. It can't open your other files, change your settings or
+        overwrite existing work, and the folder is deleted when it finishes.</p>;
+
     // "Run on my machine" — route the issue-work loop to the member's paired dev-machine CLI (claude-code
     // / codex) instead of the server LLM. Shared by the idea-wizard auto-run + the Work-on-this dialog.
     private bool _runOnMachine;
