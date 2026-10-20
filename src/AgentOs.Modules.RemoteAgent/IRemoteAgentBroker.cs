@@ -41,6 +41,10 @@ public sealed record RunnerTarget(string TenantId, string MemberUserId);
 /// <summary>A request resolved to a specific runner connection, ready for the transport to push.</summary>
 public sealed record RemoteDispatch(RemoteExecRequest Request, string ConnectionId);
 
+/// <summary>A dispatched request the server gave up on (the caller cancelled it — Stop — or it timed out); the
+/// transport tells that runner to kill the work instead of letting it run on unseen.</summary>
+public sealed record RemoteCancel(string RequestId, string ConnectionId);
+
 // ── M4 bidirectional tool protocol ──────────────────────────────────────────────────────────────
 
 /// <summary>A single tool-execution request sent from the server to the runner. The server's LLM
@@ -79,6 +83,9 @@ public interface IRemoteAgentBroker
 
     event Action<RemoteDispatch>? Dispatched;
 
+    /// <summary>Raised when a dispatched request is abandoned (cancelled by its caller, or timed out).</summary>
+    event Action<RemoteCancel>? Cancelled;
+
     Task<RemoteExecResult> DispatchAsync(RemoteExecRequest request, RunnerTarget target, TimeSpan timeout, CancellationToken cancellationToken = default);
 
     IDisposable RegisterRunner(string connectionId, RunnerConnection runner);
@@ -113,6 +120,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker
     public int AgentCount => _connections.Count;
 
     public event Action<RemoteDispatch>? Dispatched;
+    public event Action<RemoteCancel>? Cancelled;
     public event Action<RunnerToolDispatch>? ToolCallDispatched;
 
     public bool HasRunnerFor(RunnerTarget target)
@@ -142,6 +150,8 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker
         {
             if (_pending.TryRemove(request.Id, out var pending))
             {
+                // The runner is still working on it — tell it to stop (Stop button, or nobody is waiting any more).
+                Cancelled?.Invoke(new RemoteCancel(request.Id, connectionId));
                 if (cancellationToken.IsCancellationRequested)
                 {
                     pending.TrySetCanceled(cancellationToken);

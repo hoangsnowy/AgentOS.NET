@@ -31,6 +31,7 @@
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 @inject ISessionRunFeed Feed
 @inject IServiceScopeFactory ScopeFactory
+@inject AgentOs.Web.Services.TaskStopRegistry StopRegistry
 @inject Microsoft.Extensions.Options.IOptions<PipelineOptions> PipelineOpts
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @implements IDisposable
@@ -650,6 +651,13 @@ else if (_tab == Tab.Sessions)
                                     <Icon Name="play" Size="13" /> @(s.Status == "Failed" ? "Try again" : "Run")
                                 </Btn>
                             }
+                            @if (s.Status == "Running" && StopRegistry.IsRunning(_tenantId, s.Id))
+                            {
+                                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="@(() => StopSession(s))"
+                                     aria-label="@($"Stop task #{s.IssueNumber}")">
+                                    <Icon Name="x" Size="13" /> Stop
+                                </Btn>
+                            }
                             <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => CloseSession(s))"
                                  Disabled="@(_busyId == s.Id || s.Status is "Closed" or "Running")">
                                 <Icon Name="check" Size="13" /> Close
@@ -699,10 +707,22 @@ else if (_tab == Tab.Sessions)
             }
         </div>
         @WhereToWork
+        @if (_workTicket is not null && NeedsPerson(_workTicket))
+        {
+            <div class="board-where" role="alert">
+                <p class="login-error">This ticket is marked for a person (<code>needs-human</code> / epic) — usually a big goal or a
+                    decision, not one change. The AI may try to do all of it at once.</p>
+                <label class="board-repo-option">
+                    <input type="checkbox" @bind="_confirmPersonTicket" />
+                    <span>Run it anyway</span>
+                </label>
+            </div>
+        }
     </ChildContent>
     <Footer>
         <Btn OnClick="CloseWorkDialog">Cancel</Btn>
-        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ConfirmWorkSession" Disabled="_busy">Start working</Btn>
+        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ConfirmWorkSession"
+             Disabled="@(_busy || (_workTicket is not null && NeedsPerson(_workTicket) && !_confirmPersonTicket))">Start working</Btn>
     </Footer>
 </Dialog>
 
@@ -1437,8 +1457,18 @@ else if (_tab == Tab.Sessions)
             });
         }
         _runOnMachine = false;
+        _confirmPersonTicket = false;
         _showWorkDialog = true;
     }
+
+    // A ticket meant for a person: an epic, or one a planner flagged needs-human. One click must not hand it to the
+    // AI (a member started the whole M1 epic by mistake on the first real project).
+    private bool _confirmPersonTicket;
+
+    private static bool NeedsPerson(BoardTicket ticket) =>
+        ticket.Labels.Any(l => l.Equals("needs-human", StringComparison.OrdinalIgnoreCase)
+                               || l.Equals("epic", StringComparison.OrdinalIgnoreCase)
+                               || l.Equals("type:epic", StringComparison.OrdinalIgnoreCase));
 
     private void CloseWorkDialog()
     {
@@ -1460,6 +1490,7 @@ else if (_tab == Tab.Sessions)
     private async Task ConfirmWorkSession()
     {
         if (_busy || _selectedBoard is null || _workTicket is null) { return; }
+        if (NeedsPerson(_workTicket) && !_confirmPersonTicket) { return; }
         var selected = _workRepoOptions.Where(o => o.Selected).ToList();
         if (selected.Count == 0)
         {
@@ -1751,8 +1782,10 @@ else if (_tab == Tab.Sessions)
             var capturedPat = pat;
             var capturedChildren = children;
             var capturedCli = _cliProfile;   // CLI choice is transient (not persisted) — capture at dispatch.
+            var stopLease = StopRegistry.Begin(capturedTenantId, capturedSession.Id);
             _ = Task.Run(async () =>
             {
+                using var _stop = stopLease;
                 try
                 {
                     using var scope = ScopeFactory.CreateScope();
@@ -1768,7 +1801,7 @@ else if (_tab == Tab.Sessions)
                     if (EngineSelection.IsQuality(capturedSession.Brain))
                     {
                         await RunQualitySessionAsync(
-                            scope, sessRepo, capturedSession, capturedBoard, capturedPat, capturedChildren, capturedTenantId)
+                            scope, sessRepo, capturedSession, capturedBoard, capturedPat, capturedChildren, capturedTenantId, stopLease.Token)
                             .ConfigureAwait(false);
                         return;
                     }
@@ -1793,7 +1826,7 @@ else if (_tab == Tab.Sessions)
                         ProviderOverride: capturedSession.RunOnMachine ? "RemoteAgent" : null,
                         CliProfile: capturedSession.RunOnMachine ? capturedCli : null);
 
-                    var workResult = await agent.RunAsync(issueRequest).ConfigureAwait(false);
+                    var workResult = await agent.RunAsync(issueRequest, stopLease.Token).ConfigureAwait(false);
 
                     // One PR per repo that pushed a branch; write each repo's result back incrementally
                     // (per-repo try/catch so one failure doesn't sink the others).
@@ -1858,6 +1891,29 @@ else if (_tab == Tab.Sessions)
                 catch (InvalidOperationException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
                 catch (System.IO.IOException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
                 catch (TimeoutException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (stopLease.Token.IsCancellationRequested) { await HandleStopped().ConfigureAwait(false); }
+
+                // Stop: the task and every repo that hadn't finished read "Stopped", and Try again is offered.
+                async Task HandleStopped()
+                {
+                    const string stopped = "Stopped — you pressed Stop. Nothing was pushed for the unfinished parts; Try again to restart.";
+                    try
+                    {
+                        using var scope = ScopeFactory.CreateScope();
+                        var sessRepo = scope.ServiceProvider.GetRequiredService<AgentOs.Modules.Sessions.Persistence.ISessionRepository>();
+                        foreach (var child in await sessRepo.ListReposForTenantAsync(capturedTenantId, capturedSession.Id).ConfigureAwait(false))
+                        {
+                            if (child.Status is "Pending" or "Running")
+                            {
+                                await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, child.Id, "Failed", null, null, "Stopped").ConfigureAwait(false);
+                            }
+                        }
+                        await sessRepo.UpdateRunResultAsync(capturedTenantId, capturedSession.Id, "Failed", null, stopped).ConfigureAwait(false);
+                    }
+                    catch (Exception inner) when (inner is System.Net.Http.HttpRequestException or System.IO.IOException or InvalidOperationException or TimeoutException) { _ = inner.Message; }
+                    Feed.Publish(new SessionRunEvent(capturedTenantId, capturedSession.Id,
+                        SessionRunEventKind.Failed, "Stopped by you.", DateTimeOffset.UtcNow));
+                }
 
                 async Task HandleRunFailure(Exception ex)
                 {
@@ -1901,7 +1957,8 @@ else if (_tab == Tab.Sessions)
         WorkspaceEntity board,
         string pat,
         IReadOnlyList<SessionRepoEntity> children,
-        string tenantId)
+        string tenantId,
+        CancellationToken stop)
     {
         // Tenant + session tagged publish to the live feed.
         void Publish(SessionRunEventKind kind, string message, string? repo = null, string? status = null, string? prUrl = null) =>
@@ -1949,7 +2006,7 @@ else if (_tab == Tab.Sessions)
         string? error = null;
         // The pipeline runs through PersistingOrchestratorAgent, which applies the S1 per-tenant budget gate
         // (the ambient identity pushed by RunSession flows in via InProcessPipelineClient).
-        await foreach (var evt in pipeline.StreamAsync(story).ConfigureAwait(false))
+        await foreach (var evt in pipeline.StreamAsync(story, stop).ConfigureAwait(false))
         {
             switch (evt.Kind)
             {
@@ -2085,6 +2142,14 @@ else if (_tab == Tab.Sessions)
     }
 
     // ── Sessions ─────────────────────────────────────────────────────────────────────────────────
+
+    private void StopSession(RemoteSessionEntity s)
+    {
+        Toasts.Show("Board", StopRegistry.Stop(_tenantId, s.Id)
+            ? $"Stopping task #{s.IssueNumber}… the AI finishes its current step and stops."
+            : $"Task #{s.IssueNumber} isn't running here any more — refresh to see where it ended.",
+            ToastKind.Ok);
+    }
 
     private async Task CloseSession(RemoteSessionEntity s)
     {
