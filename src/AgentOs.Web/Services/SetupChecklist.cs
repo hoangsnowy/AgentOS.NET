@@ -38,11 +38,11 @@ public static class SetupChecklist
         System.ArgumentNullException.ThrowIfNull(facts);
         return
         [
-            new("key", "Add a model key", "Anthropic, Azure OpenAI, OpenAI, Gemini or xAI — then Test it.", facts.HasModelKey, false, SetupAction.ModelKeys, "Add key"),
-            new("run", "Run the agents once", "Describe a small change above and press Run now.", facts.HasRun, false, SetupAction.Composer, "Write a story"),
-            new("repo", "Connect a repository", "So the agents can open pull requests on your code.", facts.HasRepository, false, SetupAction.Board, "Open Board"),
-            new("budget", "Set a monthly budget", "A cap the agents can't spend past.", facts.HasBudget, false, SetupAction.Insights, "Set budget"),
-            new("pair", "Pair a dev machine", "Run on your own Claude Code / Copilot CLI with no server tokens.", facts.HasPairedMachine, true, SetupAction.Runners, "Pair"),
+            new("key", "Connect an AI account", "Paste a key from Anthropic, OpenAI, Azure OpenAI, Gemini or xAI, then press Test.", facts.HasModelKey, false, SetupAction.ModelKeys, "Connect"),
+            new("run", "Try a small first task", "Describe something small above and press Run now.", facts.HasRun, false, SetupAction.Composer, "Write a task"),
+            new("repo", "Connect where your code lives", "A GitHub project, so the AI can propose changes to it.", facts.HasRepository, false, SetupAction.Board, "Open Board"),
+            new("budget", "Set a spending limit", "A monthly cap the AI can't spend past.", facts.HasBudget, false, SetupAction.Insights, "Set limit"),
+            new("pair", "Use your own computer (optional)", "Let the AI work on your computer with your own AI plan — free on our side.", facts.HasPairedMachine, true, SetupAction.Runners, "Connect"),
         ];
     }
 

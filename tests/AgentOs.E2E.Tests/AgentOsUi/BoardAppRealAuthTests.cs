@@ -45,10 +45,10 @@ public sealed class BoardAppRealAuthTests : IClassFixture<AgentOsRealAuthFixture
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Board");
 
         // Runner registration lives on the Runners tab (Board opens on Boards).
-        await win.Locator(".board-tab", new() { HasTextString = "Runners" }).ClickAsync();
+        await win.Locator(".board-tab", new() { HasTextString = "Computers" }).ClickAsync();
         var label = "e2e-runner-" + Guid.NewGuid().ToString("N")[..8];
-        await win.GetByPlaceholder("Hoang's laptop").FillAsync(label);
-        await win.GetByRole(AriaRole.Button, new() { Name = "Register runner" }).ClickAsync();
+        await win.GetByPlaceholder("My laptop").FillAsync(label);
+        await win.GetByRole(AriaRole.Button, new() { Name = "Connect this computer" }).ClickAsync();
 
         await Assertions.Expect(win.Locator(".cred-readout textarea")).ToContainTextAsync("REMOTE_AGENT_TOKEN");
         // Persisted to Postgres + listed under the operator's tenant.
@@ -57,7 +57,7 @@ public sealed class BoardAppRealAuthTests : IClassFixture<AgentOsRealAuthFixture
         // Revoke what we created: this runs against a shared dev stack, and each registration mints a live
         // pairing credential — leaving them behind piles up valid tokens. Also covers the revoke path.
         var row = win.Locator(".data-table tbody tr", new() { HasTextString = label });
-        await row.GetByRole(AriaRole.Button, new() { Name = "Revoke" }).ClickAsync();
-        await Assertions.Expect(row).ToContainTextAsync("Revoked");
+        await row.GetByRole(AriaRole.Button, new() { Name = "Disconnect" }).ClickAsync();
+        await Assertions.Expect(row).ToContainTextAsync("Disconnected");
     }
 }

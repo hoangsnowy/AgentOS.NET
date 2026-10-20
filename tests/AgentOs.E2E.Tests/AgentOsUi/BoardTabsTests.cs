@@ -23,7 +23,7 @@ public sealed class BoardTabsTests : IClassFixture<AgentOsPageFixture>
 
         await _fx.Page.Locator(".dock-item[title=\"Board\"]").First.ClickAsync();
         var board = _fx.Page.Locator(".appwin.focused");
-        await board.Locator(".board-tab", new() { HasTextString = "Log" }).ClickAsync();
+        await board.Locator(".board-tab", new() { HasTextString = "Activity" }).ClickAsync();
         await Assertions.Expect(board.Locator(".board-embed .term")).ToBeVisibleAsync();
         await board.Locator(".board-tab", new() { HasTextString = "Files" }).ClickAsync();
         await Assertions.Expect(board.Locator(".board-embed .files")).ToBeVisibleAsync();
@@ -37,9 +37,9 @@ public sealed class BoardTabsTests : IClassFixture<AgentOsPageFixture>
 
         await _fx.Page.Locator(".dock-item[title=\"Home\"]").First.ClickAsync();
         var home = _fx.Page.Locator(".appwin.focused");
-        await home.Locator(".home-step[data-step=\"pair\"]").GetByRole(AriaRole.Button, new() { Name = "Pair" }).ClickAsync();
+        await home.Locator(".home-step[data-step=\"pair\"]").GetByRole(AriaRole.Button, new() { Name = "Connect" }).ClickAsync();
         var board = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(board.Locator(".appwin-title")).ToHaveTextAsync("Board");
-        await Assertions.Expect(board.Locator(".board-tab.active")).ToContainTextAsync("Runners");
+        await Assertions.Expect(board.Locator(".board-tab.active")).ToContainTextAsync("Computers");
     }
 }

@@ -24,7 +24,7 @@ public sealed class HomeTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(home.Locator(".appwin-title")).ToHaveTextAsync("Home");
 
         // Dev-auth is an admin with no model key: the checklist leads with it, and the offline note says so.
-        await Assertions.Expect(home.Locator(".home-step[data-step=\"key\"]")).ToContainTextAsync("Add a model key");
+        await Assertions.Expect(home.Locator(".home-step[data-step=\"key\"]")).ToContainTextAsync("Connect an AI account");
         await Assertions.Expect(home.Locator(".home-note")).ToContainTextAsync("No model key yet");
 
         var runNow = home.GetByRole(AriaRole.Button, new() { Name = "Run now" });

@@ -2691,6 +2691,9 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 .board-ticket-title { width: 100%; }
 .board-runall { margin-bottom: var(--space-3); }
 .board-ai-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-tertiary); white-space: nowrap; }
+/* "Where should the AI work?" — two choice rows (reuse .board-repo-option), the scope hint, Advanced. Wraps at phone width. */
+.board-where { margin-top: var(--space-3); }
+.board-where .board-ai-toggle { white-space: normal; flex-wrap: wrap; }
 
 /* ===== Brand mark (BrandMark.razor) — the AgentOS.NET product icon =====
    An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once

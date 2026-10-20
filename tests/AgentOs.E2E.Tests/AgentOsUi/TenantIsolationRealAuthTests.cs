@@ -74,7 +74,7 @@ public sealed class TenantIsolationRealAuthTests : IClassFixture<AgentOsRealAuth
 
             // ── isolation: none of A's markers leak into B ───────────────────────────────────────────
             var board = await OpenBoardAsync();
-            await Assertions.Expect(board.GetByRole(AriaRole.Heading, new() { Name = "Boards", Exact = true })).ToBeVisibleAsync(new() { Timeout = 15_000 });
+            await Assertions.Expect(board.GetByRole(AriaRole.Heading, new() { Name = "Projects", Exact = true })).ToBeVisibleAsync(new() { Timeout = 15_000 });
             await Assertions.Expect(board).Not.ToContainTextAsync(marker);
             var runners = await OpenBoardRunnersAsync();
             await Assertions.Expect(runners).Not.ToContainTextAsync(marker);
@@ -106,14 +106,14 @@ public sealed class TenantIsolationRealAuthTests : IClassFixture<AgentOsRealAuth
         await _fx.Page.Locator(".dock-item[title=\"Board\"]").First.ClickAsync();
         var win = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Board");
-        await win.Locator(".board-tab", new() { HasTextString = "Boards" }).ClickAsync();
+        await win.Locator(".board-tab", new() { HasTextString = "Projects" }).ClickAsync();
         return win;
     }
 
     private async Task<ILocator> OpenBoardRunnersAsync()
     {
         var win = _fx.Page.Locator(".appwin.focused");
-        await win.Locator(".board-tab", new() { HasTextString = "Runners" }).ClickAsync();
+        await win.Locator(".board-tab", new() { HasTextString = "Computers" }).ClickAsync();
         await Assertions.Expect(win.Locator(".data-table").First).ToBeVisibleAsync(new() { Timeout = 15_000 });
         return win;
     }
