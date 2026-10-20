@@ -494,6 +494,7 @@ else if (_tab == Tab.Idea)
                         <option value="codex">Codex</option>
                     </select>
                 </label>
+                @MachineScopeHint
             }
             @if (_runOnMachine && !HasRunner())
             {
@@ -668,12 +669,14 @@ else if (_tab == Tab.Sessions)
                         <td><Badge>@s.Status</Badge></td>
                         <td>@s.CreatedAtUtc.ToString("u")</td>
                         <td class="actions">
-                            @if (s.Status == "Draft")
+                            @* A failed session can be run again in place (after fixing what its error says) instead of being
+                               closed and recreated from the ticket. *@
+                            @if (s.Status is "Draft" or "Failed")
                             {
                                 <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary"
                                      OnClick="@(() => RunSession(s))"
                                      Disabled="@(_busyId == s.Id)">
-                                    <Icon Name="play" Size="13" /> Run
+                                    <Icon Name="play" Size="13" /> @(s.Status == "Failed" ? "Try again" : "Run")
                                 </Btn>
                             }
                             <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => CloseSession(s))"
@@ -748,6 +751,7 @@ else if (_tab == Tab.Sessions)
                     <option value="codex">Codex</option>
                 </select>
             </label>
+            @MachineScopeHint
         }
         @if (_runOnMachine && !HasRunner())
         {
@@ -842,6 +846,13 @@ else if (_tab == Tab.Sessions)
     private IReadOnlyList<WorkspaceRepoEntity>? _ideaRepos;
     private bool _ideaBusy;
     private string? _ideaError;
+    // What "Run on my machine" lets the agent do, in words a non-developer can weigh before clicking: the runner
+    // grants scoped autonomy for this session only (src/AgentOs.RemoteAgent/ScopedAutonomy.cs).
+    private static readonly RenderFragment MachineScopeHint = @<p class="muted board-form-hint" data-testid="machine-scope-hint">
+        Your computer does this ticket in a private folder made just for it: it downloads the repository, edits the code,
+        builds, tests and pushes a branch for you to review. It can't open your other files, change your settings or
+        overwrite existing work, and the folder is deleted when it finishes.</p>;
+
     // "Run on my machine" — route the issue-work loop to the member's paired dev-machine CLI (claude-code
     // / codex) instead of the server LLM. Shared by the idea-wizard auto-run + the Work-on-this dialog.
     private bool _runOnMachine;
@@ -1704,6 +1715,13 @@ else if (_tab == Tab.Sessions)
             }
 
             await Sessions.UpdateRunResultAsync(_tenantId, session.Id, "Running", null, null);
+            // Try again: a repo that failed last time starts over clean (its old error would read as this run's).
+            foreach (var failed in children.Where(c => c.Status == "Failed"))
+            {
+                await Sessions.UpdateRepoRunResultAsync(_tenantId, failed.Id, "Pending", null, null, null);
+                failed.Status = "Pending";
+                failed.Error = null;
+            }
             var all = await Sessions.ListForTenantAsync(_tenantId);
             _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
             Toasts.Show("Board", $"Session #{session.IssueNumber} is running — AI agent dispatched to runner.", ToastKind.Ok);

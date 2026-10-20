@@ -242,10 +242,11 @@ public class RemoteAgentTests
             .Returns(ci => Task.FromResult(new RemoteExecResult(((RemoteExecRequest)ci[0]!).Id, true, "ok", null)));
         var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
 
-        await client.SendAsync(new LlmRequest("s", "u", "m", Cli: "codex"));
+        await client.SendAsync(new LlmRequest("s", "u", "m", Cli: "codex") { Autonomy = WorkspaceAutonomy.Scoped });
 
         captured.ShouldNotBeNull();
         captured!.Cli.ShouldBe("codex");
+        captured.Autonomy.ShouldBe(WorkspaceAutonomy.Scoped);
     }
 
     [Fact]

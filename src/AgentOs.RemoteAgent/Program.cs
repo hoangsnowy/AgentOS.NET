@@ -17,7 +17,13 @@
 //   REMOTE_AGENT_YOLO   "1" to append the profile's autonomous flags (claude --dangerously-skip-permissions,
 //                       codex --full-auto) — the "Run on my machine" opt-in for non-interactive tool use.
 //   REMOTE_AGENT_CMD    override the profile's command (advanced)
-//   REMOTE_AGENT_ARGS   override the profile's args entirely (advanced; wins over the profile + YOLO)
+//   REMOTE_AGENT_AUTONOMY  what a session may ask for. Default: honour "scoped" requests — the server asks for
+//                       them only for a Board "Run on my machine" session (the member's own click): the CLI gets
+//                       its own empty working directory, edits are auto-approved only inside it, and the shell is
+//                       limited to build / test / VCS commands (no force-push, no git config/remote, no gh auth).
+//                       Every other request stays answer-only. "off" refuses scoped runs on this machine. See
+//                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live.
+//   REMOTE_AGENT_ARGS   override the profile's args entirely (advanced; wins over the profile + YOLO + scoped)
 //   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
 //                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
 //   REMOTE_AGENT_TIMEOUT_SECONDS  per shell command (default 600); on expiry the whole process tree is killed
@@ -28,9 +34,9 @@
 //
 // "Run on my machine" (issue-work routed to the local CLI): the server sends a full agentic prompt
 // that expects the CLI to clone, edit, build, and `git push` on its own. For that the CLI must
-//   (a) be allowed to run tools non-interactively — set REMOTE_AGENT_ARGS to include a permission
-//       flag, e.g. "-p --dangerously-skip-permissions" (this lets the agent run arbitrary shell on
-//       THIS machine — your own box + an explicit per-session opt-in), and
+//   (a) be allowed to run tools non-interactively — the session asks for scoped autonomy (a per-run directory
+//       + an allowlist; on by default, REMOTE_AGENT_AUTONOMY=off refuses it), or REMOTE_AGENT_YOLO / a permission
+//       flag in REMOTE_AGENT_ARGS (this lets the agent run arbitrary shell on THIS machine), and
 //   (b) already have git/gh authenticated to push the target repo — the clone URL carries no token.
 
 using System.Diagnostics;
@@ -97,10 +103,21 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
     var cmd = Environment.GetEnvironmentVariable("REMOTE_AGENT_CMD") ?? profile.Command;
     var argsEnv = Environment.GetEnvironmentVariable("REMOTE_AGENT_ARGS");
     var yolo = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_YOLO"));
-    // REMOTE_AGENT_ARGS overrides everything; otherwise the profile's flags + (when opted in) its auto flags.
+    var scoped = AgentOs.RemoteAgent.ScopedAutonomy.Grants(request.Autonomy, Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"));
+    // REMOTE_AGENT_ARGS overrides everything; otherwise the profile's flags + (when opted in) its auto flags
+    // (YOLO) or the scoped allowlist.
     var args = argsEnv is not null
         ? argsEnv.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-        : yolo ? [.. profile.DefaultArgs, .. profile.AutoArgs] : profile.DefaultArgs;
+        : yolo ? [.. profile.DefaultArgs, .. profile.AutoArgs]
+        : scoped ? [.. profile.DefaultArgs, .. AgentOs.RemoteAgent.ScopedAutonomy.ArgsFor(cmd)]
+        : profile.DefaultArgs;
+
+    // Every CLI run starts in its OWN empty directory — never the runner's current directory, which is usually
+    // a checkout of something else (the agent once saw "file access limited to D:GithubAgentOs").
+    var runDir = AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
+        Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(),
+        request.Id);
+    var keepRun = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_RUNS"));
 
     var prompt = string.IsNullOrEmpty(request.SystemPrompt)
         ? request.UserPrompt
@@ -114,6 +131,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            WorkingDirectory = runDir,
         };
         foreach (var a in args)
         {
@@ -125,7 +143,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
             psi.ArgumentList.Add(prompt);
         }
 
-        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")}");
+        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")} autonomy={(argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt")} dir={runDir}");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{cmd}'. Is the {cli} CLI installed and on PATH?");
@@ -156,6 +174,10 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
     catch (System.IO.IOException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
     catch (InvalidOperationException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
     catch (TimeoutException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
+    finally
+    {
+        if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
+    }
 }
 
 // Resolve a bare command name to something CreateProcess can actually launch.
@@ -331,7 +353,7 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
 
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
-internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null);
+internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null);
 internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error);
 internal sealed record RunnerToolCall(string RequestId, string ToolCallId, string ToolName, string JsonInput);
 internal sealed record RunnerToolResult(string RequestId, string ToolCallId, bool Ok, string JsonOutput, string? Error);

@@ -46,8 +46,9 @@
 
   <ItemGroup>
     <!-- The runner is an exe whose top-level records would clash with Modules.RemoteAgent's; compile only its
-         dependency-free command policy into the tests. -->
+         dependency-free command policy + scoped-autonomy flags into the tests. -->
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunnerCommandPolicy.cs" Link="Linked\RunnerCommandPolicy.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\ScopedAutonomy.cs" Link="Linked\ScopedAutonomy.cs" />
   </ItemGroup>
 
 </Project>

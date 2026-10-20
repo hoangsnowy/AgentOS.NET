@@ -83,10 +83,12 @@ internal static class IssueWorkPrompt
         {4}
         Workflow:
 
-        1. Clone the {0}/{1} repository into a fresh working directory and enter it:
-           git clone https://github.com/{0}/{1}.git
-           cd {1}
+        1. Clone the {0}/{1} repository. The runner starts you in a fresh, empty directory made for
+           this run — clone INTO it, so every later command runs there without a `cd`:
+           git clone https://github.com/{0}/{1}.git .
+           (Only if the current directory is not empty: clone into a new subdirectory and work there.)
            Use the machine's existing git/gh credentials — do NOT embed any token in the URL.
+           Stay inside this directory: files outside it and other repositories are off limits.
 
         2. Understand the codebase: read the relevant files (structure, key modules, tests).
            Read only what is needed — do not dump entire file trees.

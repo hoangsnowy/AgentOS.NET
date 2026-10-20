@@ -21,7 +21,8 @@
         logs     tail the AppHost log
         test     run the lab integration tests (real GitHub / Azure DevOps) + the real-auth UI E2E against the lab
         pair     pair THIS machine as a RemoteAgent runner (claude -p, your Claude subscription) and route the lab
-                 tenant's agents to it — real agent runs with no API key on the server (prompt mode, no YOLO)
+                 tenant's agents to it — real agent runs with no API key on the server (prompt mode, no YOLO;
+                 Board "Run on my machine" sessions get scoped autonomy: own dir per run + a tool allowlist)
         unpair   stop the paired runner
 
 .EXAMPLE

@@ -53,6 +53,14 @@ public sealed record LlmRequest(
     public string? AgentRole { get; init; }
 
     /// <summary>
+    /// What a paired-runner CLI agent may do on the member's machine for this request: <c>null</c> = answer only
+    /// (no file or shell tools — every text-generating agent), <see cref="WorkspaceAutonomy.Scoped"/> = clone, edit,
+    /// build, test and push inside a fresh directory made for this run (issue-work "Run on my machine"). Only
+    /// <c>RemoteAgentLlmClient</c> honours it; the runner applies it unless its owner switched scoped runs off.
+    /// </summary>
+    public string? Autonomy { get; init; }
+
+    /// <summary>
     /// Validates required values. Throws <see cref="System.ArgumentException"/> if invalid.
     /// </summary>
     public void Validate()

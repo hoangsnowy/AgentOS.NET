@@ -76,7 +76,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         }
 
         var id = Guid.NewGuid().ToString("N");
-        var execRequest = new RemoteExecRequest(id, request.SystemPrompt, request.UserPrompt, request.Model, request.Cli);
+        var execRequest = new RemoteExecRequest(id, request.SystemPrompt, request.UserPrompt, request.Model, request.Cli, request.Autonomy);
 
         // A single full-prompt dispatch (M3) caps at 120s, but an agentic issue-work run on the local
         // CLI (clone → build → test → push) needs minutes — the caller raises it via LlmRequest.Timeout.
