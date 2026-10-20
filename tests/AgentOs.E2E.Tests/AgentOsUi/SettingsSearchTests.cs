@@ -54,7 +54,7 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
         var input = _fx.Page.Locator(".ko-search-input");
         await Assertions.Expect(input).ToBeFocusedAsync();
         await input.PressSequentiallyAsync("add key");
-        await Assertions.Expect(_fx.Page.Locator(".ko-row", new() { HasTextString = "Add a model key" })).ToBeVisibleAsync();
+        await Assertions.Expect(_fx.Page.Locator(".ko-row", new() { HasTextString = "Connect an AI account" })).ToBeVisibleAsync();
         await input.PressAsync("Enter");
         var win = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".prefs-h", new() { HasTextString = "Model keys" })).ToBeVisibleAsync();

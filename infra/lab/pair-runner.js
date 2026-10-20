@@ -2,7 +2,7 @@
 // the local `claude -p` (your Claude subscription), no API key on the server. Invoked by `lab.ps1 pair`.
 //
 //   1. signs in to the lab desktop as the seeded operator (lab-only test credentials, local .localhost host);
-//   2. Board → Runners → registers a runner, reads the one-time pairing token from the readout;
+//   2. Board → Computers → registers a runner, reads the one-time pairing token from the readout;
 //   3. Settings → AI → Routing → Force provider = RemoteAgent;
 //   4. starts the runner DETACHED with the token in its environment only — the token is never printed or
 //      written to disk; its console output goes to .lab/runner.log, its pid to .lab/runner.pid.
@@ -62,9 +62,9 @@ async function setForceProvider(page, value) {
     // Register a runner.
     await page.locator('.dock-item[title="Board"]').first().click();
     let win = page.locator('.appwin.focused');
-    await win.locator('.board-tab', { hasText: 'Runners' }).click();
-    await win.getByPlaceholder("Hoang's laptop").fill(`lab · ${require('os').hostname()} · claude -p`);
-    await win.getByRole('button', { name: 'Register runner' }).click();
+    await win.locator('.board-tab', { hasText: 'Computers' }).click();
+    await win.getByPlaceholder("My laptop").fill(`lab · ${require('os').hostname()} · claude -p`);
+    await win.getByRole('button', { name: 'Connect this computer' }).click();
     const readout = await win.locator('.cred-readout textarea').inputValue({ timeout: 15000 });
     id = /REMOTE_AGENT_ID=(\S+)/.exec(readout)?.[1];
     token = /REMOTE_AGENT_TOKEN=(\S+)/.exec(readout)?.[1];

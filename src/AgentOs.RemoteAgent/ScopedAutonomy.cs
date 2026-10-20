@@ -37,6 +37,9 @@ internal static class ScopedAutonomy
         "Bash(git push origin *)", "Bash(git fetch*)", "Bash(git pull*)", "Bash(git rev-parse*)", "Bash(git branch*)",
         "Bash(gh repo clone *)", "Bash(gh pr create *)", "Bash(gh pr view*)", "Bash(gh issue view *)",
         "Bash(dotnet *)", "Bash(npm *)", "Bash(pnpm *)", "Bash(yarn *)",
+        // The repository's own scripts (a reference decoder, codegen) — a path inside the checkout, never node -e. A live
+        // run had to work out a reference decoder's verdicts by hand because node was not allowed at all.
+        "Bash(node tools/*)", "Bash(node scripts/*)", "Bash(node ./*)",
         "Bash(cd *)", "Bash(ls*)", "Bash(pwd)", "Bash(wc *)", "Bash(mkdir *)",
     ];
 

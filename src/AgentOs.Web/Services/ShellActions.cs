@@ -43,8 +43,8 @@ public static class ShellActions
     private static readonly ShellAction[] All =
     [
         new(Run, "Run the agent pipeline", "Home · describe a change, the 5 agents build it", "play") { Keywords = "run start execute pipeline workflow agents build story" },
-        new(Idea, "Start from an idea", "Board · turn an idea into tickets and sessions", "git-pull-request") { Keywords = "new idea ticket story issue plan board decompose" },
-        new(AddKey, "Add a model key", "Settings › AI › Model keys", "key") { Keywords = "add api key connect model llm provider anthropic openai gemini xai azure", AdminOnly = true },
+        new(Idea, "Start from an idea", "Board · turn an idea into a plan and tasks", "git-pull-request") { Keywords = "new idea ticket story issue plan board decompose" },
+        new(AddKey, "Connect an AI account", "Settings › AI › Model keys", "key") { Keywords = "add model key api connect account llm provider anthropic openai gemini xai azure", AdminOnly = true },
         new(Invite, "Invite a member", "Settings › People & data › Users", "user") { Keywords = "invite add user member people team", AdminOnly = true },
         new(Token, "Create an API token", "Settings › People & data › API tokens", "tag") { Keywords = "create new api token service account ci machine", AdminOnly = true },
         new(Export, "Export workspace data", "Settings › People & data › Data", "floppy-disk") { Keywords = "export download backup data workspace", AdminOnly = true },

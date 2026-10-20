@@ -82,7 +82,7 @@ the lab can never overspend.
 
 ```powershell
 pwsh infra/lab/lab.ps1 pair     # pair THIS machine as a runner; lab agents run on your local `claude -p`
-pwsh infra/lab/lab.ps1 unpair   # stop it (revoke it in Board → Runners to retire the token)
+pwsh infra/lab/lab.ps1 unpair   # stop it (disconnect it in Board → Computers to retire the token)
 ```
 
 `pair` signs in to the lab as the seeded operator, registers a runner, sets **Force provider = RemoteAgent**

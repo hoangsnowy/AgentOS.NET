@@ -37,8 +37,8 @@
 
 <header class="page-head">
     <div>
-        <h1 class="page-title">Board · <code>@_tenantId</code></h1>
-        <p class="page-sub">Tickets your agents work on — boards, sessions on paired machines, their live log and the repo files.</p>
+        <h1 class="page-title">Board</h1>
+        <p class="page-sub">Your projects, the tasks the AI is working on, and the computers it can use.</p>
     </div>
     <Btn OnClick="ReloadAll" Disabled="_loading">
         <Icon Name="arrow-clockwise" Size="14" /> Refresh
@@ -47,20 +47,20 @@
 
 <div class="board-tabs">
     <button class="board-tab @(_tab == Tab.Boards ? "active" : "")" @onclick="@(() => { _tab = Tab.Boards; _selectedBoard = null; })">
-        Boards <Badge>@(_boards?.Count ?? 0)</Badge>
+        Projects <Badge>@(_boards?.Count ?? 0)</Badge>
     </button>
     <button class="board-tab @(_tab == Tab.Idea ? "active" : "")" @onclick="@(() => _tab = Tab.Idea)">
-        Start from idea
-    </button>
-    <button class="board-tab @(_tab == Tab.Runners ? "active" : "")" @onclick="@(() => _tab = Tab.Runners)">
-        Runners <Badge>@(_runners?.Count ?? 0)</Badge>
+        New idea
     </button>
     <button class="board-tab @(_tab == Tab.Sessions ? "active" : "")" @onclick="@(() => _tab = Tab.Sessions)">
-        Sessions <Badge>@(_sessions?.Count ?? 0)</Badge>
+        Tasks <Badge>@(_sessions?.Count ?? 0)</Badge>
+    </button>
+    <button class="board-tab @(_tab == Tab.Runners ? "active" : "")" @onclick="@(() => _tab = Tab.Runners)">
+        Computers <Badge>@(_runners?.Count ?? 0)</Badge>
     </button>
     @* Was the standalone Terminal app: the runner's live session feed lives next to the sessions it tails. *@
     <button class="board-tab @(_tab == Tab.Log ? "active" : "")" @onclick="@(() => _tab = Tab.Log)">
-        <Icon Name="terminal" Size="13" /> Log
+        <Icon Name="terminal" Size="13" /> Activity
     </button>
     @* Was the standalone Files app: browse the connected repos the tickets live in. *@
     <button class="board-tab @(_tab == Tab.Files ? "active" : "")" @onclick="@(() => _tab = Tab.Files)">
@@ -144,7 +144,7 @@ else if (_tab == Tab.Boards)
         @if (_boards is null) { <Spinner /> }
         else
         {
-            <Panel Title="Boards">
+            <Panel Title="Projects">
             <table class="data-table">
                 <thead>
                     <tr>
@@ -391,7 +391,7 @@ else if (_tab == Tab.Boards)
 @* ── START FROM IDEA TAB (bootstrap) ──────────────────────────────────────────────────────── *@
 else if (_tab == Tab.Idea)
 {
-    <Panel Title="Start from idea">
+    <Panel Title="New idea">
         <div class="board-wizard-steps">
             <span class="board-wizard-step @StepClass(IdeaStep.Input)">1 · Idea</span>
             <span class="board-wizard-step @StepClass(IdeaStep.Review)">2 · Review</span>
@@ -470,36 +470,7 @@ else if (_tab == Tab.Idea)
             </table>
 
             @if (_ideaError is not null) { <p class="login-error">@_ideaError</p> }
-            <label class="board-ai-toggle" style="margin:var(--space-3) 0 0">
-                Engine
-                <select @bind="_brain" @bind:after="OnBrainChanged" class="prefs-input" style="width:auto;margin-left:var(--space-2)">
-                    <option value="Quick">Quick — runner edit loop</option>
-                    <option value="Quality">Quality — 5-agent pipeline</option>
-                </select>
-            </label>
-            @if (_brain == "Quality")
-            {
-                <p class="muted board-form-hint">Quality runs the 5-agent SDLC pipeline server-side — up to @QualityNMax() QA iteration(s), higher server-token cost. Greenfield feature tickets only; bug/edit tickets are refused.</p>
-            }
-            <label class="board-ai-toggle" style="margin:var(--space-3) 0">
-                <input type="checkbox" @bind="_runOnMachine" disabled="@(_brain == "Quality")" aria-label="Run on my machine" />
-                Run on my machine — your paired runner's CLI does the work (0 server tokens)
-            </label>
-            @if (_runOnMachine)
-            {
-                <label class="board-ai-toggle" style="margin:0 0 var(--space-3)">
-                    CLI agent
-                    <select @bind="_cliProfile" class="prefs-input" style="width:auto;margin-left:var(--space-2)">
-                        <option value="claude">Claude Code</option>
-                        <option value="codex">Codex</option>
-                    </select>
-                </label>
-                @MachineScopeHint
-            }
-            @if (_runOnMachine && !HasRunner())
-            {
-                <p class="muted board-form-hint">No paired runner yet — register one in the <strong>Runners</strong> tab and start the AgentOS.NET remote agent (@_cliProfile) on your machine first.</p>
-            }
+            @WhereToWork
             <div class="form-actions">
                 <Btn OnClick="@(() => { _ideaStep = IdeaStep.Input; _ideaError = null; })" Disabled="_ideaBusy">Back</Btn>
                 <Btn Variant="Btn.ButtonVariant.Primary" OnClick="@(() => CreateTickets(true))" Disabled="@(_ideaBusy || _draftRows.Count == 0)">
@@ -528,7 +499,7 @@ else if (_tab == Tab.Idea)
             </table>
             <div class="form-actions">
                 <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ResetIdea">Start another</Btn>
-                <Btn OnClick="@(() => { _tab = Tab.Boards; ResetIdea(); })">Go to boards</Btn>
+                <Btn OnClick="@(() => { _tab = Tab.Boards; ResetIdea(); })">Go to projects</Btn>
             </div>
         }
     </Panel>
@@ -537,15 +508,15 @@ else if (_tab == Tab.Idea)
 @* ── RUNNERS TAB ───────────────────────────────────────────────────────────────────────────── *@
 else if (_tab == Tab.Runners)
 {
-    <Panel Title="Register a runner (a paired dev machine)">
+    <Panel Title="Connect a computer">
         <div class="form-grid">
             <Field Label="Label">
-                <input @bind="_runnerLabel" placeholder="Hoang's laptop" />
+                <input @bind="_runnerLabel" placeholder="My laptop" />
             </Field>
         </div>
         <div class="form-actions">
             <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RegisterRunner" Disabled="_busy">
-                @(_busy ? "Registering…" : "Register runner")
+                @(_busy ? "Connecting…" : "Connect this computer")
             </Btn>
         </div>
         @if (_newRunner is not null)
@@ -563,7 +534,7 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
     @if (_runners is null) { <Spinner /> }
     else
     {
-        <Panel Title="@(_isAdmin ? "Runners (all members)" : "My Runners")">
+        <Panel Title="@(_isAdmin ? "Computers (all members)" : "Your computers")">
         <table class="data-table">
             <thead>
                 <tr>
@@ -580,17 +551,17 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                     <tr>
                         <td>@r.Label</td>
                         @if (_isAdmin) { <td><code>@(string.IsNullOrEmpty(r.OwnerUserId) ? "—" : r.OwnerUserId)</code></td> }
-                        <td><Badge>@r.Status</Badge></td>
+                        <td><Badge>@(r.Status switch { "Revoked" => "Disconnected", "Pending" => "Waiting to connect", "Paired" => "Ready", _ => r.Status })</Badge></td>
                         <td>@r.CreatedAtUtc.ToString("u")</td>
                         <td class="actions">
                             <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger"
                                  OnClick="@(() => RevokeRunner(r))" Disabled="@(_busyId == r.Id || r.Status == "Revoked")">
-                                <Icon Name="x" Size="13" /> Revoke
+                                <Icon Name="x" Size="13" /> Disconnect
                             </Btn>
                         </td>
                     </tr>
                 }
-                @if (_runners.Count == 0) { <tr><td colspan="@(_isAdmin ? 5 : 4)" class="data-empty">No runners yet — register one above.</td></tr> }
+                @if (_runners.Count == 0) { <tr><td colspan="@(_isAdmin ? 5 : 4)" class="data-empty">No computers connected yet — connect one above.</td></tr> }
             </tbody>
         </table>
         </Panel>
@@ -611,7 +582,7 @@ else if (_tab == Tab.Sessions)
     @if (_sessions is null) { <Spinner /> }
     else
     {
-        <Panel Title="@(_isAdmin ? "Sessions (all members)" : "My Sessions")">
+        <Panel Title="@(_isAdmin ? "Tasks (all members)" : "Your tasks")">
         <table class="data-table">
             <thead>
                 <tr>
@@ -644,7 +615,7 @@ else if (_tab == Tab.Sessions)
                                 {
                                     <div class="board-session-repo">
                                         <code>@r.Owner/@r.Repo</code>
-                                        <Badge>@r.Status</Badge>
+                                        <Badge>@PlainStatus(r.Status)</Badge>
                                         @if (!string.IsNullOrEmpty(r.PrUrl))
                                         {
                                             <a href="@r.PrUrl" target="_blank" rel="noopener">PR</a>
@@ -666,7 +637,7 @@ else if (_tab == Tab.Sessions)
                             }
                         </td>
                         @if (_isAdmin) { <td><code>@(string.IsNullOrEmpty(s.MemberUserId) ? "—" : s.MemberUserId)</code></td> }
-                        <td><Badge>@s.Status</Badge></td>
+                        <td><Badge>@PlainStatus(s.Status)</Badge></td>
                         <td>@s.CreatedAtUtc.ToString("u")</td>
                         <td class="actions">
                             @* A failed session can be run again in place (after fixing what its error says) instead of being
@@ -702,7 +673,7 @@ else if (_tab == Tab.Sessions)
                         </tr>
                     }
                 }
-                @if (_sessions.Count == 0) { <tr><td colspan="@(_isAdmin ? 7 : 6)" class="data-empty">No sessions yet. Open a board and start one from a ticket.</td></tr> }
+                @if (_sessions.Count == 0) { <tr><td colspan="@(_isAdmin ? 7 : 6)" class="data-empty">No tasks yet. Open a project and pick "Work on this" on a ticket.</td></tr> }
             </tbody>
         </table>
         </Panel>
@@ -712,12 +683,12 @@ else if (_tab == Tab.Sessions)
 @* ── Work dialog: pick which repo(s) the ticket maps to ──────────────────────────────────── *@
 <Dialog Show="_showWorkDialog" Title="@($"Work on #{_workTicket?.Number}")" OnClose="CloseWorkDialog">
     <ChildContent>
-        <p class="muted">Pick the repositories this ticket spans. The AI works each one and opens a PR per repo.</p>
+        <p class="muted">Pick the code projects this task touches. The AI prepares a proposed change in each one for you to review.</p>
         <div class="board-repo-picker">
             @foreach (var opt in _workRepoOptions)
             {
                 <label class="board-repo-option">
-                    <input type="checkbox" @bind="opt.Selected" aria-label="@($"Include {opt.Owner}/{opt.Repo} in this session")" />
+                    <input type="checkbox" @bind="opt.Selected" aria-label="@($"Include {opt.Owner}/{opt.Repo} in this task")" />
                     <code>@opt.Owner/@opt.Repo</code>
                     <span class="muted">@opt.DefaultBranch</span>
                 </label>
@@ -727,40 +698,11 @@ else if (_tab == Tab.Sessions)
                 <p class="muted">No repositories available — add one under the board first.</p>
             }
         </div>
-        <label class="board-ai-toggle" style="margin-top:var(--space-3)">
-            Engine
-            <select @bind="_brain" @bind:after="OnBrainChanged" class="prefs-input" style="width:auto;margin-left:var(--space-2)">
-                <option value="Quick">Quick — runner edit loop</option>
-                <option value="Quality">Quality — 5-agent pipeline</option>
-            </select>
-        </label>
-        @if (_brain == "Quality")
-        {
-            <p class="muted board-form-hint">Quality runs the 5-agent SDLC pipeline server-side — up to @QualityNMax() QA iteration(s), higher server-token cost. Greenfield feature tickets only; bug/edit tickets are refused.</p>
-        }
-        <label class="board-ai-toggle" style="margin-top:var(--space-3)">
-            <input type="checkbox" @bind="_runOnMachine" disabled="@(_brain == "Quality")" aria-label="Run on my machine" />
-            Run on my machine — your paired runner's CLI does the work (0 server tokens)
-        </label>
-        @if (_runOnMachine)
-        {
-            <label class="board-ai-toggle" style="margin:0 0 var(--space-3)">
-                CLI agent
-                <select @bind="_cliProfile" class="prefs-input" style="width:auto;margin-left:var(--space-2)">
-                    <option value="claude">Claude Code</option>
-                    <option value="codex">Codex</option>
-                </select>
-            </label>
-            @MachineScopeHint
-        }
-        @if (_runOnMachine && !HasRunner())
-        {
-            <p class="muted">No paired runner yet — register one in the Runners tab first.</p>
-        }
+        @WhereToWork
     </ChildContent>
     <Footer>
         <Btn OnClick="CloseWorkDialog">Cancel</Btn>
-        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ConfirmWorkSession" Disabled="_busy">Create session</Btn>
+        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ConfirmWorkSession" Disabled="_busy">Start working</Btn>
     </Footer>
 </Dialog>
 
@@ -846,6 +788,54 @@ else if (_tab == Tab.Sessions)
     private IReadOnlyList<WorkspaceRepoEntity>? _ideaRepos;
     private bool _ideaBusy;
     private string? _ideaError;
+    // "Where should the AI work?" — the one question a member answers before a task starts. The engine and the CLI
+    // stay available under Advanced for people who know what they are; the defaults (Fast, Claude Code) fit most.
+    private RenderFragment WhereToWork => @<div class="board-where">
+        <p class="muted board-form-hint"><strong>Where should the AI work?</strong></p>
+        <div class="board-repo-picker" role="radiogroup" aria-label="Where should the AI work?">
+            <label class="board-repo-option">
+                <input type="radio" name="board-where" checked="@(!_runOnMachine)" @onchange="@(() => _runOnMachine = false)" />
+                <span><strong>On our servers</strong> <span class="muted">— nothing to set up</span></span>
+            </label>
+            <label class="board-repo-option">
+                <input type="radio" name="board-where" checked="@_runOnMachine" disabled="@(_brain == "Quality")" @onchange="@(() => _runOnMachine = true)" />
+                <span><strong>On my computer</strong> <span class="muted">— uses your own AI plan, free on our side</span></span>
+            </label>
+        </div>
+        @if (_runOnMachine)
+        {
+            @MachineScopeHint
+            @if (!HasRunner())
+            {
+                <p class="muted board-form-hint">Connect your computer first — open the <strong>Computers</strong> tab.</p>
+            }
+        }
+        <details class="prefs-details">
+            <summary>Advanced</summary>
+            <label class="board-ai-toggle" style="margin-top:var(--space-2)">
+                How thorough
+                <select @bind="_brain" @bind:after="OnBrainChanged" class="prefs-input" style="width:auto;margin-left:var(--space-2)" aria-label="How thorough">
+                    <option value="Quick">Fast — one agent edits the code</option>
+                    <option value="Quality">Thorough — five agents with extra checks (costs more)</option>
+                </select>
+            </label>
+            @if (_brain == "Quality")
+            {
+                <p class="muted board-form-hint">Thorough runs on our servers with up to @QualityNMax() review round(s). For new features only — it won't change existing code.</p>
+            }
+            @if (_runOnMachine)
+            {
+                <label class="board-ai-toggle" style="margin-top:var(--space-2)">
+                    AI helper on your computer
+                    <select @bind="_cliProfile" class="prefs-input" style="width:auto;margin-left:var(--space-2)" aria-label="AI helper on your computer">
+                        <option value="claude">Claude Code</option>
+                        <option value="codex">Codex</option>
+                    </select>
+                </label>
+            }
+        </details>
+    </div>;
+
     // What "Run on my machine" lets the agent do, in words a non-developer can weigh before clicking: the runner
     // grants scoped autonomy for this session only (src/AgentOs.RemoteAgent/ScopedAutonomy.cs).
     private static readonly RenderFragment MachineScopeHint = @<p class="muted board-form-hint" data-testid="machine-scope-hint">
@@ -1683,9 +1673,35 @@ else if (_tab == Tab.Sessions)
         }
     }
 
-    private IReadOnlyList<SessionRepoEntity> SessionReposFor(Guid sessionId) =>
-        _sessionRepos?.Where(r => r.SessionId == sessionId).OrderBy(r => r.Owner).ThenBy(r => r.Repo).ToList()
-        ?? (IReadOnlyList<SessionRepoEntity>)Array.Empty<SessionRepoEntity>();
+    // The Sessions table asks for every row's repos on each render; group them once per load (keyed by the list
+    // instance) instead of rescanning the whole list per row — O(repos) per load, not O(sessions × repos) per render.
+    private IReadOnlyList<SessionRepoEntity>? _sessionReposIndexed;
+    private Dictionary<Guid, SessionRepoEntity[]> _reposBySession = new();
+
+    // Task and repo states in words, not enum names (the stored values stay as they are).
+    private static string PlainStatus(string status) => status switch
+    {
+        "Draft" => "Not started",
+        "Pending" => "Waiting",
+        "Running" => "Working…",
+        "Failed" => "Couldn't finish",
+        "Blocked" => "Needs your review",   // the QA gate refused to open the change
+        "Done" => "Ready for review",
+        "Closed" => "Closed",
+        _ => status,
+    };
+
+    private IReadOnlyList<SessionRepoEntity> SessionReposFor(Guid sessionId)
+    {
+        if (!ReferenceEquals(_sessionReposIndexed, _sessionRepos))
+        {
+            _reposBySession = (_sessionRepos ?? Array.Empty<SessionRepoEntity>())
+                .GroupBy(r => r.SessionId)
+                .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Owner).ThenBy(r => r.Repo).ToArray());
+            _sessionReposIndexed = _sessionRepos;
+        }
+        return _reposBySession.TryGetValue(sessionId, out var repos) ? repos : Array.Empty<SessionRepoEntity>();
+    }
 
     // ── Run session (fire-and-forget AI pipeline) ──────────────────────────────────────────────
 
@@ -1722,6 +1738,7 @@ else if (_tab == Tab.Sessions)
                 failed.Status = "Pending";
                 failed.Error = null;
             }
+            _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
             var all = await Sessions.ListForTenantAsync(_tenantId);
             _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
             Toasts.Show("Board", $"Session #{session.IssueNumber} is running — AI agent dispatched to runner.", ToastKind.Ok);
@@ -1801,8 +1818,8 @@ else if (_tab == Tab.Sessions)
                             var prResult = await prService.CreateFromBranchAsync(
                                 descriptor,
                                 outcome.BranchName,
-                                $"fix: #{capturedSession.IssueNumber} {capturedSession.Title}",
-                                outcome.Summary).ConfigureAwait(false);
+                                AgentOs.Domain.Workspaces.PullRequestText.Title(capturedSession.IssueNumber, capturedSession.Title, capturedSession.TicketType),
+                                AgentOs.Domain.Workspaces.PullRequestText.Body(capturedSession.IssueNumber, outcome.Summary)).ConfigureAwait(false);
 
                             await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, outcome.SessionRepoId,
                                 prResult.Ok ? "Done" : "Failed", outcome.BranchName, prResult.HtmlUrl,

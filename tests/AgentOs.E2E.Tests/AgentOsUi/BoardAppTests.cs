@@ -36,10 +36,10 @@ public sealed class BoardAppTests : IClassFixture<AgentOsPageFixture>
 
         var win = await OpenBoardAsync();
 
-        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "Boards" })).ToBeVisibleAsync();
-        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "Start from idea" })).ToBeVisibleAsync();
-        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "Runners" })).ToBeVisibleAsync();
-        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "Sessions" })).ToBeVisibleAsync();
+        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "Projects" })).ToBeVisibleAsync();
+        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "New idea" })).ToBeVisibleAsync();
+        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "Computers" })).ToBeVisibleAsync();
+        await Assertions.Expect(win.Locator(".board-tab", new() { HasTextString = "Tasks" })).ToBeVisibleAsync();
     }
 
     // The Boards tab shows the connect-a-board form.
@@ -49,7 +49,7 @@ public sealed class BoardAppTests : IClassFixture<AgentOsPageFixture>
         if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
 
         var win = await OpenBoardAsync();
-        await win.Locator(".board-tab", new() { HasTextString = "Boards" }).ClickAsync();
+        await win.Locator(".board-tab", new() { HasTextString = "Projects" }).ClickAsync();
 
         await Assertions.Expect(win.GetByPlaceholder("ghp_… (needs repo + read:project)")).ToBeVisibleAsync();
         await Assertions.Expect(win.GetByRole(AriaRole.Button, new() { Name = "Connect" })).ToBeVisibleAsync();
@@ -65,9 +65,9 @@ public sealed class BoardAppTests : IClassFixture<AgentOsPageFixture>
 
         // Navigate to Runners tab (default is now Boards). Fill a label and register. (The register
         // controls sit in the body interior, clear of the window's thin edge resize-handles.)
-        await win.Locator(".board-tab", new() { HasTextString = "Runners" }).ClickAsync();
-        await win.GetByPlaceholder("Hoang's laptop").FillAsync("CI test runner");
-        await win.GetByRole(AriaRole.Button, new() { Name = "Register runner" }).ClickAsync();
+        await win.Locator(".board-tab", new() { HasTextString = "Computers" }).ClickAsync();
+        await win.GetByPlaceholder("My laptop").FillAsync("CI test runner");
+        await win.GetByRole(AriaRole.Button, new() { Name = "Connect this computer" }).ClickAsync();
 
         var token = win.Locator(".cred-readout textarea");
         await Assertions.Expect(token).ToBeVisibleAsync();
