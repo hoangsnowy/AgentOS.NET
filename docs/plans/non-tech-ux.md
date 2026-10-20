@@ -10,7 +10,7 @@ non-technical user against effort.
 
 | # | Change | Borrowed from | Effort | Status |
 |---|---|---|---|---|
-| 1 | **Failure card + "Fix it for me"** — classify a failed task (no AI account, computer offline, GitHub access expired, build failed, tests failed, agents couldn't agree), show what happened + one primary action, raw text under *Details*; cap automatic retries at 3, then "This needs a person". | Lovable "Try to fix", Bolt auto-fix | M | *Try again* shipped (#228) |
+| 1 | **Failure card + "Fix it for me"** — classify a failed task (no AI account, computer offline, GitHub access expired, build failed, tests failed, agents couldn't agree), show what happened + one primary action, raw text under *Details*; cap automatic retries at 3, then "This needs a person". | Lovable "Try to fix", Bolt auto-fix | M | *Try again* (#228) + failure card (#231) shipped; auto-retry cap open |
 | 2 | **"Connect this computer" with a code** — download the helper, open it, type a short code; the page turns "Connected ✓" live. Reuses the existing one-time-code exchange (`/runner/pair/exchange`). | Claude Code Remote Control, `gh auth login` device codes | M | |
 | 3 | **Plain-language progress** — fixed steps (Understanding → Planning → Writing the code → Checking it builds → Testing → Ready for you) instead of a timestamped log; *Stop* and *Tell the agent something*; raw log one click away. | Copilot session logs, Replit checkpoints | M | *Stop* shipped (#230) |
 | 4 | **Plan first by default** — Home's main action is "Show me a plan" → "Looks good — build it"; auto-pick the board/repo when there is one. | Replit / Lovable Plan mode | M | |

@@ -2694,6 +2694,15 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 /* "Where should the AI work?" — two choice rows (reuse .board-repo-option), the scope hint, Advanced. Wraps at phone width. */
 .board-where { margin-top: var(--space-3); }
 .board-where .board-ai-toggle { white-space: normal; flex-wrap: wrap; }
+/* Failed task card (TaskFailure): headline, one line of advice, one action, raw text under Details. */
+.board-failure {
+  display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-left: 3px solid var(--err); border-radius: var(--radius-sm);
+  background: var(--bg-2); font-size: var(--fs-xs); white-space: normal; max-width: 60ch;
+}
+.board-failure-actions { display: flex; align-items: flex-start; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-1); }
+.board-failure-details { margin-top: 0; }
+.board-failure-details pre { white-space: pre-wrap; word-break: break-word; max-height: 12rem; overflow: auto; font-size: 11px; }
 
 /* ===== Brand mark (BrandMark.razor) — the AgentOS.NET product icon =====
    An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once
