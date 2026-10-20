@@ -40,6 +40,7 @@ public sealed class RemoteAgentTransport : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _broker.Dispatched += OnDispatched;
+        _broker.Cancelled += OnCancelled;
         _broker.ToolCallDispatched += OnToolCallDispatched;
         return Task.CompletedTask;
     }
@@ -48,6 +49,7 @@ public sealed class RemoteAgentTransport : IHostedService
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _broker.Dispatched -= OnDispatched;
+        _broker.Cancelled -= OnCancelled;
         _broker.ToolCallDispatched -= OnToolCallDispatched;
         return Task.CompletedTask;
     }
@@ -73,6 +75,22 @@ public sealed class RemoteAgentTransport : IHostedService
         catch (System.IO.IOException ex) { _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
         catch (InvalidOperationException ex) { _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
         catch (TimeoutException ex) { _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
+    }
+
+    // Stop / timeout: tell the runner to kill the CLI run. Best effort — a runner that is already gone has nothing
+    // left to kill, and an older runner without a "Cancel" handler ignores the message.
+    private void OnCancelled(RemoteCancel cancel) => _ = PushCancelAsync(cancel);
+
+    private async Task PushCancelAsync(RemoteCancel cancel)
+    {
+        try
+        {
+            await _hub.Clients.Client(cancel.ConnectionId).SendAsync("Cancel", cancel.RequestId).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HubException or System.IO.IOException or InvalidOperationException or TimeoutException)
+        {
+            _logger.LogWarning(ex, "[RemoteAgent] could not deliver cancel for request {Id}.", cancel.RequestId);
+        }
     }
 
     // ── M4: bidirectional tool-call dispatch ──

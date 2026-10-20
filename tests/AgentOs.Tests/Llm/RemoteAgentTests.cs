@@ -60,6 +60,53 @@ public class RemoteAgentTests
         result.Content.ShouldBe("result text");
     }
 
+    // Stop: the caller's token cancels the dispatch AND tells the runner to kill the work (it would run on unseen).
+    [Fact]
+    public async Task Broker_CallerCancels_RaisesCancelledForThatRunner()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", Conn());
+        RemoteCancel? cancelled = null;
+        broker.Cancelled += c => cancelled = c;
+        using var stop = new CancellationTokenSource();
+
+        var task = broker.DispatchAsync(new RemoteExecRequest("id-stop", "sys", "user", "model"), Target(), TimeSpan.FromMinutes(5), stop.Token);
+        await stop.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(task);
+        cancelled.ShouldBe(new RemoteCancel("id-stop", "conn-1"));
+    }
+
+    [Fact]
+    public async Task Broker_Timeout_RaisesCancelled()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", Conn());
+        RemoteCancel? cancelled = null;
+        broker.Cancelled += c => cancelled = c;
+
+        await Should.ThrowAsync<TimeoutException>(
+            broker.DispatchAsync(new RemoteExecRequest("id-late", "sys", "user", "model"), Target(), TimeSpan.FromMilliseconds(50)));
+        cancelled.ShouldBe(new RemoteCancel("id-late", "conn-1"));
+    }
+
+    [Fact]
+    public async Task Broker_Completed_NeverRaisesCancelled()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", Conn());
+        var cancelled = false;
+        broker.Cancelled += _ => cancelled = true;
+        using var stop = new CancellationTokenSource();
+
+        var task = broker.DispatchAsync(new RemoteExecRequest("id-ok", "sys", "user", "model"), Target(), TimeSpan.FromSeconds(5), stop.Token);
+        broker.Complete(new RemoteExecResult("id-ok", true, "done", null));
+        (await task).Ok.ShouldBeTrue();
+        await stop.CancelAsync();
+
+        cancelled.ShouldBeFalse();
+    }
+
     [Fact]
     public async Task Broker_NoRunner_DispatchThrows()
     {

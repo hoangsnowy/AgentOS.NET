@@ -79,6 +79,17 @@ connection.On<RemoteExecRequest>("Execute", async request =>
         : $"[agent] -> {request.Id} ok=False: {result.Error}");
 });
 
+// Stop — the server abandoned a request (the member pressed Stop, or it timed out): kill that CLI run's whole
+// process tree (git, dotnet, npm children included). Unknown id = already finished; nothing to do.
+connection.On<string>("Cancel", requestId =>
+{
+    if (RunningCli.TryRemove(requestId, out var process))
+    {
+        try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* exited meanwhile */ }
+        Console.WriteLine($"[agent] -> {requestId} stopped by the server");
+    }
+});
+
 // M4 — server-driven tool execution
 connection.On<RunnerToolCall>("ExecuteToolCall", async call =>
 {
@@ -147,6 +158,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{cmd}'. Is the {cli} CLI installed and on PATH?");
+        RunningCli[request.Id] = process;
 
         if (profile.PromptViaStdin)
         {
@@ -176,6 +188,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
     catch (TimeoutException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
     finally
     {
+        RunningCli.TryRemove(request.Id, out _);
         if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
     }
 }
@@ -349,6 +362,12 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
     catch (InvalidOperationException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
     catch (TimeoutException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
     catch (JsonException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
+}
+
+// CLI runs in flight, by request id — what a "Cancel" from the server kills.
+internal static partial class Program
+{
+    internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Process> RunningCli = new(StringComparer.Ordinal);
 }
 
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
