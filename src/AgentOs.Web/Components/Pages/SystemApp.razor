@@ -69,7 +69,7 @@
                         <span class="prefs-range-val">@_glass%</span>
                     </div>
                 </div>
-                <div class="prefs-row">
+                <div class="prefs-row" data-restored="@(_restored ? "true" : "false")">
                     <div class="prefs-label"><strong>Animations</strong><br /><span class="prefs-hint">Agent characters act out their run state and icons move when you point at them. Off keeps every state visible, stops the motion; the OS reduce-motion setting always wins.</span></div>
                     <Toggle Checked="_agentMotion" Title="Animations" CheckedChanged="OnAgentMotionChanged" />
                 </div>
@@ -140,6 +140,9 @@
     private string _wall = "enterprise-light";
     private int _glass = 0;
     private bool _agentMotion = true;
+    // The browser-stored preferences arrive after the first render; until then a click must not be lost to them.
+    private bool _restored;
+    private bool _agentMotionTouched;
 
     // Date & time
     private bool _clock24 = true;
@@ -179,7 +182,9 @@
             _theme = await JS.InvokeAsync<string>("agenticTheme.getTheme");
             _wall = await JS.InvokeAsync<string>("agenticTheme.getWallpaper");
             _glass = await JS.InvokeAsync<int>("agenticTheme.getGlass");
-            _agentMotion = await JS.InvokeAsync<string>("agenticTheme.getAgentMotion") != "off";
+            var storedMotion = await JS.InvokeAsync<string>("agenticTheme.getAgentMotion") != "off";
+            // A click that landed while preferences were loading wins over the stored value it would otherwise undo.
+            if (!_agentMotionTouched) { _agentMotion = storedMotion; }
 
             // Reflect the live singleton state (restored at shell start by AppShellLayout).
             _notifs = Toasts.ShowToasts;
@@ -191,6 +196,7 @@
             _clockSeconds = (await JS.InvokeAsync<string?>("localStorage.getItem", "pref-clock-seconds")) != "0";
 
             UpdatePreview();
+            _restored = true;
             StateHasChanged();
         }
     }
@@ -286,6 +292,7 @@
 
     private async Task OnAgentMotionChanged(bool v)
     {
+        _agentMotionTouched = true;
         _agentMotion = v;
         await JS.InvokeVoidAsync("agenticTheme.applyAgentMotion", v ? "on" : "off");
     }

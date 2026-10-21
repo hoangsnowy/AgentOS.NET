@@ -22,6 +22,8 @@ public sealed class AgentMotionTests : IClassFixture<AgentOsPageFixture>
         var win = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Settings");
         await win.Locator(".prefs-cat", new() { HasTextString = "Appearance" }).ClickAsync();
+        // The stored preferences load after the first render; clicking before that raced them (flaky on CI).
+        await Assertions.Expect(win.Locator(".prefs-row[data-restored=\"true\"]")).ToBeVisibleAsync();
         return win.Locator("label.toggle[title=\"Animations\"]");
     }
 
