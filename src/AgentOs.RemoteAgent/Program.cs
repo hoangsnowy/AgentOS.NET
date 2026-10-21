@@ -8,6 +8,8 @@
 //       on the server; the runner only provides the execution environment.
 //
 // Configure via environment variables:
+//   (none needed)       after `AgentOs.RemoteAgent pair <server> <code>` (Board › Computers › Connect this computer):
+//                       the credentials are saved for this OS user (RunnerCredentials.cs); the variables below override them
 //   REMOTE_AGENT_HUB    hub URL      (default https://localhost:5080/hubs/remote-agent)
 //   REMOTE_AGENT_ID     runner id    (the Guid returned by POST /runners)
 //   REMOTE_AGENT_TOKEN  pairing token (the plaintext returned ONCE by POST /runners)
@@ -52,9 +54,39 @@ var commandTimeout = TimeSpan.FromSeconds(int.TryParse(Environment.GetEnvironmen
 var approvedForSession = new HashSet<string>(StringComparer.Ordinal);
 var approvalGate = new SemaphoreSlim(1, 1);
 
-var hubUrl = Environment.GetEnvironmentVariable("REMOTE_AGENT_HUB") ?? "https://localhost:5080/hubs/remote-agent";
-var runnerId = Environment.GetEnvironmentVariable("REMOTE_AGENT_ID") ?? "";
-var token = Environment.GetEnvironmentVariable("REMOTE_AGENT_TOKEN") ?? "";
+// `AgentOs.RemoteAgent pair <server> <code>` — the Board › Computers flow: trade the one-time code for this runner's
+// credentials, remember them for this OS user, and connect. Later starts need no arguments and no environment.
+var credentialsPath = AgentOs.RemoteAgent.RunnerCredentials.DefaultPath();
+if (args.Length > 0 && string.Equals(args[0], "pair", StringComparison.OrdinalIgnoreCase))
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine("Usage: AgentOs.RemoteAgent pair <server address> <code>   (both are shown on Board › Computers)");
+        Environment.Exit(2);
+    }
+    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    AgentOs.RemoteAgent.RunnerCredentials? paired;
+    try { paired = await AgentOs.RemoteAgent.RunnerCredentials.ExchangeAsync(http, args[1], args[2]).ConfigureAwait(false); }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
+    {
+        Console.WriteLine($"[agent] Could not reach {args[1]}: {ex.Message}");
+        Environment.Exit(1);
+        return;
+    }
+    if (paired is null)
+    {
+        Console.WriteLine("[agent] That code didn't work — it is used once and lasts 10 minutes. Make a new one on Board › Computers.");
+        Environment.Exit(1);
+        return;
+    }
+    paired.Save(credentialsPath);
+    Console.WriteLine($"[agent] Paired and remembered ({credentialsPath}). Next time just run AgentOs.RemoteAgent.");
+}
+var saved = AgentOs.RemoteAgent.RunnerCredentials.Load(credentialsPath);
+
+var hubUrl = Environment.GetEnvironmentVariable("REMOTE_AGENT_HUB") ?? saved?.HubUrl ?? "https://localhost:5080/hubs/remote-agent";
+var runnerId = Environment.GetEnvironmentVariable("REMOTE_AGENT_ID") ?? saved?.RunnerId ?? "";
+var token = Environment.GetEnvironmentVariable("REMOTE_AGENT_TOKEN") ?? saved?.Token ?? "";
 
 var connection = new HubConnectionBuilder()
     .WithUrl(hubUrl, options =>

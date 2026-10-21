@@ -69,8 +69,11 @@ public sealed class BoardAppTests : IClassFixture<AgentOsPageFixture>
         await win.GetByPlaceholder("My laptop").FillAsync("CI test runner");
         await win.GetByRole(AriaRole.Button, new() { Name = "Connect this computer" }).ClickAsync();
 
+        // The member sees one command with a typed code; the raw values sit under "Set it up by hand".
+        var command = win.Locator("[data-testid=pair-command]");
+        await Assertions.Expect(command).ToBeVisibleAsync();
+        await Assertions.Expect(command).ToHaveTextAsync(new System.Text.RegularExpressions.Regex(@"AgentOs\.RemoteAgent pair \S+ [2-9A-Z]{4}-[2-9A-Z]{4}$"));
         var token = win.Locator(".cred-readout textarea");
-        await Assertions.Expect(token).ToBeVisibleAsync();
         await Assertions.Expect(token).ToContainTextAsync("REMOTE_AGENT_TOKEN");
         await Assertions.Expect(token).ToContainTextAsync("REMOTE_AGENT_ID");
     }

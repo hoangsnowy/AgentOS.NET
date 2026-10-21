@@ -27,13 +27,18 @@ public static class PairingEndpoints
     private static readonly string[] AllowedCallbackSchemes =
         ["vscode://", "vscode-insiders://", "vscodium://", "cursor://", "windsurf://"];
 
+    /// <summary>Rate-limiter policy name the host must register for the code exchange.</summary>
+    public const string ExchangeRateLimitPolicy = "pairing-exchange";
+
     public static void MapPairingEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
         endpoints.MapGet("/pair/vscode", ApprovePage).RequireAuthorization("Member");
         endpoints.MapPost("/pair/vscode", ApproveAsync).RequireAuthorization("Member").DisableAntiforgery();
-        endpoints.MapPost("/runner/pair/exchange", ExchangeAsync); // anonymous — gated by the one-time code
+        // Anonymous — gated by the one-time code. A typed code is short (≈39 bits), so the host rate-limits this
+        // route per client under ExchangeRateLimitPolicy (the Web registers it).
+        endpoints.MapPost("/runner/pair/exchange", ExchangeAsync).RequireRateLimiting(ExchangeRateLimitPolicy);
     }
 
     // The branded approve page. Self-contained HTML so it renders without the Blazor shell.

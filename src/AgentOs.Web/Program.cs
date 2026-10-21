@@ -268,6 +268,21 @@ builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.
 builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.SmtpProbe>();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.SystemStatusService>();
 
+// The anonymous pairing-code exchange: a typed code is short, so each client gets a handful of tries a minute.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy(AgentOs.Modules.Sessions.Endpoints.PairingEndpoints.ExchangeRateLimitPolicy, http =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+});
+
 var app = builder.Build();
 
 await app.Services.InitializeModulesAsync();
@@ -307,6 +322,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.UseAntiforgery();
 
 // Tenant + traceId on every log line written during the request (after auth: needs the claim).
