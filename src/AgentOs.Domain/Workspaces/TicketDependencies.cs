@@ -28,18 +28,11 @@ public static partial class TicketDependencies
     public static IReadOnlyList<int> Parse(string? body)
     {
         if (string.IsNullOrWhiteSpace(body)) { return []; }
-        var result = new SortedSet<int>();
-        foreach (Match line in DependencyLine().Matches(body))
-        {
-            foreach (Match number in IssueRef().Matches(line.Groups["refs"].Value))
-            {
-                if (int.TryParse(number.Groups["n"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n > 0)
-                {
-                    result.Add(n);
-                }
-            }
-        }
-        return [.. result];
+        var numbers = DependencyLine().Matches(body)
+            .SelectMany(line => IssueRef().Matches(line.Groups["refs"].Value))
+            .Select(m => int.TryParse(m.Groups["n"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : 0)
+            .Where(n => n > 0);
+        return [.. new SortedSet<int>(numbers)];
     }
 
     /// <summary>
@@ -49,18 +42,7 @@ public static partial class TicketDependencies
     public static IReadOnlyList<int> CreationOrder(int count, Func<int, IReadOnlyList<int>?> dependsOn)
     {
         ArgumentNullException.ThrowIfNull(dependsOn);
-        var edges = new List<int>[count];
-        var indegree = new int[count];
-        for (var i = 0; i < count; i++) { edges[i] = []; }
-        for (var i = 0; i < count; i++)
-        {
-            foreach (var d in (dependsOn(i) ?? []).Distinct())
-            {
-                if (d < 0 || d >= count || d == i) { continue; }
-                edges[d].Add(i);
-                indegree[i]++;
-            }
-        }
+        var (edges, indegree) = Graph(count, dependsOn);
         var ready = new PriorityQueue<int, int>();
         for (var i = 0; i < count; i++) { if (indegree[i] == 0) { ready.Enqueue(i, i); } }
         var order = new List<int>(count);
@@ -77,6 +59,24 @@ public static partial class TicketDependencies
         // Whatever is left sits on a cycle: append in index order (their cyclic edges are then ignored).
         for (var i = 0; i < count; i++) { if (!placed[i]) { order.Add(i); } }
         return order;
+    }
+
+    // Adjacency (dependency → dependants) and in-degrees, keeping only edges between distinct, in-range tickets.
+    private static (List<int>[] Edges, int[] Indegree) Graph(int count, Func<int, IReadOnlyList<int>?> dependsOn)
+    {
+        var edges = new List<int>[count];
+        var indegree = new int[count];
+        for (var i = 0; i < count; i++) { edges[i] = []; }
+        for (var i = 0; i < count; i++)
+        {
+            var self = i;
+            foreach (var d in (dependsOn(i) ?? []).Distinct().Where(d => d >= 0 && d < count && d != self))
+            {
+                edges[d].Add(i);
+                indegree[i]++;
+            }
+        }
+        return (edges, indegree);
     }
 
     [GeneratedRegex(@"^[ \t>*_-]*(?:\*\*)?(?:depends on|blocked by|requires)(?:\*\*)?\s*:?\s*(?<refs>.+)$", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant)]

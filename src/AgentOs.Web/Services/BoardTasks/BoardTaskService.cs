@@ -253,12 +253,11 @@ public sealed class BoardTaskService(
         {
             using var scope = scopes.CreateScope();
             var sessRepo = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
-            foreach (var child in await sessRepo.ListReposForTenantAsync(tenantId, sessionId).ConfigureAwait(false))
+            var unfinished = (await sessRepo.ListReposForTenantAsync(tenantId, sessionId).ConfigureAwait(false))
+                .Where(child => child.Status is "Pending" or "Running");
+            foreach (var child in unfinished)
             {
-                if (child.Status is "Pending" or "Running")
-                {
-                    await sessRepo.UpdateRepoRunResultAsync(tenantId, child.Id, "Failed", null, null, "Stopped").ConfigureAwait(false);
-                }
+                await sessRepo.UpdateRepoRunResultAsync(tenantId, child.Id, "Failed", null, null, "Stopped").ConfigureAwait(false);
             }
             await sessRepo.UpdateRunResultAsync(tenantId, sessionId, "Failed", null, stopped).ConfigureAwait(false);
         }
