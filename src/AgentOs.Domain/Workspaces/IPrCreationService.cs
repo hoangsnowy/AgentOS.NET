@@ -13,6 +13,19 @@ namespace AgentOs.Domain.Workspaces;
 /// <param name="Error">Failure reason; null when <see cref="Ok"/> is true.</param>
 public sealed record PrCreationResult(bool Ok, int? Number, string? HtmlUrl, string? Error);
 
+/// <summary>The combined state of a pull request's checks on its latest commit.</summary>
+public enum PrChecksState
+{
+    /// <summary>No checks reported (none configured, or not started yet).</summary>
+    None,
+    /// <summary>At least one check still running, none failed.</summary>
+    Pending,
+    /// <summary>At least one check failed, timed out or was cancelled.</summary>
+    Failed,
+    /// <summary>Every check completed successfully (or was skipped/neutral).</summary>
+    Passed,
+}
+
 /// <summary>Where an opened pull request stands now (<see cref="IPrCreationService.GetStateAsync"/>).</summary>
 public enum PrState
 {
@@ -49,4 +62,12 @@ public interface IPrCreationService
     /// failed or the provider can't tell. Never throws.</summary>
     Task<string> GetFailedChecksAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult(string.Empty);
+
+    /// <summary>The combined state of pull request <paramref name="number"/>'s checks. Never throws; None when unknown.</summary>
+    Task<PrChecksState> GetChecksStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
+        Task.FromResult(PrChecksState.None);
+
+    /// <summary>Squash-merge pull request <paramref name="number"/> and delete its branch. Null on success, else the reason.</summary>
+    Task<string?> MergeAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
+        Task.FromResult<string?>("Merging is not supported for this provider.");
 }

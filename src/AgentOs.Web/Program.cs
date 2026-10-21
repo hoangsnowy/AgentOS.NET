@@ -238,6 +238,10 @@ builder.Services.AddSingleton<AgentOs.Web.Orchestrations.OrchestrationStore>();
 builder.Services.AddSingleton<AgentOs.Web.Services.TaskStopRegistry>();
 // Board tasks run here, off any circuit — the Board UI and the project orchestrator share it.
 builder.Services.AddSingleton<AgentOs.Web.Services.BoardTasks.BoardTaskService>();
+// The project orchestrator (Autopilot): a pass over every autopilot board each minute, decisions logged per board.
+builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.OrchestratorLog>();
+builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.ProjectOrchestrator>();
+builder.Services.AddHostedService<AgentOs.Web.Services.Orchestration.ProjectOrchestratorWorker>();
 // Per-circuit UI state: each user's desktop has its own open windows. Singleton would bleed windows
 // (and their Z-order) across every connected circuit/user on the server.
 builder.Services.AddScoped<AgentOs.Web.Shell.Services.ToastService>();

@@ -46,4 +46,10 @@ public sealed class WorkspaceEntity
     public string? CreatedByUserId { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
     public string Status { get; set; } = "Connected";
+
+    // Autopilot — what the project orchestrator may do on this board unattended: "Off", "Build" (start approved tickets
+    // in dependency order, fix failing checks) or "BuildAndMerge" (and merge once every check passes). It acts as the
+    // member who switched it on (their computer, their AI plan).
+    public string Autopilot { get; set; } = "Off";
+    public string? AutopilotUserId { get; set; }
 }

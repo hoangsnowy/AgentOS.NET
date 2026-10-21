@@ -57,7 +57,10 @@ public sealed class WorkspacesDbContext : DbContext
             e.Property(x => x.CredentialRef).IsRequired().HasMaxLength(256);
             e.Property(x => x.Status).IsRequired().HasMaxLength(32);
             e.Property(x => x.CreatedAtUtc).IsRequired();
+            e.Property(x => x.Autopilot).IsRequired().HasMaxLength(16).HasDefaultValue("Off");
+            e.Property(x => x.AutopilotUserId).HasMaxLength(64);
             e.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+            e.HasIndex(x => x.Autopilot);
             e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
         });
 

@@ -41,6 +41,58 @@ public sealed class BoardTaskService(
     TaskStopRegistry stops,
     IOptions<PipelineOptions> pipelineOptions)
 {
+    /// <summary>A repo a new task works in (the first one is the task's primary repo).</summary>
+    public sealed record TaskRepo(string Owner, string Repo, string DefaultBranch, Guid? WorkspaceRepoId);
+
+    /// <summary>Create a task (a draft session + its repos) for a ticket, as <paramref name="memberUserId"/>.</summary>
+    public async Task<RemoteSessionEntity> CreateAsync(string tenantId, string memberUserId, Guid boardId, int? issueNumber, string title,
+        string? itemNodeId, string ticketKind, IReadOnlyList<TaskRepo> repos, bool runOnMachine, string brain = "Quick",
+        string? ticketType = null, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentNullException.ThrowIfNull(repos);
+        if (repos.Count == 0) { throw new ArgumentException("A task needs at least one repository.", nameof(repos)); }
+        using var scope = scopes.CreateScope();
+        var sessions = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+        var primary = repos[0];
+        var session = new RemoteSessionEntity
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            WorkspaceId = boardId,
+            MemberUserId = memberUserId,
+            Title = title,
+            Status = "Draft",
+            IssueNumber = issueNumber,
+            RepoOwner = primary.Owner,
+            RepoName = primary.Repo,
+            RepoDefaultBranch = primary.DefaultBranch,
+            BoardItemNodeId = itemNodeId,
+            TicketKind = ticketKind,
+            RunOnMachine = runOnMachine,
+            Brain = brain,
+            TicketType = ticketType,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            CreatedByUserId = string.IsNullOrEmpty(memberUserId) ? null : memberUserId,
+        };
+        await sessions.AddForTenantAsync(session, ct).ConfigureAwait(false);
+        foreach (var r in repos)
+        {
+            await sessions.AddRepoForTenantAsync(new SessionRepoEntity
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                SessionId = session.Id,
+                WorkspaceRepoId = r.WorkspaceRepoId,
+                Owner = r.Owner,
+                Repo = r.Repo,
+                DefaultBranch = r.DefaultBranch,
+                Status = "Pending",
+            }, ct).ConfigureAwait(false);
+        }
+        return session;
+    }
+
     /// <summary>
     /// Start (or restart) a task. With <paramref name="changeRequest"/> it is a follow-up: each repo that already has a
     /// pull request continues on its branch. Returns once the work is under way; the run reports on the session feed.
