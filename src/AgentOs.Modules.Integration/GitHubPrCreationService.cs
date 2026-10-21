@@ -23,6 +23,27 @@ public sealed class GitHubPrCreationService : IPrCreationService
     }
 
     /// <inheritdoc />
+    public async Task<PrState> GetStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return PrState.Unknown; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            ct.ThrowIfCancellationRequested();
+            var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            return pr.Merged ? PrState.Merged
+                : pr.State.Value == ItemState.Closed ? PrState.Closed
+                : PrState.Open;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "PR state lookup failed for {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return PrState.Unknown;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<PrCreationResult> CreateFromBranchAsync(
         WorkspaceDescriptor workspace,
         string branch,

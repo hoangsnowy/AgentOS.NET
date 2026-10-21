@@ -551,7 +551,7 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                 {
                     <tr>
                         <td>@r.Label</td>
-                        @if (_isAdmin) { <td><code>@(string.IsNullOrEmpty(r.OwnerUserId) ? "—" : r.OwnerUserId)</code></td> }
+                        @if (_isAdmin) { <td title="@r.OwnerUserId">@MemberLabel(r.OwnerUserId)</td> }
                         <td><Badge>@(r.Status switch { "Revoked" => "Disconnected", "Pending" => "Waiting to connect", "Paired" => "Ready", _ => r.Status })</Badge></td>
                         <td>@r.CreatedAtUtc.ToString("u")</td>
                         <td class="actions">
@@ -649,13 +649,14 @@ else if (_tab == Tab.Sessions)
                                 <span class="muted">—</span>
                             }
                         </td>
-                        @if (_isAdmin) { <td><code>@(string.IsNullOrEmpty(s.MemberUserId) ? "—" : s.MemberUserId)</code></td> }
+                        @if (_isAdmin) { <td title="@s.MemberUserId">@MemberLabel(s.MemberUserId)</td> }
                         <td><Badge>@PlainStatus(s.Status)</Badge></td>
                         <td>@s.CreatedAtUtc.ToString("u")</td>
                         <td class="actions">
                             @* A failed session can be run again in place (after fixing what its error says) instead of being
                                closed and recreated from the ticket. *@
-                            @if (s.Status is "Draft" or "Failed")
+                            @* The failure card already carries Try again when that is its action — don't show it twice. *@
+                            @if (s.Status == "Draft" || (s.Status == "Failed" && AgentOs.Web.Services.TaskFailure.Explain(s.Error)?.Action != AgentOs.Web.Services.TaskFailureAction.TryAgain))
                             {
                                 <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary"
                                      OnClick="@(() => RunSession(s))"
@@ -978,6 +979,7 @@ else if (_tab == Tab.Sessions)
             var allSessions = await Sessions.ListForTenantAsync(_tenantId);
             _sessions = _isAdmin ? allSessions : allSessions.Where(s => s.MemberUserId == _userId).ToList();
             _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
+            _ = SyncMergedAsync();
         }
         catch (System.Net.Http.HttpRequestException ex) { HandleLoadError(ex); }
         catch (InvalidOperationException ex) { HandleLoadError(ex); }
@@ -1721,6 +1723,61 @@ else if (_tab == Tab.Sessions)
     private IReadOnlyList<SessionRepoEntity>? _sessionReposIndexed;
     private Dictionary<Guid, SessionRepoEntity[]> _reposBySession = new();
 
+    // "Ready for review" rows whose pull request has since been merged → "Done". Only open-PR rows are checked, and
+    // a merged row is written back, so each change costs one GitHub call in its life, on load/refresh only.
+    private async Task SyncMergedAsync()
+    {
+        var pending = (_sessionRepos ?? Array.Empty<SessionRepoEntity>())
+            .Where(r => r.Status == "Done" && !string.IsNullOrEmpty(r.PrUrl))
+            .Take(20)
+            .ToList();
+        if (pending.Count == 0 || _boards is null) { return; }
+        var changed = false;
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var prs = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Workspaces.IPrCreationService>();
+            var sessionsById = (_sessions ?? []).ToDictionary(s => s.Id);
+            var pats = new Dictionary<Guid, string?>();
+            foreach (var repo in pending)
+            {
+                if (!sessionsById.TryGetValue(repo.SessionId, out var session)) { continue; }
+                var board = _boards.FirstOrDefault(b => b.Id == session.WorkspaceId);
+                if (board is null || PrNumber(repo.PrUrl) is not { } number) { continue; }
+                if (!pats.TryGetValue(board.Id, out var pat))
+                {
+                    pat = await ConfigStore.GetForTenantAsync(_tenantId, board.CredentialRef);
+                    pats[board.Id] = pat;
+                }
+                if (string.IsNullOrEmpty(pat)) { continue; }
+                var state = await prs.GetStateAsync(RepoDescriptor(board, _tenantId, repo.Owner, repo.Repo, repo.DefaultBranch, pat), number);
+                if (state != AgentOs.Domain.Workspaces.PrState.Merged) { continue; }
+                await Sessions.UpdateRepoRunResultAsync(_tenantId, repo.Id, "Merged", repo.BranchName, repo.PrUrl, null);
+                await Sessions.RecomputeSessionStatusForTenantAsync(_tenantId, repo.SessionId);
+                changed = true;
+            }
+            if (!changed) { return; }
+            var all = await Sessions.ListForTenantAsync(_tenantId);
+            _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
+            _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
+            await InvokeAsync(StateHasChanged);
+        }
+        // Best effort — the rows simply keep "Ready for review" until the next refresh.
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or System.IO.IOException or TimeoutException or ObjectDisposedException) { _ = ex.Message; }
+    }
+
+    private static int? PrNumber(string? url)
+    {
+        if (string.IsNullOrEmpty(url)) { return null; }
+        var i = url.LastIndexOf("/pull/", StringComparison.Ordinal);
+        return i >= 0 && int.TryParse(url.AsSpan(i + "/pull/".Length).TrimEnd('/'), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
+    }
+
+    // A person, not a GUID: "You" for the signed-in member, else a short id (full id in the cell's tooltip).
+    private string MemberLabel(string? userId) =>
+        string.IsNullOrEmpty(userId) ? "—" : userId == _userId ? "You" : "Member " + userId[..Math.Min(8, userId.Length)];
+
     // Task and repo states in words, not enum names (the stored values stay as they are).
     private static string PlainStatus(string status) => status switch
     {
@@ -1730,6 +1787,7 @@ else if (_tab == Tab.Sessions)
         "Failed" => "Couldn't finish",
         "Blocked" => "Needs your review",   // the QA gate refused to open the change
         "Done" => "Ready for review",
+        "Merged" => "Done",
         "Closed" => "Closed",
         _ => status,
     };
