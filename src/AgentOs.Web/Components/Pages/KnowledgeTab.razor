@@ -1,0 +1,153 @@
+@*
+  Board › Knowledge — what the AI has learned on each project (the knowledge graph, ADR-0008 slice 1): a picture of
+  repo → tickets → proposed changes → lessons, and the lessons as a list a person can pin (always read first) or
+  forget. The list is the table alternative to the picture.
+*@
+@using AgentOs.Domain.Memory
+@using AgentOs.Web.Services.Knowledge
+@inject IServiceScopeFactory ScopeFactory
+@inject AgentOs.Web.Shell.Services.ToastService Toasts
+
+@if (_graph is null)
+{
+    <Spinner />
+}
+else if (_repos.Count == 0)
+{
+    <Panel Title="What the AI has learned">
+        <p class="muted">Nothing yet. As the AI works on your projects, what each ticket changed and every lesson from reviews,
+            failing checks and acceptance tests lands here — and is read back before the next task.</p>
+    </Panel>
+}
+else
+{
+    var lessons = Lessons();
+    <Panel Title="What the AI has learned">
+        <div class="form-grid">
+            <Field Label="Project">
+                <select class="prefs-input" @bind="_repo" aria-label="Project">
+                    @foreach (var r in _repos) { <option value="@r">@r</option> }
+                </select>
+            </Field>
+        </div>
+        @{ var picture = KnowledgeLayout.Compute(_graph, _repo); }
+        <p class="muted board-form-hint">
+            @Count(MemoryKinds.Ticket) ticket(s) · @Count(MemoryKinds.PullRequest) proposed change(s) · @lessons.Count lesson(s)
+        </p>
+        <svg class="knowledge-graph" viewBox="-320 -320 640 640" role="img"
+             aria-label="@($"Knowledge graph of {_repo}: {Count(MemoryKinds.Ticket)} tickets, {Count(MemoryKinds.PullRequest)} changes, {lessons.Count} lessons")">
+            @foreach (var e in picture.Edges)
+            {
+                <line class="kg-edge kg-@e.Rel" x1="@e.X1" y1="@e.Y1" x2="@e.X2" y2="@e.Y2" />
+            }
+            @foreach (var n in picture.Nodes)
+            {
+                <g class="kg-node kg-@n.Node.Kind.ToLowerInvariant() @(n.Node.Pinned ? "kg-pinned" : "")" transform="@($"translate({n.X},{n.Y})")">
+                    <title>@n.Node.Title</title>
+                    <circle r="@(n.Node.Kind == MemoryKinds.Repo ? 22 : n.Node.Kind == MemoryKinds.Lesson ? 8 : 12)" />
+                    @if (n.Node.Kind != MemoryKinds.Lesson)
+                    {
+                        @* Razor reserves <text>; the SVG label is emitted as encoded markup. *@
+                        @Label(n.Node)
+                    }
+                </g>
+            }
+        </svg>
+        <ul class="kg-legend" aria-label="Legend">
+            <li><span class="kg-dot kg-repo"></span> Project</li>
+            <li><span class="kg-dot kg-ticket"></span> Ticket</li>
+            <li><span class="kg-dot kg-pullrequest"></span> Proposed change</li>
+            <li><span class="kg-dot kg-lesson"></span> Lesson</li>
+        </ul>
+    </Panel>
+
+    <Panel Title="@($"Lessons on {_repo}")">
+        @if (lessons.Count == 0)
+        {
+            <p class="muted">No lessons yet — they come from "Ask for changes", failing checks and acceptance tests.</p>
+        }
+        else
+        {
+            <table class="data-table">
+                <thead><tr><th>Lesson</th><th>Learned</th><th class="actions">Actions</th></tr></thead>
+                <tbody>
+                    @foreach (var l in lessons)
+                    {
+                        <tr>
+                            <td>
+                                <strong>@l.Title</strong>
+                                <details class="prefs-details"><summary>Details</summary><pre class="kg-body">@l.Body</pre></details>
+                            </td>
+                            <td title="@l.RecordedAt.ToString("u")">@l.RecordedAt.ToString("yyyy-MM-dd")</td>
+                            <td class="actions">
+                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => Pin(l, !l.Pinned))"
+                                     aria-label="@(l.Pinned ? "Unpin this lesson" : "Pin this lesson — always read first")">
+                                    <Icon Name="star" Size="13" /> @(l.Pinned ? "Unpin" : "Pin")
+                                </Btn>
+                                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => Forget(l))" aria-label="Forget this lesson">
+                                    <Icon Name="x" Size="13" /> Forget
+                                </Btn>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Panel>
+}
+
+@code {
+    [Parameter, EditorRequired] public string TenantId { get; set; } = "";
+
+    private MemoryGraph? _graph;
+    private List<string> _repos = [];
+    private string _repo = "";
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        if (string.IsNullOrEmpty(TenantId)) { _graph = new MemoryGraph([], []); return; }
+        using var scope = ScopeFactory.CreateScope();
+        _graph = await scope.ServiceProvider.GetRequiredService<IMemoryStore>().GraphAsync(TenantId, null, 400);
+        _repos = _graph.Nodes.Where(n => n.RepoKey is not null).Select(n => n.RepoKey!).Distinct().Order().ToList();
+        if (!_repos.Contains(_repo)) { _repo = _repos.FirstOrDefault() ?? ""; }
+    }
+
+    private int Count(string kind) => _graph?.Nodes.Count(n => n.RepoKey == _repo && n.Kind == kind) ?? 0;
+
+    private List<MemoryNode> Lessons() => (_graph?.Nodes ?? [])
+        .Where(n => n.RepoKey == _repo && n.Kind == MemoryKinds.Lesson)
+        .OrderByDescending(n => n.Pinned).ThenByDescending(n => n.RecordedAt).ToList();
+
+    private static MarkupString Label(MemoryNode n) => new(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+        $"<text y=\"{(n.Kind == MemoryKinds.Repo ? 38 : 26)}\">{System.Net.WebUtility.HtmlEncode(Short(n))}</text>"));
+
+    private static string Short(MemoryNode n)
+    {
+        var t = n.Kind == MemoryKinds.Ticket && n.Key.Contains('#', StringComparison.Ordinal) ? "#" + n.Key[(n.Key.LastIndexOf('#') + 1)..]
+            : n.Kind == MemoryKinds.PullRequest && n.Key.Contains("/pull/", StringComparison.Ordinal) ? "PR " + n.Key[(n.Key.LastIndexOf('/') + 1)..]
+            : n.Title;
+        return t.Length > 22 ? t[..22] + "…" : t;
+    }
+
+    private async Task Pin(MemoryNode l, bool pinned)
+    {
+        using (var scope = ScopeFactory.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IMemoryStore>().SetPinnedAsync(TenantId, l.Id, pinned);
+        }
+        Toasts.Show("Knowledge", pinned ? "Pinned — the AI reads it first on this project." : "Unpinned.", AgentOs.Web.Shell.Services.ToastKind.Ok);
+        await LoadAsync();
+    }
+
+    private async Task Forget(MemoryNode l)
+    {
+        using (var scope = ScopeFactory.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IMemoryStore>().ForgetAsync(TenantId, l.Id);
+        }
+        Toasts.Show("Knowledge", "Forgotten — the AI won't use it again.", AgentOs.Web.Shell.Services.ToastKind.Ok);
+        await LoadAsync();
+    }
+}

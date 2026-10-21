@@ -67,6 +67,9 @@
     <button class="board-tab @(_tab == Tab.Autopilot ? "active" : "")" @onclick="@(() => _tab = Tab.Autopilot)">
         <Icon Name="lightning" Size="13" /> Autopilot
     </button>
+    <button class="board-tab @(_tab == Tab.Knowledge ? "active" : "")" @onclick="@(() => _tab = Tab.Knowledge)">
+        <Icon Name="graph" Size="13" /> Knowledge
+    </button>
     @* Was the standalone Terminal app: the runner's live session feed lives next to the sessions it tails. *@
     <button class="board-tab @(_tab == Tab.Log ? "active" : "")" @onclick="@(() => _tab = Tab.Log)">
         <Icon Name="terminal" Size="13" /> Activity
@@ -618,6 +621,10 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
 }
 
 @* ── SESSIONS TAB ──────────────────────────────────────────────────────────────────────────── *@
+else if (_tab == Tab.Knowledge)
+{
+    <KnowledgeTab TenantId="@_tenantId" />
+}
 else if (_tab == Tab.Autopilot)
 {
     @* The project orchestrator: what it may do on its own, and what it decided (newest first). *@
@@ -892,7 +899,7 @@ else if (_tab == Tab.Sessions)
 </Dialog>
 
 @code {
-    private enum Tab { Boards, Idea, Runners, Sessions, Log, Files, Autopilot }
+    private enum Tab { Boards, Idea, Runners, Sessions, Log, Files, Autopilot, Knowledge }
 
     /// <summary>Board deep-link tabs (WM.RequestLaunchTab("board", …)): the setup checklist's "Pair" → runners, etc.</summary>
     public static class LaunchTabs

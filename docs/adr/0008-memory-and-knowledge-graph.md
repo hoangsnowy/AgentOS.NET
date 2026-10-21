@@ -1,6 +1,6 @@
 # ADR-0008 — Shared memory and knowledge graph
 
-- **Status:** Proposed (2026-10-17) — implemented in plan Phase 3
+- **Status:** Accepted — slice 1 implemented (2026-10-21, `AgentOs.Modules.Memory`: nodes + edges, full-text recall of lessons, Board › Knowledge); embeddings, repo map and the run blackboard are slice 2+
 - **Deciders:** AgentOS.NET maintainers
 - **Plan:** [Agentic SDLC v2 — Phase 3](../plans/agentic-sdlc-v2.md#phase-3--shared-context-memory-34-weeks) (owner decision D-B: pgvector built-in)
 

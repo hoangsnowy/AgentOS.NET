@@ -5,6 +5,22 @@ and is asked only when a decision is genuinely theirs. The acceptance test is De
 end to end on the lab; anything that still needs a hand edit there is a missing AgentOS feature
 (see the `dogfood-through-agentos` rule).
 
+## Three agentic phases
+
+Every ticket flows through three phases (owner, 2026-10-21); the knowledge graph is the memory they share.
+
+| Phase | The agents… | Today | Missing |
+|---|---|---|---|
+| **1. Agentic Discovery** | idea → research → spec → tickets with acceptance criteria and dependencies | New idea → spec → tickets, dependencies (#240) | a research agent (market / UX / technical), reading the customer's own documents, asking back when the idea is ambiguous |
+| **2. Agentic Coding** | ticket → code → pull request; continues from review and CI | on a computer or the servers, scoped, Stop, live steps, Ask for changes, Fix the failing checks | autopilot over a board in dependency order |
+| **3. Agentic Testing** | accepts a PR against its criteria: unit tests, Playwright on a real stack, data checks, performance → evidence → merge, or back to Coding with findings | done by hand on the lab | the acceptance agent + merge policy |
+
+**Knowledge graph** (ADR-0008, `AgentOs.Modules.Memory`): Discovery records decisions and requirements, Coding records
+changed files, PRs and review lessons, Testing records failures, fixes and evidence — and each phase reads what the
+others learned. The board shows each ticket's phase (Discovery → Coding → Testing → Done).
+
+## Levels
+
 | Level | The agent… | A person… | State (2026-10-21) |
 |---|---|---|---|
 | **L1** | writes code when asked | runs everything | ✅ |

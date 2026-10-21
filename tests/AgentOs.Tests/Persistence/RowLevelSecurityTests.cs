@@ -38,8 +38,9 @@ public sealed class RowLevelSecurityTests
     {
         // app_config and audit_events hold platform-scope rows (__platform / _platform) read by every tenant.
         RowLevelSecurity.Tables.ShouldNotContain(t => t.Table == "app_config" || t.Table == "audit_events");
-        RowLevelSecurity.Tables.Count.ShouldBe(10);   // + pipeline.scheduled_runs
+        RowLevelSecurity.Tables.Count.ShouldBe(12);   // + pipeline.scheduled_runs, memory.nodes, memory.edges
         RowLevelSecurity.Tables.ShouldContain(("pipeline", "scheduled_runs"));
+        RowLevelSecurity.Tables.ShouldContain(("memory", "nodes"));
     }
 
     [Fact]

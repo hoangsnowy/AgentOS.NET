@@ -42,6 +42,7 @@ public static partial class RowLevelSecurity
         ("sessions", "sessions"), ("sessions", "session_repos"), ("sessions", "runners"),
         ("tools", "tool_invocations"),
         ("workspaces", "workspaces"), ("workspaces", "workspace_repos"),
+        ("memory", "nodes"), ("memory", "edges"),
     ];
 
     private static volatile bool _enabled;
