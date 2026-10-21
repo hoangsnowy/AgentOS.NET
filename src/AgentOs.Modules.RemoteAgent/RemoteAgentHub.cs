@@ -97,6 +97,9 @@ public sealed class RemoteAgentHub : Hub
     /// <summary>Invoked by the runner when it has a result for a dispatched request (M3).</summary>
     public void CompleteRequest(RemoteExecResult result) => _broker.Complete(result);
 
+    /// <summary>Runner → server: the plain step a running request is on (live progress on the Board).</summary>
+    public void ReportProgress(string requestId, string step) => _broker.ReportProgress(requestId, step);
+
     /// <summary>Invoked by the runner when it has finished executing a tool call (M4).</summary>
     public void CompleteToolCall(RunnerToolResult result) => _broker.CompleteToolCall(result);
 }

@@ -61,6 +61,13 @@ public sealed record LlmRequest(
     public string? Autonomy { get; init; }
 
     /// <summary>
+    /// Optional live progress: a paired-runner CLI run reports the plain step it is on (a
+    /// <see cref="AgentOs.Domain.Sessions.TaskSteps"/> key, e.g. <c>"testing"</c>) as it happens. Only
+    /// <c>RemoteAgentLlmClient</c> raises it; other providers ignore it.
+    /// </summary>
+    public System.IProgress<string>? Progress { get; init; }
+
+    /// <summary>
     /// Validates required values. Throws <see cref="System.ArgumentException"/> if invalid.
     /// </summary>
     public void Validate()

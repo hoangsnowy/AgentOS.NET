@@ -46,6 +46,9 @@ public sealed record RemoteDispatch(RemoteExecRequest Request, string Connection
 /// transport tells that runner to kill the work instead of letting it run on unseen.</summary>
 public sealed record RemoteCancel(string RequestId, string ConnectionId);
 
+/// <summary>A running request's current plain step, reported by its runner (a TaskSteps key).</summary>
+public sealed record RemoteProgress(string RequestId, string Step);
+
 // ── M4 bidirectional tool protocol ──────────────────────────────────────────────────────────────
 
 /// <summary>A single tool-execution request sent from the server to the runner. The server's LLM
@@ -90,6 +93,12 @@ public interface IRemoteAgentBroker
     /// <summary>Raised when a dispatched request is abandoned (cancelled by its caller, or timed out).</summary>
     event Action<RemoteCancel>? Cancelled;
 
+    /// <summary>Raised when a runner reports the step a pending request is on.</summary>
+    event Action<RemoteProgress>? Progressed;
+
+    /// <summary>Called by the hub when a runner sends <c>ReportProgress</c>; ignored for requests no one waits for.</summary>
+    void ReportProgress(string requestId, string stepKey);
+
     Task<RemoteExecResult> DispatchAsync(RemoteExecRequest request, RunnerTarget target, TimeSpan timeout, CancellationToken cancellationToken = default);
 
     IDisposable RegisterRunner(string connectionId, RunnerConnection runner);
@@ -125,6 +134,14 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker
 
     public event Action<RemoteDispatch>? Dispatched;
     public event Action<RemoteCancel>? Cancelled;
+    public event Action<RemoteProgress>? Progressed;
+
+    public void ReportProgress(string requestId, string stepKey)
+    {
+        // Only for a request someone is waiting on: an unknown id is a late or forged report.
+        if (string.IsNullOrEmpty(requestId) || string.IsNullOrEmpty(stepKey) || stepKey.Length > 64 || !_pending.ContainsKey(requestId)) { return; }
+        Progressed?.Invoke(new RemoteProgress(requestId, stepKey));
+    }
     public event Action<RunnerToolDispatch>? ToolCallDispatched;
 
     public bool IsConnected(Guid runnerId) => _connections.Values.Any(c => c.RunnerId == runnerId);
