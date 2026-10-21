@@ -152,3 +152,20 @@ public sealed class AutopilotPlannerBranchTests
     public void MergeStateOf_GitHubFlags(bool? mergeable, Octokit.MergeableState? state, PrMergeState expected) =>
         AgentOs.Modules.Integration.GitHubPrCreationService.MergeStateOf(mergeable, state).ShouldBe(expected);
 }
+
+public sealed class AutopilotPlannerTestingSlotTests
+{
+    private static PlanTask Green(int issue, ChangeTesting testing = ChangeTesting.Untested) =>
+        new(Guid.NewGuid(), issue, testing == ChangeTesting.Testing ? "Running" : "Done",
+            [new PlanChange(Guid.NewGuid(), 30 + issue, PrChecksState.Passed, null, testing)], 0);
+
+    // Two acceptance runs on one computer fight over the app's fixed ports — one at a time.
+    [Fact]
+    public void OneAcceptanceRunAtATime()
+    {
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [Green(1), Green(2)])
+            .OfType<AutopilotAction.RunTests>().ShouldHaveSingleItem().IssueNumber.ShouldBe(1);
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [Green(1, ChangeTesting.Testing), Green(2)])
+            .OfType<AutopilotAction.RunTests>().ShouldBeEmpty();
+    }
+}
