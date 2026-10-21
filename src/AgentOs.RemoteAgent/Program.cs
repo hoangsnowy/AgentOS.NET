@@ -27,6 +27,7 @@
 //   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
 //                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
 //   REMOTE_AGENT_TIMEOUT_SECONDS  per shell command (default 600); on expiry the whole process tree is killed
+//   REMOTE_AGENT_MAX_PARALLEL     CLI runs at once on this machine (default 2); more wait their turn
 //
 // A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
 // 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
@@ -65,18 +66,43 @@ var connection = new HubConnectionBuilder()
     .WithAutomaticReconnect()
     .Build();
 
+// The SignalR client runs server→client handlers ONE AT A TIME: a handler that awaited a 15-minute CLI run held back
+// the next task's Execute (whose server-side timeout kept ticking) and every Cancel (Stop never reached the CLI).
+// So handlers only enqueue; the work runs off the receive loop, at most REMOTE_AGENT_MAX_PARALLEL CLI runs at once.
+var maxParallel = int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_MAX_PARALLEL"), out var mp) && mp > 0 ? mp : 2;
+var cliSlots = new SemaphoreSlim(maxParallel, maxParallel);
+
 // M3 — full-prompt LLM dispatch
-connection.On<RemoteExecRequest>("Execute", async request =>
+connection.On<RemoteExecRequest>("Execute", request =>
 {
     Console.WriteLine($"[agent] Execute {request.Id} (model={request.Model})");
-    var result = await RunLlmAsync(request).ConfigureAwait(false);
-    await connection.SendAsync("CompleteRequest", result).ConfigureAwait(false);
-    // Print WHY on failure. Logging only ok=False made every distinct failure — CLI not on PATH, CLI not
-    // logged in, non-zero exit — look identical from the runner console, which is the one place an
-    // operator watches while pairing a machine.
-    Console.WriteLine(result.Ok
-        ? $"[agent] -> {request.Id} ok=True"
-        : $"[agent] -> {request.Id} ok=False: {result.Error}");
+    _ = Task.Run(async () =>
+    {
+        await cliSlots.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // Stopped while it waited for a slot: never start it.
+            var result = CancelledBeforeStart.TryRemove(request.Id, out _)
+                ? new RemoteExecResult(request.Id, false, string.Empty, "Stopped before it started.")
+                : await RunLlmAsync(request).ConfigureAwait(false);
+            await connection.SendAsync("CompleteRequest", result).ConfigureAwait(false);
+            // Print WHY on failure. Logging only ok=False made every distinct failure — CLI not on PATH, CLI not
+            // logged in, non-zero exit — look identical from the runner console, which is the one place an
+            // operator watches while pairing a machine.
+            Console.WriteLine(result.Ok
+                ? $"[agent] -> {request.Id} ok=True"
+                : $"[agent] -> {request.Id} ok=False: {result.Error}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or OperationCanceledException)
+        {
+            Console.WriteLine($"[agent] -> {request.Id} could not report back: {ex.Message}");
+        }
+        finally
+        {
+            cliSlots.Release();
+        }
+    });
+    return Task.CompletedTask;
 });
 
 // Stop — the server abandoned a request (the member pressed Stop, or it timed out): kill that CLI run's whole
@@ -88,15 +114,31 @@ connection.On<string>("Cancel", requestId =>
         try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* exited meanwhile */ }
         Console.WriteLine($"[agent] -> {requestId} stopped by the server");
     }
+    else
+    {
+        // Still waiting for a free slot (or already done — then the entry is never read; bounded by requests sent).
+        CancelledBeforeStart[requestId] = 0;
+    }
 });
 
 // M4 — server-driven tool execution
-connection.On<RunnerToolCall>("ExecuteToolCall", async call =>
+connection.On<RunnerToolCall>("ExecuteToolCall", call =>
 {
     Console.WriteLine($"[agent] ExecuteToolCall {call.ToolCallId} ({call.ToolName})");
-    var result = await ExecuteToolAsync(call, policy, commandTimeout, ApproveAsync).ConfigureAwait(false);
-    await connection.SendAsync("CompleteToolCall", result).ConfigureAwait(false);
-    Console.WriteLine($"[agent] -> {call.ToolCallId} ok={result.Ok}");
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            var result = await ExecuteToolAsync(call, policy, commandTimeout, ApproveAsync).ConfigureAwait(false);
+            await connection.SendAsync("CompleteToolCall", result).ConfigureAwait(false);
+            Console.WriteLine($"[agent] -> {call.ToolCallId} ok={result.Ok}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or OperationCanceledException)
+        {
+            Console.WriteLine($"[agent] -> {call.ToolCallId} could not report back: {ex.Message}");
+        }
+    });
+    return Task.CompletedTask;
 });
 
 await connection.StartAsync().ConfigureAwait(false);
@@ -368,6 +410,9 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
 internal static partial class Program
 {
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Process> RunningCli = new(StringComparer.Ordinal);
+
+    // Requests stopped while they waited for a CLI slot — skipped instead of started.
+    internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> CancelledBeforeStart = new(StringComparer.Ordinal);
 }
 
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
