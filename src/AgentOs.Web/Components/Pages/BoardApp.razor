@@ -64,7 +64,7 @@
     <button class="board-tab @(_tab == Tab.Runners ? "active" : "")" @onclick="@(() => _tab = Tab.Runners)">
         Computers <Badge>@(_runners?.Count(r => r.Status != "Revoked") ?? 0)</Badge>
     </button>
-    <button class="board-tab @(_tab == Tab.Autopilot ? "active" : "")" @onclick="@(() => _tab = Tab.Autopilot)">
+    <button class="board-tab @(_tab == Tab.Autopilot ? "active" : "")" @onclick="ShowAutopilot">
         <Icon Name="lightning" Size="13" /> Autopilot
     </button>
     <button class="board-tab @(_tab == Tab.Knowledge ? "active" : "")" @onclick="@(() => _tab = Tab.Knowledge)">
@@ -665,7 +665,7 @@ else if (_tab == Tab.Autopilot)
                         </Btn>
                     </div>
                 </div>
-                @{ var decisions = OrchestratorLog.Recent(_tenantId, b.Id); }
+                @{ var decisions = _autopilotLog.GetValueOrDefault(b.Id) ?? []; }
                 @if (decisions.Count == 0)
                 {
                     <p class="muted board-form-hint">No decisions yet.</p>
@@ -2231,6 +2231,21 @@ else if (_tab == Tab.Sessions)
     }
 
     // ── Autopilot ────────────────────────────────────────────────────────────────────────────────────
+    private readonly Dictionary<Guid, IReadOnlyList<(DateTimeOffset At, string Text)>> _autopilotLog = new();
+
+    private async Task ShowAutopilot()
+    {
+        _tab = Tab.Autopilot;
+        await LoadAutopilotLogAsync();
+    }
+
+    private async Task LoadAutopilotLogAsync()
+    {
+        foreach (var b in _boards ?? [])
+        {
+            _autopilotLog[b.Id] = await OrchestratorLog.RecentAsync(_tenantId, b.Id);
+        }
+    }
     private async Task SetAutopilot(WorkspaceEntity board, string mode)
     {
         if (!await Workspaces.SetAutopilotForTenantAsync(_tenantId, board.Id, mode, _userId))
@@ -2246,6 +2261,7 @@ else if (_tab == Tab.Sessions)
             "BuildAndMerge" => "Autopilot on: building and merging when all checks pass.",
             _ => "Autopilot off.",
         });
+        await LoadAutopilotLogAsync();
     }
 
     private async Task AutopilotNow(WorkspaceEntity board)
@@ -2256,6 +2272,7 @@ else if (_tab == Tab.Sessions)
             var actions = await Orchestrator.StepAsync(board);
             if (actions.Count == 0) { OrchestratorLog.Add(_tenantId, board.Id, "Checked: nothing to do right now."); }
             await ReloadAll();
+            await LoadAutopilotLogAsync();
         }
         finally
         {

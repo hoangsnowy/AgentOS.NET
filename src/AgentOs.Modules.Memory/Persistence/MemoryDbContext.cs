@@ -80,7 +80,7 @@ public sealed class MemoryDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.RepoKey, x.Kind });
             e.HasGeneratedTsVectorColumn(x => x.SearchVector, "simple", x => new { x.Title, x.Body })
              .HasIndex(x => x.SearchVector).HasMethod("GIN");
-            e.HasQueryFilter(x => _tenant == null || x.TenantId == _tenant.TenantId);
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
         });
 
         modelBuilder.Entity<MemoryEdgeEntity>(e =>
@@ -91,7 +91,7 @@ public sealed class MemoryDbContext : DbContext
             e.Property(x => x.Rel).IsRequired().HasMaxLength(32);
             e.HasIndex(x => new { x.TenantId, x.FromId, x.Rel });
             e.HasIndex(x => new { x.TenantId, x.ToId, x.Rel });
-            e.HasQueryFilter(x => _tenant == null || x.TenantId == _tenant.TenantId);
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
         });
     }
 }

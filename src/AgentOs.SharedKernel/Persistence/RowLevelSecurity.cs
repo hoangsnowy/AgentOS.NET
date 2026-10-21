@@ -41,7 +41,7 @@ public static partial class RowLevelSecurity
         ("pipeline", "pipeline_runs"), ("pipeline", "run_metrics"), ("pipeline", "orchestrations"), ("pipeline", "scheduled_runs"),
         ("sessions", "sessions"), ("sessions", "session_repos"), ("sessions", "runners"),
         ("tools", "tool_invocations"),
-        ("workspaces", "workspaces"), ("workspaces", "workspace_repos"),
+        ("workspaces", "workspaces"), ("workspaces", "workspace_repos"), ("workspaces", "autopilot_events"),
         ("memory", "nodes"), ("memory", "edges"),
     ];
 

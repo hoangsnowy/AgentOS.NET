@@ -23,6 +23,35 @@ namespace AgentOs.Modules.Workspaces.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.AutopilotEventEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("BoardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "BoardId", "AtUtc");
+
+                    b.ToTable("autopilot_events", "workspaces");
+                });
+
             modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.WorkspaceEntity", b =>
                 {
                     b.Property<Guid>("Id")
