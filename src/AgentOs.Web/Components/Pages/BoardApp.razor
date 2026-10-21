@@ -33,6 +33,8 @@
 @inject IServiceScopeFactory ScopeFactory
 @inject AgentOs.Web.Services.TaskStopRegistry StopRegistry
 @inject AgentOs.Web.Services.BoardTasks.BoardTaskService TaskService
+@inject AgentOs.Web.Services.Orchestration.ProjectOrchestrator Orchestrator
+@inject AgentOs.Web.Services.Orchestration.OrchestratorLog OrchestratorLog
 @inject AgentOs.Modules.Sessions.Pairing.IComputerPairingCodes PairingCodes
 @inject AgentOs.Modules.RemoteAgent.IRemoteAgentBroker Broker
 @inject NavigationManager Nav
@@ -61,6 +63,9 @@
     </button>
     <button class="board-tab @(_tab == Tab.Runners ? "active" : "")" @onclick="@(() => _tab = Tab.Runners)">
         Computers <Badge>@(_runners?.Count(r => r.Status != "Revoked") ?? 0)</Badge>
+    </button>
+    <button class="board-tab @(_tab == Tab.Autopilot ? "active" : "")" @onclick="@(() => _tab = Tab.Autopilot)">
+        <Icon Name="lightning" Size="13" /> Autopilot
     </button>
     @* Was the standalone Terminal app: the runner's live session feed lives next to the sessions it tails. *@
     <button class="board-tab @(_tab == Tab.Log ? "active" : "")" @onclick="@(() => _tab = Tab.Log)">
@@ -613,6 +618,64 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
 }
 
 @* ── SESSIONS TAB ──────────────────────────────────────────────────────────────────────────── *@
+else if (_tab == Tab.Autopilot)
+{
+    @* The project orchestrator: what it may do on its own, and what it decided (newest first). *@
+    @if (_boards is null) { <Spinner /> }
+    else if (_boards.Count == 0)
+    {
+        <Panel Title="Autopilot"><p class="muted">Connect a project first — the Projects tab.</p></Panel>
+    }
+    else
+    {
+        @foreach (var b in _boards)
+        {
+            var mode = AgentOs.Web.Services.Orchestration.ProjectOrchestrator.ParseMode(b.Autopilot);
+            <Panel Title="@($"Autopilot · {b.Name}")">
+                <div class="board-where" role="radiogroup" aria-label="@($"What the AI may do on {b.Name} by itself")">
+                    <p class="muted board-form-hint"><strong>What may the AI do on this project by itself?</strong></p>
+                    <div class="board-repo-picker">
+                        <label class="board-repo-option">
+                            <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off)"
+                                   @onchange="@(() => SetAutopilot(b, "Off"))" />
+                            <span><strong>Nothing</strong> <span class="muted">— it only works when you click</span></span>
+                        </label>
+                        <label class="board-repo-option">
+                            <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Build)"
+                                   @onchange="@(() => SetAutopilot(b, "Build"))" />
+                            <span><strong>Build</strong> <span class="muted">— start approved tickets in order, two at a time, and fix failing checks. You merge.</span></span>
+                        </label>
+                        <label class="board-repo-option">
+                            <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.BuildAndMerge)"
+                                   @onchange="@(() => SetAutopilot(b, "BuildAndMerge"))" />
+                            <span><strong>Build and merge</strong> <span class="muted">— also merge each change once all its checks pass.</span></span>
+                        </label>
+                    </div>
+                    <p class="muted board-form-hint">It checks the project every minute, asks you when a fix keeps failing, and never touches tickets marked for a person.</p>
+                    <div class="form-actions">
+                        <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => AutopilotNow(b))" Disabled="@(_busy || mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off)">
+                            <Icon Name="arrow-clockwise" Size="13" /> Check now
+                        </Btn>
+                    </div>
+                </div>
+                @{ var decisions = OrchestratorLog.Recent(_tenantId, b.Id); }
+                @if (decisions.Count == 0)
+                {
+                    <p class="muted board-form-hint">No decisions yet.</p>
+                }
+                else
+                {
+                    <ol class="autopilot-log" aria-label="@($"Autopilot decisions on {b.Name}, newest first")">
+                        @foreach (var (at, text) in decisions)
+                        {
+                            <li><span class="board-activity-time" title="@at.ToString("u")">@Ago(at)</span> @text</li>
+                        }
+                    </ol>
+                }
+            </Panel>
+        }
+    }
+}
 else if (_tab == Tab.Log)
 {
     <div class="board-embed"><TerminalApp /></div>
@@ -825,7 +888,7 @@ else if (_tab == Tab.Sessions)
 </Dialog>
 
 @code {
-    private enum Tab { Boards, Idea, Runners, Sessions, Log, Files }
+    private enum Tab { Boards, Idea, Runners, Sessions, Log, Files, Autopilot }
 
     /// <summary>Board deep-link tabs (WM.RequestLaunchTab("board", …)): the setup checklist's "Pair" → runners, etc.</summary>
     public static class LaunchTabs
@@ -1727,50 +1790,12 @@ else if (_tab == Tab.Sessions)
     // Persist a session (+ its repo rows) for a ticket; returns the entity so the caller can run it.
     // The single source of truth for "ticket → session", shared by Work-on-this, Run-all-ready, and
     // the idea-wizard auto-run. repos[0] is the primary repo.
-    private async Task<RemoteSessionEntity> PersistSessionAsync(
+    private Task<RemoteSessionEntity> PersistSessionAsync(
         Guid workspaceId, int? issueNumber, string title, string? itemNodeId, string ticketKind,
-        IReadOnlyList<RepoOption> repos, bool runOnMachine = false, string brain = "Quick", string? ticketType = null)
-    {
-        var sessionId = Guid.NewGuid();
-        var primary = repos[0];
-        var session = new RemoteSessionEntity
-        {
-            Id = sessionId,
-            TenantId = _tenantId,
-            WorkspaceId = workspaceId,
-            MemberUserId = _userId,
-            Title = title,
-            Status = "Draft",
-            IssueNumber = issueNumber,
-            RepoOwner = primary.Owner,
-            RepoName = primary.Repo,
-            RepoDefaultBranch = primary.DefaultBranch,
-            BoardItemNodeId = itemNodeId,
-            TicketKind = ticketKind,
-            RunOnMachine = runOnMachine,
-            Brain = brain,
-            TicketType = ticketType,
-            CreatedAtUtc = DateTimeOffset.UtcNow,
-            CreatedByUserId = string.IsNullOrEmpty(_userId) ? null : _userId,
-        };
-        await Sessions.AddForTenantAsync(session);
-
-        foreach (var opt in repos)
-        {
-            await Sessions.AddRepoForTenantAsync(new SessionRepoEntity
-            {
-                Id = Guid.NewGuid(),
-                TenantId = _tenantId,
-                SessionId = sessionId,
-                WorkspaceRepoId = opt.WorkspaceRepoId,
-                Owner = opt.Owner,
-                Repo = opt.Repo,
-                DefaultBranch = opt.DefaultBranch,
-                Status = "Pending",
-            });
-        }
-        return session;
-    }
+        IReadOnlyList<RepoOption> repos, bool runOnMachine = false, string brain = "Quick", string? ticketType = null) =>
+        TaskService.CreateAsync(_tenantId, _userId, workspaceId, issueNumber, title, itemNodeId, ticketKind,
+            repos.Select(r => new AgentOs.Web.Services.BoardTasks.BoardTaskService.TaskRepo(r.Owner, r.Repo, r.DefaultBranch, r.WorkspaceRepoId)).ToList(),
+            runOnMachine, brain, ticketType);
 
     // The ticket's `type:*` label (type:feature / type:bug / …), captured so the greenfield router can
     // hard-gate the Quality engine. First match wins; null when the ticket carries no type label.
@@ -2188,6 +2213,39 @@ else if (_tab == Tab.Sessions)
         finally
         {
             _loadingChecks = false;
+        }
+    }
+
+    // ── Autopilot ────────────────────────────────────────────────────────────────────────────────────
+    private async Task SetAutopilot(WorkspaceEntity board, string mode)
+    {
+        if (!await Workspaces.SetAutopilotForTenantAsync(_tenantId, board.Id, mode, _userId))
+        {
+            Toasts.Show("Board", "Couldn't change Autopilot — reload and try again.", ToastKind.Err);
+            return;
+        }
+        board.Autopilot = mode;
+        board.AutopilotUserId = mode == "Off" ? null : _userId;
+        OrchestratorLog.Add(_tenantId, board.Id, mode switch
+        {
+            "Build" => "Autopilot on: building approved tickets in order; you merge.",
+            "BuildAndMerge" => "Autopilot on: building and merging when all checks pass.",
+            _ => "Autopilot off.",
+        });
+    }
+
+    private async Task AutopilotNow(WorkspaceEntity board)
+    {
+        _busy = true;
+        try
+        {
+            var actions = await Orchestrator.StepAsync(board);
+            if (actions.Count == 0) { OrchestratorLog.Add(_tenantId, board.Id, "Checked: nothing to do right now."); }
+            await ReloadAll();
+        }
+        finally
+        {
+            _busy = false;
         }
     }
 

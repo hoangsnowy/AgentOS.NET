@@ -78,6 +78,27 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
         return await QuerySingleAsync(sql, new { tenantId, id }, ct).ConfigureAwait(false);
     }
 
+    public async Task<bool> SetAutopilotForTenantAsync(string tenantId, Guid id, string mode, string? userId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(mode);
+        var row = await _db.Workspaces.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(w => w.Id == id && w.TenantId == tenantId, ct).ConfigureAwait(false);
+        if (row is null) { return false; }
+        row.Autopilot = mode;
+        row.AutopilotUserId = mode == "Off" ? null : userId;
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return true;
+    }
+
+    public async Task<IReadOnlyList<WorkspaceEntity>> ListAutopilotAsync(CancellationToken ct = default)
+    {
+        // Cross-tenant on purpose: the project orchestrator is a platform worker. Explicit bypass, not an empty tenant.
+        using var platform = RowLevelSecurity.Bypass();
+        return await _db.Workspaces.IgnoreQueryFilters().AsNoTracking()
+            .Where(w => w.Autopilot != "Off")
+            .ToListAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task AddForTenantAsync(WorkspaceEntity workspace, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);

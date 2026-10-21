@@ -33,6 +33,12 @@ public interface IWorkspaceRepository
     /// <summary>Persist a board whose <see cref="WorkspaceEntity.TenantId"/> is already set by the caller.</summary>
     Task AddForTenantAsync(WorkspaceEntity workspace, CancellationToken ct = default);
 
+    /// <summary>Switch a board's autopilot ("Off" / "Build" / "BuildAndMerge"), acting as <paramref name="userId"/>.</summary>
+    Task<bool> SetAutopilotForTenantAsync(string tenantId, Guid id, string mode, string? userId, CancellationToken ct = default);
+
+    /// <summary>Every board with autopilot on, across tenants — for the project orchestrator only (a platform worker).</summary>
+    Task<IReadOnlyList<WorkspaceEntity>> ListAutopilotAsync(CancellationToken ct = default);
+
     // ── Repos under a board ──────────────────────────────────────────────────────────────────────
 
     /// <summary>List the repos connected under a board, for an explicit tenant.</summary>

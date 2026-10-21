@@ -4,6 +4,7 @@
 // tenant-global IRuntimeOverrides — correct grain for the Board per-workspace flow.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -78,6 +79,66 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         {
             _logger.LogWarning(ex, "Failed-check lookup failed for {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
             return string.Empty;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<PrChecksState> GetChecksStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return PrChecksState.None; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            var runs = (await client.Check.Run.GetAllForReference(workspace.Owner, workspace.Repo, pr.Head.Sha).ConfigureAwait(false)).CheckRuns;
+            return Combine(runs.Select(r => (r.Status.Value, r.Conclusion?.Value)));
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Check-state lookup failed for {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return PrChecksState.None;
+        }
+    }
+
+    /// <summary>Failed beats running beats passed; nothing reported is None.</summary>
+    internal static PrChecksState Combine(IEnumerable<(CheckStatus Status, CheckConclusion? Conclusion)> runs)
+    {
+        var any = false;
+        var pending = false;
+        foreach (var (status, conclusion) in runs)
+        {
+            any = true;
+            if (status != CheckStatus.Completed) { pending = true; continue; }
+            if (conclusion is CheckConclusion.Failure or CheckConclusion.TimedOut or CheckConclusion.Cancelled or CheckConclusion.ActionRequired)
+            {
+                return PrChecksState.Failed;
+            }
+        }
+        return !any ? PrChecksState.None : pending ? PrChecksState.Pending : PrChecksState.Passed;
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> MergeAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return "Merging is not supported for this provider."; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            var merged = await client.PullRequest.Merge(workspace.Owner, workspace.Repo, number,
+                new MergePullRequest { MergeMethod = PullRequestMergeMethod.Squash, Sha = pr.Head.Sha }).ConfigureAwait(false);
+            if (!merged.Merged) { return merged.Message ?? "GitHub did not merge the pull request."; }
+            try { await client.Git.Reference.Delete(workspace.Owner, workspace.Repo, "heads/" + pr.Head.Ref).ConfigureAwait(false); }
+            catch (ApiException) { /* branch protection or already gone — the merge is what matters */ }
+            _logger.LogInformation("Merged {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return null;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Merge failed for {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return ex.Message;
         }
     }
 

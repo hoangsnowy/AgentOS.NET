@@ -12,6 +12,12 @@ namespace AgentOs.Modules.Workspaces.Persistence.Repositories;
 
 internal sealed class NullWorkspaceRepository : IWorkspaceRepository
 {
+    public Task<bool> SetAutopilotForTenantAsync(string tenantId, Guid id, string mode, string? userId, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    public Task<IReadOnlyList<WorkspaceEntity>> ListAutopilotAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<WorkspaceEntity>>(Array.Empty<WorkspaceEntity>());
+
     public Task<IReadOnlyList<WorkspaceEntity>> ListAsync(int limit = Page.DefaultLimit, int offset = 0, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<WorkspaceEntity>>(Array.Empty<WorkspaceEntity>());
 
