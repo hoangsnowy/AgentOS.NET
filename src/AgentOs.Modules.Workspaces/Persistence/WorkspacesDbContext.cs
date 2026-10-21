@@ -28,10 +28,22 @@ public sealed class WorkspacesDbContext : DbContext
 
     public DbSet<WorkspaceRepoEntity> WorkspaceRepos => Set<WorkspaceRepoEntity>();
 
+    public DbSet<AutopilotEventEntity> AutopilotEvents => Set<AutopilotEventEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.HasDefaultSchema("workspaces");
+
+        modelBuilder.Entity<AutopilotEventEntity>(e =>
+        {
+            e.ToTable("autopilot_events");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Text).IsRequired().HasMaxLength(1000);
+            e.HasIndex(x => new { x.TenantId, x.BoardId, x.AtUtc });
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
+        });
 
         modelBuilder.Entity<WorkspaceEntity>(e =>
         {

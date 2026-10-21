@@ -36,6 +36,12 @@ public interface IWorkspaceRepository
     /// <summary>Switch a board's autopilot ("Off" / "Build" / "BuildAndMerge"), acting as <paramref name="userId"/>.</summary>
     Task<bool> SetAutopilotForTenantAsync(string tenantId, Guid id, string mode, string? userId, CancellationToken ct = default);
 
+    /// <summary>Record an Autopilot decision on a board (keeps the newest 300 per board).</summary>
+    Task AddAutopilotEventAsync(string tenantId, Guid boardId, string text, CancellationToken ct = default);
+
+    /// <summary>A board's Autopilot decisions, newest first.</summary>
+    Task<IReadOnlyList<AutopilotEventEntity>> ListAutopilotEventsAsync(string tenantId, Guid boardId, int max, CancellationToken ct = default);
+
     /// <summary>Every board with autopilot on, across tenants — for the project orchestrator only (a platform worker).</summary>
     Task<IReadOnlyList<WorkspaceEntity>> ListAutopilotAsync(CancellationToken ct = default);
 

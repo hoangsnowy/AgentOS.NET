@@ -90,6 +90,35 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
         return true;
     }
 
+    public async Task AddAutopilotEventAsync(string tenantId, Guid boardId, string text, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        var now = DateTimeOffset.UtcNow;
+        _db.AutopilotEvents.Add(new AutopilotEventEntity
+        {
+            Id = Guid.CreateVersion7(now), TenantId = tenantId, BoardId = boardId, AtUtc = now,
+            Text = text.Length <= 1000 ? text : text[..1000],
+        });
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        // Keep the newest 300 per board: delete anything older than the 300th.
+        var cutoff = await _db.AutopilotEvents.IgnoreQueryFilters()
+            .Where(e => e.TenantId == tenantId && e.BoardId == boardId)
+            .OrderByDescending(e => e.AtUtc).Skip(300).Select(e => (DateTimeOffset?)e.AtUtc)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (cutoff is { } c)
+        {
+            await _db.AutopilotEvents.IgnoreQueryFilters()
+                .Where(e => e.TenantId == tenantId && e.BoardId == boardId && e.AtUtc <= c)
+                .ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    public async Task<IReadOnlyList<AutopilotEventEntity>> ListAutopilotEventsAsync(string tenantId, Guid boardId, int max, CancellationToken ct = default) =>
+        await _db.AutopilotEvents.IgnoreQueryFilters().AsNoTracking()
+            .Where(e => e.TenantId == tenantId && e.BoardId == boardId)
+            .OrderByDescending(e => e.AtUtc).Take(Math.Clamp(max, 1, 300))
+            .ToListAsync(ct).ConfigureAwait(false);
+
     public async Task<IReadOnlyList<WorkspaceEntity>> ListAutopilotAsync(CancellationToken ct = default)
     {
         // Cross-tenant on purpose: the project orchestrator is a platform worker. Explicit bypass, not an empty tenant.

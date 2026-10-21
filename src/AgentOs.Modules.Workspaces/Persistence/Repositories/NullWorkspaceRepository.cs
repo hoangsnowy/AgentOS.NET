@@ -15,6 +15,11 @@ internal sealed class NullWorkspaceRepository : IWorkspaceRepository
     public Task<bool> SetAutopilotForTenantAsync(string tenantId, Guid id, string mode, string? userId, CancellationToken ct = default)
         => Task.FromResult(false);
 
+    public Task AddAutopilotEventAsync(string tenantId, Guid boardId, string text, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<IReadOnlyList<AutopilotEventEntity>> ListAutopilotEventsAsync(string tenantId, Guid boardId, int max, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<AutopilotEventEntity>>(Array.Empty<AutopilotEventEntity>());
+
     public Task<IReadOnlyList<WorkspaceEntity>> ListAutopilotAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<WorkspaceEntity>>(Array.Empty<WorkspaceEntity>());
 

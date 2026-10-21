@@ -25,11 +25,15 @@ using Microsoft.Extensions.Logging;
 
 namespace AgentOs.Web.Services.Orchestration;
 
-/// <summary>Recent orchestrator decisions per board (newest first), for the Autopilot tab. Bounded, in memory.</summary>
-public sealed class OrchestratorLog
+/// <summary>
+/// Orchestrator decisions per board (newest first) for the Autopilot tab. Written through to the database
+/// (workspaces.autopilot_events) so the history survives a restart; a bounded in-memory copy serves reads.
+/// </summary>
+public sealed class OrchestratorLog(IServiceScopeFactory scopes, ILogger<OrchestratorLog> logger)
 {
     private const int Keep = 200;
     private readonly ConcurrentDictionary<(string, Guid), LinkedList<(DateTimeOffset At, string Text)>> _entries = new();
+    private readonly ConcurrentDictionary<(string, Guid), bool> _loaded = new();
 
     public void Add(string tenantId, Guid boardId, string text)
     {
@@ -39,12 +43,51 @@ public sealed class OrchestratorLog
             list.AddFirst((DateTimeOffset.UtcNow, text));
             while (list.Count > Keep) { list.RemoveLast(); }
         }
+        _ = PersistAsync(tenantId, boardId, text);
     }
 
-    public IReadOnlyList<(DateTimeOffset At, string Text)> Recent(string tenantId, Guid boardId, int max = 50)
+    /// <summary>The newest decisions; the first read for a board loads its history from the database.</summary>
+    public async Task<IReadOnlyList<(DateTimeOffset At, string Text)>> RecentAsync(string tenantId, Guid boardId, int max = 50)
     {
-        if (!_entries.TryGetValue((tenantId, boardId), out var list)) { return []; }
-        lock (list) { return list.Take(max).ToList(); }
+        var key = (tenantId, boardId);
+        if (_loaded.TryAdd(key, true))
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var stored = await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>()
+                    .ListAutopilotEventsAsync(tenantId, boardId, Keep).ConfigureAwait(false);
+                var list = _entries.GetOrAdd(key, _ => new());
+                lock (list)
+                {
+                    // Stored history first (newest first), then anything added since start that isn't in it yet.
+                    var merged = stored.Select(e => (e.AtUtc, e.Text)).Concat(list).DistinctBy(x => (x.Item1, x.Item2))
+                        .OrderByDescending(x => x.Item1).Take(Keep).ToList();
+                    list.Clear();
+                    foreach (var e in merged) { list.AddLast(e); }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _loaded.TryRemove(key, out _);
+                logger.LogWarning(ex, "Couldn't load the Autopilot history of board {Board}", boardId);
+            }
+        }
+        if (!_entries.TryGetValue(key, out var entries)) { return []; }
+        lock (entries) { return entries.Take(max).ToList(); }
+    }
+
+    private async Task PersistAsync(string tenantId, Guid boardId, string text)
+    {
+        try
+        {
+            using var scope = scopes.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>().AddAutopilotEventAsync(tenantId, boardId, text).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Couldn't store an Autopilot decision for board {Board}", boardId);
+        }
     }
 }
 
