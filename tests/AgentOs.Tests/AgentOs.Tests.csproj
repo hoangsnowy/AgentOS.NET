@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\src\AgentOs.Modules.Sessions\AgentOs.Modules.Sessions.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.ServiceDefaults\AgentOs.ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.Web\AgentOs.Web.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.Modules.Memory\AgentOs.Modules.Memory.csproj" />
   </ItemGroup>
 
   <ItemGroup>

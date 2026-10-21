@@ -113,6 +113,7 @@ builder.Services.AddModulesFromAssemblies(builder.Configuration,
     typeof(ToolsModule).Assembly,
     typeof(IntegrationModule).Assembly,
     typeof(WorkspacesModule).Assembly,
+    typeof(AgentOs.Modules.Memory.MemoryModule).Assembly,
     typeof(SessionsModule).Assembly,
     typeof(McpModule).Assembly,
     typeof(RemoteAgentModule).Assembly);

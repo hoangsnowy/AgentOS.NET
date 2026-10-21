@@ -52,7 +52,7 @@ public interface IMemoryStore
     Task<Guid> RecordAsync(string tenantId, MemoryNodeInput node, CancellationToken ct = default);
 
     /// <summary>Add a typed edge once (an identical live edge is not duplicated).</summary>
-    Task LinkAsync(string tenantId, Guid from, Guid to, string rel, CancellationToken ct = default);
+    Task LinkAsync(string tenantId, Guid fromId, Guid toId, string rel, CancellationToken ct = default);
 
     /// <summary>The lessons an agent should read before working on <paramref name="repoKey"/>: pinned first, then the
     /// ones closest to <paramref name="query"/> (full-text), then the most recent. Marks them used.</summary>
@@ -73,7 +73,7 @@ public sealed class NullMemoryStore : IMemoryStore
 {
     public Task<Guid> RecordAsync(string tenantId, MemoryNodeInput node, CancellationToken ct = default) => Task.FromResult(Guid.Empty);
 
-    public Task LinkAsync(string tenantId, Guid from, Guid to, string rel, CancellationToken ct = default) => Task.CompletedTask;
+    public Task LinkAsync(string tenantId, Guid fromId, Guid toId, string rel, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<MemoryNode>> RecallLessonsAsync(string tenantId, string repoKey, string query, int max, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<MemoryNode>>([]);

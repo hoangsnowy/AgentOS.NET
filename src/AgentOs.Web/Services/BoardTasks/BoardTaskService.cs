@@ -126,6 +126,16 @@ public sealed class BoardTaskService(
         }
 
         var change = string.IsNullOrWhiteSpace(changeRequest) ? null : changeRequest.Trim();
+        if (change is not null)
+        {
+            // Knowledge graph: what the review / failing checks / acceptance test said becomes a lesson of the project,
+            // read back by every later task on it.
+            var memory = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Memory.IMemoryStore>();
+            foreach (var c in children.Where(c => !string.IsNullOrEmpty(c.PrUrl)))
+            {
+                await AgentOs.Domain.Memory.ProjectMemory.RecordLessonAsync(memory, tenantId, $"{c.Owner}/{c.Repo}", c.PrUrl, change, ct).ConfigureAwait(false);
+            }
+        }
         var stopLease = stops.Begin(tenantId, session.Id);
         // Fire-and-forget in a fresh scope, independent of whoever asked (a circuit, or the orchestrator).
         _ = Task.Run(() => RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease), CancellationToken.None);
@@ -304,6 +314,12 @@ public sealed class BoardTaskService(
                         prResult.Ok ? "Done" : "Failed", outcome.BranchName, prResult.HtmlUrl,
                         prResult.Ok ? null : prResult.Error).ConfigureAwait(false);
                     if (!prResult.Ok) { anyFailure = true; }
+                    else
+                    {
+                        await AgentOs.Domain.Memory.ProjectMemory.RecordChangeAsync(scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Memory.IMemoryStore>(),
+                            tenantId, outcome.Owner, outcome.Repo, session.IssueNumber, session.Title, prResult.HtmlUrl ?? "",
+                            PullRequestText.Title(session.IssueNumber, session.Title, session.TicketType), outcome.Summary).ConfigureAwait(false);
+                    }
                     Publish(SessionRunEventKind.RepoDone,
                         prResult.Ok ? $"{repoLabel} — PR opened" : $"{repoLabel} — PR failed: {prResult.Error}",
                         repoLabel, prResult.Ok ? "Done" : "Failed", prResult.HtmlUrl);

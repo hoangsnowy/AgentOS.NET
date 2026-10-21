@@ -36,6 +36,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
     private readonly IAgentProfiles? _profiles;
     private readonly IRunAdmission? _admission;
     private readonly Prompts.IPromptOverrides? _prompts;
+    private readonly AgentOs.Domain.Memory.IMemoryStore? _memory;
 
     public IssueWorkAgent(
         ILlmClientFactory factory,
@@ -45,8 +46,10 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         IBudgetGuard? budgetGuard = null,
         IAgentProfiles? profiles = null,
         IRunAdmission? admission = null,
-        Prompts.IPromptOverrides? prompts = null)
+        Prompts.IPromptOverrides? prompts = null,
+        AgentOs.Domain.Memory.IMemoryStore? memory = null)
     {
+        _memory = memory;
         _admission = admission;
         _prompts = prompts;
         ArgumentNullException.ThrowIfNull(factory);
@@ -220,6 +223,26 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         return new IssueWorkResult(ok, outcomes, ok ? null : "One or more repositories failed — see per-repo errors.");
     }
 
+    // Best-effort and bounded: six lessons at most, a memory failure is no lessons.
+    private async Task<string> RecallLessonsAsync(IssueWorkRequest request, WorkRepo repo, CancellationToken ct)
+    {
+        if (_memory is null) { return string.Empty; }
+        try
+        {
+            var found = await _memory.RecallLessonsAsync(request.TenantId, $"{repo.Owner}/{repo.Repo}", request.IssueTitle, 6, ct).ConfigureAwait(false);
+            if (found.Count > 0)
+            {
+                Emit(request, SessionRunEventKind.Step, $"Remembered {found.Count} lesson(s) from earlier work on {repo.Owner}/{repo.Repo}.", $"{repo.Owner}/{repo.Repo}");
+            }
+            return AgentOs.Domain.Memory.ProjectMemory.PromptBlock(found);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "IssueWorkAgent: lesson recall failed for {Owner}/{Repo}", repo.Owner, repo.Repo);
+            return string.Empty;
+        }
+    }
+
     private async Task<RepoWorkOutcome> RunOneAsync(ILlmClient llm, AgentOptions opts, IssueWorkRequest request, WorkRepo repo, bool cliMode, CancellationToken ct)
     {
         // Server-side (default): the LLM drives the paired runner via the runner_shell tool loop.
@@ -227,10 +250,12 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         // expose no server tools, and grant a long timeout for the full clone→build→test→push run.
         // E1.6: the tenant's workspace rules apply to the Quick engine too (server and CLI mode).
         var rules = _prompts is null ? string.Empty : WorkspaceRules.ToPromptBlock(await _prompts.ResolveRulesAsync(ct).ConfigureAwait(false));
+        // Knowledge graph: the lessons earlier work on this repo left behind (reviews, failing checks, acceptance tests).
+        var lessons = await RecallLessonsAsync(request, repo, ct).ConfigureAwait(false);
         var req = cliMode
             ? new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.SystemCli(request, repo) + rules,
-                UserPrompt: IssueWorkPrompt.User(request, repo),
+                UserPrompt: IssueWorkPrompt.User(request, repo) + lessons,
                 Model: opts.Model,
                 Temperature: opts.Temperature,
                 MaxTokens: opts.MaxTokens,
@@ -252,7 +277,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             }
             : new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.System(request, repo) + rules,
-                UserPrompt: IssueWorkPrompt.User(request, repo),
+                UserPrompt: IssueWorkPrompt.User(request, repo) + lessons,
                 Model: opts.Model,
                 Temperature: opts.Temperature,
                 MaxTokens: opts.MaxTokens,

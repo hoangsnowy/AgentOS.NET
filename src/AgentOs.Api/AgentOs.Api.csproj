@@ -24,6 +24,7 @@
     <ProjectReference Include="..\AgentOs.Modules.Workspaces\AgentOs.Modules.Workspaces.csproj" />
     <ProjectReference Include="..\AgentOs.Modules.Mcp\AgentOs.Modules.Mcp.csproj" />
     <ProjectReference Include="..\AgentOs.ServiceDefaults\AgentOs.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\AgentOs.Modules.Memory\AgentOs.Modules.Memory.csproj" />
   </ItemGroup>
 
   <ItemGroup>

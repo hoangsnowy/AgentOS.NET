@@ -2704,6 +2704,20 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 .task-step.is-done { color: var(--txt-dim); }
 .task-step.is-done::before { content: "✓ "; }
 .task-step.is-now { color: var(--txt-on-accent); background: var(--accent); border-color: transparent; font-weight: 600; }
+/* Board › Knowledge — the knowledge graph picture (KnowledgeLayout) and its legend. Static: nothing animates. */
+.knowledge-graph { display: block; width: 100%; max-width: 640px; height: auto; margin: var(--space-2) auto; }
+.kg-edge { stroke: var(--line-strong); stroke-width: 1; }
+.kg-edge.kg-learned_from { stroke-dasharray: 3 3; }
+.kg-node circle { stroke: var(--bg-2); stroke-width: 2; }
+.kg-node text { font-size: 11px; fill: var(--txt-dim); text-anchor: middle; }
+.kg-repo circle, .kg-dot.kg-repo { fill: var(--accent); background: var(--accent); }
+.kg-ticket circle, .kg-dot.kg-ticket { fill: var(--txt-dim); background: var(--txt-dim); }
+.kg-pullrequest circle, .kg-dot.kg-pullrequest { fill: var(--ok, var(--accent)); background: var(--ok, var(--accent)); }
+.kg-lesson circle, .kg-dot.kg-lesson { fill: var(--warn, var(--err)); background: var(--warn, var(--err)); }
+.kg-pinned circle { stroke: var(--txt); stroke-width: 3; }
+.kg-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); list-style: none; margin: 0; padding: 0; font-size: var(--fs-xs); color: var(--txt-dim); }
+.kg-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; }
+.kg-body { white-space: pre-wrap; word-break: break-word; max-height: 14rem; overflow: auto; font-size: 11px; }
 /* Autopilot decisions — newest first, time then sentence. */
 .autopilot-log { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--fs-xs); max-height: 22rem; overflow: auto; }
 .autopilot-log li { display: flex; gap: var(--space-2); }
