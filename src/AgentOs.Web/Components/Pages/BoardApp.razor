@@ -602,9 +602,21 @@ else if (_tab == Tab.Sessions)
                     <tr>
                         <td>
                             @s.Title
-                            @if (!string.IsNullOrEmpty(s.Error))
+                            @if (s.Status != "Running" && AgentOs.Web.Services.TaskFailure.Explain(s.Error) is { } why)
                             {
-                                <br /><span class="board-session-repo-err" style="font-size:11px">@s.Error</span>
+                                @* Failure card: what happened in one line, what to do, ONE action; the raw text under Details. *@
+                                <div class="board-failure" role="status" data-kind="@why.Kind">
+                                    <strong>@why.Headline</strong>
+                                    <span class="muted">@why.Advice</span>
+                                    <div class="board-failure-actions">
+                                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary"
+                                             OnClick="@(() => OnFailureAction(s, why.Action))" Disabled="@(_busyId == s.Id)">@why.ActionLabel</Btn>
+                                        <details class="prefs-details board-failure-details">
+                                            <summary>Details</summary>
+                                            <pre>@s.Error</pre>
+                                        </details>
+                                    </div>
+                                </div>
                             }
                         </td>
                         <td><code>@BoardName(s.WorkspaceId)</code></td>
@@ -2142,6 +2154,33 @@ else if (_tab == Tab.Sessions)
     }
 
     // ── Sessions ─────────────────────────────────────────────────────────────────────────────────
+
+    // The failure card's one button.
+    private async Task OnFailureAction(RemoteSessionEntity s, AgentOs.Web.Services.TaskFailureAction action)
+    {
+        switch (action)
+        {
+            case AgentOs.Web.Services.TaskFailureAction.ConnectAiAccount:
+                AgentOs.Web.Services.SettingsLinks.Open(WM, AgentOs.Web.Services.SettingsLinks.ModelKeys);
+                break;
+            case AgentOs.Web.Services.TaskFailureAction.ConnectComputer:
+                _tab = Tab.Runners;
+                break;
+            case AgentOs.Web.Services.TaskFailureAction.ReconnectGitHub:
+                _tab = Tab.Boards;
+                _selectedBoard = null;
+                break;
+            case AgentOs.Web.Services.TaskFailureAction.RaiseSpendingLimit:
+                if (AgentOs.Web.Services.AppCatalog.Find("insights") is { } insights)
+                {
+                    WM.OpenApp(insights.Key, insights.Title, insights.Icon, insights.W, insights.H);
+                }
+                break;
+            default:
+                await RunSession(s);
+                break;
+        }
+    }
 
     private void StopSession(RemoteSessionEntity s)
     {
