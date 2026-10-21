@@ -37,7 +37,11 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
         // Runner provisioning (shared by the /runners endpoint + the VS Code browser-pairing flow) and
         // the one-time exchange-code store for that flow. Stateless / in-memory, so always registered.
         services.TryAddScoped<IRunnerProvisioningService, RunnerProvisioningService>();
-        services.TryAddSingleton<IPairingCodeStore, PairingCodeStore>();
+        // One store behind both seams: the editor flow (IPairingCodeStore) and the typed code a member reads off
+        // Board › Computers (IComputerPairingCodes) are redeemed by the same exchange endpoint.
+        services.TryAddSingleton<PairingCodeStore>();
+        services.TryAddSingleton<IPairingCodeStore>(sp => sp.GetRequiredService<PairingCodeStore>());
+        services.TryAddSingleton<IComputerPairingCodes>(sp => sp.GetRequiredService<PairingCodeStore>());
 
         // M6 — live session-run event feed (singleton, in-memory): the issue-work agent + the run
         // worker publish progress to it and the desktop subscribes for live updates. Always registered

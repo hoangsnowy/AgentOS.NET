@@ -97,6 +97,12 @@ encrypted, per tenant). Then pick each agent's model in **Settings → Agent pro
 the next run uses it, no restart. Keys can also be seeded from the environment
 (`Llm__Claude__ApiKey`, user-secrets) — see [docs/CONFIG.md](docs/CONFIG.md).
 
+**Or use your own computer and AI plan** (Claude Code / Codex, no server key): **Board → Computers →
+Connect this computer** shows one command with a one-time code — run it on that computer, in the helper's
+folder (`dotnet run --project src/AgentOs.RemoteAgent -- pair <address> <code>` from a checkout). The
+page turns *Connected* by itself; later starts need no arguments. Board tasks set to *On my computer* then
+clone, edit, build, test and push in a private per-task folder (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`).
+
 ### 4 — Build and test
 
 ```bash

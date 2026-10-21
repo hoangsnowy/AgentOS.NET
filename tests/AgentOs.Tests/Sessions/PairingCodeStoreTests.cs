@@ -48,6 +48,39 @@ public class PairingCodeStoreTests
         store.Redeem(code).ShouldBeNull();
     }
 
+    // Board › Computers: a code a person reads off one screen and types on another computer.
+    [Fact]
+    public void IssueTypedCode_IsShortReadableAndRedeemsOnceWhateverTheCaseOrDash()
+    {
+        var store = new PairingCodeStore(TimeProvider.System);
+        var runner = Guid.NewGuid();
+
+        var code = store.IssueTypedCode(runner, "tok-typed", "https://lab.dev.localhost:6180/hubs/remote-agent");
+
+        code.ShouldMatch("^[2-9A-HJKMNP-TV-Z]{4}-[2-9A-HJKMNP-TV-Z]{4}$");
+        var typed = code.Replace("-", " ", StringComparison.Ordinal).ToLowerInvariant();
+        var payload = store.Redeem(typed);
+        payload.ShouldNotBeNull();
+        payload!.RunnerId.ShouldBe(runner);
+        payload.Token.ShouldBe("tok-typed");
+        store.Redeem(code).ShouldBeNull();
+    }
+
+    [Fact]
+    public void IssueTypedCode_LastsTenMinutesNotSixtySeconds()
+    {
+        var clock = new FixedClock(DateTimeOffset.UnixEpoch);
+        var store = new PairingCodeStore(clock);
+        var kept = store.IssueTypedCode(Guid.NewGuid(), "a", "https://h/hubs/remote-agent");
+        var expired = store.IssueTypedCode(Guid.NewGuid(), "b", "https://h/hubs/remote-agent");
+
+        clock.Advance(TimeSpan.FromMinutes(5));
+        store.Redeem(kept).ShouldNotBeNull();
+
+        clock.Advance(PairingCodeStore.TypedTtl);
+        store.Redeem(expired).ShouldBeNull();
+    }
+
     private sealed class FixedClock(DateTimeOffset start) : TimeProvider
     {
         private DateTimeOffset _now = start;

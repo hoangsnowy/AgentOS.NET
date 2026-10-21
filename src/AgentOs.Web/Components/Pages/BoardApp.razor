@@ -32,6 +32,9 @@
 @inject ISessionRunFeed Feed
 @inject IServiceScopeFactory ScopeFactory
 @inject AgentOs.Web.Services.TaskStopRegistry StopRegistry
+@inject AgentOs.Modules.Sessions.Pairing.IComputerPairingCodes PairingCodes
+@inject AgentOs.Modules.RemoteAgent.IRemoteAgentBroker Broker
+@inject NavigationManager Nav
 @inject Microsoft.Extensions.Options.IOptions<PipelineOptions> PipelineOpts
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @implements IDisposable
@@ -522,12 +525,24 @@ else if (_tab == Tab.Runners)
         </div>
         @if (_newRunner is not null)
         {
-            <div class="cred-readout">
-                <p class="cred-readout-hint">
-                    Pairing token — shown <strong>once</strong>. Set these on the dev machine, then run the AgentOS.NET remote agent:
-                </p>
-                <textarea readonly rows="2">REMOTE_AGENT_ID=@_newRunner.Value.Id
+            <div class="cred-readout" data-testid="connect-readout">
+                @if (_newRunnerConnected)
+                {
+                    <p class="pair-connected" role="status"><Icon Name="check" Size="14" /> <strong>@_newRunnerLabel</strong> is connected. The AI can now work on it.</p>
+                }
+                else
+                {
+                    <p class="cred-readout-hint">On <strong>@_newRunnerLabel</strong>, open the AgentOS.NET helper folder and run this once — it connects the computer and remembers it:</p>
+                    <pre class="pair-command" data-testid="pair-command">AgentOs.RemoteAgent pair @Nav.BaseUri.TrimEnd('/') @_newRunnerCode</pre>
+                    <p class="cred-readout-hint">Code <strong class="pair-code">@_newRunnerCode</strong> works once, for 10 minutes. This page turns to “connected” by itself.</p>
+                }
+                <details class="prefs-details">
+                    <summary>Set it up by hand (advanced)</summary>
+                    <p class="cred-readout-hint">Shown <strong>once</strong>. Set these on the computer, then start the helper:</p>
+                    <textarea readonly rows="2" aria-label="Manual pairing values">REMOTE_AGENT_HUB=@(Nav.BaseUri)hubs/remote-agent
+REMOTE_AGENT_ID=@_newRunner.Value.Id
 REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
+                </details>
             </div>
         }
     </Panel>
@@ -552,7 +567,7 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                     <tr>
                         <td>@r.Label</td>
                         @if (_isAdmin) { <td title="@r.OwnerUserId">@MemberLabel(r.OwnerUserId)</td> }
-                        <td><Badge>@(r.Status switch { "Revoked" => "Disconnected", "Pending" => "Waiting to connect", "Paired" => "Ready", _ => r.Status })</Badge></td>
+                        <td><Badge>@ComputerStatus(r)</Badge></td>
                         <td>@r.CreatedAtUtc.ToString("u")</td>
                         <td class="actions">
                             <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger"
@@ -811,6 +826,34 @@ else if (_tab == Tab.Sessions)
     // ── Runner registration form ─────────────────────────────────────────────────────────────
     private string _runnerLabel = "";
     private (Guid Id, string Token)? _newRunner;
+    private string _newRunnerCode = "";
+    private string _newRunnerLabel = "";
+    private bool _newRunnerConnected;
+
+    // Live, not stored: a paired computer is "Connected" while its helper holds a hub connection.
+    private string ComputerStatus(RunnerEntity r) =>
+        r.Status == "Revoked" ? "Disconnected"
+        : Broker.IsConnected(r.Id) ? "Connected"
+        : r.Status == "Pending" ? "Waiting to connect"
+        : "Offline";
+
+    // While a fresh code is on screen, watch for that computer to come online (2 s, up to the code's 10 minutes).
+    private async Task WatchForConnectionAsync(Guid runnerId)
+    {
+        var stop = _cts?.Token ?? CancellationToken.None;
+        for (var i = 0; i < 300 && !stop.IsCancellationRequested; i++)
+        {
+            try { await Task.Delay(TimeSpan.FromSeconds(2), stop); } catch (OperationCanceledException) { return; }
+            if (_newRunner?.Id != runnerId) { return; }
+            if (!Broker.IsConnected(runnerId)) { continue; }
+            _newRunnerConnected = true;
+            var all = await Runners.ListForTenantAsync(_tenantId);
+            _runners = _isAdmin ? all : all.Where(x => x.OwnerUserId == _userId).ToList();
+            Toasts.Show("Board", $"{_newRunnerLabel} is connected.", ToastKind.Ok);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+    }
 
     // ── "Start from idea" wizard (bootstrap) ─────────────────────────────────────────────────
     private enum IdeaStep { Input, Review, Result }
@@ -2177,8 +2220,11 @@ else if (_tab == Tab.Sessions)
             };
             await Runners.AddForTenantAsync(entity);
             _newRunner = (entity.Id, secret.Token);
+            _newRunnerLabel = entity.Label;
+            _newRunnerConnected = false;
+            _newRunnerCode = PairingCodes.IssueTypedCode(entity.Id, secret.Token, Nav.BaseUri + "hubs/remote-agent");
             _runnerLabel = "";
-            Toasts.Show("Board", "Runner registered. Copy the pairing token now — it won't be shown again.", ToastKind.Ok);
+            _ = WatchForConnectionAsync(entity.Id);
             var r0 = await Runners.ListForTenantAsync(_tenantId);
             _runners = _isAdmin ? r0 : r0.Where(r => r.OwnerUserId == _userId).ToList();
         }

@@ -813,6 +813,10 @@ select {
 /* One-time credential / URL readout (pairing token, invite URL). */
 .cred-readout { margin-top: var(--space-3); padding: var(--space-3); background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--r-4); max-width: 720px; }
 .cred-readout-hint { font-size: var(--fs-xs); color: var(--txt-dim); margin: 0 0 var(--space-2); }
+/* Board › Computers: the one command a member runs on the computer they connect, and its typed code. */
+.pair-command { margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-3); font-family: var(--mono); font-size: 13px; color: var(--txt); background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r-3); white-space: pre-wrap; word-break: break-all; user-select: all; }
+.pair-code { font-family: var(--mono); letter-spacing: .08em; color: var(--txt); }
+.pair-connected { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); color: var(--txt); }
 .cred-readout textarea { width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 12px; color: var(--txt); background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r-3); padding: var(--space-2); resize: vertical; }
 
 /* Inline error banner (admin pages + login/signup). Self-inset via margin so it reads well as a

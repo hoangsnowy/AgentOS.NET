@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -79,6 +80,9 @@ public interface IRemoteAgentBroker
     /// <summary>True when a runner matching <paramref name="target"/> is currently connected.</summary>
     bool HasRunnerFor(RunnerTarget target);
 
+    /// <summary>True when this specific paired runner has a live connection right now (Board › Computers status).</summary>
+    bool IsConnected(Guid runnerId) => false;
+
     // ── M3: full-prompt dispatch ──
 
     event Action<RemoteDispatch>? Dispatched;
@@ -122,6 +126,8 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker
     public event Action<RemoteDispatch>? Dispatched;
     public event Action<RemoteCancel>? Cancelled;
     public event Action<RunnerToolDispatch>? ToolCallDispatched;
+
+    public bool IsConnected(Guid runnerId) => _connections.Values.Any(c => c.RunnerId == runnerId);
 
     public bool HasRunnerFor(RunnerTarget target)
     {
