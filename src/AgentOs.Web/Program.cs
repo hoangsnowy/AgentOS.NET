@@ -236,6 +236,8 @@ builder.Services.AddPlugins(builder.Configuration,
 builder.Services.AddSingleton<AgentOs.Web.Orchestrations.OrchestrationStore>();
 // Board "Stop": a task outlives its circuit, so its cancellation is process-wide, keyed by tenant + task.
 builder.Services.AddSingleton<AgentOs.Web.Services.TaskStopRegistry>();
+// Board tasks run here, off any circuit — the Board UI and the project orchestrator share it.
+builder.Services.AddSingleton<AgentOs.Web.Services.BoardTasks.BoardTaskService>();
 // Per-circuit UI state: each user's desktop has its own open windows. Singleton would bleed windows
 // (and their Z-order) across every connected circuit/user on the server.
 builder.Services.AddScoped<AgentOs.Web.Shell.Services.ToastService>();

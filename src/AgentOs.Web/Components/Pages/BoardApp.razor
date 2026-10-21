@@ -32,10 +32,10 @@
 @inject ISessionRunFeed Feed
 @inject IServiceScopeFactory ScopeFactory
 @inject AgentOs.Web.Services.TaskStopRegistry StopRegistry
+@inject AgentOs.Web.Services.BoardTasks.BoardTaskService TaskService
 @inject AgentOs.Modules.Sessions.Pairing.IComputerPairingCodes PairingCodes
 @inject AgentOs.Modules.RemoteAgent.IRemoteAgentBroker Broker
 @inject NavigationManager Nav
-@inject Microsoft.Extensions.Options.IOptions<PipelineOptions> PipelineOpts
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @implements IDisposable
 
@@ -1782,55 +1782,7 @@ else if (_tab == Tab.Sessions)
     // Project come from the board (the workspace); the descriptor Id is the board's workspace id.
     private static WorkspaceDescriptor RepoDescriptor(
         WorkspaceEntity board, string tenantId, string owner, string repo, string defaultBranch, string pat) =>
-        new(board.Id, tenantId, board.Kind, owner, repo, board.Project,
-            string.IsNullOrWhiteSpace(defaultBranch) ? "main" : defaultBranch, pat);
-
-    // Read the ticket's CURRENT body (third-party text — the agent prompts fence it as untrusted data).
-    // Best-effort: an unsupported backend, a missing ticket, or a network/API failure yields null and the
-    // run proceeds on the title alone rather than failing.
-    private static async Task<string?> ReadTicketBodyAsync(
-        IServiceScope scope, WorkspaceEntity board, string tenantId, RemoteSessionEntity session, string pat)
-    {
-        if (session.IssueNumber is not > 0 || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName))
-        {
-            return null;
-        }
-        var resolver = scope.ServiceProvider.GetRequiredService<ISourceProviderResolver>();
-        if (!resolver.TryResolve(board.Kind, out var provider) || provider is null)
-        {
-            return null;
-        }
-        var repo = RepoDescriptor(board, tenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat);
-        try
-        {
-            return await provider.ReadTicketBodyAsync(repo, session.IssueNumber.Value).ConfigureAwait(false);
-        }
-        catch (System.Net.Http.HttpRequestException) { return null; }
-        catch (Octokit.ApiException) { return null; }
-        catch (InvalidOperationException) { return null; }
-        catch (TaskCanceledException) { return null; }
-    }
-
-    // The target repo's agent-instruction files, budgeted (E0.7). Best-effort like the ticket body: a backend
-    // without repo context or an API failure means "no guidance", never a failed run.
-    private static async Task<IReadOnlyList<RepoInstructionFile>> ReadRepoGuidanceAsync(
-        IServiceScope scope, WorkspaceEntity board, string tenantId, SessionRepoEntity primary, string pat)
-    {
-        var resolver = scope.ServiceProvider.GetRequiredService<ISourceProviderResolver>();
-        if (!resolver.TryResolve(board.Kind, out var provider) || provider is null)
-        {
-            return [];
-        }
-        var repo = RepoDescriptor(board, tenantId, primary.Owner, primary.Repo, primary.DefaultBranch, pat);
-        try
-        {
-            return (await provider.ReadRepoContextAsync(repo).ConfigureAwait(false)).Instructions;
-        }
-        catch (System.Net.Http.HttpRequestException) { return []; }
-        catch (Octokit.ApiException) { return []; }
-        catch (InvalidOperationException) { return []; }
-        catch (TaskCanceledException) { return []; }
-    }
+        AgentOs.Web.Services.BoardTasks.BoardTaskService.RepoDescriptor(board, tenantId, owner, repo, defaultBranch, pat);
 
     // The ai:ready tickets on the board that the agent can run unattended: a real, OPEN issue with a repo and no task
     // already working on it or done (a failed or closed task may be run again).
@@ -2043,355 +1995,44 @@ else if (_tab == Tab.Sessions)
         _busyId = session.Id;
         try
         {
-            var board = _boards?.FirstOrDefault(w => w.Id == session.WorkspaceId);
-            if (board is null)
+            // The run itself lives in BoardTaskService (shared with the project orchestrator); this only reports it.
+            var started = await TaskService.StartAsync(_tenantId, session.Id, changeRequest, _cliProfile);
+            switch (started)
             {
-                Toasts.Show("Board", "Board not found — reload and try again.", ToastKind.Err);
-                return;
+                case AgentOs.Web.Services.BoardTasks.TaskStart.Started:
+                    _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
+                    var all = await Sessions.ListForTenantAsync(_tenantId);
+                    _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
+                    Toasts.Show("Board", $"Task #{session.IssueNumber} started — the AI is working on it. You can close this window.", ToastKind.Ok);
+                    StartPolling();
+                    break;
+                case AgentOs.Web.Services.BoardTasks.TaskStart.BoardNotFound:
+                    Toasts.Show("Board", "Board not found — reload and try again.", ToastKind.Err);
+                    break;
+                case AgentOs.Web.Services.BoardTasks.TaskStart.NoCodeProject:
+                    Toasts.Show("Board", "This task has no code project to work on. Start it again from the ticket.", ToastKind.Err);
+                    break;
+                case AgentOs.Web.Services.BoardTasks.TaskStart.NoGitHubAccess:
+                    Toasts.Show("Board", "GitHub access has expired — reconnect the project.", ToastKind.Err);
+                    break;
+                default:
+                    Toasts.Show("Board", "This task no longer exists — refresh the list.", ToastKind.Err);
+                    break;
             }
-            var children = await Sessions.ListReposForTenantAsync(_tenantId, session.Id);
-            if (children.Count == 0)
-            {
-                Toasts.Show("Board", "This task has no code project to work on. Start it again from the ticket.", ToastKind.Err);
-                return;
-            }
-            var pat = await ConfigStore.GetForTenantAsync(_tenantId, board.CredentialRef);
-            if (string.IsNullOrEmpty(pat))
-            {
-                Toasts.Show("Board", "Could not retrieve board credentials. Reconnect the board.", ToastKind.Err);
-                return;
-            }
-
-            await Sessions.UpdateRunResultAsync(_tenantId, session.Id, "Running", null, null);
-            // Try again: a repo that failed last time starts over clean (its old error would read as this run's).
-            foreach (var failed in children.Where(c => c.Status == "Failed"))
-            {
-                // A follow-up keeps the branch + pull request it continues; a plain retry starts over.
-                var keep = changeRequest is not null && !string.IsNullOrEmpty(failed.PrUrl);
-                await Sessions.UpdateRepoRunResultAsync(_tenantId, failed.Id, "Pending", keep ? failed.BranchName : null, keep ? failed.PrUrl : null, null);
-                failed.Status = "Pending";
-                failed.Error = null;
-            }
-            _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
-            var all = await Sessions.ListForTenantAsync(_tenantId);
-            _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
-            Toasts.Show("Board", $"Task #{session.IssueNumber} started — the AI is working on it. You can close this window.", ToastKind.Ok);
-            StartPolling();
-
-            // Fire-and-forget background work in a fresh DI scope (independent of this circuit).
-            var capturedTenantId = _tenantId;
-            var capturedSession = session;
-            var capturedBoard = board;
-            var capturedPat = pat;
-            var capturedChildren = children;
-            var capturedCli = _cliProfile;   // CLI choice is transient (not persisted) — capture at dispatch.
-            var capturedChange = string.IsNullOrWhiteSpace(changeRequest) ? null : changeRequest.Trim();
-            var stopLease = StopRegistry.Begin(capturedTenantId, capturedSession.Id);
-            _ = Task.Run(async () =>
-            {
-                using var _stop = stopLease;
-                try
-                {
-                    using var scope = ScopeFactory.CreateScope();
-                    // No HttpContext in this Task.Run, so seed the captured tenant + member as the ambient
-                    // identity — the LLM tool tenant + the runner dispatch read it to target the right runner,
-                    // and runner_shell tags its per-command progress to the session id carried here.
-                    using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(capturedTenantId, capturedSession.MemberUserId, capturedSession.Id);
-                    var sessRepo = scope.ServiceProvider.GetRequiredService<AgentOs.Modules.Sessions.Persistence.ISessionRepository>();
-
-                    // Quality engine — the 5-agent SDLC pipeline runs server-side (generates new files,
-                    // commits them + opens a PR via Octokit), greenfield only, hard-gated by the ticket-type
-                    // router. The Quick engine (the default IssueWorkAgent edit loop) is below.
-                    if (EngineSelection.IsQuality(capturedSession.Brain))
-                    {
-                        await RunQualitySessionAsync(
-                            scope, sessRepo, capturedSession, capturedBoard, capturedPat, capturedChildren, capturedTenantId, stopLease.Token)
-                            .ConfigureAwait(false);
-                        return;
-                    }
-
-                    var agent = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Sessions.IIssueWorkAgent>();
-                    var prService = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Workspaces.IPrCreationService>();
-
-                    var issueBody = await ReadTicketBodyAsync(scope, capturedBoard, capturedTenantId, capturedSession, capturedPat).ConfigureAwait(false);
-
-                    // Ask for changes: each repo that already has a pull request continues on its branch.
-                    var workRepos = capturedChildren
-                        .Select(c => new AgentOs.Domain.Sessions.WorkRepo(c.Id, c.Owner, c.Repo, c.DefaultBranch,
-                            capturedChange is not null && !string.IsNullOrEmpty(c.PrUrl) ? c.BranchName : null))
-                        .ToList();
-                    var issueRequest = new AgentOs.Domain.Sessions.IssueWorkRequest(
-                        SessionId: capturedSession.Id,
-                        TenantId: capturedTenantId,
-                        MemberId: capturedSession.MemberUserId,
-                        Repos: workRepos,
-                        IssueNumber: capturedSession.IssueNumber ?? 0,
-                        IssueTitle: capturedSession.Title,
-                        IssueBody: issueBody ?? "",
-                        TicketKind: capturedSession.TicketKind ?? "Issue",
-                        ProviderOverride: capturedSession.RunOnMachine ? "RemoteAgent" : null,
-                        CliProfile: capturedSession.RunOnMachine ? capturedCli : null,
-                        TicketType: capturedSession.TicketType,
-                        ChangeRequest: capturedChange);
-
-                    var workResult = await agent.RunAsync(issueRequest, stopLease.Token).ConfigureAwait(false);
-
-                    // One PR per repo that pushed a branch; write each repo's result back incrementally
-                    // (per-repo try/catch so one failure doesn't sink the others).
-                    var anyFailure = false;
-                    foreach (var outcome in workResult.Repos)
-                    {
-                        var repoLabel = $"{outcome.Owner}/{outcome.Repo}";
-                        if (!outcome.Ok)
-                        {
-                            anyFailure = true;
-                            await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, outcome.SessionRepoId,
-                                "Failed", outcome.BranchName, null, outcome.Error ?? "Agent failed.").ConfigureAwait(false);
-                            Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — failed: {outcome.Error}", repoLabel, "Failed");
-                            continue;
-                        }
-
-                        // A follow-up pushed more commits to an open pull request: nothing new to open.
-                        var child = capturedChildren.FirstOrDefault(c => c.Id == outcome.SessionRepoId);
-                        if (capturedChange is not null && !string.IsNullOrEmpty(child?.PrUrl))
-                        {
-                            await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, outcome.SessionRepoId,
-                                "Done", outcome.BranchName, child.PrUrl, null).ConfigureAwait(false);
-                            Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — proposed change updated", repoLabel, "Done", child.PrUrl);
-                            continue;
-                        }
-
-                        var childBranch = child?.DefaultBranch ?? "main";
-                        var descriptor = RepoDescriptor(capturedBoard, capturedTenantId, outcome.Owner, outcome.Repo, childBranch, capturedPat);
-
-                        try
-                        {
-                            var prResult = await prService.CreateFromBranchAsync(
-                                descriptor,
-                                outcome.BranchName,
-                                AgentOs.Domain.Workspaces.PullRequestText.Title(capturedSession.IssueNumber, capturedSession.Title, capturedSession.TicketType),
-                                AgentOs.Domain.Workspaces.PullRequestText.Body(capturedSession.IssueNumber, outcome.Summary)).ConfigureAwait(false);
-
-                            await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, outcome.SessionRepoId,
-                                prResult.Ok ? "Done" : "Failed", outcome.BranchName, prResult.HtmlUrl,
-                                prResult.Ok ? null : prResult.Error).ConfigureAwait(false);
-                            if (!prResult.Ok) { anyFailure = true; }
-                            Publish(SessionRunEventKind.RepoDone,
-                                prResult.Ok ? $"{repoLabel} — PR opened" : $"{repoLabel} — PR failed: {prResult.Error}",
-                                repoLabel, prResult.Ok ? "Done" : "Failed", prResult.HtmlUrl);
-                        }
-                        catch (System.Net.Http.HttpRequestException prEx) { await HandlePrError(prEx).ConfigureAwait(false); }
-                        catch (System.Text.Json.JsonException prEx) { await HandlePrError(prEx).ConfigureAwait(false); }
-                        catch (InvalidOperationException prEx) { await HandlePrError(prEx).ConfigureAwait(false); }
-                        catch (System.IO.IOException prEx) { await HandlePrError(prEx).ConfigureAwait(false); }
-                        catch (TimeoutException prEx) { await HandlePrError(prEx).ConfigureAwait(false); }
-
-                        async Task HandlePrError(Exception prEx)
-                        {
-                            anyFailure = true;
-                            await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, outcome.SessionRepoId,
-                                "Failed", outcome.BranchName, null, $"PR creation failed: {prEx.Message}").ConfigureAwait(false);
-                            Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — PR creation failed: {prEx.Message}", repoLabel, "Failed");
-                        }
-                    }
-
-                    await sessRepo.RecomputeSessionStatusForTenantAsync(capturedTenantId, capturedSession.Id).ConfigureAwait(false);
-                    Publish(anyFailure ? SessionRunEventKind.Failed : SessionRunEventKind.Done,
-                        anyFailure ? "Session finished with failures." : "Session complete — all repos done.");
-
-                    // Local publish helper: tags every event with this run's tenant + session.
-                    void Publish(SessionRunEventKind kind, string message, string? repo = null, string? status = null, string? prUrl = null) =>
-                        Feed.Publish(new SessionRunEvent(capturedTenantId, capturedSession.Id, kind, message, DateTimeOffset.UtcNow, repo, status, prUrl));
-                }
-                catch (System.Net.Http.HttpRequestException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
-                catch (System.Text.Json.JsonException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
-                catch (Microsoft.AspNetCore.SignalR.HubException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
-                catch (InvalidOperationException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
-                catch (System.IO.IOException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
-                catch (TimeoutException ex) { await HandleRunFailure(ex).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (stopLease.Token.IsCancellationRequested) { await HandleStopped().ConfigureAwait(false); }
-
-                // Stop: the task and every repo that hadn't finished read "Stopped", and Try again is offered.
-                async Task HandleStopped()
-                {
-                    const string stopped = "Stopped — you pressed Stop. Nothing was pushed for the unfinished parts; Try again to restart.";
-                    try
-                    {
-                        using var scope = ScopeFactory.CreateScope();
-                        var sessRepo = scope.ServiceProvider.GetRequiredService<AgentOs.Modules.Sessions.Persistence.ISessionRepository>();
-                        foreach (var child in await sessRepo.ListReposForTenantAsync(capturedTenantId, capturedSession.Id).ConfigureAwait(false))
-                        {
-                            if (child.Status is "Pending" or "Running")
-                            {
-                                await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, child.Id, "Failed", null, null, "Stopped").ConfigureAwait(false);
-                            }
-                        }
-                        await sessRepo.UpdateRunResultAsync(capturedTenantId, capturedSession.Id, "Failed", null, stopped).ConfigureAwait(false);
-                    }
-                    catch (Exception inner) when (inner is System.Net.Http.HttpRequestException or System.IO.IOException or InvalidOperationException or TimeoutException) { _ = inner.Message; }
-                    Feed.Publish(new SessionRunEvent(capturedTenantId, capturedSession.Id,
-                        SessionRunEventKind.Failed, "Stopped by you.", DateTimeOffset.UtcNow));
-                }
-
-                async Task HandleRunFailure(Exception ex)
-                {
-                    try
-                    {
-                        using var scope = ScopeFactory.CreateScope();
-                        var sessRepo = scope.ServiceProvider.GetRequiredService<AgentOs.Modules.Sessions.Persistence.ISessionRepository>();
-                        await sessRepo.UpdateRunResultAsync(capturedTenantId, capturedSession.Id,
-                            "Failed", null, ex.Message).ConfigureAwait(false);
-                    }
-                    // Best-effort.
-                    catch (System.Net.Http.HttpRequestException inner) { _ = inner.Message; }
-                    catch (System.IO.IOException inner) { _ = inner.Message; }
-                    catch (InvalidOperationException inner) { _ = inner.Message; }
-                    catch (TimeoutException inner) { _ = inner.Message; }
-                    Feed.Publish(new SessionRunEvent(capturedTenantId, capturedSession.Id,
-                        SessionRunEventKind.Failed, $"Session failed: {ex.Message}", DateTimeOffset.UtcNow));
-                }
-            });
         }
-        catch (System.Net.Http.HttpRequestException ex) { Toasts.Show("Board", $"Run failed: {ex.Message}", ToastKind.Err); }
-        catch (InvalidOperationException ex) { Toasts.Show("Board", $"Run failed: {ex.Message}", ToastKind.Err); }
-        catch (System.IO.IOException ex) { Toasts.Show("Board", $"Run failed: {ex.Message}", ToastKind.Err); }
-        catch (TimeoutException ex) { Toasts.Show("Board", $"Run failed: {ex.Message}", ToastKind.Err); }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or System.IO.IOException or TimeoutException)
+        {
+            Toasts.Show("Board", $"Run failed: {ex.Message}", ToastKind.Err);
+        }
         finally
         {
             _busyId = null;
         }
     }
 
-    // ── Quality engine (5-agent pipeline) ─────────────────────────────────────────────────────────
+    // The QA-loop iteration cap a Thorough run advertises (BoardTaskService applies the same clamp).
+    private int QualityNMax() => TaskService.QualityNMax();
 
-    // Runs the 5-agent SDLC pipeline for a session against its PRIMARY repo (children[0]) and opens a PR
-    // with the generated code + tests. Server-side end-to-end — no runner needed. Hard-gated by the
-    // ticket-type router: a non-greenfield ticket is REFUSED (the pipeline only generates new files), never
-    // silently downgraded to Quick. Multi-repo fan-out is deferred (Quality targets the primary repo only).
-    private async Task RunQualitySessionAsync(
-        IServiceScope scope,
-        AgentOs.Modules.Sessions.Persistence.ISessionRepository sessRepo,
-        RemoteSessionEntity session,
-        WorkspaceEntity board,
-        string pat,
-        IReadOnlyList<SessionRepoEntity> children,
-        string tenantId,
-        CancellationToken stop)
-    {
-        // Tenant + session tagged publish to the live feed.
-        void Publish(SessionRunEventKind kind, string message, string? repo = null, string? status = null, string? prUrl = null) =>
-            Feed.Publish(new SessionRunEvent(tenantId, session.Id, kind, message, DateTimeOffset.UtcNow, repo, status, prUrl));
-
-        // Hard greenfield router (red-team HIGH) — refuse edit/bug/ambiguous tickets, never best-effort.
-        var cls = TicketClassifier.Classify(session.TicketType, session.Title);
-        if (cls != TicketClass.Greenfield)
-        {
-            var reason = TicketClassifier.RefusalMessage(cls);
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, reason).ConfigureAwait(false);
-            Publish(SessionRunEventKind.Failed, reason);
-            return;
-        }
-
-        var primary = children.Count > 0 ? children[0] : null;
-        if (primary is null)
-        {
-            const string noRepo = "Quality run has no target repo — recreate the session from a board ticket.";
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, noRepo).ConfigureAwait(false);
-            Publish(SessionRunEventKind.Failed, noRepo);
-            return;
-        }
-        var repoLabel = $"{primary.Owner}/{primary.Repo}";
-
-        // Resolve the heavy services lazily, inside this background scope (eager-DI landmine — never a
-        // @inject'd field, which would build a pooled LLM client in the circuit ctor and crash on open).
-        var pipeline = scope.ServiceProvider.GetRequiredService<IPipelineClient>();
-        var prService = scope.ServiceProvider.GetRequiredService<IGitHubPrService>();
-
-        Publish(SessionRunEventKind.Running, $"Quality engine — 5-agent pipeline on {repoLabel}.", repoLabel);
-
-        var ticketBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
-        var story = IssueToStoryAdapter.ToUserStory(session.Title, ticketBody, QualityNMax());
-
-        // E0.7: the repo's own agent instructions (AGENTS.md, CLAUDE.md, Copilot instructions, …) guide every
-        // agent of this run; the session feed says which files were used so the outcome is explainable.
-        var guidance = await ReadRepoGuidanceAsync(scope, board, tenantId, primary, pat).ConfigureAwait(false);
-        Publish(SessionRunEventKind.Step, guidance.Count == 0
-            ? $"{repoLabel} — no repo agent instructions found (AGENTS.md, CLAUDE.md, …)."
-            : $"{repoLabel} — following repo instructions: {RepoInstructions.Describe(guidance)}.", repoLabel);
-        using var guidanceScope = RunGuidance.Push(RepoInstructions.ToPromptBlock(guidance));
-
-        PipelineResult? result = null;
-        string? error = null;
-        // The pipeline runs through PersistingOrchestratorAgent, which applies the S1 per-tenant budget gate
-        // (the ambient identity pushed by RunSession flows in via InProcessPipelineClient).
-        await foreach (var evt in pipeline.StreamAsync(story, stop).ConfigureAwait(false))
-        {
-            switch (evt.Kind)
-            {
-                case PipelineStreamEventKind.Progress when evt.Progress is not null:
-                    Publish(SessionRunEventKind.Step, PipelineProgressFormatter.Describe(evt.Progress), repoLabel);
-                    break;
-                case PipelineStreamEventKind.Result:
-                    result = evt.Result;
-                    break;
-                case PipelineStreamEventKind.Error:
-                    error = evt.Error ?? "Pipeline error.";
-                    break;
-            }
-        }
-
-        if (result is null || result.Status == PipelineStatus.Failed)
-        {
-            var msg = error ?? "Quality pipeline failed — see the server log.";
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Failed", null, null, msg).ConfigureAwait(false);
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, msg).ConfigureAwait(false);
-            Publish(SessionRunEventKind.Failed, $"{repoLabel} — {msg}", repoLabel, "Failed");
-            return;
-        }
-
-        // QA gate (plan 0.5): only a result QA PASSED on real model output becomes a PR. Anything else is
-        // Blocked with the reason — visible on the session, never silently shipped.
-        var gate = PrGate.Evaluate(result);
-        if (!gate.Allowed)
-        {
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Blocked", null, null, gate.Reason).ConfigureAwait(false);
-            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
-            Publish(SessionRunEventKind.Failed, $"{repoLabel} — {gate.Reason}", repoLabel, "Blocked");
-            return;
-        }
-
-        // Commit the generated code + tests to the primary repo and open a PR (server-side via Octokit).
-        var descriptor = RepoDescriptor(board, tenantId, primary.Owner, primary.Repo, primary.DefaultBranch, pat);
-        var title = $"feat: #{session.IssueNumber} {session.Title}";
-        var body = $"Generated by the AgentOS.NET Quality pipeline (5-agent SDLC loop) for session #{session.IssueNumber}.";
-        try
-        {
-            var pr = await prService.OpenPrAsync(result, descriptor, title, body, CancellationToken.None).ConfigureAwait(false);
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Done", pr.Branch, pr.HtmlUrl, null).ConfigureAwait(false);
-            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
-            Publish(SessionRunEventKind.Done, $"{repoLabel} — PR opened.", repoLabel, "Done", pr.HtmlUrl);
-        }
-        catch (System.Net.Http.HttpRequestException ex) { await PrFailed(ex).ConfigureAwait(false); }
-        catch (System.Text.Json.JsonException ex) { await PrFailed(ex).ConfigureAwait(false); }
-        catch (InvalidOperationException ex) { await PrFailed(ex).ConfigureAwait(false); }
-        catch (ArgumentException ex) { await PrFailed(ex).ConfigureAwait(false); }
-        catch (System.IO.IOException ex) { await PrFailed(ex).ConfigureAwait(false); }
-        catch (TimeoutException ex) { await PrFailed(ex).ConfigureAwait(false); }
-
-        async Task PrFailed(Exception ex)
-        {
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Failed", null, null, $"PR creation failed: {ex.Message}").ConfigureAwait(false);
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, $"PR creation failed: {ex.Message}").ConfigureAwait(false);
-            Publish(SessionRunEventKind.Failed, $"{repoLabel} — PR creation failed: {ex.Message}", repoLabel, "Failed");
-        }
-    }
-
-    // The QA-loop iteration cap for a Quality run, clamped to the admin/tenant bound (S4): the pipeline
-    // default (3), never above Pipeline:MaxIterations. The orchestrator re-clamps the same way, so this is
-    // also what the cost label can honestly advertise.
-    private int QualityNMax() => Math.Clamp(Math.Min(3, PipelineOpts.Value.MaxIterations), 1, 10);
-
-    // Switching the engine to Quality forces "run on my machine" off — the pipeline is server-side.
     private void OnBrainChanged()
     {
         if (EngineSelection.IsQuality(_brain)) { _runOnMachine = false; }
