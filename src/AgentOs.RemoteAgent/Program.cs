@@ -221,6 +221,11 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             RedirectStandardError = true,
             UseShellExecute = false,
             WorkingDirectory = runDir,
+            // UTF-8 both ways. The default is the console code page (cp437/1252 on Windows): a Vietnamese ticket reached
+            // the agent garbled and its answer came back as "Ä^PÄƒng kÃ½" instead of "Đăng ký" in the pull request.
+            StandardInputEncoding = Utf8NoBom,
+            StandardOutputEncoding = Utf8NoBom,
+            StandardErrorEncoding = Utf8NoBom,
         };
         foreach (var a in args)
         {
@@ -487,6 +492,9 @@ async Task ReportProgressAsync(string requestId, string step)
 internal static partial class Program
 {
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Process> RunningCli = new(StringComparer.Ordinal);
+
+    // Every pipe to and from a CLI is UTF-8 without a BOM (a BOM on stdin would reach the model as a stray character).
+    internal static readonly System.Text.Encoding Utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     // Requests stopped while they waited for a CLI slot — skipped instead of started.
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> CancelledBeforeStart = new(StringComparer.Ordinal);
