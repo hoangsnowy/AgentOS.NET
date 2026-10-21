@@ -60,7 +60,7 @@
         Tasks <Badge>@(_sessions?.Count ?? 0)</Badge>
     </button>
     <button class="board-tab @(_tab == Tab.Runners ? "active" : "")" @onclick="@(() => _tab = Tab.Runners)">
-        Computers <Badge>@(_runners?.Count ?? 0)</Badge>
+        Computers <Badge>@(_runners?.Count(r => r.Status != "Revoked") ?? 0)</Badge>
     </button>
     @* Was the standalone Terminal app: the runner's live session feed lives next to the sessions it tails. *@
     <button class="board-tab @(_tab == Tab.Log ? "active" : "")" @onclick="@(() => _tab = Tab.Log)">
@@ -624,11 +624,11 @@ else if (_tab == Tab.Sessions)
             <thead>
                 <tr>
                     <th>Title</th>
-                    <th>Board</th>
-                    <th>Repos</th>
+                    <th>Project</th>
+                    <th>Code</th>
                     @if (_isAdmin) { <th>Member</th> }
                     <th>Status</th>
-                    <th>Created</th>
+                    <th>Started</th>
                     <th class="actions">Actions</th>
                 </tr>
             </thead>
@@ -638,17 +638,6 @@ else if (_tab == Tab.Sessions)
                     <tr>
                         <td>
                             @s.Title
-                            @if (s.Status == "Running" && CurrentStep(s.Id) is var step && step >= 0)
-                            {
-                                @* Live progress in plain steps (reported by the computer doing the work). Static — no looping motion. *@
-                                <ol class="task-steps" aria-label="Progress">
-                                    @for (var i = 0; i < AgentOs.Domain.Sessions.TaskSteps.All.Count; i++)
-                                    {
-                                        var state = i < step ? "done" : i == step ? "now" : "next";
-                                        <li class="task-step is-@state" aria-current="@(i == step ? "step" : null)">@AgentOs.Domain.Sessions.TaskSteps.All[i].Label</li>
-                                    }
-                                </ol>
-                            }
                             @if (s.Status != "Running" && AgentOs.Web.Services.TaskFailure.Explain(s.Error) is { } why)
                             {
                                 @* Failure card: what happened in one line, what to do, ONE action; the raw text under Details. *@
@@ -675,7 +664,7 @@ else if (_tab == Tab.Sessions)
                                 {
                                     <div class="board-session-repo">
                                         <code>@r.Owner/@r.Repo</code>
-                                        <Badge>@PlainStatus(r.Status)</Badge>
+                                        <Badge>@(s.Status == "Running" && r.Status == "Done" ? "Updating…" : PlainStatus(r.Status))</Badge>
                                         @if (!string.IsNullOrEmpty(r.PrUrl))
                                         {
                                             <a href="@r.PrUrl" target="_blank" rel="noopener">PR</a>
@@ -698,7 +687,7 @@ else if (_tab == Tab.Sessions)
                         </td>
                         @if (_isAdmin) { <td title="@s.MemberUserId">@MemberLabel(s.MemberUserId)</td> }
                         <td><Badge>@PlainStatus(s.Status)</Badge></td>
-                        <td>@s.CreatedAtUtc.ToString("u")</td>
+                        <td title="@s.CreatedAtUtc.ToString("u")">@Ago(s.CreatedAtUtc)</td>
                         <td class="actions">
                             @* A failed session can be run again in place (after fixing what its error says) instead of being
                                closed and recreated from the ticket. *@
@@ -730,6 +719,21 @@ else if (_tab == Tab.Sessions)
                             </Btn>
                         </td>
                     </tr>
+                    @if (s.Status == "Running" && CurrentStep(s.Id) is var step && step >= 0)
+                    {
+                        <tr class="board-activity-tr">
+                            <td colspan="@(_isAdmin ? 7 : 6)">
+                                @* Live progress in plain steps (reported by the computer doing the work). Static — no looping motion. *@
+                                <ol class="task-steps" aria-label="@($"Progress of task #{s.IssueNumber}")">
+                                    @for (var i = 0; i < AgentOs.Domain.Sessions.TaskSteps.All.Count; i++)
+                                    {
+                                        var state = i < step ? "done" : i == step ? "now" : "next";
+                                        <li class="task-step is-@state" aria-current="@(i == step ? "step" : null)">@AgentOs.Domain.Sessions.TaskSteps.All[i].Label</li>
+                                    }
+                                </ol>
+                            </td>
+                        </tr>
+                    }
                     @if (_changesFor == s.Id)
                     {
                         <tr class="board-activity-tr">
