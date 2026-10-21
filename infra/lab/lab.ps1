@@ -33,7 +33,9 @@ param(
     [Parameter(Position = 0)][ValidateSet('up', 'update', 'down', 'status', 'reset', 'logs', 'test', 'pair', 'unpair')][string]$Command = 'status',
     [string]$Ref = 'origin/main',
     [string]$LabDir = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) '..\AgentOs-lab'),
-    [switch]$Force
+    [switch]$Force,
+    # pair: test data the agents may read on this computer, e.g. "CHESS_LIBRARY_PATH=D:\Chess" (REMOTE_AGENT_DATA)
+    [string]$Data
 )
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -155,6 +157,8 @@ switch ($Command) {
         $env:LAB_URL = $WebUrl
         $env:RUNNER_EXE = Join-Path $LabDir 'src/AgentOs.RemoteAgent/bin/Release/net10.0/AgentOs.RemoteAgent.exe'
         $env:STATE_DIR = $StateDir
+        if ($Data) { $env:REMOTE_AGENT_DATA = $Data; Write-Host "== Test data for the agents: $(($Data -split ';' | ForEach-Object { ($_ -split '=')[0] }) -join ', ')" }
+        else { Remove-Item Env:REMOTE_AGENT_DATA -ErrorAction SilentlyContinue }
         & (Join-Path $pwDir 'node/win32_x64/node.exe') (Join-Path $PSScriptRoot 'pair-runner.js')
         if ($LASTEXITCODE -ne 0) { throw 'Pairing failed — see the message above.' }
         Start-Sleep -Seconds 4

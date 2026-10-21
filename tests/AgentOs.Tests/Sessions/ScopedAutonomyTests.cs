@@ -133,3 +133,26 @@ public sealed class ScopedAutonomyTests
         Directory.Exists(dir).ShouldBeFalse();
     }
 }
+
+public sealed class TestDataTests
+{
+    [Fact]
+    public void Parse_KeepsOnlyPlainNamesAndExistingAbsolutePaths()
+    {
+        var dir = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar, '/');
+
+        var data = TestData.Parse($"CHESS_LIBRARY_PATH={dir}; lower={dir}; PATH={dir}; REL=relative/x; MISSING={dir}/no-such-dir-{Guid.NewGuid():N}; =x; NOEQUALS");
+
+        data.ShouldHaveSingleItem().ShouldBe(("CHESS_LIBRARY_PATH", dir));
+    }
+
+    [Fact]
+    public void PromptNote_NamesTheDataButNeverThePath()
+    {
+        var note = TestData.PromptNote([("CHESS_LIBRARY_PATH", @"D:\Chess")]);
+
+        note.ShouldContain("CHESS_LIBRARY_PATH");
+        note.ShouldNotContain(@"D:\Chess");
+        TestData.PromptNote([]).ShouldBeEmpty();
+    }
+}
