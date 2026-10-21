@@ -19,6 +19,9 @@ public sealed class RemoteAgentModule : IModule, IEndpointModule
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton<IRemoteAgentBroker, InProcessRemoteAgentBroker>();
+        // "Try the app" rides the same connections: the in-process broker is also the preview seam.
+        services.TryAddSingleton<IRunnerPreviewBroker>(sp =>
+            sp.GetRequiredService<IRemoteAgentBroker>() as IRunnerPreviewBroker ?? new InProcessRemoteAgentBroker());
         // Fail-closed: deny remote/runner exec outside Development unless RemoteAgent:AutoApprove=true.
         // (AutoApproveRemoteExec is retained for tests + explicit dev wiring.)
         services.TryAddSingleton<IRemoteExecApprover, ConfigGatedRemoteExecApprover>();

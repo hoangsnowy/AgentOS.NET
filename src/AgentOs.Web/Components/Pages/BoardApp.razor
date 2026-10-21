@@ -37,6 +37,7 @@
 @inject AgentOs.Web.Services.Orchestration.OrchestratorLog OrchestratorLog
 @inject AgentOs.Modules.Sessions.Pairing.IComputerPairingCodes PairingCodes
 @inject AgentOs.Modules.RemoteAgent.IRemoteAgentBroker Broker
+@inject AgentOs.Web.Services.Preview.PreviewService Previews
 @inject NavigationManager Nav
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @implements IDisposable
@@ -250,6 +251,12 @@ else if (_tab == Tab.Boards)
                                 <td><code>@r.Owner/@r.Repo</code></td>
                                 <td>@r.DefaultBranch</td>
                                 <td class="actions">
+                                    @{ var preview = Previews.Get(_tenantId, r.Id); }
+                                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary"
+                                         OnClick="@(() => TryTheApp(r))" Disabled="@(_previewBusy == r.Id || preview is { IsActive: true })"
+                                         Title="Run the latest version of this project on your computer">
+                                        <Icon Name="play" Size="13" /> @(_previewBusy == r.Id ? "Checking…" : "Try the app")
+                                    </Btn>
                                     <Btn Size="Btn.ButtonSize.Sm"
                                          OnClick="@(() => SeedLabels(r))" Disabled="@(_busyId == r.Id)">
                                         <Icon Name="tag" Size="13" /> Seed labels
@@ -260,6 +267,10 @@ else if (_tab == Tab.Boards)
                                     </Btn>
                                 </td>
                             </tr>
+                            @if (_previewAsk.ContainsKey(r.Id) || preview is not null)
+                            {
+                                <tr class="board-preview-row"><td colspan="3">@PreviewCard(r, preview)</td></tr>
+                            }
                         }
                         @if (_repos.Count == 0)
                         {
@@ -1172,6 +1183,7 @@ else if (_tab == Tab.Sessions)
         // No tenant on the token → nothing tenant-scoped to load (fail closed; never read the `default`
         // workspace for a malformed sign-in). The empty-state UI handles _tenantId == "".
         if (_tenantId.Length == 0) { return; }
+        Previews.Changed += OnPreviewChanged;
         await ReloadAll();
         _pollTimer = new System.Threading.Timer(
             _ => InvokeAsync(PollRunningSessions),
@@ -1190,6 +1202,7 @@ else if (_tab == Tab.Sessions)
 
     public void Dispose()
     {
+        Previews.Changed -= OnPreviewChanged;
         _pollTimer?.Dispose();
         _renderTimer?.Dispose();
         if (_cts is not null)
@@ -2229,6 +2242,138 @@ else if (_tab == Tab.Sessions)
             _loadingChecks = false;
         }
     }
+
+    // ── Try the app (a local preview on the member's computer) ───────────────────────────────────────
+    private Guid? _previewBusy;
+    // Recipes read for a repo and not yet run or dismissed: the person sees the exact command before it runs.
+    private readonly Dictionary<Guid, AgentOs.Web.Services.Preview.RecipeLookup> _previewAsk = new();
+
+    private void OnPreviewChanged(string tenantId)
+    {
+        if (tenantId == _tenantId) { _ = InvokeAsync(StateHasChanged); }
+    }
+
+    private bool HasMyComputer() => (_runners ?? []).Any(x => x.OwnerUserId == _userId && Broker.IsConnected(x.Id));
+
+    private async Task TryTheApp(WorkspaceRepoEntity r)
+    {
+        if (_selectedBoard is null) { return; }
+        _previewBusy = r.Id;
+        try { _previewAsk[r.Id] = await Previews.ReadRecipeAsync(_tenantId, _selectedBoard, r); }
+        finally { _previewBusy = null; }
+    }
+
+    private void RunPreview(WorkspaceRepoEntity r, AgentOs.Domain.Preview.PreviewRecipe recipe)
+    {
+        if (_selectedBoard is null) { return; }
+        _previewAsk.Remove(r.Id);
+        if (Previews.Start(_tenantId, _userId, _selectedBoard.Id, r, recipe) == AgentOs.Web.Services.Preview.PreviewStartResult.NoComputer)
+        {
+            Toasts.Show("Try the app", "Your computer isn't connected — connect it on the Computers tab first.", ToastKind.Warn);
+        }
+    }
+
+    private async Task AskForRecipe(WorkspaceRepoEntity r)
+    {
+        if (_selectedBoard is null) { return; }
+        _previewBusy = r.Id;
+        try
+        {
+            var number = await Previews.RequestRecipeAsync(_tenantId, _selectedBoard, r);
+            _previewAsk.Remove(r.Id);
+            Toasts.Show("Try the app", number is { } n
+                ? $"Opened #{n} — the AI will add the recipe; then Try the app works here."
+                : "Couldn't open the ticket — AgentOS.NET has no access to this project.", number is null ? ToastKind.Err : ToastKind.Ok);
+        }
+        catch (Exception ex) when (ex is Octokit.ApiException or System.Net.Http.HttpRequestException or InvalidOperationException)
+        {
+            Toasts.Show("Try the app", $"Couldn't open the ticket: {ex.Message}", ToastKind.Err);
+        }
+        finally { _previewBusy = null; }
+    }
+
+    private static string PreviewHeadline(AgentOs.Web.Services.Preview.PreviewState p) => p.State switch
+    {
+        "Preparing" => "Getting the latest version onto your computer…",
+        "Starting" => "Starting the app…",
+        "Ready" => "The app is running on your computer.",
+        "Failed" => "The app couldn't start.",
+        _ => "Stopped.",
+    };
+
+    private RenderFragment PreviewCard(WorkspaceRepoEntity r, AgentOs.Web.Services.Preview.PreviewState? p) => @<div class="board-preview" data-state="@(_previewAsk.ContainsKey(r.Id) ? "Ask" : p?.State)" role="status" aria-live="polite">
+        @if (_previewAsk.TryGetValue(r.Id, out var ask))
+        {
+            @if (ask.Recipe is { } recipe)
+            {
+                <strong>Try @r.Repo on your computer</strong>
+                <span>AgentOS.NET gets the latest <code>@(string.IsNullOrWhiteSpace(r.DefaultBranch) ? "main" : r.DefaultBranch)</code> and runs the project's own command:</span>
+                <code class="board-preview-command">@recipe.Command</code>
+                <span class="muted">Then it opens <code>@recipe.Url.AbsoluteUri</code>. Testing on this project waits while the app runs.</span>
+                @if (!HasMyComputer())
+                {
+                    <span class="board-preview-warn">Your computer isn't connected — connect it on the Computers tab first.</span>
+                }
+                <div class="board-preview-actions">
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="@(() => RunPreview(r, recipe))" Disabled="@(!HasMyComputer())">
+                        <Icon Name="play" Size="13" /> Run it
+                    </Btn>
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => _previewAsk.Remove(r.Id))">Cancel</Btn>
+                </div>
+            }
+            else if (ask.Missing)
+            {
+                <strong>This project doesn't say how to run it yet.</strong>
+                <span>The AI can add a small recipe file (<code>@AgentOs.Domain.Preview.PreviewRecipe.FilePath</code>) as a normal task — then Try the app works here.</span>
+                <div class="board-preview-actions">
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="@(() => AskForRecipe(r))" Disabled="@(_previewBusy == r.Id)">
+                        <Icon Name="lightning" Size="13" /> Ask the AI to set it up
+                    </Btn>
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => _previewAsk.Remove(r.Id))">Cancel</Btn>
+                </div>
+            }
+            else
+            {
+                <strong>Try the app isn't set up right.</strong>
+                <span>@ask.Problem</span>
+                <div class="board-preview-actions">
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => _previewAsk.Remove(r.Id))">Close</Btn>
+                </div>
+            }
+        }
+        else if (p is not null)
+        {
+            <strong>@PreviewHeadline(p)</strong>
+            @if (p.State is "Preparing" or "Starting" && !string.IsNullOrEmpty(p.Message))
+            {
+                <span class="muted">@p.Message</span>
+            }
+            <div class="board-preview-actions">
+                @if (p.State == "Ready")
+                {
+                    <a class="btn btn-primary btn-sm" href="@p.Url" target="_blank" rel="noopener"><Icon Name="arrow-square-out" Size="13" /> Open the app</a>
+                    <span class="muted">@p.Url</span>
+                }
+                @if (p.IsActive)
+                {
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="@(() => Previews.Stop(_tenantId, r.Id))">
+                        <Icon Name="stop" Size="13" /> Stop
+                    </Btn>
+                }
+                else
+                {
+                    <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => TryTheApp(r))"><Icon Name="arrow-clockwise" Size="13" /> Try again</Btn>
+                }
+            </div>
+            @if (!p.IsActive && !string.IsNullOrWhiteSpace(p.Message))
+            {
+                <details class="board-failure-details">
+                    <summary>What happened</summary>
+                    <pre>@p.Message</pre>
+                </details>
+            }
+        }
+    </div>;
 
     // ── Autopilot ────────────────────────────────────────────────────────────────────────────────────
     private readonly Dictionary<Guid, IReadOnlyList<(DateTimeOffset At, string Text)>> _autopilotLog = new();

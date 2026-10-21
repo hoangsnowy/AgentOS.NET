@@ -239,6 +239,8 @@ builder.Services.AddSingleton<AgentOs.Web.Orchestrations.OrchestrationStore>();
 builder.Services.AddSingleton<AgentOs.Web.Services.TaskStopRegistry>();
 // Board tasks run here, off any circuit — the Board UI and the project orchestrator share it.
 builder.Services.AddSingleton<AgentOs.Web.Services.BoardTasks.BoardTaskService>();
+// "Try the app": previews run on a member's paired computer; their state lives as long as the runner connection.
+builder.Services.AddSingleton<AgentOs.Web.Services.Preview.PreviewService>();
 // The project orchestrator (Autopilot): a pass over every autopilot board each minute, decisions logged per board.
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.OrchestratorLog>();
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.ProjectOrchestrator>();

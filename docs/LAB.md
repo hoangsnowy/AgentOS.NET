@@ -103,6 +103,14 @@ machine's own git credentials. Every other request (spec generation, the 5-agent
 answer-only. It is still code from a ticket running on your box; the machine's owner can refuse scoped runs
 with `REMOTE_AGENT_AUTONOMY=off`. With the runner paired, `RUN_AGENTOS_E2E_REAL=true AGENTOS_REAL_URL=https://lab.dev.localhost:6180 AGENTOS_E2E_RUN_TIMEOUT_SECONDS=1200 dotnet test --project tests/AgentOs.E2E.Tests --filter-class "*WorkflowAppRealAuthTests"` runs the full 5-agent pipeline live.
 
+### Try the app on the lab
+
+With the runner paired, Board → VNChessAcademy → **Try the app** on a repository runs its latest default branch on
+this machine from `%LOCALAPPDATA%\AgentOS.NET\previews\<owner>-<repo>` (a reused checkout, so restores stay warm)
+and shows *Open the app* once the recipe's url accepts connections. *Stop* kills the whole process tree; the runner
+also stops its previews when it exits and kills leftovers from a hard kill on its next start (`preview.pid`).
+Autopilot holds acceptance testing on that board while a preview runs and says so in the Autopilot log.
+
 ## Run the lab tests
 
 ```powershell
