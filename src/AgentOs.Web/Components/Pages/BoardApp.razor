@@ -697,12 +697,39 @@ else if (_tab == Tab.Sessions)
                                     <Icon Name="x" Size="13" /> Stop
                                 </Btn>
                             }
+                            @if (s.Status is "Done" or "Failed" or "Blocked" && HasOpenChange(s.Id))
+                            {
+                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => ToggleChanges(s.Id))" aria-expanded="@(_changesFor == s.Id)">
+                                    <Icon Name="pencil" Size="13" /> Ask for changes
+                                </Btn>
+                            }
                             <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => CloseSession(s))"
                                  Disabled="@(_busyId == s.Id || s.Status is "Closed" or "Running")">
                                 <Icon Name="check" Size="13" /> Close
                             </Btn>
                         </td>
                     </tr>
+                    @if (_changesFor == s.Id)
+                    {
+                        <tr class="board-activity-tr">
+                            <td colspan="@(_isAdmin ? 7 : 6)">
+                                @* Review in words: what to change on the open proposed change. The AI continues on the same
+                                   branch and pull request; "Fix the failing checks" fills this from the CI log. *@
+                                <div class="board-where board-changes">
+                                    <label class="board-ai-toggle" for="@($"changes-{s.Id}")"><strong>What should the AI change?</strong></label>
+                                    <textarea id="@($"changes-{s.Id}")" class="prefs-input" rows="4" @bind="_changesText"
+                                              placeholder="e.g. The second test is wrong: reload the page before checking the duplicate email."></textarea>
+                                    <div class="board-failure-actions">
+                                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="@(() => SendChanges(s))"
+                                             Disabled="@(_busyId == s.Id || string.IsNullOrWhiteSpace(_changesText))">Send to the AI</Btn>
+                                        <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => FixFailingChecks(s))" Disabled="@(_busyId == s.Id || _loadingChecks)">
+                                            @(_loadingChecks ? "Reading the checks…" : "Fix the failing checks")
+                                        </Btn>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    }
                     @if (_activity.TryGetValue(s.Id, out var feed) && feed.Count > 0)
                     {
                         <tr class="board-activity-tr">
@@ -1873,7 +1900,7 @@ else if (_tab == Tab.Sessions)
 
     // ── Run session (fire-and-forget AI pipeline) ──────────────────────────────────────────────
 
-    private async Task RunSession(RemoteSessionEntity session)
+    private async Task RunSession(RemoteSessionEntity session, string? changeRequest = null)
     {
         if (_busyId == session.Id) { return; }
         _busyId = session.Id;
@@ -1902,7 +1929,9 @@ else if (_tab == Tab.Sessions)
             // Try again: a repo that failed last time starts over clean (its old error would read as this run's).
             foreach (var failed in children.Where(c => c.Status == "Failed"))
             {
-                await Sessions.UpdateRepoRunResultAsync(_tenantId, failed.Id, "Pending", null, null, null);
+                // A follow-up keeps the branch + pull request it continues; a plain retry starts over.
+                var keep = changeRequest is not null && !string.IsNullOrEmpty(failed.PrUrl);
+                await Sessions.UpdateRepoRunResultAsync(_tenantId, failed.Id, "Pending", keep ? failed.BranchName : null, keep ? failed.PrUrl : null, null);
                 failed.Status = "Pending";
                 failed.Error = null;
             }
@@ -1919,6 +1948,7 @@ else if (_tab == Tab.Sessions)
             var capturedPat = pat;
             var capturedChildren = children;
             var capturedCli = _cliProfile;   // CLI choice is transient (not persisted) — capture at dispatch.
+            var capturedChange = string.IsNullOrWhiteSpace(changeRequest) ? null : changeRequest.Trim();
             var stopLease = StopRegistry.Begin(capturedTenantId, capturedSession.Id);
             _ = Task.Run(async () =>
             {
@@ -1948,8 +1978,10 @@ else if (_tab == Tab.Sessions)
 
                     var issueBody = await ReadTicketBodyAsync(scope, capturedBoard, capturedTenantId, capturedSession, capturedPat).ConfigureAwait(false);
 
+                    // Ask for changes: each repo that already has a pull request continues on its branch.
                     var workRepos = capturedChildren
-                        .Select(c => new AgentOs.Domain.Sessions.WorkRepo(c.Id, c.Owner, c.Repo, c.DefaultBranch))
+                        .Select(c => new AgentOs.Domain.Sessions.WorkRepo(c.Id, c.Owner, c.Repo, c.DefaultBranch,
+                            capturedChange is not null && !string.IsNullOrEmpty(c.PrUrl) ? c.BranchName : null))
                         .ToList();
                     var issueRequest = new AgentOs.Domain.Sessions.IssueWorkRequest(
                         SessionId: capturedSession.Id,
@@ -1961,7 +1993,9 @@ else if (_tab == Tab.Sessions)
                         IssueBody: issueBody ?? "",
                         TicketKind: capturedSession.TicketKind ?? "Issue",
                         ProviderOverride: capturedSession.RunOnMachine ? "RemoteAgent" : null,
-                        CliProfile: capturedSession.RunOnMachine ? capturedCli : null);
+                        CliProfile: capturedSession.RunOnMachine ? capturedCli : null,
+                        TicketType: capturedSession.TicketType,
+                        ChangeRequest: capturedChange);
 
                     var workResult = await agent.RunAsync(issueRequest, stopLease.Token).ConfigureAwait(false);
 
@@ -1980,7 +2014,17 @@ else if (_tab == Tab.Sessions)
                             continue;
                         }
 
-                        var childBranch = capturedChildren.FirstOrDefault(c => c.Id == outcome.SessionRepoId)?.DefaultBranch ?? "main";
+                        // A follow-up pushed more commits to an open pull request: nothing new to open.
+                        var child = capturedChildren.FirstOrDefault(c => c.Id == outcome.SessionRepoId);
+                        if (capturedChange is not null && !string.IsNullOrEmpty(child?.PrUrl))
+                        {
+                            await sessRepo.UpdateRepoRunResultAsync(capturedTenantId, outcome.SessionRepoId,
+                                "Done", outcome.BranchName, child.PrUrl, null).ConfigureAwait(false);
+                            Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — proposed change updated", repoLabel, "Done", child.PrUrl);
+                            continue;
+                        }
+
+                        var childBranch = child?.DefaultBranch ?? "main";
                         var descriptor = RepoDescriptor(capturedBoard, capturedTenantId, outcome.Owner, outcome.Repo, childBranch, capturedPat);
 
                         try
@@ -2307,6 +2351,65 @@ else if (_tab == Tab.Sessions)
             default:
                 await RunSession(s);
                 break;
+        }
+    }
+
+    // ── Ask for changes ──────────────────────────────────────────────────────────────────────────────
+    private Guid? _changesFor;
+    private string _changesText = "";
+    private bool _loadingChecks;
+
+    private bool HasOpenChange(Guid sessionId) => SessionReposFor(sessionId).Any(r => !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName));
+
+    private void ToggleChanges(Guid sessionId)
+    {
+        _changesFor = _changesFor == sessionId ? null : sessionId;
+        _changesText = "";
+    }
+
+    private async Task SendChanges(RemoteSessionEntity s)
+    {
+        var text = _changesText;
+        if (string.IsNullOrWhiteSpace(text)) { return; }
+        _changesFor = null;
+        _changesText = "";
+        await RunSession(s, text);
+    }
+
+    // The checks of each open pull request of this task that failed, with the tail of their logs, as the request.
+    private async Task FixFailingChecks(RemoteSessionEntity s)
+    {
+        var board = _boards?.FirstOrDefault(b => b.Id == s.WorkspaceId);
+        if (board is null) { return; }
+        _loadingChecks = true;
+        try
+        {
+            var pat = await ConfigStore.GetForTenantAsync(_tenantId, board.CredentialRef);
+            if (string.IsNullOrEmpty(pat)) { Toasts.Show("Board", "GitHub access has expired — reconnect the project.", ToastKind.Err); return; }
+            using var scope = ScopeFactory.CreateScope();
+            var prs = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Workspaces.IPrCreationService>();
+            var report = new System.Text.StringBuilder();
+            foreach (var repo in SessionReposFor(s.Id).Where(r => PrNumber(r.PrUrl) is not null))
+            {
+                var failed = await prs.GetFailedChecksAsync(RepoDescriptor(board, _tenantId, repo.Owner, repo.Repo, repo.DefaultBranch, pat), PrNumber(repo.PrUrl)!.Value);
+                if (!string.IsNullOrWhiteSpace(failed)) { report.Append(repo.Owner).Append('/').Append(repo.Repo).Append(":\n").Append(failed).Append('\n'); }
+            }
+            if (report.Length == 0)
+            {
+                Toasts.Show("Board", "No failing checks right now — they may still be running.", ToastKind.Ok);
+                return;
+            }
+            _changesFor = null;
+            _changesText = "";
+            await RunSession(s, "The pull request's automated checks failed. Fix the cause (not the test, unless the test itself is wrong) so they pass:\n\n" + report);
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or TimeoutException)
+        {
+            Toasts.Show("Board", $"Couldn't read the checks: {ex.Message}", ToastKind.Err);
+        }
+        finally
+        {
+            _loadingChecks = false;
         }
     }
 

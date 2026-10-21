@@ -313,6 +313,9 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                     error ?? "Agent did not push a branch.");
             }
 
+            // A follow-up pushes to the pull request's existing branch — whatever name the reply claims, that is the one.
+            if (!string.IsNullOrWhiteSpace(repo.ExistingBranch) && !string.IsNullOrWhiteSpace(request.ChangeRequest)) { branch = repo.ExistingBranch; }
+
             _logger.LogInformation("IssueWorkAgent: session {SessionId} repo {Owner}/{Repo} pushed branch '{Branch}'",
                 request.SessionId, repo.Owner, repo.Repo, branch);
             return new RepoWorkOutcome(repo.SessionRepoId, true, repo.Owner, repo.Repo, branch, summary, null);

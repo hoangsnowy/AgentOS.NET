@@ -14,7 +14,9 @@ namespace AgentOs.Domain.Sessions;
 /// <param name="Owner">GitHub owner / org.</param>
 /// <param name="Repo">Repository name.</param>
 /// <param name="DefaultBranch">Base branch the fix branch is cut from.</param>
-public sealed record WorkRepo(Guid SessionRepoId, string Owner, string Repo, string DefaultBranch);
+/// <param name="ExistingBranch">Set for "Ask for changes": the branch of this repo's open pull request. The agent
+/// checks it out and pushes more commits to it instead of starting a new branch.</param>
+public sealed record WorkRepo(Guid SessionRepoId, string Owner, string Repo, string DefaultBranch, string? ExistingBranch = null);
 
 /// <summary>Request to the issue-work agent — a ticket plus the repos it should be implemented in.</summary>
 /// <param name="SessionId">Correlating session row for evidence / logging.</param>
@@ -45,7 +47,9 @@ public sealed record IssueWorkRequest(
     string IssueBody,
     string TicketKind = "Issue",
     string? ProviderOverride = null,
-    string? CliProfile = null);
+    string? CliProfile = null,
+    string? TicketType = null,
+    string? ChangeRequest = null);
 
 /// <summary>The agent's outcome for one repo.</summary>
 /// <param name="SessionRepoId">The session-repo row this outcome belongs to.</param>
