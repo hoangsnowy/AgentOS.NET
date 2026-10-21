@@ -550,25 +550,38 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
     @if (_runners is null) { <Spinner /> }
     else
     {
+        var offline = _runners.Where(r => r.Status != "Revoked" && !Broker.IsConnected(r.Id)).ToList();
+        var disconnectedCount = _runners.Count(r => r.Status == "Revoked");
         <Panel Title="@(_isAdmin ? "Computers (all members)" : "Your computers")">
+        @if (offline.Count > 1)
+        {
+            @* Re-pairing leaves the old entry behind; one click retires every computer that isn't connected now. Two
+               steps — each keeps a live pairing secret, and its helper needs a new code to come back. *@
+            <div class="form-actions">
+                <Btn Size="Btn.ButtonSize.Sm" Variant="@(_confirmOffline ? Btn.ButtonVariant.Danger : Btn.ButtonVariant.Default)"
+                     OnClick="@(() => DisconnectOffline(offline))" Disabled="_busy">
+                    @(_confirmOffline ? $"Click again to disconnect {offline.Count} offline computers" : $"Disconnect offline computers ({offline.Count})")
+                </Btn>
+            </div>
+        }
         <table class="data-table">
             <thead>
                 <tr>
                     <th>Label</th>
                     @if (_isAdmin) { <th>Owner</th> }
                     <th>Status</th>
-                    <th>Created</th>
+                    <th>Last seen</th>
                     <th class="actions">Actions</th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var r in _runners)
+                @foreach (var r in VisibleComputers())
                 {
                     <tr>
                         <td>@r.Label</td>
                         @if (_isAdmin) { <td title="@r.OwnerUserId">@MemberLabel(r.OwnerUserId)</td> }
                         <td><Badge>@ComputerStatus(r)</Badge></td>
-                        <td>@r.CreatedAtUtc.ToString("u")</td>
+                        <td title="@((r.LastSeenUtc ?? r.CreatedAtUtc).ToString("u"))">@(Broker.IsConnected(r.Id) ? "now" : Ago(r.LastSeenUtc ?? r.CreatedAtUtc))</td>
                         <td class="actions">
                             <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger"
                                  OnClick="@(() => RevokeRunner(r))" Disabled="@(_busyId == r.Id || r.Status == "Revoked")">
@@ -577,9 +590,17 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                         </td>
                     </tr>
                 }
-                @if (_runners.Count == 0) { <tr><td colspan="@(_isAdmin ? 5 : 4)" class="data-empty">No computers connected yet — connect one above.</td></tr> }
+                @if (_runners.Count(r => r.Status != "Revoked") == 0) { <tr><td colspan="@(_isAdmin ? 5 : 4)" class="data-empty">No computers connected yet — connect one above.</td></tr> }
             </tbody>
         </table>
+        @if (disconnectedCount > 0)
+        {
+            <p class="muted board-form-hint">
+                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => _showDisconnected = !_showDisconnected)">
+                    @(_showDisconnected ? "Hide" : "Show") @disconnectedCount disconnected
+                </Btn>
+            </p>
+        }
         </Panel>
     }
 }
@@ -840,6 +861,50 @@ else if (_tab == Tab.Sessions)
     private string _newRunnerCode = "";
     private string _newRunnerLabel = "";
     private bool _newRunnerConnected;
+
+    private bool _showDisconnected;
+    private bool _confirmOffline;
+
+    // Connected first, then waiting, then offline (most recently seen first); disconnected history only on request.
+    private IEnumerable<RunnerEntity> VisibleComputers() => (_runners ?? [])
+        .Where(r => _showDisconnected || r.Status != "Revoked")
+        .OrderBy(r => r.Status == "Revoked" ? 3 : Broker.IsConnected(r.Id) ? 0 : r.Status == "Pending" ? 1 : 2)
+        .ThenByDescending(r => r.LastSeenUtc ?? r.CreatedAtUtc);
+
+    private static string Ago(DateTimeOffset at)
+    {
+        var d = DateTimeOffset.UtcNow - at;
+        return d.TotalMinutes < 1 ? "just now"
+            : d.TotalHours < 1 ? $"{(int)d.TotalMinutes} min ago"
+            : d.TotalDays < 1 ? $"{(int)d.TotalHours} h ago"
+            : d.TotalDays < 60 ? $"{(int)d.TotalDays} days ago"
+            : at.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private async Task DisconnectOffline(IReadOnlyList<RunnerEntity> offline)
+    {
+        if (!_confirmOffline) { _confirmOffline = true; return; }
+        _confirmOffline = false;
+        _busy = true;
+        try
+        {
+            foreach (var r in offline.Where(r => !Broker.IsConnected(r.Id)))
+            {
+                await Runners.SetStatusForTenantAsync(_tenantId, r.Id, "Revoked");
+            }
+            var all = await Runners.ListForTenantAsync(_tenantId);
+            _runners = _isAdmin ? all : all.Where(x => x.OwnerUserId == _userId).ToList();
+            Toasts.Show("Board", $"Disconnected {offline.Count} offline computer(s).", ToastKind.Ok);
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or System.IO.IOException or TimeoutException)
+        {
+            Toasts.Show("Board", $"Couldn't disconnect: {ex.Message}", ToastKind.Err);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
 
     // Live, not stored: a paired computer is "Connected" while its helper holds a hub connection.
     private string ComputerStatus(RunnerEntity r) =>
