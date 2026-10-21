@@ -63,7 +63,16 @@ async function setForceProvider(page, value) {
     await page.locator('.dock-item[title="Board"]').first().click();
     let win = page.locator('.appwin.focused');
     await win.locator('.board-tab', { hasText: 'Computers' }).click();
-    await win.getByPlaceholder("My laptop").fill(`lab · ${require('os').hostname()} · claude -p`);
+    // Re-pairing used to pile up one row (and one live token) per run: disconnect this machine's earlier lab runners first.
+    const label = `lab · ${require('os').hostname()} · claude -p`;
+    await win.locator('.data-table').first().waitFor({ timeout: 15000 });
+    for (let i = 0; i < 50; i++) {
+      const stale = win.locator('.data-table tbody tr', { hasText: label }).filter({ has: page.getByRole('button', { name: 'Disconnect', disabled: false }) }).first();
+      if (!(await stale.count())) break;
+      await stale.getByRole('button', { name: 'Disconnect' }).click();
+      await page.waitForTimeout(800);
+    }
+    await win.getByPlaceholder("My laptop").fill(label);
     await win.getByRole('button', { name: 'Connect this computer' }).click();
     const readout = await win.locator('.cred-readout textarea').inputValue({ timeout: 15000 });
     id = /REMOTE_AGENT_ID=(\S+)/.exec(readout)?.[1];
