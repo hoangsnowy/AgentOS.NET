@@ -12,7 +12,9 @@ namespace AgentOs.Domain.Workspaces;
 /// <param name="Body">Markdown body — typically the requirement plus a <c>- [ ]</c> acceptance-criteria checklist.</param>
 /// <param name="Labels">Labels to apply (drawn from the standard taxonomy; includes the ai gate).</param>
 /// <param name="AiReady">True when AgentOS.NET may auto-run this ticket (mirrors the <c>ai:ready</c> label).</param>
-public sealed record TicketDraft(string Title, string Body, IReadOnlyList<string> Labels, bool AiReady);
+/// <param name="DependsOn">Indices (into the same draft list) of the tickets that must be done first — written into
+/// the created ticket as "Depends on #N" (TicketDependencies). Null/empty = none.</param>
+public sealed record TicketDraft(string Title, string Body, IReadOnlyList<string> Labels, bool AiReady, IReadOnlyList<int>? DependsOn = null);
 
 /// <summary>A ticket created by <see cref="ISourceProvider.CreateTicketsAsync"/> — the resolved ids + URL.</summary>
 /// <param name="Number">Repo issue number.</param>

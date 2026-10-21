@@ -84,9 +84,16 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
             var response = await llm.SendAsync(request, cancellationToken).ConfigureAwait(false);
             var dto = JsonExtractor.Deserialize<DecomposedDto>(response.Content, AgentName);
 
-            var tickets = (dto.Tickets ?? [])
-                .Where(t => !string.IsNullOrWhiteSpace(t.Title))
-                .Select(ToDraft)
+            // Dependencies point at indices of the LLM's list; dropping a blank ticket shifts them, so re-map.
+            var all = dto.Tickets ?? [];
+            var kept = all.Select((t, i) => (t, i)).Where(x => !string.IsNullOrWhiteSpace(x.t.Title)).ToList();
+            var newIndex = kept.Select((x, j) => (x.i, j)).ToDictionary(p => p.i, p => p.j);
+            var tickets = kept
+                .Select(x => ToDraft(x.t) with
+                {
+                    DependsOn = (x.t.DependsOn ?? []).Where(newIndex.ContainsKey).Select(d => newIndex[d])
+                        .Where(d => d != newIndex[x.i]).Distinct().ToList(),
+                })
                 .ToList();
 
             if (tickets.Count == 0)
@@ -135,5 +142,6 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
         public string? Body { get; set; }
         public List<string?>? Labels { get; set; }
         public bool AiReady { get; set; }
+        public List<int>? DependsOn { get; set; }
     }
 }

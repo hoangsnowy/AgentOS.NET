@@ -15,7 +15,7 @@ end to end on the lab; anything that still needs a hand edit there is a missing 
 
 ## What L4 needs
 
-1. **Ticket dependencies.** "Start from idea" writes them (`Depends on #11`) and the board records them; *Run all
+1. ✅ (#240) **Ticket dependencies.** "Start from idea" writes them (`Depends on #11`) and the board records them; *Run all
    approved* starts only tickets whose dependencies are merged, at most N at a time, and re-checks when one merges.
    Today it starts everything at once — #12 (import) would race #11 (the module it needs).
 2. **Self-repair on CI.** When a task's pull request goes red, run *Fix the failing checks* automatically, at most
