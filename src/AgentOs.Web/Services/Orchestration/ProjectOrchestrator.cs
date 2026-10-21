@@ -95,10 +95,13 @@ public sealed class OrchestratorLog(IServiceScopeFactory scopes, ILogger<Orchest
 public sealed partial class ProjectOrchestrator(
     IServiceScopeFactory scopes,
     BoardTaskService tasks,
+    TaskStopRegistry stops,
     IRemoteAgentBroker broker,
     OrchestratorLog log,
     ILogger<ProjectOrchestrator> logger)
 {
+    // Tasks seen "Running" with no live run here, by pass: one pass of grace (a run registers right after it is marked).
+    private readonly ConcurrentDictionary<Guid, int> _orphanSeen = new();
     // Automatic fix rounds per task (in memory: a restart grants at most another MaxFixRounds — bounded either way).
     private readonly ConcurrentDictionary<Guid, int> _fixRounds = new();
     // Ticket bodies (for dependencies) change rarely; read each at most every 10 minutes.
@@ -137,6 +140,11 @@ public sealed partial class ProjectOrchestrator(
                 .ToList();
             var sessions = (await sessionsRepo.ListForTenantAsync(tenant, ct).ConfigureAwait(false)).Where(s => s.WorkspaceId == board.Id).ToList();
             var repos = (await sessionsRepo.ListAllReposForTenantAsync(tenant, ct).ConfigureAwait(false)).ToLookup(r => r.SessionId);
+            if (await RecoverOrphansAsync(board, sessions, repos, sessionsRepo, ct).ConfigureAwait(false))
+            {
+                sessions = (await sessionsRepo.ListForTenantAsync(tenant, ct).ConfigureAwait(false)).Where(s => s.WorkspaceId == board.Id).ToList();
+                repos = (await sessionsRepo.ListAllReposForTenantAsync(tenant, ct).ConfigureAwait(false)).ToLookup(r => r.SessionId);
+            }
 
             // Proposed changes: merged ones are recorded; open ones get their check state.
             var planTasks = new List<PlanTask>();
@@ -281,6 +289,42 @@ public sealed partial class ProjectOrchestrator(
                 break;
             }
         }
+    }
+
+    // A task still "Running" whose run is not alive in this process lost it — the host restarted mid-way (a lab update,
+    // a deploy). It would otherwise read "Working…" forever. A test that was cut short goes back to untested (it runs
+    // again); coding that was cut short is restarted from scratch (Try again). Returns whether anything changed.
+    private async Task<bool> RecoverOrphansAsync(WorkspaceEntity board, IReadOnlyList<RemoteSessionEntity> sessions,
+        ILookup<Guid, SessionRepoEntity> repos, ISessionRepository sessionsRepo, CancellationToken ct)
+    {
+        var tenant = board.TenantId;
+        var changed = false;
+        foreach (var s in sessions.Where(s => s.Status == "Running"))
+        {
+            if (stops.IsRunning(tenant, s.Id)) { _orphanSeen.TryRemove(s.Id, out _); continue; }
+            if (_orphanSeen.AddOrUpdate(s.Id, 1, (_, n) => n + 1) < 2) { continue; }
+            _orphanSeen.TryRemove(s.Id, out _);
+            var children = repos[s.Id].ToList();
+            var wasCoding = children.Any(r => r.Status is "Pending" or "Running");
+            foreach (var r in children.Where(r => r.Status == "Testing"))
+            {
+                await sessionsRepo.UpdateRepoRunResultAsync(tenant, r.Id, "Done", r.BranchName, r.PrUrl, null, ct).ConfigureAwait(false);
+            }
+            await sessionsRepo.RecomputeSessionStatusForTenantAsync(tenant, s.Id, ct).ConfigureAwait(false);
+            if (wasCoding)
+            {
+                var restarted = await tasks.StartAsync(tenant, s.Id, ct: ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, restarted == TaskStart.Started
+                    ? $"#{s.IssueNumber} was cut short by a restart — started it again."
+                    : $"#{s.IssueNumber} was cut short by a restart and couldn't restart: {restarted}.");
+            }
+            else
+            {
+                log.Add(tenant, board.Id, $"#{s.IssueNumber}'s test was cut short by a restart — it will be tested again.");
+            }
+            changed = true;
+        }
+        return changed;
     }
 
     private async Task<IReadOnlyList<int>> DependenciesAsync(ISourceProvider? provider, WorkspaceEntity board, string tenant, string pat, BoardTicket t, CancellationToken ct)
