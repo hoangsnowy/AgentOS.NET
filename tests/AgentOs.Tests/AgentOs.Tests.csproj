@@ -50,6 +50,7 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunnerCommandPolicy.cs" Link="Linked\RunnerCommandPolicy.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ScopedAutonomy.cs" Link="Linked\ScopedAutonomy.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunnerCredentials.cs" Link="Linked\RunnerCredentials.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\CliProgress.cs" Link="Linked\CliProgress.cs" />
   </ItemGroup>
 
 </Project>

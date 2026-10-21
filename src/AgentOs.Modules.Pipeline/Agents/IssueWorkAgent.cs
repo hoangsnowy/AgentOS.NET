@@ -241,6 +241,14 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 // The only request that asks the runner for hands: clone → edit → build → test → push in its own
                 // per-run directory. Every other remote call stays answer-only.
                 Autonomy = WorkspaceAutonomy.Scoped,
+                // What the CLI is doing right now, in plain words, on the task's live feed.
+                Progress = new InlineProgress<string>(step =>
+                {
+                    if (TaskSteps.LabelFor(step) is { } label)
+                    {
+                        Emit(request, SessionRunEventKind.Step, label, $"{repo.Owner}/{repo.Repo}");
+                    }
+                }),
             }
             : new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.System(request, repo) + rules,

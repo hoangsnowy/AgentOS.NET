@@ -107,6 +107,26 @@ public class RemoteAgentTests
         cancelled.ShouldBeFalse();
     }
 
+    // Live progress: only for a request someone waits on, and the client hands it to that request only.
+    [Fact]
+    public async Task Client_RunnerReportsProgress_ReachesThatRequestOnly()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", Conn());
+        broker.Dispatched += d =>
+        {
+            broker.ReportProgress(d.Request.Id, "testing");
+            broker.ReportProgress("someone-else", "sending");
+            broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
+        };
+        var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
+        var steps = new List<string>();
+
+        await client.SendAsync(new LlmRequest("s", "u", "m") { Progress = new AgentOs.Domain.Sessions.InlineProgress<string>(steps.Add) });
+
+        steps.ShouldBe(["testing"]);
+    }
+
     [Fact]
     public async Task Broker_NoRunner_DispatchThrows()
     {

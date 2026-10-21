@@ -92,10 +92,15 @@ internal static class ScopedAutonomy
         return
         [
             "--permission-mode", "acceptEdits",
-            "--allowedTools", .. ClaudeAllowed,
-            "--disallowedTools", .. ClaudeDenied,
+            "--allowedTools", .. WithPowerShell(ClaudeAllowed),
+            "--disallowedTools", .. WithPowerShell(ClaudeDenied),
         ];
     }
+
+    // On Windows claude also has a PowerShell tool; with Bash-only rules every PowerShell call was denied and the
+    // agent retried each step through Bash (seen in a live stream). Mirror every shell rule onto it.
+    internal static string[] WithPowerShell(string[] rules) =>
+        [.. rules, .. rules.Where(r => r.StartsWith("Bash(", StringComparison.Ordinal)).Select(r => "PowerShell(" + r["Bash(".Length..])];
 
     /// <summary>Default root for run directories: <c>%LOCALAPPDATA%/AgentOS.NET/runs</c> on Windows, the XDG cache
     /// (<c>~/.cache/agentos-net/runs</c>) elsewhere — NOT LocalApplicationData there, which is ~/.local/share, a

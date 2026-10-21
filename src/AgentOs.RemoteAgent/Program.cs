@@ -116,7 +116,7 @@ connection.On<RemoteExecRequest>("Execute", request =>
             // Stopped while it waited for a slot: never start it.
             var result = CancelledBeforeStart.TryRemove(request.Id, out _)
                 ? new RemoteExecResult(request.Id, false, string.Empty, "Stopped before it started.")
-                : await RunLlmAsync(request).ConfigureAwait(false);
+                : await RunLlmAsync(request, ReportProgressAsync).ConfigureAwait(false);
             await connection.SendAsync("CompleteRequest", result).ConfigureAwait(false);
             // Print WHY on failure. Logging only ok=False made every distinct failure — CLI not on PATH, CLI not
             // logged in, non-zero exit — look identical from the runner console, which is the one place an
@@ -179,7 +179,7 @@ await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
 
 // ── M3: run the LLM CLI with the prompt piped to stdin ──────────────────────────────────────────
 
-static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
+static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<string, string, Task> report)
 {
     // Pick the CLI-agent profile: per-request hint (server-chosen), else REMOTE_AGENT_CLI, else claude.
     var cli = (request.Cli ?? Environment.GetEnvironmentVariable("REMOTE_AGENT_CLI") ?? "claude").Trim();
@@ -196,9 +196,13 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
         : yolo ? [.. profile.DefaultArgs, .. profile.AutoArgs]
         : scoped ? [.. profile.DefaultArgs, .. AgentOs.RemoteAgent.ScopedAutonomy.ArgsFor(cmd)]
         : profile.DefaultArgs;
+    // Claude with the runner's own flags streams its events, so the Board can show what it is doing (CliProgress.cs).
+    // A custom REMOTE_AGENT_ARGS keeps exactly what the operator asked for.
+    var streaming = argsEnv is null && string.Equals(profile.Command, "claude", StringComparison.OrdinalIgnoreCase);
+    if (streaming) { args = [.. args, "--output-format", "stream-json", "--verbose"]; }
 
     // Every CLI run starts in its OWN empty directory — never the runner's current directory, which is usually
-    // a checkout of something else (the agent once saw "file access limited to D:GithubAgentOs").
+    // a checkout of something else (the agent once saw "file access limited to D:\Github\AgentOs").
     var runDir = AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
         Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(),
         request.Id);
@@ -240,9 +244,43 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request)
             process.StandardInput.Close();
         }
 
-        var stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-        await process.WaitForExitAsync().ConfigureAwait(false);
+        // stderr drains concurrently: reading it only after stdout ends can deadlock a chatty CLI on a full pipe.
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        string stdout;
+        if (streaming)
+        {
+            // One JSON event per line: report each new plain step as it happens, keep the closing result.
+            AgentOs.RemoteAgent.CliProgress.Result? final = null;
+            string? lastStep = null;
+            var raw = new System.Text.StringBuilder();
+            while (await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
+            {
+                var (step, result) = AgentOs.RemoteAgent.CliProgress.Parse(line);
+                if (result is not null) { final = result; }
+                else if (raw.Length < 64 * 1024) { raw.AppendLine(line); }
+                if (step is not null && step != lastStep)
+                {
+                    lastStep = step;
+                    await report(request.Id, step).ConfigureAwait(false);
+                }
+            }
+            var streamErr = await stderrTask.ConfigureAwait(false);
+            await process.WaitForExitAsync().ConfigureAwait(false);
+            if (final is not null)
+            {
+                return final.IsError
+                    ? new RemoteExecResult(request.Id, false, string.Empty, final.Text.Length > 0 ? final.Text : streamErr.Trim())
+                    : new RemoteExecResult(request.Id, true, final.Text.Trim(), null);
+            }
+            // No result event (killed by Stop, crashed, not logged in): fall through to the exit-code report.
+            stdout = raw.ToString();
+        }
+        else
+        {
+            stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            await process.WaitForExitAsync().ConfigureAwait(false);
+        }
+        var stderr = await stderrTask.ConfigureAwait(false);
 
         if (process.ExitCode == 0)
         {
@@ -436,6 +474,13 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
     catch (InvalidOperationException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
     catch (TimeoutException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
     catch (JsonException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
+}
+
+// Best effort: a lost progress line only means the Board shows the previous step a little longer.
+async Task ReportProgressAsync(string requestId, string step)
+{
+    try { await connection.SendAsync("ReportProgress", requestId, step).ConfigureAwait(false); }
+    catch (Exception ex) when (ex is InvalidOperationException or IOException) { _ = ex; }
 }
 
 // CLI runs in flight, by request id — what a "Cancel" from the server kills.

@@ -86,7 +86,20 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         RemoteExecResult result;
         try
         {
-            result = await _broker.DispatchAsync(execRequest, target, timeout, cancellationToken).ConfigureAwait(false);
+            // Live progress for this request only, for as long as it runs.
+            void OnProgress(RemoteProgress p)
+            {
+                if (p.RequestId == id) { request.Progress?.Report(p.Step); }
+            }
+            if (request.Progress is not null) { _broker.Progressed += OnProgress; }
+            try
+            {
+                result = await _broker.DispatchAsync(execRequest, target, timeout, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (request.Progress is not null) { _broker.Progressed -= OnProgress; }
+            }
         }
         catch (TimeoutException ex)
         {

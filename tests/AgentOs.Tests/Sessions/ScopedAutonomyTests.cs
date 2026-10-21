@@ -37,7 +37,9 @@ public sealed class ScopedAutonomyTests
         args.ShouldContain("Read(~/AppData/Roaming/**)");
         args.ShouldNotContain("Bash(cat *)");
         args.ShouldNotContain("Bash(node *)");
-        args.ShouldContain("Bash(node tools/*)");   // the repo's own scripts (a reference decoder) — not node -e
+        args.ShouldContain("Bash(node tools/*)");
+        args.ShouldContain("PowerShell(git clone *)");      // Windows: claude's PowerShell tool gets the same rules
+        args.ShouldContain("PowerShell(git push --force*)");   // the repo's own scripts (a reference decoder) — not node -e
         // Deny list comes after the allow list so the variadic --allowedTools ends at --disallowedTools.
         Array.IndexOf(args, "--disallowedTools").ShouldBeGreaterThan(Array.IndexOf(args, "--allowedTools"));
     }

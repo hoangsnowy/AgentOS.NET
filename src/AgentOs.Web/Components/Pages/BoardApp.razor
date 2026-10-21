@@ -617,6 +617,17 @@ else if (_tab == Tab.Sessions)
                     <tr>
                         <td>
                             @s.Title
+                            @if (s.Status == "Running" && CurrentStep(s.Id) is var step && step >= 0)
+                            {
+                                @* Live progress in plain steps (reported by the computer doing the work). Static — no looping motion. *@
+                                <ol class="task-steps" aria-label="Progress">
+                                    @for (var i = 0; i < AgentOs.Domain.Sessions.TaskSteps.All.Count; i++)
+                                    {
+                                        var state = i < step ? "done" : i == step ? "now" : "next";
+                                        <li class="task-step is-@state" aria-current="@(i == step ? "step" : null)">@AgentOs.Domain.Sessions.TaskSteps.All[i].Label</li>
+                                    }
+                                </ol>
+                            }
                             @if (s.Status != "Running" && AgentOs.Web.Services.TaskFailure.Explain(s.Error) is { } why)
                             {
                                 @* Failure card: what happened in one line, what to do, ONE action; the raw text under Details. *@
@@ -1816,6 +1827,18 @@ else if (_tab == Tab.Sessions)
         var i = url.LastIndexOf("/pull/", StringComparison.Ordinal);
         return i >= 0 && int.TryParse(url.AsSpan(i + "/pull/".Length).TrimEnd('/'), System.Globalization.NumberStyles.None,
             System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
+    }
+
+    // The furthest plain step this task's live feed has reported (feed messages carry the step labels), or -1.
+    private int CurrentStep(Guid sessionId)
+    {
+        if (!_activity.TryGetValue(sessionId, out var feed)) { return -1; }
+        var furthest = -1;
+        foreach (var ev in feed)
+        {
+            furthest = Math.Max(furthest, AgentOs.Domain.Sessions.TaskSteps.IndexOfLabel(ev.Message));
+        }
+        return furthest;
     }
 
     // A person, not a GUID: "You" for the signed-in member, else a short id (full id in the cell's tooltip).
