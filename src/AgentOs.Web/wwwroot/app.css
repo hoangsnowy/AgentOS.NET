@@ -2734,6 +2734,21 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 .board-failure-details { margin-top: 0; }
 .board-failure-details pre { white-space: pre-wrap; word-break: break-word; max-height: 12rem; overflow: auto; font-size: 11px; }
 
+/* "Try the app" — a project's local preview under its repository row (BoardApp PreviewCard). */
+.board-preview-row > td { padding-top: 0; }
+.board-preview {
+  display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius-sm);
+  background: var(--bg-2); font-size: var(--fs-xs); white-space: normal; max-width: 72ch;
+}
+.board-preview[data-state="Ready"] { border-left-color: var(--ok); }
+.board-preview[data-state="Failed"] { border-left-color: var(--err); }
+.board-preview[data-state="Stopped"] { border-left-color: var(--line); }
+.board-preview-command { display: block; padding: var(--space-1) var(--space-2); white-space: pre-wrap; word-break: break-all; }
+.board-preview-warn { color: var(--warn); }
+.board-preview-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1); }
+.board-preview-actions a.btn { text-decoration: none; }
+
 /* ===== Brand mark (BrandMark.razor) — the AgentOS.NET product icon =====
    An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once
    on hover (of the mark or the brand row around it). favicon.svg / the Keycloak tile are its static twins. */

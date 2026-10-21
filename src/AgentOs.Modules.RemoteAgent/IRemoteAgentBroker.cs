@@ -70,6 +70,51 @@ public sealed record RunnerToolResult(string RequestId, string ToolCallId, bool 
 /// <summary>A tool call resolved to a specific runner connection, ready for the transport to push.</summary>
 public sealed record RunnerToolDispatch(RunnerToolCall Call, string ConnectionId);
 
+// ── "Try the app" (local preview) ──────────────────────────────────────────────────────────────
+
+/// <summary>Run a project's preview on a runner: the latest <paramref name="Branch"/> of <paramref name="Owner"/>/<paramref name="Repo"/>,
+/// started with <paramref name="Command"/> (the recipe the person was shown) until <paramref name="Url"/> answers.
+/// The runner re-reads the recipe from its own checkout and refuses when it differs.</summary>
+public sealed record PreviewStart(string PreviewId, string Owner, string Repo, string Branch, string Command, string Url, int ReadyTimeoutSeconds);
+
+/// <summary>Where a preview stands, as its runner reports it.</summary>
+public static class PreviewStates
+{
+    public const string Preparing = "Preparing";
+    public const string Starting = "Starting";
+    public const string Ready = "Ready";
+    public const string Failed = "Failed";
+    public const string Stopped = "Stopped";
+
+    /// <summary>True while the app is (being) run — the computer's ports are taken.</summary>
+    public static bool IsActive(string state) => state is Preparing or Starting or Ready;
+}
+
+/// <summary>A runner's report for a preview it runs.</summary>
+public sealed record PreviewStatus(string PreviewId, string State, string? Message);
+
+/// <summary>A preview start or stop, resolved to the runner connection that runs it.</summary>
+public sealed record PreviewCommand(string ConnectionId, PreviewStart? Start, string? StopPreviewId);
+
+/// <summary>Seam for "Try the app": start / stop a preview on a member's paired computer and hear back from it.</summary>
+public interface IRunnerPreviewBroker
+{
+    /// <summary>Raised to push a start or stop to a runner (the transport sends it).</summary>
+    event Action<PreviewCommand>? PreviewCommanded;
+
+    /// <summary>Raised when a runner reports on a preview it was asked to run (or its computer disconnected).</summary>
+    event Action<PreviewStatus>? PreviewReported;
+
+    /// <summary>Send <paramref name="start"/> to the runner matching <paramref name="target"/>; false when none is connected.</summary>
+    bool StartPreview(PreviewStart start, RunnerTarget target);
+
+    /// <summary>Ask the runner of a preview to stop it. Unknown id = nothing to stop.</summary>
+    void StopPreview(string previewId);
+
+    /// <summary>Called by the hub: a report counts only from the connection the preview was sent to.</summary>
+    void ReportPreview(string connectionId, string previewId, string state, string? message);
+}
+
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 
 /// <summary>Dispatch seam between the server and connected remote runners.</summary>
@@ -122,11 +167,50 @@ public interface IRemoteAgentBroker
 }
 
 /// <summary>In-process broker. Singleton; thread-safe.</summary>
-public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker
+public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPreviewBroker
 {
     private readonly ConcurrentDictionary<string, RunnerConnection> _connections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<RemoteExecResult>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<RunnerToolResult>> _pendingToolCalls = new(StringComparer.Ordinal);
+    // Preview id → the connection running it (a report from any other connection is ignored).
+    private readonly ConcurrentDictionary<string, string> _previews = new(StringComparer.Ordinal);
+
+    public event Action<PreviewCommand>? PreviewCommanded;
+    public event Action<PreviewStatus>? PreviewReported;
+
+    public bool StartPreview(PreviewStart start, RunnerTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(start);
+        ArgumentNullException.ThrowIfNull(target);
+        if (!TryResolveConnection(target, out var connectionId)) { return false; }
+        _previews[start.PreviewId] = connectionId;
+        PreviewCommanded?.Invoke(new PreviewCommand(connectionId, start, null));
+        return true;
+    }
+
+    public void StopPreview(string previewId)
+    {
+        if (_previews.TryGetValue(previewId, out var connectionId))
+        {
+            PreviewCommanded?.Invoke(new PreviewCommand(connectionId, null, previewId));
+        }
+    }
+
+    public void ReportPreview(string connectionId, string previewId, string state, string? message)
+    {
+        if (string.IsNullOrEmpty(previewId) || !_previews.TryGetValue(previewId, out var owner)
+            || !string.Equals(owner, connectionId, StringComparison.Ordinal))
+        {
+            return;
+        }
+        if (state is not (PreviewStates.Preparing or PreviewStates.Starting or PreviewStates.Ready or PreviewStates.Failed or PreviewStates.Stopped))
+        {
+            return;
+        }
+        if (!PreviewStates.IsActive(state)) { _previews.TryRemove(previewId, out _); }
+        var text = message is { Length: > 4000 } ? message[^4000..] : message;
+        PreviewReported?.Invoke(new PreviewStatus(previewId, state, text));
+    }
 
     public bool HasAgent => !_connections.IsEmpty;
 
@@ -292,7 +376,18 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker
         return false;
     }
 
-    private void Unregister(string connectionId) => _connections.TryRemove(connectionId, out _);
+    private void Unregister(string connectionId)
+    {
+        _connections.TryRemove(connectionId, out _);
+        // The runner went away: whatever it ran is gone with it (it stops its previews when it exits).
+        foreach (var (previewId, owner) in _previews)
+        {
+            if (string.Equals(owner, connectionId, StringComparison.Ordinal) && _previews.TryRemove(previewId, out _))
+            {
+                PreviewReported?.Invoke(new PreviewStatus(previewId, PreviewStates.Stopped, "The computer disconnected."));
+            }
+        }
+    }
 
     private sealed class Registration : IDisposable
     {

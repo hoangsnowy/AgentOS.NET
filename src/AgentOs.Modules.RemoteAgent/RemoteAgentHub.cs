@@ -100,6 +100,10 @@ public sealed class RemoteAgentHub : Hub
     /// <summary>Runner → server: the plain step a running request is on (live progress on the Board).</summary>
     public void ReportProgress(string requestId, string step) => _broker.ReportProgress(requestId, step);
 
+    /// <summary>Runner → server: where a "Try the app" preview it runs stands (Preparing / Starting / Ready / Failed / Stopped).</summary>
+    public void ReportPreview(string previewId, string state, string? message) =>
+        (_broker as IRunnerPreviewBroker)?.ReportPreview(Context.ConnectionId, previewId, state, message);
+
     /// <summary>Invoked by the runner when it has finished executing a tool call (M4).</summary>
     public void CompleteToolCall(RunnerToolResult result) => _broker.CompleteToolCall(result);
 }

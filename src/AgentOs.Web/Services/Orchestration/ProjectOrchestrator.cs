@@ -98,10 +98,13 @@ public sealed partial class ProjectOrchestrator(
     TaskStopRegistry stops,
     IRemoteAgentBroker broker,
     OrchestratorLog log,
-    ILogger<ProjectOrchestrator> logger)
+    ILogger<ProjectOrchestrator> logger,
+    AgentOs.Web.Services.Preview.PreviewService previews)
 {
     // Tasks seen "Running" with no live run here, by pass: one pass of grace (a run registers right after it is marked).
     private readonly ConcurrentDictionary<Guid, int> _orphanSeen = new();
+    // Boards whose testing is held for a running "Try the app" preview (logged once per hold, not every pass).
+    private readonly ConcurrentDictionary<Guid, bool> _heldForPreview = new();
     // Automatic fix rounds per task (in memory: a restart grants at most another MaxFixRounds — bounded either way).
     private readonly ConcurrentDictionary<Guid, int> _fixRounds = new();
     // Ticket bodies (for dependencies) change rarely; read each at most every 10 minutes.
@@ -194,6 +197,17 @@ public sealed partial class ProjectOrchestrator(
             // The Testing agent needs the member's computer (a browser, containers, the repo's toolchain).
             var runners = await sp.GetRequiredService<IRunnerRepository>().ListForTenantAsync(tenant, ct).ConfigureAwait(false);
             var canTest = runners.Any(r => r.OwnerUserId == member && broker.IsConnected(r.Id));
+            // Someone is trying the app on a computer: its ports are taken, and a test run would start a second copy of
+            // the same app on them. Testing waits; coding and merging go on.
+            if (previews.IsActiveOnBoard(tenant, board.Id))
+            {
+                canTest = false;
+                if (_heldForPreview.TryAdd(board.Id, true)) { log.Add(tenant, board.Id, "Testing waits while the app is being tried — it resumes when the preview stops."); }
+            }
+            else
+            {
+                _heldForPreview.TryRemove(board.Id, out _);
+            }
             var actions = AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest);
             foreach (var action in actions)
             {

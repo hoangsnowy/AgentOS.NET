@@ -103,6 +103,17 @@ folder (`dotnet run --project src/AgentOs.RemoteAgent -- pair <address> <code>` 
 page turns *Connected* by itself; later starts need no arguments. Board tasks set to *On my computer* then
 clone, edit, build, test and push in a private per-task folder (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`).
 
+**Try the app** (Board → a project → *Try the app*) runs the latest default branch on that same computer and opens it
+— no terminal. The project says how in `.agentos/preview.json`:
+
+```json
+{ "command": "dotnet run --project infra/MyApp.AppHost", "url": "http://localhost:5173", "readyTimeoutSeconds": 600 }
+```
+
+The command is shown before anything runs, and the computer re-reads it from its own checkout and refuses if it
+changed. A project without the file gets an *Ask the AI to set it up* button that opens a ticket for it. Testing on
+that project waits while the app runs (same ports). `REMOTE_AGENT_PREVIEWS=off` refuses previews on a computer.
+
 ### 4 — Build and test
 
 ```bash

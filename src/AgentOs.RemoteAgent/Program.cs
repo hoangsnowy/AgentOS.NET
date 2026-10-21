@@ -32,6 +32,8 @@
 //   REMOTE_AGENT_MAX_PARALLEL     CLI runs at once on this machine (default 2); more wait their turn
 //   REMOTE_AGENT_DATA   test data the agents may read: "NAME=C:\path;OTHER=/data/x" → env vars of each scoped run,
 //                       names (not paths) told to the agent, read-only to it (see TestData in ScopedAutonomy.cs)
+//   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks
+//                       Try the app after seeing the project's command); REMOTE_AGENT_PREVIEWROOT moves their folder
 //
 // A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
 // 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
@@ -153,6 +155,29 @@ connection.On<string>("Cancel", requestId =>
         // Still waiting for a free slot (or already done — then the entry is never read; bounded by requests sent).
         CancelledBeforeStart[requestId] = 0;
     }
+});
+
+// "Try the app" — run a project's preview on this computer (PreviewHost.cs). The member saw the command first; the
+// host re-checks it against its own checkout before running it.
+var previewRoot = Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWROOT") ?? AgentOs.RemoteAgent.PreviewHost.DefaultRoot();
+var previewsOff = string.Equals(Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWS"), "off", StringComparison.OrdinalIgnoreCase);
+AgentOs.RemoteAgent.PreviewHost.KillLeftovers(previewRoot);
+var previews = new AgentOs.RemoteAgent.PreviewHost(previewRoot, ReportPreviewAsync);
+AppDomain.CurrentDomain.ProcessExit += (_, _) => previews.StopAll();
+Console.CancelKeyPress += (_, _) => previews.StopAll();
+
+connection.On<AgentOs.RemoteAgent.PreviewStart>("StartPreview", start =>
+{
+    Console.WriteLine($"[agent] StartPreview {start.PreviewId} ({start.Owner}/{start.Repo})");
+    if (previewsOff) { _ = ReportPreviewAsync(start.PreviewId, "Failed", "This computer doesn't run previews (REMOTE_AGENT_PREVIEWS=off)."); }
+    else { previews.Start(start); }
+    return Task.CompletedTask;
+});
+
+connection.On<string>("StopPreview", previewId =>
+{
+    previews.Stop(previewId);
+    return Task.CompletedTask;
 });
 
 // M4 — server-driven tool execution
@@ -493,6 +518,13 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
 async Task ReportProgressAsync(string requestId, string step)
 {
     try { await connection.SendAsync("ReportProgress", requestId, step).ConfigureAwait(false); }
+    catch (Exception ex) when (ex is InvalidOperationException or IOException) { _ = ex; }
+}
+
+// Best effort as well: a lost preview report leaves the Board on the previous state until the next one.
+async Task ReportPreviewAsync(string previewId, string state, string? message)
+{
+    try { await connection.SendAsync("ReportPreview", previewId, state, message).ConfigureAwait(false); }
     catch (Exception ex) when (ex is InvalidOperationException or IOException) { _ = ex; }
 }
 

@@ -20,6 +20,7 @@ namespace AgentOs.Modules.RemoteAgent;
 public sealed class RemoteAgentTransport : IHostedService
 {
     private readonly IRemoteAgentBroker _broker;
+    private readonly IRunnerPreviewBroker? _previews;
     private readonly IHubContext<RemoteAgentHub> _hub;
     private readonly IRemoteExecApprover _approver;
     private readonly ILogger<RemoteAgentTransport> _logger;
@@ -31,6 +32,7 @@ public sealed class RemoteAgentTransport : IHostedService
         ILogger<RemoteAgentTransport> logger)
     {
         _broker = broker;
+        _previews = broker as IRunnerPreviewBroker;
         _hub = hub;
         _approver = approver;
         _logger = logger;
@@ -42,6 +44,7 @@ public sealed class RemoteAgentTransport : IHostedService
         _broker.Dispatched += OnDispatched;
         _broker.Cancelled += OnCancelled;
         _broker.ToolCallDispatched += OnToolCallDispatched;
+        if (_previews is not null) { _previews.PreviewCommanded += OnPreviewCommanded; }
         return Task.CompletedTask;
     }
 
@@ -51,7 +54,32 @@ public sealed class RemoteAgentTransport : IHostedService
         _broker.Dispatched -= OnDispatched;
         _broker.Cancelled -= OnCancelled;
         _broker.ToolCallDispatched -= OnToolCallDispatched;
+        if (_previews is not null) { _previews.PreviewCommanded -= OnPreviewCommanded; }
         return Task.CompletedTask;
+    }
+
+    // ── "Try the app": start / stop a preview on the runner ──
+
+    private void OnPreviewCommanded(PreviewCommand command) => _ = PushPreviewAsync(command);
+
+    private async Task PushPreviewAsync(PreviewCommand command)
+    {
+        var id = command.Start?.PreviewId ?? command.StopPreviewId ?? "";
+        try
+        {
+            var client = _hub.Clients.Client(command.ConnectionId);
+            await (command.Start is { } start
+                ? client.SendAsync("StartPreview", start)
+                : client.SendAsync("StopPreview", command.StopPreviewId)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HubException or System.IO.IOException or InvalidOperationException or TimeoutException)
+        {
+            _logger.LogWarning(ex, "[RemoteAgent] could not deliver a preview command for {Id}.", id);
+            if (command.Start is not null)
+            {
+                _previews?.ReportPreview(command.ConnectionId, id, PreviewStates.Failed, "Couldn't reach the computer.");
+            }
+        }
     }
 
     // ── M3: full-prompt dispatch ──
