@@ -95,10 +95,14 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
            images or any data outside this directory.
         5. A criterion you cannot check here — a data set or secret that is not available, an external service —
            is "not-checked" with the reason. Never report "pass" for something you did not run.
+        6. When a test fails, check whether it already fails on the default branch: `git worktree add ../base origin/{3}`,
+           run the same test there. If it fails the same way, it is a pre-existing failure, not this change's:
+           list it under "baseFailures" and do not let it fail the verdict.
 
         Reply ONLY with this JSON (no other text):
-        {{"verdict":"pass","criteria":[{{"criterion":"<ID or the criterion's words>","result":"pass","evidence":"<command and the key output line, or why it was not checked>"}}],"summary":"<one or two sentences>"}}
-        "verdict" is "pass" only when the build and the unit tests passed and no criterion failed; otherwise "fail".
+        {{"verdict":"pass","criteria":[{{"criterion":"<ID or the criterion's words>","result":"pass","evidence":"<command and the key output line, or why it was not checked>"}}],"baseFailures":[{{"test":"<fully qualified test name>","evidence":"<the failure, and that it fails the same on {3}>"}}],"summary":"<one or two sentences>"}}
+        "verdict" is "pass" only when the build passed, every failing test is a pre-existing failure, and no criterion
+        failed; otherwise "fail".
         "result" is one of "pass", "fail", "not-checked".
         """,
         r.Repo.Owner, r.Repo.Repo, r.Repo.ExistingBranch, r.Repo.DefaultBranch);
@@ -139,7 +143,11 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
                 : [];
             var claimed = string.Equals(Str(root, "verdict"), "pass", StringComparison.OrdinalIgnoreCase);
             var passed = claimed && criteria.All(c => c.Result != "fail");
-            return new AcceptanceVerdict(true, passed, criteria, Str(root, "summary"), null);
+            var baseFailures = root.TryGetProperty("baseFailures", out var bf) && bf.ValueKind == JsonValueKind.Array
+                ? bf.EnumerateArray().Select(b => new AcceptanceCriterion(Str(b, "test"), "fail", Str(b, "evidence")))
+                    .Where(b => b.Criterion.Length > 0).ToList()
+                : [];
+            return new AcceptanceVerdict(true, passed, criteria, Str(root, "summary"), null) { BaseFailures = baseFailures };
         }
         catch (JsonException)
         {
@@ -166,6 +174,11 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
                 var icon = c.Result switch { "pass" => "✅ pass", "fail" => "❌ fail", _ => "➖ not checked" };
                 sb.Append("| ").Append(Cell(c.Criterion)).Append(" | ").Append(icon).Append(" | ").Append(Cell(c.Evidence)).Append(" |\n");
             }
+        }
+        if (verdict.BaseFailures.Count > 0)
+        {
+            sb.Append("\n**Already failing on the base branch** (not caused by this change — a separate fix ticket is opened):\n");
+            foreach (var b in verdict.BaseFailures) { sb.Append("- `").Append(Cell(b.Criterion)).Append("` — ").Append(Cell(b.Evidence)).Append('\n'); }
         }
         sb.Append("\n<sub>Run by the AgentOS.NET Testing agent on a paired computer. It does not change the code.</sub>\n");
         return sb.ToString();

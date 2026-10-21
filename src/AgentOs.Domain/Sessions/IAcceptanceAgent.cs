@@ -26,6 +26,10 @@ public sealed record AcceptanceCriterion(string Criterion, string Result, string
 /// <summary>The Testing agent's verdict. <see cref="Ran"/> is false when it could not test at all (no computer, …).</summary>
 public sealed record AcceptanceVerdict(bool Ran, bool Passed, IReadOnlyList<AcceptanceCriterion> Criteria, string Summary, string? Error)
 {
+    /// <summary>Tests that fail identically on the base branch — not caused by this change, so they don't fail it; the
+    /// base gets its own fix ticket.</summary>
+    public IReadOnlyList<AcceptanceCriterion> BaseFailures { get; init; } = [];
+
     /// <summary>The criteria that failed, as the findings sent back to the Coding agent.</summary>
     public IEnumerable<AcceptanceCriterion> Failures =>
         Criteria.Where(c => string.Equals(c.Result, "fail", StringComparison.OrdinalIgnoreCase));

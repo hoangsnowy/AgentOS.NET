@@ -76,3 +76,28 @@ public sealed class AcceptanceAgentTests
         s.ShouldContain("Never report \"pass\" for something you did not run");
     }
 }
+
+public sealed class AcceptanceBaseFailureTests
+{
+    // Seen on VNChessAcademy#25: a corpus test failing identically on main bounced an unrelated change.
+    [Fact]
+    public void Parse_BaseFailures_DoNotFailTheChange_AndAreReported()
+    {
+        var v = AcceptanceAgent.Parse("""{"verdict":"pass","criteria":[{"criterion":"LIB-1","result":"pass","evidence":"ok"}],"baseFailures":[{"test":"TeacherHub.Tests.Formats.AcademyCorpusTests.CrossCheck","evidence":"CommentsLossy 29589 ≠ 31000, same on main"}],"summary":"Passes; main has one failing corpus test."}""");
+
+        v.Passed.ShouldBeTrue();
+        v.BaseFailures.ShouldHaveSingleItem().Criterion.ShouldEndWith("CrossCheck");
+
+        var md = AcceptanceAgent.Comment(11, v);
+        md.ShouldContain("Already failing on the base branch");
+        md.ShouldContain("`TeacherHub.Tests.Formats.AcademyCorpusTests.CrossCheck`");
+    }
+
+    [Fact]
+    public void Instructions_AskToCompareAFailingTestWithTheBaseBranch()
+    {
+        var r = new AcceptanceRequest(Guid.NewGuid(), "t", "m", new WorkRepo(Guid.NewGuid(), "o", "r", "main", "issue-11-ai-fix"), 11, "t", "b");
+
+        AcceptanceAgent.Instructions(r).ShouldContain("git worktree add ../base origin/main");
+    }
+}

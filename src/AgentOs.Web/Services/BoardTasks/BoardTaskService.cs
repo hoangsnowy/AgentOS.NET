@@ -204,6 +204,10 @@ public sealed class BoardTaskService(
                     await prs.CommentAsync(RepoDescriptor(board, tenantId, change.Owner, change.Repo, change.DefaultBranch, pat), number,
                         AgentOs.Modules.Pipeline.Agents.AcceptanceAgent.Comment(session.IssueNumber ?? 0, verdict)).ConfigureAwait(false);
                 }
+                if (verdict.BaseFailures.Count > 0)
+                {
+                    await OpenBaseFixTicketsAsync(scope, board, tenantId, change, pat, verdict.BaseFailures).ConfigureAwait(false);
+                }
                 await sessRepo.UpdateRepoRunResultAsync(tenantId, change.Id, verdict.Passed ? "Accepted" : "Rejected", change.BranchName, change.PrUrl,
                     verdict.Passed ? null : AgentOs.Modules.Pipeline.Agents.AcceptanceAgent.Findings(verdict)).ConfigureAwait(false);
                 feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.RepoDone,
@@ -220,6 +224,53 @@ public sealed class BoardTaskService(
         {
             await MarkFailedAsync(tenantId, session.Id, ex.Message).ConfigureAwait(false);
         }
+    }
+
+    // A test the Testing agent found failing on the base branch too gets one bug ticket (p0, approved for the AI), so
+    // Autopilot fixes the base instead of bouncing every change that happens to run it. Deduplicated by title against
+    // the board's open tickets. Best-effort.
+    private async Task OpenBaseFixTicketsAsync(IServiceScope scope, WorkspaceEntity board, string tenantId, SessionRepoEntity change,
+        string pat, IReadOnlyList<AcceptanceCriterion> failures)
+    {
+        try
+        {
+            var boardDesc = new BoardDescriptor(board.Id, tenantId, board.Kind, board.ProjectOwner, board.ProjectScope,
+                board.ProjectNumber, board.ProjectNodeId, pat, board.Project);
+            var open = (await scope.ServiceProvider.GetRequiredService<IBoardTicketService>().ListTicketsAsync(boardDesc).ConfigureAwait(false)).Items
+                .Where(t => !string.Equals(t.State, "CLOSED", StringComparison.OrdinalIgnoreCase)).Select(t => t.Title).ToHashSet(StringComparer.Ordinal);
+            var drafts = failures
+                .Select(f => new TicketDraft(
+                    $"Fix the failing test on {change.DefaultBranch}: {ShortTestName(f.Criterion)}",
+                    $"The AgentOS.NET Testing agent found `{f.Criterion}` failing on `{change.DefaultBranch}` while testing {change.PrUrl} "
+                    + $"— the failure is not caused by that change.\n\n{f.Evidence}\n\n## Acceptance criteria\n- [ ] `{f.Criterion}` passes on {change.DefaultBranch}.\n"
+                    + "- [ ] The rest of the test suite still passes.",
+                    ["type:bug", "p0", StandardLabels.AiReady], true))
+                .Where(d => !open.Contains(d.Title))
+                .DistinctBy(d => d.Title)
+                .ToList();
+            if (drafts.Count == 0) { return; }
+            var repo = RepoDescriptor(board, tenantId, change.Owner, change.Repo, change.DefaultBranch, pat);
+            var created = await scope.ServiceProvider.GetRequiredService<IBoardWriteService>().CreateTicketsAsync(boardDesc, repo, drafts).ConfigureAwait(false);
+            foreach (var t in created)
+            {
+                feed.Publish(new SessionRunEvent(tenantId, Guid.Empty, SessionRunEventKind.Step,
+                    $"Opened #{t.Number}: {t.Title}", DateTimeOffset.UtcNow, $"{change.Owner}/{change.Repo}"));
+            }
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or Octokit.ApiException or InvalidOperationException or TimeoutException)
+        {
+            _ = ex; // best-effort: the comment on the pull request still lists the failure
+        }
+    }
+
+    private static string ShortTestName(string test)
+    {
+        var name = test.Trim();
+        var dot = name.LastIndexOf('.', name.Length - 1);
+        var cls = dot > 0 ? name[..dot] : name;
+        var lastClass = cls.LastIndexOf('.');
+        var shortName = dot > 0 ? (lastClass >= 0 ? cls[(lastClass + 1)..] : cls) + name[dot..] : name;
+        return shortName.Length > 90 ? shortName[..90] + "…" : shortName;
     }
 
     /// <summary>The number of a pull request from its URL (…/pull/42).</summary>
