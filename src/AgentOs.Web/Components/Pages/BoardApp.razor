@@ -1397,7 +1397,7 @@ else if (_tab == Tab.Sessions)
                 }
                 if (sessions.Count > 0)
                 {
-                    Toasts.Show("Board", $"Running {sessions.Count} ai:ready ticket(s)…", ToastKind.Ok);
+                    Toasts.Show("Board", $"Starting {sessions.Count} approved ticket(s)…", ToastKind.Ok);
                     await ReloadAll();
                     ResetIdea();
                     _tab = Tab.Sessions;
@@ -1524,21 +1524,22 @@ else if (_tab == Tab.Sessions)
             var ordered = selected
                 .OrderByDescending(o => o.Owner == ticket.RepoOwner && o.Repo == ticket.RepoName)
                 .ToList();
-            await PersistSessionAsync(
+            var created = await PersistSessionAsync(
                 _selectedBoard.Id, ticket.Number, $"#{ticket.Number} {ticket.Title}",
                 ticket.ItemNodeId, ticket.Kind.ToString(), ordered, _runOnMachine,
                 brain: _brain, ticketType: TicketTypeOf(ticket.Labels));
 
-            Toasts.Show("Board", $"Session created for #{ticket.Number} across {ordered.Count} repo(s). Switch to Sessions to run it.", ToastKind.Ok);
+            // "Start working" means it: the task starts now (it used to sit as a draft until Run was pressed on Tasks).
             CloseWorkDialog();
             await ReloadAll();
             _tab = Tab.Sessions;
             CloseBoard();
+            await RunSession(created);
         }
-        catch (System.Net.Http.HttpRequestException ex) { Toasts.Show("Board", $"Failed to create session: {ex.Message}", ToastKind.Err); }
-        catch (InvalidOperationException ex) { Toasts.Show("Board", $"Failed to create session: {ex.Message}", ToastKind.Err); }
-        catch (System.IO.IOException ex) { Toasts.Show("Board", $"Failed to create session: {ex.Message}", ToastKind.Err); }
-        catch (TimeoutException ex) { Toasts.Show("Board", $"Failed to create session: {ex.Message}", ToastKind.Err); }
+        catch (System.Net.Http.HttpRequestException ex) { Toasts.Show("Board", $"Couldn't start the task: {ex.Message}", ToastKind.Err); }
+        catch (InvalidOperationException ex) { Toasts.Show("Board", $"Couldn't start the task: {ex.Message}", ToastKind.Err); }
+        catch (System.IO.IOException ex) { Toasts.Show("Board", $"Couldn't start the task: {ex.Message}", ToastKind.Err); }
+        catch (TimeoutException ex) { Toasts.Show("Board", $"Couldn't start the task: {ex.Message}", ToastKind.Err); }
         finally
         {
             _busy = false;
@@ -1699,7 +1700,7 @@ else if (_tab == Tab.Sessions)
                     ticket.ItemNodeId, ticket.Kind.ToString(), [RepoOptionForTicket(ticket)],
                     ticketType: TicketTypeOf(ticket.Labels)));
             }
-            Toasts.Show("Board", $"Running {sessions.Count} ai:ready ticket(s)…", ToastKind.Ok);
+            Toasts.Show("Board", $"Starting {sessions.Count} approved ticket(s)…", ToastKind.Ok);
             await ReloadAll();
             _tab = Tab.Sessions;
             CloseBoard();
@@ -1821,7 +1822,7 @@ else if (_tab == Tab.Sessions)
             var children = await Sessions.ListReposForTenantAsync(_tenantId, session.Id);
             if (children.Count == 0)
             {
-                Toasts.Show("Board", "This session has no target repos. Recreate it from a board ticket.", ToastKind.Err);
+                Toasts.Show("Board", "This task has no code project to work on. Start it again from the ticket.", ToastKind.Err);
                 return;
             }
             var pat = await ConfigStore.GetForTenantAsync(_tenantId, board.CredentialRef);
@@ -1842,7 +1843,7 @@ else if (_tab == Tab.Sessions)
             _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
             var all = await Sessions.ListForTenantAsync(_tenantId);
             _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
-            Toasts.Show("Board", $"Session #{session.IssueNumber} is running — AI agent dispatched to runner.", ToastKind.Ok);
+            Toasts.Show("Board", $"Task #{session.IssueNumber} started — the AI is working on it. You can close this window.", ToastKind.Ok);
             StartPolling();
 
             // Fire-and-forget background work in a fresh DI scope (independent of this circuit).
