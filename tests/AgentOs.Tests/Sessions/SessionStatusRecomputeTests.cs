@@ -22,6 +22,8 @@ public sealed class SessionStatusRecomputeTests
     [InlineData(new[] { "Done", "Done" }, "Done")]
     [InlineData(new[] { "Merged", "Pending" }, "Running")]
     [InlineData(new[] { "Merged", "Failed" }, "Failed")]
+    [InlineData(new[] { "Accepted", "Rejected" }, "Done")]       // tested proposed changes are still open changes
+    [InlineData(new[] { "Accepted", "Testing" }, "Running")]     // the Testing agent at work
     public async Task Recompute_RepoStatuses_SessionStatus(string[] repoStatuses, string expected)
     {
         var options = new DbContextOptionsBuilder<SessionsDbContext>().UseInMemoryDatabase($"recompute-{Guid.NewGuid()}").Options;

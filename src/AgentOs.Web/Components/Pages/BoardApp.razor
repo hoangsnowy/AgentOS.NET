@@ -779,6 +779,10 @@ else if (_tab == Tab.Sessions)
                             }
                             @if (s.Status is "Done" or "Failed" or "Blocked" && HasOpenChange(s.Id))
                             {
+                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => TestTask(s))" Disabled="@(_busyId == s.Id)"
+                                     aria-label="@($"Test task #{s.IssueNumber} against its acceptance criteria")">
+                                    <Icon Name="check" Size="13" /> Test it
+                                </Btn>
                                 <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => ToggleChanges(s.Id))" aria-expanded="@(_changesFor == s.Id)">
                                     <Icon Name="pencil" Size="13" /> Ask for changes
                                 </Btn>
@@ -1996,6 +2000,9 @@ else if (_tab == Tab.Sessions)
         "Blocked" => "Needs your review",   // the QA gate refused to open the change
         "Done" => "Ready for review",
         "Merged" => "Done",
+        "Testing" => "Being tested",
+        "Accepted" => "Passed testing",
+        "Rejected" => "Failed testing",
         "Closed" => "Closed",
         _ => status,
     };
@@ -2246,6 +2253,25 @@ else if (_tab == Tab.Sessions)
         finally
         {
             _busy = false;
+        }
+    }
+
+    // Agentic Testing on demand: the Testing agent checks the open change against the ticket's criteria on your computer.
+    private async Task TestTask(RemoteSessionEntity s)
+    {
+        _busyId = s.Id;
+        try
+        {
+            var started = await TaskService.TestAsync(_tenantId, s.Id, _cliProfile);
+            Toasts.Show("Board", started == AgentOs.Web.Services.BoardTasks.TaskStart.Started
+                ? $"Testing #{s.IssueNumber} on your computer — the result is posted on the pull request."
+                : $"Couldn't test #{s.IssueNumber}: {started}.", started == AgentOs.Web.Services.BoardTasks.TaskStart.Started ? ToastKind.Ok : ToastKind.Err);
+            await ReloadAll();
+            StartPolling();
+        }
+        finally
+        {
+            _busyId = null;
         }
     }
 

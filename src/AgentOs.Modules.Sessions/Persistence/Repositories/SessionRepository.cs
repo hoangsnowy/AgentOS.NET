@@ -229,7 +229,8 @@ internal sealed class SessionRepository : ISessionRepository
         session.Status = repos.Any(r => r.Status == "Failed") ? "Failed"
             : repos.Any(r => r.Status == "Blocked") ? "Blocked"   // QA gate refused the PR (plan 0.5)
             : repos.All(r => r.Status == "Merged") ? "Merged"               // every proposed change is in
-            : repos.All(r => r.Status is "Done" or "Merged") ? "Done"
+            // Done = every repo has a proposed change, tested or not (Accepted / Rejected by the Testing agent).
+            : repos.All(r => r.Status is "Done" or "Merged" or "Accepted" or "Rejected") ? "Done"
             : "Running";
 
         // Mirror the first PR + first error onto the parent for back-compat display.

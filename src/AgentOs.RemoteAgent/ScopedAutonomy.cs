@@ -40,6 +40,9 @@ internal static class ScopedAutonomy
         // The repository's own scripts (a reference decoder, codegen) — a path inside the checkout, never node -e. A live
         // run had to work out a reference decoder's verdicts by hand because node was not allowed at all.
         "Bash(node tools/*)", "Bash(node scripts/*)", "Bash(node ./*)",
+        // Agentic Testing: end-to-end specs, waiting for a local app to answer, and its own background shells.
+        "Bash(npx playwright *)", "Bash(npm exec playwright *)", "Bash(curl * http://localhost*)", "Bash(curl * https://localhost*)",
+        "Bash(curl * http://127.0.0.1*)", "BashOutput", "KillShell",
         "Bash(cd *)", "Bash(ls*)", "Bash(pwd)", "Bash(wc *)", "Bash(mkdir *)",
     ];
 

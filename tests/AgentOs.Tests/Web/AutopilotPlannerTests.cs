@@ -66,14 +66,40 @@ public sealed class AutopilotPlannerTests
     }
 
     [Fact]
-    public void GreenChecks_MergeOnlyWhenTheBoardAllowsIt()
+    public void GreenChecks_Untested_AreTestedFirst_NeverMergedUntested()
     {
         var green = Task(9, "Done", Pr(PrChecksState.Passed, number: 23));
 
-        AutopilotPlanner.Decide(AutopilotMode.Build, [], [green]).ShouldBeEmpty();
-        var merge = AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [green]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.Merge>();
-        merge.PrNumber.ShouldBe(23);
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [green]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.RunTests>();
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [green], canTest: false).ShouldBeEmpty();
     }
+
+    [Fact]
+    public void Accepted_MergesOnlyWhenTheBoardAllowsIt()
+    {
+        var accepted = Task(9, "Done", Pr(PrChecksState.Passed, number: 23) with { Testing = ChangeTesting.Accepted });
+
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [accepted]).ShouldBeEmpty();
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [accepted]).ShouldHaveSingleItem()
+            .ShouldBeOfType<AutopilotAction.Merge>().PrNumber.ShouldBe(23);
+    }
+
+    [Fact]
+    public void Rejected_GoesBackToCodingWithTheFindings_ThenAPerson()
+    {
+        var rejected = Task(9, "Done", Pr(PrChecksState.Passed) with { Testing = ChangeTesting.Rejected, Findings = "- F-4: duplicate email accepted" });
+
+        var fix = AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [rejected]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.FixChecks>();
+        fix.Report.ShouldBe("- F-4: duplicate email accepted");
+        fix.Why.ShouldContain("failed acceptance testing");
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [rejected with { FixRounds = AutopilotPlanner.MaxFixRounds }])
+            .ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.NeedsPerson>();
+    }
+
+    [Fact]
+    public void WhileTesting_NothingMoves() =>
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [],
+            [Task(9, "Done", Pr(PrChecksState.Passed) with { Testing = ChangeTesting.Testing })]).ShouldBeEmpty();
 
     [Theory]
     [InlineData(PrChecksState.Pending)]

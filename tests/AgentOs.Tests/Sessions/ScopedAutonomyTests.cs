@@ -52,7 +52,8 @@ public sealed class ScopedAutonomyTests
     // the run directory (found by a live smoke run that wrote into the home directory).
     [Fact]
     public void ClaudeAllowed_NoUnscopedFileTool() =>
-        ScopedAutonomy.ClaudeAllowed.ShouldAllBe(rule => rule.StartsWith("Bash(", StringComparison.Ordinal));
+        ScopedAutonomy.ClaudeAllowed.ShouldAllBe(rule => rule.StartsWith("Bash(", StringComparison.Ordinal)
+            || rule == "BashOutput" || rule == "KillShell"); // its own background shells (the Testing agent's app)
 
     // A Read deny rule that covered the run root would lock the agent out of its own checkout (a live smoke run
     // with "Read(~/AppData/**)" could not read README.md under %LOCALAPPDATA%).
