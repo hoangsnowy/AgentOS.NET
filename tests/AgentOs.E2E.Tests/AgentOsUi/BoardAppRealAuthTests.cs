@@ -58,6 +58,9 @@ public sealed class BoardAppRealAuthTests : IClassFixture<AgentOsRealAuthFixture
         // pairing credential — leaving them behind piles up valid tokens. Also covers the revoke path.
         var row = win.Locator(".data-table tbody tr", new() { HasTextString = label });
         await row.GetByRole(AriaRole.Button, new() { Name = "Disconnect" }).ClickAsync();
+        // Disconnected computers leave the list (history stays behind "Show N disconnected").
+        await Assertions.Expect(row).ToHaveCountAsync(0);
+        await win.GetByRole(AriaRole.Button, new() { NameRegex = new System.Text.RegularExpressions.Regex(@"^Show \d+ disconnected$") }).ClickAsync();
         await Assertions.Expect(row).ToContainTextAsync("Disconnected");
     }
 }

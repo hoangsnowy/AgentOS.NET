@@ -66,12 +66,18 @@ async function setForceProvider(page, value) {
     // Re-pairing used to pile up one row (and one live token) per run: disconnect this machine's earlier lab runners first.
     const label = `lab · ${require('os').hostname()} · claude -p`;
     await win.locator('.data-table').first().waitFor({ timeout: 15000 });
-    for (let i = 0; i < 50; i++) {
-      const stale = win.locator('.data-table tbody tr', { hasText: label }).filter({ has: page.getByRole('button', { name: 'Disconnect', disabled: false }) }).first();
-      if (!(await stale.count())) break;
-      await stale.getByRole('button', { name: 'Disconnect' }).click();
-      await page.waitForTimeout(800);
+    // A click on the prerendered page (before the Blazor circuit is live) is swallowed — which is how the earlier
+    // loop "disconnected" nothing and left four Offline rows. So each click must actually remove a row (disconnected
+    // computers are hidden), else it is repeated.
+    const stale = () => win.locator('.data-table tbody tr', { hasText: label })
+      .filter({ has: page.getByRole('button', { name: 'Disconnect', disabled: false }) });
+    for (let i = 0; i < 60; i++) {
+      const before = await stale().count();
+      if (!before) break;
+      await stale().first().getByRole('button', { name: 'Disconnect' }).click();
+      for (let t = 0; t < 20 && (await stale().count()) >= before; t++) { await page.waitForTimeout(250); }
     }
+    if (await stale().count()) { console.log(`warning: ${await stale().count()} earlier lab runner(s) could not be disconnected`); }
     await win.getByPlaceholder("My laptop").fill(label);
     await win.getByRole('button', { name: 'Connect this computer' }).click();
     const readout = await win.locator('.cred-readout textarea').inputValue({ timeout: 15000 });
