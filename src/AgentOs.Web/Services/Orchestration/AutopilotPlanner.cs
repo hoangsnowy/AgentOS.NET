@@ -55,6 +55,10 @@ public static class AutopilotPlanner
     /// <summary>Tasks running at once on a board.</summary>
     public const int MaxParallel = 2;
 
+    /// <summary>Acceptance runs at once: a test brings the app up on fixed ports, so two at once on one computer collide
+    /// (seen on the lab: the second one found the ports taken and could not check its end-to-end criteria).</summary>
+    public const int MaxParallelTests = 1;
+
     /// <param name="canTest">A computer of the member is connected, so the Testing agent can run. Without one nothing
     /// is tested — and nothing untested is merged.</param>
     public static IReadOnlyList<AutopilotAction> Decide(AutopilotMode mode, IReadOnlyList<PlanTicket> tickets, IReadOnlyList<PlanTask> tasks,
@@ -66,6 +70,7 @@ public static class AutopilotPlanner
         if (mode == AutopilotMode.Off) { return actions; }
 
         var running = tasks.Count(t => t.Status == "Running");
+        var testing = tasks.Count(t => t.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing));
 
         // 1) Proposed changes waiting on their checks: fix red ones (bounded), merge green ones (when allowed).
         foreach (var task in tasks.Where(t => t.Status == "Done"))
@@ -135,10 +140,11 @@ public static class AutopilotPlanner
             }
             if (task.OpenChanges.Any(c => c.Testing == ChangeTesting.Untested))
             {
-                if (!canTest || running >= MaxParallel) { continue; }
+                if (!canTest || running >= MaxParallel || testing >= MaxParallelTests) { continue; }
                 actions.Add(new AutopilotAction.RunTests(task.SessionId, task.IssueNumber,
                     $"Testing #{task.IssueNumber} against its acceptance criteria — its checks passed."));
                 running++;
+                testing++;
                 continue;
             }
             if (mode == AutopilotMode.BuildAndMerge)
