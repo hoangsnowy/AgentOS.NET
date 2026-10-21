@@ -82,6 +82,7 @@ the lab can never overspend.
 
 ```powershell
 pwsh infra/lab/lab.ps1 pair     # pair THIS machine as a runner; lab agents run on your local `claude -p`
+pwsh infra/lab/lab.ps1 pair -Data "CHESS_LIBRARY_PATH=D:\Chess"   # also lets the agents read test data (read-only env vars)
 pwsh infra/lab/lab.ps1 unpair   # stop it (disconnect it in Board → Computers to retire the token)
 ```
 

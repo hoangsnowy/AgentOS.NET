@@ -30,6 +30,8 @@
 //                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
 //   REMOTE_AGENT_TIMEOUT_SECONDS  per shell command (default 600); on expiry the whole process tree is killed
 //   REMOTE_AGENT_MAX_PARALLEL     CLI runs at once on this machine (default 2); more wait their turn
+//   REMOTE_AGENT_DATA   test data the agents may read: "NAME=C:\path;OTHER=/data/x" → env vars of each scoped run,
+//                       names (not paths) told to the agent, read-only to it (see TestData in ScopedAutonomy.cs)
 //
 // A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
 // 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
@@ -208,9 +210,11 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         request.Id);
     var keepRun = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_RUNS"));
 
-    var prompt = string.IsNullOrEmpty(request.SystemPrompt)
+    // Test data this computer offers (REMOTE_AGENT_DATA): env vars of the run, named — never pathed — in the prompt.
+    var data = scoped ? AgentOs.RemoteAgent.TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA")) : [];
+    var prompt = (string.IsNullOrEmpty(request.SystemPrompt)
         ? request.UserPrompt
-        : request.SystemPrompt + "\n\n" + request.UserPrompt;
+        : request.SystemPrompt + "\n\n" + request.UserPrompt) + AgentOs.RemoteAgent.TestData.PromptNote(data);
 
     try
     {
@@ -230,6 +234,10 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         foreach (var a in args)
         {
             psi.ArgumentList.Add(a);
+        }
+        foreach (var (name, path) in data)
+        {
+            psi.Environment[name] = path;
         }
         // Claude reads the prompt from stdin (`claude -p`); Codex takes it as a positional arg (`codex exec "<prompt>"`).
         if (!profile.PromptViaStdin)

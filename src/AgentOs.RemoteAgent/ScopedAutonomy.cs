@@ -14,6 +14,7 @@
 //   REMOTE_AGENT_KEEP_RUNS  "1" keeps each run directory afterwards (debugging); default deletes it
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -148,4 +149,41 @@ internal static class ScopedAutonomy
         catch (IOException) { /* a process still holds a file — leave it for the next cleanup */ }
         catch (UnauthorizedAccessException) { /* same */ }
     }
+}
+
+/// <summary>
+/// Test data on this computer the agents may read (a corpus, fixtures too big or too private for the repo):
+/// <c>REMOTE_AGENT_DATA="CHESS_LIBRARY_PATH=D:\Chess;OTHER=/data/x"</c>. Each entry becomes an environment variable of
+/// the CLI run, and the agent is told the names (never the paths). Reading outside the run directory needs no approval
+/// in claude; editing there does, which nobody can give — so the data is read-only to the agent.
+/// </summary>
+internal static class TestData
+{
+    internal static IReadOnlyList<(string Name, string Path)> Parse(string? setting)
+    {
+        if (string.IsNullOrWhiteSpace(setting)) { return []; }
+        var result = new List<(string, string)>();
+        foreach (var entry in setting.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var eq = entry.IndexOf('=', StringComparison.Ordinal);
+            if (eq <= 0) { continue; }
+            var name = entry[..eq].Trim();
+            var path = entry[(eq + 1)..].Trim();
+            // Only plain variable names and existing absolute folders/files — never PATH-like or relative entries.
+            var validName = name.Length <= 64 && (char.IsAsciiLetterUpper(name[0]) || name[0] == '_')
+                && name.All(c => char.IsAsciiLetterUpper(c) || char.IsAsciiDigit(c) || c == '_')
+                && name is not ("PATH" or "HOME" or "USERPROFILE" or "APPDATA" or "TEMP" or "TMP");
+            if (validName && Path.IsPathRooted(path) && (Directory.Exists(path) || File.Exists(path)))
+            {
+                result.Add((name, path));
+            }
+        }
+        return result;
+    }
+
+    /// <summary>The sentence added to the agent's instructions (names only).</summary>
+    internal static string PromptNote(IReadOnlyList<(string Name, string Path)> data) => data.Count == 0
+        ? string.Empty
+        : "\n\nTest data available on this computer (read-only, as environment variables): "
+          + string.Join(", ", data.Select(d => d.Name)) + ". Use them for the data checks the acceptance criteria ask for.";
 }
