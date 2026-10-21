@@ -119,6 +119,51 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
     }
 
     /// <inheritdoc />
+    public async Task<PrMergeState> GetMergeStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return PrMergeState.Unknown; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            return MergeStateOf(pr.Mergeable, pr.MergeableState?.Value);
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Merge-state lookup failed for {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return PrMergeState.Unknown;
+        }
+    }
+
+    /// <summary>GitHub's mergeable flags as a PrMergeState (a conflict is <c>mergeable == false</c> / <c>dirty</c>).</summary>
+    internal static PrMergeState MergeStateOf(bool? mergeable, MergeableState? state) =>
+        mergeable == false || state == MergeableState.Dirty ? PrMergeState.Conflicts
+        : state == MergeableState.Behind ? PrMergeState.Behind
+        : mergeable == true ? PrMergeState.Clean
+        : PrMergeState.Unknown;
+
+    /// <inheritdoc />
+    public async Task<string?> UpdateBranchAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return "Updating a branch is not supported for this provider."; }
+        try
+        {
+            // PUT /repos/{owner}/{repo}/pulls/{n}/update-branch — not wrapped by Octokit 14.
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var uri = new Uri($"repos/{Uri.EscapeDataString(workspace.Owner)}/{Uri.EscapeDataString(workspace.Repo)}/pulls/{number.ToString(System.Globalization.CultureInfo.InvariantCulture)}/update-branch", UriKind.Relative);
+            await client.Connection.Put<object>(uri, new { }, null, "application/vnd.github+json").ConfigureAwait(false);
+            return null;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Update-branch failed for {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return ex.Message;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);

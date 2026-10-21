@@ -115,3 +115,40 @@ public sealed class AutopilotPlannerTests
         actions.Select(a => a.GetType().Name).ShouldBe(["FixChecks"]);
     }
 }
+
+public sealed class AutopilotPlannerBranchTests
+{
+    private static PlanTask Done(params PlanChange[] changes) => new(Guid.NewGuid(), 9, "Done", changes, 0);
+
+    private static PlanChange Accepted(PrMergeState merge) =>
+        new(Guid.NewGuid(), 23, PrChecksState.Passed, null, ChangeTesting.Accepted, null, merge, "main");
+
+    [Fact]
+    public void Conflicts_GoBackToTheCodingAgent_BeforeAnythingElse()
+    {
+        var conflicting = new PlanChange(Guid.NewGuid(), 23, PrChecksState.Passed, null, ChangeTesting.Accepted, null, PrMergeState.Conflicts, "main");
+
+        var fix = AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [Done(conflicting)]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.FixChecks>();
+
+        fix.Report.ShouldContain("Merge origin/main");
+        fix.Why.ShouldBe("#9 conflicts with main — asked the AI to bring it up to date (try 1 of 3).");
+    }
+
+    [Fact]
+    public void Behind_IsUpdatedBeforeMerging()
+    {
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [Done(Accepted(PrMergeState.Behind))])
+            .ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.UpdateBranch>();
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [Done(Accepted(PrMergeState.Clean))])
+            .ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.Merge>();
+    }
+
+    [Theory]
+    [InlineData(false, null, PrMergeState.Conflicts)]
+    [InlineData(null, Octokit.MergeableState.Dirty, PrMergeState.Conflicts)]
+    [InlineData(true, Octokit.MergeableState.Behind, PrMergeState.Behind)]
+    [InlineData(true, Octokit.MergeableState.Clean, PrMergeState.Clean)]
+    [InlineData(null, null, PrMergeState.Unknown)]
+    public void MergeStateOf_GitHubFlags(bool? mergeable, Octokit.MergeableState? state, PrMergeState expected) =>
+        AgentOs.Modules.Integration.GitHubPrCreationService.MergeStateOf(mergeable, state).ShouldBe(expected);
+}

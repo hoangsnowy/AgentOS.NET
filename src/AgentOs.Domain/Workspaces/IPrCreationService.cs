@@ -26,6 +26,19 @@ public enum PrChecksState
     Passed,
 }
 
+/// <summary>Whether a pull request can merge into its base as it stands.</summary>
+public enum PrMergeState
+{
+    /// <summary>Not computed yet, or not known.</summary>
+    Unknown,
+    /// <summary>Up to date and mergeable.</summary>
+    Clean,
+    /// <summary>Its base moved on; no conflicts — the branch only needs updating.</summary>
+    Behind,
+    /// <summary>It conflicts with its base.</summary>
+    Conflicts,
+}
+
 /// <summary>Where an opened pull request stands now (<see cref="IPrCreationService.GetStateAsync"/>).</summary>
 public enum PrState
 {
@@ -66,6 +79,15 @@ public interface IPrCreationService
     /// <summary>The combined state of pull request <paramref name="number"/>'s checks. Never throws; None when unknown.</summary>
     Task<PrChecksState> GetChecksStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult(PrChecksState.None);
+
+    /// <summary>Whether pull request <paramref name="number"/> can merge as it stands. Never throws; Unknown when it can't tell.</summary>
+    Task<PrMergeState> GetMergeStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
+        Task.FromResult(PrMergeState.Unknown);
+
+    /// <summary>Bring a behind pull request up to date with its base (the provider merges the base into the branch).
+    /// Null on success, else the reason.</summary>
+    Task<string?> UpdateBranchAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
+        Task.FromResult<string?>("Updating a branch is not supported for this provider.");
 
     /// <summary>Post a comment on pull request <paramref name="number"/> (the Testing agent's evidence). Never throws.</summary>
     Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default) =>

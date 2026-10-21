@@ -29,7 +29,8 @@ public enum ChangeTesting { Untested, Testing, Accepted, Rejected }
 
 /// <summary>An open proposed change of a task.</summary>
 public sealed record PlanChange(Guid RepoId, int PrNumber, PrChecksState Checks, string? FailedReport,
-    ChangeTesting Testing = ChangeTesting.Untested, string? Findings = null);
+    ChangeTesting Testing = ChangeTesting.Untested, string? Findings = null, PrMergeState Merge = PrMergeState.Clean,
+    string BaseBranch = "main");
 
 /// <summary>A task as the planner sees it.</summary>
 public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IReadOnlyList<PlanChange> OpenChanges, int FixRounds);
@@ -39,6 +40,7 @@ public abstract record AutopilotAction(string Why)
 {
     public sealed record StartTicket(int Number, string Why) : AutopilotAction(Why);
     public sealed record FixChecks(Guid SessionId, int IssueNumber, string Report, int Round, string Why) : AutopilotAction(Why);
+    public sealed record UpdateBranch(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record Merge(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why);
@@ -68,6 +70,27 @@ public static class AutopilotPlanner
         // 1) Proposed changes waiting on their checks: fix red ones (bounded), merge green ones (when allowed).
         foreach (var task in tasks.Where(t => t.Status == "Done"))
         {
+            // Another change merged first and this one now conflicts: the Coding agent brings it up to date.
+            var conflicting = task.OpenChanges.Where(c => c.Merge == PrMergeState.Conflicts).ToList();
+            if (conflicting.Count > 0)
+            {
+                if (task.FixRounds >= MaxFixRounds)
+                {
+                    actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
+                        "Still conflicts with its base after automatic fixes — needs a person.",
+                        $"Stopped fixing #{task.IssueNumber}: it still conflicts with {conflicting[0].BaseBranch}. It needs you."));
+                    continue;
+                }
+                if (running >= MaxParallel) { continue; }
+                var conflictRound = task.FixRounds + 1;
+                actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
+                    $"Your branch conflicts with {conflicting[0].BaseBranch} (another change was merged first). Merge origin/{conflicting[0].BaseBranch} "
+                    + "into it, resolve every conflict keeping the intent of both changes, build, run the tests, commit and push.",
+                    conflictRound,
+                    $"#{task.IssueNumber} conflicts with {conflicting[0].BaseBranch} — asked the AI to bring it up to date (try {conflictRound} of {MaxFixRounds})."));
+                running++;
+                continue;
+            }
             var failed = task.OpenChanges.Where(c => c.Checks == PrChecksState.Failed).ToList();
             if (failed.Count > 0)
             {
@@ -120,6 +143,14 @@ public static class AutopilotPlanner
             }
             if (mode == AutopilotMode.BuildAndMerge)
             {
+                // Its base moved on without conflicts: update the branch first (checks run again), merge next pass.
+                var behind = task.OpenChanges.Where(c => c.Merge == PrMergeState.Behind).ToList();
+                if (behind.Count > 0)
+                {
+                    actions.AddRange(behind.Select(c => new AutopilotAction.UpdateBranch(task.SessionId, task.IssueNumber, c.RepoId, c.PrNumber,
+                        $"Brought #{task.IssueNumber}'s change (PR #{c.PrNumber}) up to date with {c.BaseBranch} before merging.")));
+                    continue;
+                }
                 foreach (var change in task.OpenChanges)
                 {
                     actions.Add(new AutopilotAction.Merge(task.SessionId, task.IssueNumber, change.RepoId, change.PrNumber,

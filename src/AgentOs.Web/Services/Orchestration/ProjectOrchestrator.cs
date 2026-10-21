@@ -119,7 +119,8 @@ public sealed partial class ProjectOrchestrator(
                         "Rejected" => ChangeTesting.Rejected,
                         _ => ChangeTesting.Untested,
                     };
-                    open.Add(new PlanChange(r.Id, number, checks, report, testing, testing == ChangeTesting.Rejected ? r.Error : null));
+                    var merge = s.Status == "Done" ? await prs.GetMergeStateAsync(desc, number, ct).ConfigureAwait(false) : PrMergeState.Unknown;
+                    open.Add(new PlanChange(r.Id, number, checks, report, testing, testing == ChangeTesting.Rejected ? r.Error : null, merge, r.DefaultBranch));
                 }
                 planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, _fixRounds.GetValueOrDefault(s.Id)));
             }
@@ -191,6 +192,15 @@ public sealed partial class ProjectOrchestrator(
                     ct: ct).ConfigureAwait(false);
                 log.Add(tenant, board.Id, restarted == TaskStart.Started ? fix.Why : $"Couldn't send #{fix.IssueNumber} back: {restarted}.");
                 break;
+            case AutopilotAction.UpdateBranch update:
+            {
+                var sessions = sp.GetRequiredService<ISessionRepository>();
+                var repo = (await sessions.ListReposForTenantAsync(tenant, update.SessionId, ct).ConfigureAwait(false)).First(r => r.Id == update.RepoId);
+                var error = await sp.GetRequiredService<IPrCreationService>().UpdateBranchAsync(
+                    BoardTaskService.RepoDescriptor(board, tenant, repo.Owner, repo.Repo, repo.DefaultBranch, pat), update.PrNumber, ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, error is null ? update.Why : $"Couldn't update #{update.IssueNumber}'s branch: {error}");
+                break;
+            }
             case AutopilotAction.RunTests test:
             {
                 var tested = await tasks.TestAsync(tenant, test.SessionId, ct: ct).ConfigureAwait(false);
