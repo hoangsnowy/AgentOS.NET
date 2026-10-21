@@ -47,6 +47,28 @@ public sealed class TicketDecomposerAgentTests
         result[0].AiReady.ShouldBeTrue();
     }
 
+    // dependsOn points at the model's own list; a dropped blank ticket shifts indices, so they are re-mapped, and
+    // self or dangling references disappear.
+    [Fact]
+    public async Task RunAsync_DependsOn_RemappedAcrossDroppedTickets()
+    {
+        var json = """
+            { "tickets": [
+              { "title": "Add the module", "body": "", "labels": ["type:feature","area:data","p0"], "aiReady": true },
+              { "title": "", "body": "blank, dropped" },
+              { "title": "Add the API", "body": "", "labels": ["type:feature","area:api","p1"], "aiReady": true, "dependsOn": [0, 1, 2, 9] },
+              { "title": "Add the page", "body": "", "labels": ["type:feature","area:ui","p1"], "aiReady": true, "dependsOn": [2] }
+            ] }
+            """;
+
+        var result = await Build(json).RunAsync(DecompositionFixtures.Spec(), DecompositionFixtures.Seed());
+
+        result.Count.ShouldBe(3);
+        result[0].DependsOn.ShouldBeEmpty();
+        result[1].DependsOn.ShouldBe([0]);   // the blank, itself and the out-of-range index are gone
+        result[2].DependsOn.ShouldBe([1]);   // "the API" moved from index 2 to 1
+    }
+
     [Fact]
     public async Task RunAsync_AiReadyFalse_ForcesNeedsHumanAndDropsAiReady()
     {

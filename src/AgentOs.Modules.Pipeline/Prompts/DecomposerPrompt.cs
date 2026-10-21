@@ -16,7 +16,7 @@ namespace AgentOs.Modules.Pipeline.Prompts;
 public static class DecomposerPrompt
 {
     /// <summary>Prompt version. Bump when editing <see cref="System"/> or <see cref="RenderUser"/>.</summary>
-    public const string Version = "v1";
+    public const string Version = "v2";
 
     private static readonly string AllowedLabels = string.Join(", ", StandardLabels.All.Select(l => l.Name));
 
@@ -29,7 +29,7 @@ public static class DecomposerPrompt
         Return ONLY JSON (no markdown fence, no prose):
         {
           "tickets": [
-            { "title": "imperative one-line", "body": "markdown with a - [ ] acceptance checklist", "labels": ["type:feature","area:api","p1","ai:ready"], "aiReady": true }
+            { "title": "imperative one-line", "body": "markdown with a - [ ] acceptance checklist", "labels": ["type:feature","area:api","p1","ai:ready"], "aiReady": true, "dependsOn": [0] }
           ]
         }
 
@@ -40,6 +40,10 @@ public static class DecomposerPrompt
         - labels: choose ONLY from this set -> {{AllowedLabels}}. Each ticket gets exactly one type:*, one area:*, and one of p0|p1|p2.
         - Exactly one of ai:ready / needs-human per ticket. Use ai:ready (aiReady=true) ONLY if a coding agent could implement it from the body alone; otherwise needs-human. Keep the umbrella/epic as needs-human.
         - Prefer 3-8 tickets for a typical feature. Do NOT invent work beyond the spec.
+        - dependsOn: the 0-based indices (in YOUR returned list) of the tickets whose code this ticket needs merged first
+          (a module before its API, an API before its UI, a decoder before its importer). Only real build-order needs —
+          tickets that merely touch the same area stay independent so they can run in parallel. No cycles; the
+          umbrella/epic ticket depends on nothing and nothing depends on it. Do NOT write dependencies into the body.
         """;
 
     /// <summary>Renders the user prompt from the spec + the deterministic seed.</summary>
