@@ -49,11 +49,11 @@ public sealed class TaskStopRegistryTests
     public void Begin_Twice_CancelsTheFirstAndKeepsTrackingTheSecond()
     {
         var registry = new TaskStopRegistry();
-        var first = registry.Begin("t1", Task1);
+        using var first = registry.Begin("t1", Task1);
         using var second = registry.Begin("t1", Task1);
 
         first.Token.IsCancellationRequested.ShouldBeTrue();
-        first.Dispose();
+        first.Dispose(); // the old run winds down first (a second Dispose at scope end is a no-op)
 
         registry.IsRunning("t1", Task1).ShouldBeTrue();
         registry.Stop("t1", Task1).ShouldBeTrue();

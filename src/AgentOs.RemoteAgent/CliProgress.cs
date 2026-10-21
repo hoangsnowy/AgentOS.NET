@@ -7,6 +7,7 @@
 // closing "result" event. Pure, so the mapping is unit-tested against real event lines.
 
 using System;
+using System.Linq;
 using System.Text.Json;
 
 namespace AgentOs.RemoteAgent;
@@ -100,15 +101,13 @@ internal static class CliProgress
             {
                 return (null, null);
             }
-            string? step = null;
-            foreach (var part in content.EnumerateArray())
-            {
-                if (part.TryGetProperty("type", out var pt) && pt.GetString() == "tool_use"
-                    && part.TryGetProperty("name", out var name) && name.GetString() is { } tool)
-                {
-                    step = StepFor(tool, part.TryGetProperty("input", out var input) ? input : default) ?? step;
-                }
-            }
+            // The last tool call of the event that moves the task along wins.
+            var step = content.EnumerateArray()
+                .Where(part => part.TryGetProperty("type", out var pt) && pt.GetString() == "tool_use")
+                .Select(part => part.TryGetProperty("name", out var name) && name.GetString() is { } tool
+                    ? StepFor(tool, part.TryGetProperty("input", out var input) ? input : default)
+                    : null)
+                .LastOrDefault(s => s is not null);
             return (step, null);
         }
         catch (JsonException)

@@ -84,7 +84,7 @@ internal static class IssueWorkPrompt
         {4}
         Workflow:
 
-        1. Clone the {0}/{1} repository. The runner starts you in a fresh, empty directory made for
+        1. Clone the {0}/{1} repository (default branch: {2}). The runner starts you in a fresh, empty directory made for
            this run — clone INTO it, so every later command runs there without a `cd`:
            git clone https://github.com/{0}/{1}.git .
            (Only if the current directory is not empty: clone into a new subdirectory and work there.)

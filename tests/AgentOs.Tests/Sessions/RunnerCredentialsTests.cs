@@ -66,12 +66,23 @@ public sealed class RunnerCredentialsTests
         (await RunnerCredentials.ExchangeAsync(http, "https://h", "K7F2-9QXM")).ShouldBeNull();
     }
 
+    // Owns the responses it hands out and disposes them with itself (the HttpClient disposes the handler).
     private sealed class Stub(HttpStatusCode status, string body) : HttpMessageHandler
     {
+        private readonly List<HttpResponseMessage> _responses = [];
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             request.RequestUri!.AbsolutePath.ShouldBe("/runner/pair/exchange");
-            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            var response = new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+            _responses.Add(response);
+            return Task.FromResult(response);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { _responses.ForEach(r => r.Dispose()); }
+            base.Dispose(disposing);
         }
     }
 }
