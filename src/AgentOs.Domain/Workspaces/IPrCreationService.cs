@@ -43,4 +43,10 @@ public interface IPrCreationService
     /// stops reading "Ready for review". Never throws; <see cref="PrState.Unknown"/> when it can't tell.</summary>
     Task<PrState> GetStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult(PrState.Unknown);
+
+    /// <summary>The failed checks of pull request <paramref name="number"/>'s latest commit — name, summary and the tail of
+    /// each log — as plain text for the agent to fix (Board › Ask for changes › Fix the failing checks). Empty when nothing
+    /// failed or the provider can't tell. Never throws.</summary>
+    Task<string> GetFailedChecksAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
+        Task.FromResult(string.Empty);
 }

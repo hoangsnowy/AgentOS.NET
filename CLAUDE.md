@@ -229,6 +229,9 @@ The owner's standing instructions. They apply to every change; the execution pla
   Keep multi-line edit scripts in a file (Write) and run `node file.js` instead of inline `node -e`. In those
   scripts pass replacements as a function (`s.replace(a, () => b)`) or use `split/join`: a `$` followed by a
   backtick, `'`, `&` or a digit in a replacement string is a JS replace pattern and splices in other text.
+  Never write `\n` (or any backslash escape) inside a JS template literal that carries C#/TS source: the
+  template turns it into a real newline/character and splits the target's string literals — build such text
+  with `String.fromCharCode(92)` or edit with the Edit tool.
   PowerShell `Invoke-WebRequest` treats an unfollowed 302 as an error — probe with `curl.exe`.
 - **Secrets:** never type real tokens into a browser or the chat. Tokens live in user-secrets / env and are
   read by test code; the owner sets them in their own terminal.

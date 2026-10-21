@@ -256,6 +256,24 @@ public class IssueWorkAgentTests
         captured.Autonomy.ShouldBeNull(); // nor asks a runner CLI for hands
     }
 
+    // Ask for changes: whatever branch the reply names, the follow-up result is the pull request's own branch.
+    [Fact]
+    public async Task RunAsync_FollowUp_OutcomeIsTheExistingBranch()
+    {
+        var llm = Substitute.For<ILlmClient>();
+        llm.SendAsync(Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+           .Returns(AgentTestHelpers.StubResponse("""{"branch":"some-other-branch","summary":"Done."}"""));
+        var request = MakeRequest(42) with
+        {
+            Repos = [new WorkRepo(Guid.NewGuid(), "acme", "my-service", "main", ExistingBranch: "issue-42-ai-fix")],
+            ChangeRequest = "Reload before the duplicate check.",
+        };
+
+        var result = await MakeAgent(llm).RunAsync(request);
+
+        result.Repos.ShouldHaveSingleItem().BranchName.ShouldBe("issue-42-ai-fix");
+    }
+
     [Fact]
     public async Task RunAsync_RunOnMachine_ForwardsCliProfileToLlmRequest()
     {
