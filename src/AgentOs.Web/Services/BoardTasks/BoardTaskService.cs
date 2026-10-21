@@ -132,6 +132,95 @@ public sealed class BoardTaskService(
         return TaskStart.Started;
     }
 
+    /// <summary>
+    /// Agentic Testing: test every open proposed change of a task against its ticket's acceptance criteria on the
+    /// member's computer, post the evidence on each pull request, and mark it Accepted or Rejected.
+    /// </summary>
+    public async Task<TaskStart> TestAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        using var scope = scopes.CreateScope();
+        var sessions = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+        var session = (await sessions.ListForTenantAsync(tenantId, ct).ConfigureAwait(false)).FirstOrDefault(s => s.Id == sessionId);
+        if (session is null) { return TaskStart.TaskNotFound; }
+        var board = await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>()
+            .GetForTenantAsync(tenantId, session.WorkspaceId, ct).ConfigureAwait(false);
+        if (board is null) { return TaskStart.BoardNotFound; }
+        var changes = (await sessions.ListReposForTenantAsync(tenantId, session.Id, ct).ConfigureAwait(false))
+            .Where(r => r.Status is "Done" or "Accepted" or "Rejected" && !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName))
+            .ToList();
+        if (changes.Count == 0) { return TaskStart.NoCodeProject; }
+        var pat = await scope.ServiceProvider.GetRequiredService<IAppConfigStore>()
+            .GetForTenantAsync(tenantId, board.CredentialRef, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(pat)) { return TaskStart.NoGitHubAccess; }
+
+        await sessions.UpdateRunResultAsync(tenantId, session.Id, "Running", session.PrUrl, null, ct).ConfigureAwait(false);
+        foreach (var c in changes)
+        {
+            await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Testing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
+        }
+        var stopLease = stops.Begin(tenantId, session.Id);
+        _ = Task.Run(() => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease), CancellationToken.None);
+        return TaskStart.Started;
+    }
+
+    private async Task TestChangesAsync(string tenantId, RemoteSessionEntity session, WorkspaceEntity board, string pat,
+        IReadOnlyList<SessionRepoEntity> changes, string? cliProfile, TaskStopRegistry.Lease stopLease)
+    {
+        using var _stop = stopLease;
+        try
+        {
+            using var scope = scopes.CreateScope();
+            using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(tenantId, session.MemberUserId, session.Id);
+            var sessRepo = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+            var tester = scope.ServiceProvider.GetRequiredService<IAcceptanceAgent>();
+            var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
+            var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            foreach (var change in changes)
+            {
+                var repoLabel = $"{change.Owner}/{change.Repo}";
+                var verdict = await tester.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
+                    new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
+                    session.IssueNumber ?? 0, session.Title, body, cliProfile), stopLease.Token).ConfigureAwait(false);
+                if (!verdict.Ran)
+                {
+                    // Couldn't test (no computer, timed out): the change stays as it was, the reason is on the feed.
+                    await sessRepo.UpdateRepoRunResultAsync(tenantId, change.Id, "Done", change.BranchName, change.PrUrl, null).ConfigureAwait(false);
+                    feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step, $"{repoLabel} — couldn't test: {verdict.Error}", DateTimeOffset.UtcNow, repoLabel));
+                    continue;
+                }
+                if (PrNumber(change.PrUrl) is { } number)
+                {
+                    await prs.CommentAsync(RepoDescriptor(board, tenantId, change.Owner, change.Repo, change.DefaultBranch, pat), number,
+                        AgentOs.Modules.Pipeline.Agents.AcceptanceAgent.Comment(session.IssueNumber ?? 0, verdict)).ConfigureAwait(false);
+                }
+                await sessRepo.UpdateRepoRunResultAsync(tenantId, change.Id, verdict.Passed ? "Accepted" : "Rejected", change.BranchName, change.PrUrl,
+                    verdict.Passed ? null : AgentOs.Modules.Pipeline.Agents.AcceptanceAgent.Findings(verdict)).ConfigureAwait(false);
+                feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.RepoDone,
+                    verdict.Passed ? $"{repoLabel} — passed testing" : $"{repoLabel} — failed testing: {verdict.Summary}",
+                    DateTimeOffset.UtcNow, repoLabel, verdict.Passed ? "Accepted" : "Rejected", change.PrUrl));
+            }
+            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stopLease.Token.IsCancellationRequested)
+        {
+            await MarkStoppedAsync(tenantId, session.Id).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or System.IO.IOException or TimeoutException)
+        {
+            await MarkFailedAsync(tenantId, session.Id, ex.Message).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>The number of a pull request from its URL (…/pull/42).</summary>
+    public static int? PrNumber(string? url)
+    {
+        if (string.IsNullOrEmpty(url)) { return null; }
+        var i = url.LastIndexOf("/pull/", StringComparison.Ordinal);
+        return i >= 0 && int.TryParse(url.AsSpan(i + "/pull/".Length).TrimEnd('/'), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
+    }
+
     private async Task RunAsync(string tenantId, RemoteSessionEntity session, WorkspaceEntity board, string pat,
         IReadOnlyList<SessionRepoEntity> children, string? cliProfile, string? change, TaskStopRegistry.Lease stopLease)
     {

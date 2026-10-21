@@ -24,8 +24,12 @@ public enum AutopilotMode
 /// <summary>A ticket as the planner sees it.</summary>
 public sealed record PlanTicket(int Number, bool Open, bool AiReady, int Priority, IReadOnlyList<int> DependsOn, bool HasLiveTask);
 
+/// <summary>Where a proposed change stands with the Testing agent.</summary>
+public enum ChangeTesting { Untested, Testing, Accepted, Rejected }
+
 /// <summary>An open proposed change of a task.</summary>
-public sealed record PlanChange(Guid RepoId, int PrNumber, PrChecksState Checks, string? FailedReport);
+public sealed record PlanChange(Guid RepoId, int PrNumber, PrChecksState Checks, string? FailedReport,
+    ChangeTesting Testing = ChangeTesting.Untested, string? Findings = null);
 
 /// <summary>A task as the planner sees it.</summary>
 public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IReadOnlyList<PlanChange> OpenChanges, int FixRounds);
@@ -35,6 +39,7 @@ public abstract record AutopilotAction(string Why)
 {
     public sealed record StartTicket(int Number, string Why) : AutopilotAction(Why);
     public sealed record FixChecks(Guid SessionId, int IssueNumber, string Report, int Round, string Why) : AutopilotAction(Why);
+    public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record Merge(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why);
 }
@@ -48,7 +53,10 @@ public static class AutopilotPlanner
     /// <summary>Tasks running at once on a board.</summary>
     public const int MaxParallel = 2;
 
-    public static IReadOnlyList<AutopilotAction> Decide(AutopilotMode mode, IReadOnlyList<PlanTicket> tickets, IReadOnlyList<PlanTask> tasks)
+    /// <param name="canTest">A computer of the member is connected, so the Testing agent can run. Without one nothing
+    /// is tested — and nothing untested is merged.</param>
+    public static IReadOnlyList<AutopilotAction> Decide(AutopilotMode mode, IReadOnlyList<PlanTicket> tickets, IReadOnlyList<PlanTask> tasks,
+        bool canTest = true)
     {
         ArgumentNullException.ThrowIfNull(tickets);
         ArgumentNullException.ThrowIfNull(tasks);
@@ -78,12 +86,44 @@ public static class AutopilotPlanner
                 running++;
                 continue;
             }
-            if (mode == AutopilotMode.BuildAndMerge && task.OpenChanges.Count > 0 && task.OpenChanges.All(c => c.Checks == PrChecksState.Passed))
+            // Testing comes after green checks; nothing moves while a test runs or a check is still going.
+            if (task.OpenChanges.Count == 0 || task.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing)
+                || !task.OpenChanges.All(c => c.Checks == PrChecksState.Passed))
+            {
+                continue;
+            }
+            var rejected = task.OpenChanges.Where(c => c.Testing == ChangeTesting.Rejected).ToList();
+            if (rejected.Count > 0)
+            {
+                if (task.FixRounds >= MaxFixRounds)
+                {
+                    actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
+                        $"Acceptance testing still fails after {MaxFixRounds} automatic fixes — needs a person.",
+                        $"Stopped fixing #{task.IssueNumber}: it still fails acceptance testing after {MaxFixRounds} tries. It needs you."));
+                    continue;
+                }
+                if (running >= MaxParallel) { continue; }
+                var round = task.FixRounds + 1;
+                actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
+                    string.Join('\n', rejected.Select(c => c.Findings).Where(r => !string.IsNullOrWhiteSpace(r))), round,
+                    $"#{task.IssueNumber} failed acceptance testing — sent back to the AI with the findings (try {round} of {MaxFixRounds})."));
+                running++;
+                continue;
+            }
+            if (task.OpenChanges.Any(c => c.Testing == ChangeTesting.Untested))
+            {
+                if (!canTest || running >= MaxParallel) { continue; }
+                actions.Add(new AutopilotAction.RunTests(task.SessionId, task.IssueNumber,
+                    $"Testing #{task.IssueNumber} against its acceptance criteria — its checks passed."));
+                running++;
+                continue;
+            }
+            if (mode == AutopilotMode.BuildAndMerge)
             {
                 foreach (var change in task.OpenChanges)
                 {
                     actions.Add(new AutopilotAction.Merge(task.SessionId, task.IssueNumber, change.RepoId, change.PrNumber,
-                        $"Merged #{task.IssueNumber}'s change (PR #{change.PrNumber}) — all checks passed."));
+                        $"Merged #{task.IssueNumber}'s change (PR #{change.PrNumber}) — checks green and acceptance testing passed."));
                 }
             }
         }

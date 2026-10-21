@@ -67,6 +67,10 @@ public interface IPrCreationService
     Task<PrChecksState> GetChecksStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult(PrChecksState.None);
 
+    /// <summary>Post a comment on pull request <paramref name="number"/> (the Testing agent's evidence). Never throws.</summary>
+    Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default) =>
+        Task.FromResult(false);
+
     /// <summary>Squash-merge pull request <paramref name="number"/> and delete its branch. Null on success, else the reason.</summary>
     Task<string?> MergeAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult<string?>("Merging is not supported for this provider.");

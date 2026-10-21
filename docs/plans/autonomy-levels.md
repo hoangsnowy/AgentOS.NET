@@ -20,7 +20,7 @@ end to end on the lab; anything that still needs a hand edit there is a missing 
    Today it starts everything at once — #12 (import) would race #11 (the module it needs).
 2. ✅ (#242, Autopilot) **Self-repair on CI.** When a task's pull request goes red, run *Fix the failing checks* automatically, at most
    3 rounds, then escalate (a failure card with "This needs a person").
-3. **Acceptance agent.** What a human reviewer did by hand on the lab: read the ticket's criteria and the project's
+3. ✅ (#244) **Acceptance agent.** What a human reviewer did by hand on the lab: read the ticket's criteria and the project's
    `docs/ACCEPTANCE.md`, run the unit tests, bring the stack up and run the Playwright specs, run data checks
    (e.g. the CBL corpus), and post the evidence on the PR. Pass → approve; fail → *Ask for changes* with the
    findings.

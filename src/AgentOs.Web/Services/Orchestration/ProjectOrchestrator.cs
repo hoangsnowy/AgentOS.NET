@@ -100,7 +100,7 @@ public sealed partial class ProjectOrchestrator(
             foreach (var s in sessions.Where(s => s.Status is "Running" or "Done"))
             {
                 var open = new List<PlanChange>();
-                foreach (var r in repos[s.Id].Where(r => r.Status == "Done" && PrNumber(r.PrUrl) is not null))
+                foreach (var r in repos[s.Id].Where(r => r.Status is "Done" or "Testing" or "Accepted" or "Rejected" && PrNumber(r.PrUrl) is not null))
                 {
                     var desc = BoardTaskService.RepoDescriptor(board, tenant, r.Owner, r.Repo, r.DefaultBranch, pat);
                     var number = PrNumber(r.PrUrl)!.Value;
@@ -112,7 +112,14 @@ public sealed partial class ProjectOrchestrator(
                     }
                     var checks = s.Status == "Done" ? await prs.GetChecksStateAsync(desc, number, ct).ConfigureAwait(false) : PrChecksState.Pending;
                     var report = checks == PrChecksState.Failed ? await prs.GetFailedChecksAsync(desc, number, ct).ConfigureAwait(false) : null;
-                    open.Add(new PlanChange(r.Id, number, checks, report));
+                    var testing = r.Status switch
+                    {
+                        "Testing" => ChangeTesting.Testing,
+                        "Accepted" => ChangeTesting.Accepted,
+                        "Rejected" => ChangeTesting.Rejected,
+                        _ => ChangeTesting.Untested,
+                    };
+                    open.Add(new PlanChange(r.Id, number, checks, report, testing, testing == ChangeTesting.Rejected ? r.Error : null));
                 }
                 planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, _fixRounds.GetValueOrDefault(s.Id)));
             }
@@ -132,7 +139,10 @@ public sealed partial class ProjectOrchestrator(
                 planTickets.Add(new PlanTicket(t.Number!.Value, open, ai, priority, deps, live));
             }
 
-            var actions = AutopilotPlanner.Decide(mode, planTickets, planTasks);
+            // The Testing agent needs the member's computer (a browser, containers, the repo's toolchain).
+            var runners = await sp.GetRequiredService<IRunnerRepository>().ListForTenantAsync(tenant, ct).ConfigureAwait(false);
+            var canTest = runners.Any(r => r.OwnerUserId == member && broker.IsConnected(r.Id));
+            var actions = AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest);
             foreach (var action in actions)
             {
                 await ExecuteAsync(action, board, member, pat, tickets, sp, ct).ConfigureAwait(false);
@@ -163,7 +173,7 @@ public sealed partial class ProjectOrchestrator(
                 var curated = (await sp.GetRequiredService<IWorkspaceRepository>().ListReposForTenantAsync(tenant, board.Id, ct).ConfigureAwait(false))
                     .FirstOrDefault(r => r.Owner == ticket.RepoOwner && r.Repo == ticket.RepoName);
                 // The member's own computer when it is connected (their AI plan), else the servers.
-                var runners = await sp.GetRequiredService<AgentOs.Modules.Sessions.Persistence.IRunnerRepository>().ListForTenantAsync(tenant, ct).ConfigureAwait(false);
+                var runners = await sp.GetRequiredService<IRunnerRepository>().ListForTenantAsync(tenant, ct).ConfigureAwait(false);
                 var onComputer = runners.Any(r => r.OwnerUserId == member && broker.IsConnected(r.Id));
                 var session = await tasks.CreateAsync(tenant, member, board.Id, ticket.Number, $"#{ticket.Number} {ticket.Title}", ticket.ItemNodeId,
                     ticket.Kind.ToString(), [new BoardTaskService.TaskRepo(ticket.RepoOwner!, ticket.RepoName!, curated?.DefaultBranch ?? "main", curated?.Id)],
@@ -181,6 +191,12 @@ public sealed partial class ProjectOrchestrator(
                     ct: ct).ConfigureAwait(false);
                 log.Add(tenant, board.Id, restarted == TaskStart.Started ? fix.Why : $"Couldn't send #{fix.IssueNumber} back: {restarted}.");
                 break;
+            case AutopilotAction.RunTests test:
+            {
+                var tested = await tasks.TestAsync(tenant, test.SessionId, ct: ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, tested == TaskStart.Started ? test.Why : $"Couldn't test #{test.IssueNumber}: {tested}.");
+                break;
+            }
             case AutopilotAction.Merge merge:
             {
                 var sessions = sp.GetRequiredService<ISessionRepository>();
