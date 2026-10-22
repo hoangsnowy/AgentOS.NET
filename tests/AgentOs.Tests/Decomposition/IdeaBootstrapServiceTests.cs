@@ -24,7 +24,7 @@ public sealed class IdeaBootstrapServiceTests
         var requirement = Substitute.For<IRequirementAgent>();
         requirement.RunAsync(Arg.Any<UserStory>(), Arg.Any<CancellationToken>()).Returns(spec);
         var decomposer = Substitute.For<ITicketDecomposerAgent>();
-        decomposer.RunAsync(spec, Arg.Any<IReadOnlyList<TicketDraft>>(), Arg.Any<CancellationToken>()).Returns(tickets);
+        decomposer.RunAsync(spec, Arg.Any<IReadOnlyList<TicketDraft>>(), Arg.Any<string?>(), Arg.Any<CancellationToken>()).Returns(tickets);
 
         var svc = new IdeaBootstrapService(requirement, decomposer);
         var preview = await svc.GenerateAsync("build a product catalog");
@@ -35,7 +35,7 @@ public sealed class IdeaBootstrapServiceTests
             Arg.Is<UserStory>(s => s!.Description == "build a product catalog"), Arg.Any<CancellationToken>());
         // The decomposer is fed the deterministic seed (non-empty) built from the spec.
         await decomposer.Received(1).RunAsync(
-            spec, Arg.Is<IReadOnlyList<TicketDraft>>(seed => seed!.Count > 0), Arg.Any<CancellationToken>());
+            spec, Arg.Is<IReadOnlyList<TicketDraft>>(seed => seed!.Count > 0), "build a product catalog", Arg.Any<CancellationToken>());
     }
 
     [Fact]

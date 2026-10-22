@@ -14,7 +14,10 @@ namespace AgentOs.Domain.Workspaces;
 /// <param name="AiReady">True when AgentOS.NET may auto-run this ticket (mirrors the <c>ai:ready</c> label).</param>
 /// <param name="DependsOn">Indices (into the same draft list) of the tickets that must be done first — written into
 /// the created ticket as "Depends on #N" (TicketDependencies). Null/empty = none.</param>
-public sealed record TicketDraft(string Title, string Body, IReadOnlyList<string> Labels, bool AiReady, IReadOnlyList<int>? DependsOn = null);
+/// <param name="DependsOnIssues">Numbers of tickets that ALREADY exist on the repo (named in the idea, e.g. "#12") this one
+/// waits for — added to the same "Depends on" line.</param>
+public sealed record TicketDraft(string Title, string Body, IReadOnlyList<string> Labels, bool AiReady, IReadOnlyList<int>? DependsOn = null,
+    IReadOnlyList<int>? DependsOnIssues = null);
 
 /// <summary>A ticket created by <see cref="ISourceProvider.CreateTicketsAsync"/> — the resolved ids + URL.</summary>
 /// <param name="Number">Repo issue number.</param>

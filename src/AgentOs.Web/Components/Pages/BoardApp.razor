@@ -472,7 +472,8 @@ else if (_tab == Tab.Idea)
                         <tr>
                             <td>
                                 <input class="board-ticket-title" @bind="row.Title" />
-                                @{ var after = _draftRows.Where(o => row.DependsOnKeys.Contains(o.Key)).Select(o => o.Title).ToList(); }
+                                @{ var after = _draftRows.Where(o => row.DependsOnKeys.Contains(o.Key)).Select(o => o.Title)
+                                       .Concat(row.DependsOnIssues.Select(n => "#" + n)).ToList(); }
                                 @if (after.Count > 0)
                                 {
                                     <p class="muted board-form-hint">After: @string.Join(" · ", after)</p>
@@ -1135,6 +1136,7 @@ else if (_tab == Tab.Sessions)
         public List<string> Labels { get; set; } = new();
         public bool AiReady { get; set; }
         public List<int> DependsOnKeys { get; init; } = new();
+        public List<int> DependsOnIssues { get; init; } = new();
     }
 
     // ── Connect board form ───────────────────────────────────────────────────────────────────
@@ -1551,6 +1553,9 @@ else if (_tab == Tab.Sessions)
             async () =>
             {
                 using var scope = ScopeFactory.CreateScope();
+                // A circuit has no HttpContext: run as this member so the tenant's routing applies (a tenant that works
+                // on its members' computers sends Discovery there too — it used to fall back to the keyless offline demo).
+                using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(_tenantId, _userId);
                 var svc = scope.ServiceProvider.GetRequiredService<IIdeaBootstrapService>();
                 _preview = await svc.GenerateAsync(_ideaText.Trim());
 
@@ -1566,6 +1571,7 @@ else if (_tab == Tab.Sessions)
                         Labels = t.Labels.ToList(),
                         AiReady = t.AiReady,
                         DependsOnKeys = (t.DependsOn ?? []).ToList(),
+                        DependsOnIssues = (t.DependsOnIssues ?? []).ToList(),
                     });
                 }
                 _ideaStep = IdeaStep.Review;
@@ -1628,13 +1634,14 @@ else if (_tab == Tab.Sessions)
             var position = rows.Select((r, i) => (r.Key, i)).ToDictionary(p => p.Key, p => p.i);
             var drafts = rows
                 .Select(r => new TicketDraft(r.Title.Trim(), r.Body, r.Labels.ToList(), r.AiReady,
-                    r.DependsOnKeys.Where(position.ContainsKey).Select(k => position[k]).ToList()))
+                    r.DependsOnKeys.Where(position.ContainsKey).Select(k => position[k]).ToList(), r.DependsOnIssues))
                 .ToList();
             // Create in dependency order, one by one, so each body can name the real numbers of what it waits for.
             var created = new CreatedTicket?[drafts.Count];
             foreach (var i in TicketDependencies.CreationOrder(drafts.Count, i => drafts[i].DependsOn))
             {
-                var waitsFor = (drafts[i].DependsOn ?? []).Where(d => created[d] is not null).Select(d => created[d]!.Number).ToList();
+                var waitsFor = (drafts[i].DependsOn ?? []).Where(d => created[d] is not null).Select(d => created[d]!.Number)
+                    .Concat(drafts[i].DependsOnIssues ?? []).ToList();
                 var draft = waitsFor.Count == 0 ? drafts[i] : drafts[i] with { Body = drafts[i].Body.TrimEnd() + "\n\n" + TicketDependencies.Line(waitsFor) };
                 var one = await BoardWriteSvc.CreateTicketsAsync(boardDesc, repoDesc, [draft]);
                 if (one.Count > 0) { created[i] = one[0]; }
@@ -1651,7 +1658,7 @@ else if (_tab == Tab.Sessions)
                 // Only what nothing blocks starts now; the rest waits for its dependencies (Run all approved picks them up).
                 for (var i = 0; i < drafts.Count; i++)
                 {
-                    if (!drafts[i].AiReady || created[i] is not { } t || (drafts[i].DependsOn?.Count ?? 0) > 0) { continue; }
+                    if (!drafts[i].AiReady || created[i] is not { } t || (drafts[i].DependsOn?.Count ?? 0) > 0 || (drafts[i].DependsOnIssues?.Count ?? 0) > 0) { continue; }
                     sessions.Add(await PersistSessionAsync(
                         board.Id, t.Number, $"#{t.Number} {t.Title}", t.ItemNodeId, "Issue", [repoOpt], _runOnMachine,
                         brain: _brain, ticketType: TicketTypeOf(drafts[i].Labels)));
