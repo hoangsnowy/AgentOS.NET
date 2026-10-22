@@ -1569,7 +1569,18 @@ else if (_tab == Tab.Sessions)
                 // on its members' computers sends Discovery there too — it used to fall back to the keyless offline demo).
                 using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(_tenantId, _userId);
                 var svc = scope.ServiceProvider.GetRequiredService<IIdeaBootstrapService>();
-                _preview = await svc.GenerateAsync(_ideaText.Trim());
+                // Metrics first: the Requirement + Decomposition calls are stored as one Discovery run for Insights.
+                var started = DateTimeOffset.UtcNow;
+                using (var calls = AgentOs.Domain.Llm.LlmCallScope.Begin())
+                {
+                    try { _preview = await svc.GenerateAsync(_ideaText.Trim()); }
+                    finally
+                    {
+                        var idea = _ideaText.Trim().ReplaceLineEndings(" ");
+                        await TaskService.SaveAgentRunAsync(_tenantId, _userId, "Discovery",
+                            "Discovery · " + (idea.Length > 120 ? idea[..120] + "…" : idea), started, calls.Calls);
+                    }
+                }
 
                 _draftRows.Clear();
                 for (var k = 0; k < _preview.Tickets.Count; k++)

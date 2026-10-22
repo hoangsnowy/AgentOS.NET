@@ -77,6 +77,52 @@ internal sealed class PipelineRunRepository(
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task SaveAgentRunAsync(AgentRunRecord record, string tenantId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        var entity = new PipelineRunEntity
+        {
+            Id = record.Id,
+            TenantId = tenantId,
+            UserStoryText = record.Label,
+            Status = record.Success ? "Completed" : "Failed",
+            TotalCostUsd = record.Calls.Sum(c => c.CostUsd),
+            TotalTokensIn = record.Calls.Sum(c => c.InputTokens),
+            TotalTokensOut = record.Calls.Sum(c => c.OutputTokens),
+            IterationCount = 0,
+            CreatedAtUtc = record.StartedAtUtc,
+            CompletedAtUtc = record.CompletedAtUtc,
+            // No pipeline artifacts: the run detail deserializes this to null and reads as not found.
+            ResultJson = "null",
+        };
+        foreach (var c in record.Calls)
+        {
+            entity.Metrics.Add(new RunMetricEntity
+            {
+                RunId = record.Id,
+                TenantId = tenantId,
+                KcId = "board",
+                Iteration = 0,
+                AgentName = string.IsNullOrWhiteSpace(c.AgentRole) ? record.Agent : c.AgentRole,
+                Model = c.Model,
+                Provider = c.Provider,
+                TokensIn = c.InputTokens,
+                TokensOut = c.OutputTokens,
+                CacheReadTokens = c.CacheReadTokens,
+                CacheWriteTokens = c.CacheWriteTokens,
+                ReasoningTokens = c.ReasoningTokens,
+                LatencyMs = c.Latency.TotalMilliseconds,
+                CostUsd = c.CostUsd,
+                Success = c.Success,
+                ErrorMessage = c.Error,
+                TimestampUtc = c.At,
+            });
+        }
+        db.PipelineRuns.Add(entity);
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<PipelineRunRecord?> GetAsync(Guid id, CancellationToken ct = default)
     {
         var entity = await db.PipelineRuns

@@ -19,6 +19,10 @@ public interface IPipelineRunRepository
     /// tenant's workflow spend.</summary>
     Task SaveAsync(PipelineRunRecord record, string tenantId, CancellationToken ct = default);
 
+    /// <summary>Stores one Board agent run (Coding, Reviewer, Testing, Discovery, Autopilot Orchestrator) with the
+    /// LLM calls it made, so Insights counts it. It has no pipeline artifacts: its run detail reads as not found.</summary>
+    Task SaveAgentRunAsync(AgentRunRecord record, string tenantId, CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>Gets a single full run by Id (null if not found).</summary>
     Task<PipelineRunRecord?> GetAsync(Guid id, CancellationToken ct = default);
 
@@ -63,6 +67,18 @@ public sealed record PipelineRunRecord(
     IReadOnlyList<RunMetric> Metrics,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset CompletedAtUtc);
+
+/// <summary>One Board agent run and its LLM calls (see <see cref="IPipelineRunRepository.SaveAgentRunAsync"/>).</summary>
+/// <param name="Label">What ran, shown in the run history (e.g. "Coding · #15 Build SVG game viewer").</param>
+/// <param name="Agent">The agent name its calls are filed under when a call carries no role.</param>
+public sealed record AgentRunRecord(
+    Guid Id,
+    string Label,
+    string Agent,
+    bool Success,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    IReadOnlyList<AgentOs.Domain.Llm.LlmCallRecord> Calls);
 
 /// <summary>Summary of a single run for the history list.</summary>
 public sealed record PipelineRunSummary(
