@@ -112,6 +112,7 @@ public abstract class LlmAgentBase
             // Carry the fixed agent role out-of-band so providers (notably the offline one) can identify the
             // agent without parsing the system prompt — robust against per-tenant prompt overrides.
             AgentRole = PromptKey,
+            Timeout = LlmRequest.AgentAnswerTimeout,
         };
         var response = await llm.SendAsync(request, ct).ConfigureAwait(false);
 

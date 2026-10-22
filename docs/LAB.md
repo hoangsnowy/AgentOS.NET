@@ -103,6 +103,10 @@ machine's own git credentials. Every other request (spec generation, the 5-agent
 answer-only. It is still code from a ticket running on your box; the machine's owner can refuse scoped runs
 with `REMOTE_AGENT_AUTONOMY=off`. With the runner paired, `RUN_AGENTOS_E2E_REAL=true AGENTOS_REAL_URL=https://lab.dev.localhost:6180 AGENTOS_E2E_RUN_TIMEOUT_SECONDS=1200 dotnet test --project tests/AgentOs.E2E.Tests --filter-class "*WorkflowAppRealAuthTests"` runs the full 5-agent pipeline live.
 
+The runner keeps two lanes: work runs (scoped: clone, build, push — `REMOTE_AGENT_MAX_PARALLEL`, default 2) and
+answer-only runs such as a New idea spec or ticket split (`REMOTE_AGENT_MAX_ANSWERS`, default 2), so a person waiting on
+the screen never queues behind Autopilot's coding. Specialist answers get a 5-minute deadline (`LlmRequest.AgentAnswerTimeout`).
+
 ### Try the app on the lab
 
 With the runner paired, Board → VNChessAcademy → **Try the app** on a repository runs its latest default branch on

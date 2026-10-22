@@ -29,7 +29,9 @@
 //   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
 //                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
 //   REMOTE_AGENT_TIMEOUT_SECONDS  per shell command (default 600); on expiry the whole process tree is killed
-//   REMOTE_AGENT_MAX_PARALLEL     CLI runs at once on this machine (default 2); more wait their turn
+//   REMOTE_AGENT_MAX_PARALLEL     work runs (scoped: clone, build, push) at once on this machine (default 2); more wait
+//   REMOTE_AGENT_MAX_ANSWERS      answer-only runs (a spec, a ticket split — someone is waiting on screen) at once
+//                                 (default 2); their own lane, so they never queue behind a long work run
 //   REMOTE_AGENT_DATA   test data the agents may read: "NAME=C:\path;OTHER=/data/x" → env vars of each scoped run,
 //                       names (not paths) told to the agent, read-only to it (see TestData in ScopedAutonomy.cs)
 //   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks
@@ -107,14 +109,20 @@ var connection = new HubConnectionBuilder()
 // So handlers only enqueue; the work runs off the receive loop, at most REMOTE_AGENT_MAX_PARALLEL CLI runs at once.
 var maxParallel = int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_MAX_PARALLEL"), out var mp) && mp > 0 ? mp : 2;
 var cliSlots = new SemaphoreSlim(maxParallel, maxParallel);
+// Answer-only requests (no tools on this machine) are short and usually have a person waiting on them. Behind two
+// 15-minute coding runs they outlived the server's deadline — the ticket split fell back to the raw draft list.
+var maxAnswers = int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_MAX_ANSWERS"), out var ma) && ma > 0 ? ma : 2;
+var answerSlots = new SemaphoreSlim(maxAnswers, maxAnswers);
 
 // M3 — full-prompt LLM dispatch
 connection.On<RemoteExecRequest>("Execute", request =>
 {
     Console.WriteLine($"[agent] Execute {request.Id} (model={request.Model})");
+    var lane = AgentOs.RemoteAgent.ScopedAutonomy.Grants(request.Autonomy, Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"))
+        ? cliSlots : answerSlots;
     _ = Task.Run(async () =>
     {
-        await cliSlots.WaitAsync().ConfigureAwait(false);
+        await lane.WaitAsync().ConfigureAwait(false);
         try
         {
             // Stopped while it waited for a slot: never start it.
@@ -135,7 +143,7 @@ connection.On<RemoteExecRequest>("Execute", request =>
         }
         finally
         {
-            cliSlots.Release();
+            lane.Release();
         }
     });
     return Task.CompletedTask;

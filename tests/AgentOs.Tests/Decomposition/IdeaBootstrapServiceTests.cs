@@ -36,6 +36,24 @@ public sealed class IdeaBootstrapServiceTests
         // The decomposer is fed the deterministic seed (non-empty) built from the spec.
         await decomposer.Received(1).RunAsync(
             spec, Arg.Is<IReadOnlyList<TicketDraft>>(seed => seed!.Count > 0), "build a product catalog", Arg.Any<CancellationToken>());
+        preview.Refined.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task GenerateAsync_DecomposerFellBackToSeed_IsNotRefined()
+    {
+        var spec = DecompositionFixtures.Spec();
+        var requirement = Substitute.For<IRequirementAgent>();
+        requirement.RunAsync(Arg.Any<UserStory>(), Arg.Any<CancellationToken>()).Returns(spec);
+        var decomposer = Substitute.For<ITicketDecomposerAgent>();
+        // The real agent returns the very seed list it was given when it can't refine it.
+        decomposer.RunAsync(spec, Arg.Any<IReadOnlyList<TicketDraft>>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(ci => ci.ArgAt<IReadOnlyList<TicketDraft>>(1));
+
+        var preview = await new IdeaBootstrapService(requirement, decomposer).GenerateAsync("build a product catalog");
+
+        preview.Refined.ShouldBeFalse();
+        preview.Tickets.ShouldNotBeEmpty();
     }
 
     [Fact]

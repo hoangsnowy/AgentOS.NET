@@ -16,7 +16,12 @@ namespace AgentOs.Modules.Pipeline.Decomposition;
 /// <summary>A generated requirement spec plus the tickets decomposed from it — the wizard's preview.</summary>
 /// <param name="Spec">The structured requirement the idea produced.</param>
 /// <param name="Tickets">The right-sized tickets to create (still editable before the user confirms).</param>
-public sealed record BootstrapPreview(RequirementSpec Spec, IReadOnlyList<TicketDraft> Tickets);
+public sealed record BootstrapPreview(RequirementSpec Spec, IReadOnlyList<TicketDraft> Tickets)
+{
+    /// <summary>False when the Decomposition agent couldn't refine the tickets (unreachable, timed out, unreadable answer)
+    /// and these are the deterministic drafts — one per requirement line. The wizard says so and offers to try again.</summary>
+    public bool Refined { get; init; } = true;
+}
 
 /// <summary>Turns a free-text idea into a reviewable spec + ticket set (no side effects).</summary>
 public interface IIdeaBootstrapService
@@ -48,6 +53,7 @@ internal sealed class IdeaBootstrapService : IIdeaBootstrapService
         var seed = TicketMapper.Map(spec);
         var tickets = await _decomposer.RunAsync(spec, seed, idea, cancellationToken).ConfigureAwait(false);
 
-        return new BootstrapPreview(spec, tickets);
+        // The decomposer hands back the very seed list when it couldn't refine it.
+        return new BootstrapPreview(spec, tickets) { Refined = !ReferenceEquals(tickets, seed) };
     }
 }
