@@ -682,7 +682,7 @@ else if (_tab == Tab.Autopilot)
                             <span><strong>Build and merge</strong> <span class="muted">— also merge each change once all its checks pass.</span></span>
                         </label>
                     </div>
-                    <p class="muted board-form-hint">It checks the project every minute, asks you when a fix keeps failing, and never touches tickets marked for a person.</p>
+                    <p class="muted board-form-hint">The Orchestrator agent reads the whole project whenever it changes and decides the next moves — within fixed rules: nothing untested is merged, no ticket starts before what it depends on. It retries stuck work with guidance, asks you precise questions on the ticket, and never touches tickets marked for a person. (Settings › Autopilot › Decided by switches to the fixed rules alone.)</p>
                     <div class="form-actions">
                         <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => AutopilotNow(b))" Disabled="@(_busy || mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off)">
                             <Icon Name="arrow-clockwise" Size="13" /> Check now
