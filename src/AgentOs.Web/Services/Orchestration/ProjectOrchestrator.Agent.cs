@@ -63,7 +63,14 @@ public sealed partial class ProjectOrchestrator
             Snapshot(tickets, planTickets, planTasks, sessions),
             moves.Select(m => new OrchestratorMove(m.Id, KindOf(m.Action), IssueOf(m.Action), m.Action.Why)).ToList(),
             stuck, freeSlots, recent);
-        var decision = await sp.GetRequiredService<IAutopilotOrchestrator>().DecideAsync(brief, ct).ConfigureAwait(false);
+        // Metrics first: the decision's LLM call is an agent run in Insights like every other agent's.
+        OrchestratorDecision decision;
+        var decidedAt = DateTimeOffset.UtcNow;
+        using (var calls = AgentOs.Domain.Llm.LlmCallScope.Begin())
+        {
+            decision = await sp.GetRequiredService<IAutopilotOrchestrator>().DecideAsync(brief, ct).ConfigureAwait(false);
+            await tasks.SaveAgentRunAsync(tenant, member, "Orchestrator", $"Orchestrator · {board.Name}", decidedAt, calls.Calls).ConfigureAwait(false);
+        }
         if (!decision.Ran)
         {
             if (_agentDown.TryAdd(board.Id, true))
