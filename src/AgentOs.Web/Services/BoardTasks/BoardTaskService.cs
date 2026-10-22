@@ -208,7 +208,8 @@ public sealed class BoardTaskService(
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Reviewing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
         var stopLease = stops.Begin(tenantId, session.Id);
-        _ = Task.Run(() => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease), CancellationToken.None);
+        _ = Task.Run(() => RecordedAsync(tenantId, session, "Reviewer", () => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+            CancellationToken.None);
         return TaskStart.Started;
     }
 
