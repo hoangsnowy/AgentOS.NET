@@ -45,6 +45,12 @@ public sealed record LlmRequest(
     string? Cli = null)
 {
     /// <summary>
+    /// Deadline for one specialist answer (a spec, a ticket split, a review) on a paired computer: a CLI answer takes a
+    /// minute or two, more on a busy machine. Above the 120 s dispatch default, far below a coding run's budget.
+    /// </summary>
+    public static readonly System.TimeSpan AgentAnswerTimeout = System.TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// Optional canonical agent role behind this request (<c>"Requirement"</c>/<c>"Coding"</c>/<c>"Testing"</c>/
     /// <c>"Qa"</c>), set by the specialist agents. Lets a provider identify the agent WITHOUT parsing the system
     /// prompt — the offline provider uses it so canned-output routing survives a tenant prompt override that

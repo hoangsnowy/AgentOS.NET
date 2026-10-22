@@ -78,7 +78,8 @@ public sealed partial class TicketDecomposerAgent : ITicketDecomposerAgent
             UserPrompt: DecomposerPrompt.RenderUser(spec, seed, idea),
             Model: profile.Model,
             Temperature: profile.Temperature,
-            MaxTokens: profile.MaxTokens);
+            MaxTokens: profile.MaxTokens,
+            Timeout: LlmRequest.AgentAnswerTimeout);
 
         try
         {

@@ -461,6 +461,18 @@ else if (_tab == Tab.Idea)
                 <h3>@_preview.Spec.Title</h3>
                 <p class="muted">@_preview.Spec.Summary</p>
             </div>
+            @if (!_preview.Refined)
+            {
+                <div class="board-failure" role="status">
+                    <strong>The AI couldn't split this into tickets this time.</strong>
+                    <span>These are rough drafts, one per requirement line — try again (your computer may have been busy), or edit and remove rows below.</span>
+                    <div class="board-failure-actions">
+                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="GenerateIdea" Disabled="_ideaBusy">
+                            <Icon Name="arrow-clockwise" Size="13" /> @(_ideaBusy ? "Trying…" : "Try again")
+                        </Btn>
+                    </div>
+                </div>
+            }
 
             <table class="data-table">
                 <thead>
