@@ -89,6 +89,10 @@ public interface IPrCreationService
     Task<string?> UpdateBranchAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult<string?>("Updating a branch is not supported for this provider.");
 
+    /// <summary>True when <paramref name="branch"/> exists on the remote. Null when it couldn't be checked.</summary>
+    Task<bool?> BranchExistsAsync(WorkspaceDescriptor workspace, string branch, CancellationToken ct = default) =>
+        Task.FromResult<bool?>(null);
+
     /// <summary>Post a comment on pull request <paramref name="number"/> (the Testing agent's evidence). Never throws.</summary>
     Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default) =>
         Task.FromResult(false);

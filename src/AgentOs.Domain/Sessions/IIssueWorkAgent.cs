@@ -16,7 +16,17 @@ namespace AgentOs.Domain.Sessions;
 /// <param name="DefaultBranch">Base branch the fix branch is cut from.</param>
 /// <param name="ExistingBranch">Set for "Ask for changes": the branch of this repo's open pull request. The agent
 /// checks it out and pushes more commits to it instead of starting a new branch.</param>
-public sealed record WorkRepo(Guid SessionRepoId, string Owner, string Repo, string DefaultBranch, string? ExistingBranch = null);
+public sealed record WorkRepo(Guid SessionRepoId, string Owner, string Repo, string DefaultBranch, string? ExistingBranch = null)
+{
+    /// <summary>The branch a fresh attempt creates, chosen by the server so it never collides with one an earlier,
+    /// interrupted attempt left on the remote (that push would need a force-push, which the agent may not do).
+    /// Null = the default <c>issue-N-ai-fix</c>.</summary>
+    public string? NewBranch { get; init; }
+
+    /// <summary>The branch a ticket's first attempt uses.</summary>
+    public static string DefaultBranchName(int issueNumber) =>
+        "issue-" + issueNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-ai-fix";
+}
 
 /// <summary>Request to the issue-work agent — a ticket plus the repos it should be implemented in.</summary>
 /// <param name="SessionId">Correlating session row for evidence / logging.</param>

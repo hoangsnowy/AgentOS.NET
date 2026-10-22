@@ -273,6 +273,24 @@ public sealed class BoardTaskService(
         return shortName.Length > 90 ? shortName[..90] + "…" : shortName;
     }
 
+    // A fresh attempt must not reuse a branch an earlier, interrupted attempt left on the remote: its push would be
+    // rejected as non-fast-forward and the agent may not force-push (#15 on the lab finished its work and could not push
+    // it). The first free of issue-N-ai-fix, -2 … -9; null (the default name) when it can't be checked.
+    internal static async Task<string?> FreeBranchAsync(IPrCreationService prs, WorkspaceDescriptor repo, int issueNumber)
+    {
+        ArgumentNullException.ThrowIfNull(prs);
+        if (issueNumber <= 0) { return null; }
+        var name = WorkRepo.DefaultBranchName(issueNumber);
+        for (var attempt = 1; attempt <= 9; attempt++)
+        {
+            var candidate = attempt == 1 ? name : $"{name}-{attempt.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            var exists = await prs.BranchExistsAsync(repo, candidate).ConfigureAwait(false);
+            if (exists is null) { return null; }
+            if (exists == false) { return attempt == 1 ? null : candidate; }
+        }
+        return $"{name}-{DateTimeOffset.UtcNow:yyyyMMddHHmm}";
+    }
+
     /// <summary>The number of a pull request from its URL (…/pull/42).</summary>
     public static int? PrNumber(string? url)
     {
@@ -308,10 +326,17 @@ public sealed class BoardTaskService(
             var issueBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
 
             // Ask for changes: each repo that already has a pull request continues on its branch.
-            var workRepos = children
-                .Select(c => new WorkRepo(c.Id, c.Owner, c.Repo, c.DefaultBranch,
-                    change is not null && !string.IsNullOrEmpty(c.PrUrl) ? c.BranchName : null))
-                .ToList();
+            var workRepos = new List<WorkRepo>(children.Count);
+            foreach (var c in children)
+            {
+                var continuing = change is not null && !string.IsNullOrEmpty(c.PrUrl);
+                workRepos.Add(new WorkRepo(c.Id, c.Owner, c.Repo, c.DefaultBranch, continuing ? c.BranchName : null)
+                {
+                    NewBranch = continuing ? null
+                        : await FreeBranchAsync(prService, RepoDescriptor(board, tenantId, c.Owner, c.Repo, c.DefaultBranch, pat),
+                            session.IssueNumber ?? 0).ConfigureAwait(false),
+                });
+            }
             var issueRequest = new IssueWorkRequest(
                 SessionId: session.Id,
                 TenantId: tenantId,

@@ -164,6 +164,28 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
     }
 
     /// <inheritdoc />
+    public async Task<bool?> BranchExistsAsync(WorkspaceDescriptor workspace, string branch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || string.IsNullOrWhiteSpace(branch)) { return null; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            await client.Repository.Branch.Get(workspace.Owner, workspace.Repo, branch).ConfigureAwait(false);
+            return true;
+        }
+        catch (NotFoundException)
+        {
+            return false;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Couldn't check branch {Branch} on {Owner}/{Repo}", branch, workspace.Owner, workspace.Repo);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);
