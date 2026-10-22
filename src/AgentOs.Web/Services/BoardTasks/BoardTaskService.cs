@@ -157,7 +157,7 @@ public sealed class BoardTaskService(
             .GetForTenantAsync(tenantId, session.WorkspaceId, ct).ConfigureAwait(false);
         if (board is null) { return TaskStart.BoardNotFound; }
         var changes = (await sessions.ListReposForTenantAsync(tenantId, session.Id, ct).ConfigureAwait(false))
-            .Where(r => r.Status is "Done" or "Accepted" or "Rejected" && !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName))
+            .Where(r => r.Status is "Done" or "Reviewed" or "Accepted" or "Rejected" && !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName))
             .ToList();
         if (changes.Count == 0) { return TaskStart.NoCodeProject; }
         var pat = await scope.ServiceProvider.GetRequiredService<IAppConfigStore>()
@@ -172,6 +172,86 @@ public sealed class BoardTaskService(
         var stopLease = stops.Begin(tenantId, session.Id);
         _ = Task.Run(() => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease), CancellationToken.None);
         return TaskStart.Started;
+    }
+
+    /// <summary>
+    /// Agentic review: the Reviewer agent reads every proposed change of a task (still unreviewed) against its ticket on
+    /// the member's computer, posts the review on each pull request, and marks it Reviewed or ChangesRequested (its
+    /// must-fix findings become the change request the Coding agent gets next).
+    /// </summary>
+    public async Task<TaskStart> ReviewAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        using var scope = scopes.CreateScope();
+        var sessions = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+        var session = (await sessions.ListForTenantAsync(tenantId, ct).ConfigureAwait(false)).FirstOrDefault(s => s.Id == sessionId);
+        if (session is null) { return TaskStart.TaskNotFound; }
+        var board = await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>()
+            .GetForTenantAsync(tenantId, session.WorkspaceId, ct).ConfigureAwait(false);
+        if (board is null) { return TaskStart.BoardNotFound; }
+        var changes = (await sessions.ListReposForTenantAsync(tenantId, session.Id, ct).ConfigureAwait(false))
+            .Where(r => r.Status == "Done" && !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName))
+            .ToList();
+        if (changes.Count == 0) { return TaskStart.NoCodeProject; }
+        var pat = await scope.ServiceProvider.GetRequiredService<IAppConfigStore>()
+            .GetForTenantAsync(tenantId, board.CredentialRef, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(pat)) { return TaskStart.NoGitHubAccess; }
+
+        await sessions.UpdateRunResultAsync(tenantId, session.Id, "Running", session.PrUrl, null, ct).ConfigureAwait(false);
+        foreach (var c in changes)
+        {
+            await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Reviewing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
+        }
+        var stopLease = stops.Begin(tenantId, session.Id);
+        _ = Task.Run(() => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease), CancellationToken.None);
+        return TaskStart.Started;
+    }
+
+    private async Task ReviewChangesAsync(string tenantId, RemoteSessionEntity session, WorkspaceEntity board, string pat,
+        IReadOnlyList<SessionRepoEntity> changes, string? cliProfile, TaskStopRegistry.Lease stopLease)
+    {
+        using var _stop = stopLease;
+        try
+        {
+            using var scope = scopes.CreateScope();
+            using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(tenantId, session.MemberUserId, session.Id);
+            var sessRepo = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+            var reviewer = scope.ServiceProvider.GetRequiredService<IReviewAgent>();
+            var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
+            var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            foreach (var change in changes)
+            {
+                var repoLabel = $"{change.Owner}/{change.Repo}";
+                var verdict = await reviewer.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
+                    new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
+                    session.IssueNumber ?? 0, session.Title, body, cliProfile), stopLease.Token).ConfigureAwait(false);
+                if (!verdict.Ran)
+                {
+                    await sessRepo.UpdateRepoRunResultAsync(tenantId, change.Id, "Done", change.BranchName, change.PrUrl, null).ConfigureAwait(false);
+                    feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step, $"{repoLabel} — couldn't review: {verdict.Error}", DateTimeOffset.UtcNow, repoLabel));
+                    continue;
+                }
+                if (PrNumber(change.PrUrl) is { } number)
+                {
+                    await prs.CommentAsync(RepoDescriptor(board, tenantId, change.Owner, change.Repo, change.DefaultBranch, pat), number,
+                        AgentOs.Modules.Pipeline.Agents.ReviewAgent.Comment(session.IssueNumber ?? 0, verdict)).ConfigureAwait(false);
+                }
+                await sessRepo.UpdateRepoRunResultAsync(tenantId, change.Id, verdict.Approved ? "Reviewed" : "ChangesRequested", change.BranchName, change.PrUrl,
+                    verdict.Approved ? null : AgentOs.Modules.Pipeline.Agents.ReviewAgent.ChangeRequest(verdict)).ConfigureAwait(false);
+                feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.RepoDone,
+                    verdict.Approved ? $"{repoLabel} — review approved" : $"{repoLabel} — review asked for changes: {verdict.Summary}",
+                    DateTimeOffset.UtcNow, repoLabel, verdict.Approved ? "Reviewed" : "ChangesRequested", change.PrUrl));
+            }
+            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stopLease.Token.IsCancellationRequested)
+        {
+            await MarkStoppedAsync(tenantId, session.Id).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or System.IO.IOException or TimeoutException)
+        {
+            await MarkFailedAsync(tenantId, session.Id, ex.Message).ConfigureAwait(false);
+        }
     }
 
     private async Task TestChangesAsync(string tenantId, RemoteSessionEntity session, WorkspaceEntity board, string pat,

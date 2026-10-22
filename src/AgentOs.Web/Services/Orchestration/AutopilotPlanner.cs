@@ -27,10 +27,13 @@ public sealed record PlanTicket(int Number, bool Open, bool AiReady, int Priorit
 /// <summary>Where a proposed change stands with the Testing agent.</summary>
 public enum ChangeTesting { Untested, Testing, Accepted, Rejected }
 
+/// <summary>Where a proposed change stands with the Reviewer agent (reviewed before it is tested).</summary>
+public enum ChangeReview { NotReviewed, Reviewing, Approved, ChangesRequested }
+
 /// <summary>An open proposed change of a task.</summary>
 public sealed record PlanChange(Guid RepoId, int PrNumber, PrChecksState Checks, string? FailedReport,
     ChangeTesting Testing = ChangeTesting.Untested, string? Findings = null, PrMergeState Merge = PrMergeState.Clean,
-    string BaseBranch = "main");
+    string BaseBranch = "main", ChangeReview Review = ChangeReview.Approved);
 
 /// <summary>A task as the planner sees it.</summary>
 public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IReadOnlyList<PlanChange> OpenChanges, int FixRounds);
@@ -42,6 +45,7 @@ public abstract record AutopilotAction(string Why)
     public sealed record FixChecks(Guid SessionId, int IssueNumber, string Report, int Round, string Why) : AutopilotAction(Why);
     public sealed record UpdateBranch(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
+    public sealed record RunReview(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record Merge(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why);
 }
@@ -119,10 +123,38 @@ public static class AutopilotPlanner
                 running++;
                 continue;
             }
-            // Testing comes after green checks; nothing moves while a test runs or a check is still going.
-            if (task.OpenChanges.Count == 0 || task.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing)
+            // Review, then testing, come after green checks; nothing moves while one runs or a check is still going.
+            if (task.OpenChanges.Count == 0 || task.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing || c.Review == ChangeReview.Reviewing)
                 || !task.OpenChanges.All(c => c.Checks == PrChecksState.Passed))
             {
+                continue;
+            }
+            // The Reviewer agent asked for changes: they go back to the Coding agent (same bounded rounds as any fix).
+            var changesRequested = task.OpenChanges.Where(c => c.Review == ChangeReview.ChangesRequested).ToList();
+            if (changesRequested.Count > 0)
+            {
+                if (task.FixRounds >= MaxFixRounds)
+                {
+                    actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
+                        $"Code review still asks for changes after {MaxFixRounds} automatic fixes — needs a person.",
+                        $"Stopped fixing #{task.IssueNumber}: code review still asks for changes after {MaxFixRounds} tries. It needs you."));
+                    continue;
+                }
+                if (running >= MaxParallel) { continue; }
+                var round = task.FixRounds + 1;
+                actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
+                    string.Join('\n', changesRequested.Select(c => c.Findings).Where(r => !string.IsNullOrWhiteSpace(r))), round,
+                    $"Code review asked for changes on #{task.IssueNumber} — sent back to the AI (try {round} of {MaxFixRounds})."));
+                running++;
+                continue;
+            }
+            if (task.OpenChanges.Any(c => c.Review == ChangeReview.NotReviewed))
+            {
+                // A review only reads the code: no app, no ports — just a free slot and the member's computer.
+                if (!canTest || running >= MaxParallel) { continue; }
+                actions.Add(new AutopilotAction.RunReview(task.SessionId, task.IssueNumber,
+                    $"Reviewing #{task.IssueNumber}'s change — its checks passed."));
+                running++;
                 continue;
             }
             var rejected = task.OpenChanges.Where(c => c.Testing == ChangeTesting.Rejected).ToList();

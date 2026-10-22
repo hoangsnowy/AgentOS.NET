@@ -13,7 +13,7 @@ Every ticket flows through three phases (owner, 2026-10-21); the knowledge graph
 |---|---|---|---|
 | **1. Agentic Discovery** | idea → research → spec → tickets with acceptance criteria and dependencies | New idea → spec → tickets, dependencies (#240) | a research agent (market / UX / technical), reading the customer's own documents, asking back when the idea is ambiguous |
 | **2. Agentic Coding** | ticket → code → pull request; continues from review and CI | on a computer or the servers, scoped, Stop, live steps, Ask for changes, Fix the failing checks | autopilot over a board in dependency order |
-| **3. Agentic Testing** | accepts a PR against its criteria: unit tests, Playwright on a real stack, data checks, performance → evidence → merge, or back to Coding with findings | done by hand on the lab | the acceptance agent + merge policy |
+| **3. Agentic Review + Testing** | the **Reviewer agent** reads the diff against the ticket and the repo's rules (correctness, security/isolation, tests) → approve, or must-fix findings back to Coding; then the **Testing agent** accepts it against its criteria: unit tests, Playwright on a real stack, data checks → evidence → merge, or back to Coding | Reviewer (#264) + Testing (#244) + Autopilot merge policy, both posting evidence on the PR | review of a cloud worker's change; a person's review folded in |
 
 **Knowledge graph** (ADR-0008, `AgentOs.Modules.Memory`): Discovery records decisions and requirements, Coding records
 changed files, PRs and review lessons, Testing records failures, fixes and evidence — and each phase reads what the
@@ -40,6 +40,8 @@ others learned. The board shows each ticket's phase (Discovery → Coding → Te
    `docs/ACCEPTANCE.md`, run the unit tests, bring the stack up and run the Playwright specs, run data checks
    (e.g. the CBL corpus), and post the evidence on the PR. Pass → approve; fail → *Ask for changes* with the
    findings.
+3b. ✅ (#264) **Reviewer agent.** Between green CI and acceptance testing: a read-only agent reviews the diff in
+   context and posts its review on the PR; must-fix findings go back to the Coding agent (same 3 bounded rounds).
 4. ✅ (#242, *Build and merge*: on green CI; acceptance agent next) **Merge policy.** Per project: merge on green + acceptance pass (squash, delete branch), or wait for a person.
 5. **Environment care.** The known stack landmines (stale Keycloak/Postgres volumes, orphaned containers, ports)
    handled by the acceptance agent's stack step, not by a person.
