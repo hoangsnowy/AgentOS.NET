@@ -138,7 +138,11 @@ public sealed class BoardTaskService(
         }
         var stopLease = stops.Begin(tenantId, session.Id);
         // Fire-and-forget in a fresh scope, independent of whoever asked (a circuit, or the orchestrator).
-        _ = Task.Run(() => RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease), CancellationToken.None);
+        // The Thorough engine stores its own pipeline run + metrics; every other run is recorded here for Insights.
+        _ = Task.Run(() => EngineSelection.IsQuality(session.Brain)
+            ? RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease)
+            : RecordedAsync(tenantId, session, "Coding", () => RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease)),
+            CancellationToken.None);
         return TaskStart.Started;
     }
 
@@ -170,7 +174,8 @@ public sealed class BoardTaskService(
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Testing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
         var stopLease = stops.Begin(tenantId, session.Id);
-        _ = Task.Run(() => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease), CancellationToken.None);
+        _ = Task.Run(() => RecordedAsync(tenantId, session, "Testing", () => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+            CancellationToken.None);
         return TaskStart.Started;
     }
 
@@ -203,7 +208,8 @@ public sealed class BoardTaskService(
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Reviewing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
         var stopLease = stops.Begin(tenantId, session.Id);
-        _ = Task.Run(() => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease), CancellationToken.None);
+        _ = Task.Run(() => RecordedAsync(tenantId, session, "Reviewer", () => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+            CancellationToken.None);
         return TaskStart.Started;
     }
 
@@ -369,6 +375,48 @@ public sealed class BoardTaskService(
             if (exists == false) { return attempt == 1 ? null : candidate; }
         }
         return $"{name}-{DateTimeOffset.UtcNow:yyyyMMddHHmm}";
+    }
+
+    /// <summary>
+    /// Metrics first: run one agent step of a task inside an LLM call scope, then store it as a run with its calls
+    /// (tokens, latency, provider, outcome) — Insights reads those. Best-effort: metrics never fail the task.
+    /// </summary>
+    internal async Task RecordedAsync(string tenantId, RemoteSessionEntity session, string agent, Func<Task> run)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(run);
+        var started = DateTimeOffset.UtcNow;
+        using var calls = AgentOs.Domain.Llm.LlmCallScope.Begin();
+        try
+        {
+            await run().ConfigureAwait(false);
+        }
+        finally
+        {
+            await SaveAgentRunAsync(tenantId, session.MemberUserId, agent, $"{agent} · #{session.IssueNumber} {session.Title}", started, calls.Calls)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Store an agent run and its LLM calls (nothing when it made none). Never throws.</summary>
+    public async Task SaveAgentRunAsync(string tenantId, string memberId, string agent, string label, DateTimeOffset started,
+        IReadOnlyList<AgentOs.Domain.Llm.LlmCallRecord> calls)
+    {
+        ArgumentNullException.ThrowIfNull(calls);
+        if (calls.Count == 0) { return; }
+        try
+        {
+            using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(tenantId, memberId);
+            using var scope = scopes.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<AgentOs.Modules.Pipeline.Persistence.IPipelineRunRepository>()
+                .SaveAgentRunAsync(new AgentOs.Modules.Pipeline.Persistence.AgentRunRecord(Guid.NewGuid(),
+                    label.Length > 200 ? label[..200] : label, agent, calls.All(c => c.Success), started, DateTimeOffset.UtcNow, calls), tenantId)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _ = ex; // metrics are best-effort: a lost row never fails the task
+        }
     }
 
     /// <summary>The number of a pull request from its URL (…/pull/42).</summary>

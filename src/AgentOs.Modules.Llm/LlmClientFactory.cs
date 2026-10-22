@@ -77,13 +77,17 @@ public sealed class LlmClientFactory : ILlmClientFactory
         // No fallbacks declared → return the bare client, identical to the pre-failover behavior.
         if (fallbacks.Count == 0)
         {
-            return primary;
+            return Observed(primary);
         }
 
         var chain = new List<ILlmClient>(1 + fallbacks.Count) { primary };
         chain.AddRange(fallbacks);
-        return new FailoverLlmClient(chain, _services.GetRequiredService<ILogger<FailoverLlmClient>>());
+        return Observed(new FailoverLlmClient(chain, _services.GetRequiredService<ILogger<FailoverLlmClient>>()));
     }
+
+    // Metrics first: inside an open LlmCallScope (a Board agent run) every call is recorded for Insights.
+    private static ILlmClient Observed(ILlmClient client) =>
+        AgentOs.Domain.Llm.LlmCallScope.Current is { } scope ? new ObservedLlmClient(client, scope) : client;
 
     // The primary must resolve — a missing primary is a hard misconfiguration.
     private ILlmClient ResolveRequired(string effective, string requested)
