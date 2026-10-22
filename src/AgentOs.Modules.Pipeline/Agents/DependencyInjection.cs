@@ -64,6 +64,7 @@ public static class AgentsServiceCollectionExtensions
         services.AddTransient<IRequirementAgent, RequirementAgent>();
         services.AddTransient<AgentOs.Domain.Sessions.IIssueWorkAgent, IssueWorkAgent>();
         services.AddTransient<AgentOs.Domain.Sessions.IAcceptanceAgent, AcceptanceAgent>();
+        services.AddTransient<AgentOs.Domain.Sessions.IReviewAgent, ReviewAgent>();
         services.AddTransient<ICodingAgent, CodingAgent>();
         services.AddTransient<ITestingAgent, TestingAgent>();
         services.AddTransient<IQaAgent, QaAgent>();

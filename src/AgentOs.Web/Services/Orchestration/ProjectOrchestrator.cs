@@ -166,7 +166,8 @@ public sealed partial class ProjectOrchestrator(
             foreach (var s in sessions.Where(s => s.Status is "Running" or "Done"))
             {
                 var open = new List<PlanChange>();
-                foreach (var r in repos[s.Id].Where(r => r.Status is "Done" or "Testing" or "Accepted" or "Rejected" && PrNumber(r.PrUrl) is not null))
+                foreach (var r in repos[s.Id].Where(r => r.Status is "Done" or "Reviewing" or "Reviewed" or "ChangesRequested" or "Testing" or "Accepted" or "Rejected"
+                    && PrNumber(r.PrUrl) is not null))
                 {
                     var desc = BoardTaskService.RepoDescriptor(board, tenant, r.Owner, r.Repo, r.DefaultBranch, pat);
                     var number = PrNumber(r.PrUrl)!.Value;
@@ -185,8 +186,17 @@ public sealed partial class ProjectOrchestrator(
                         "Rejected" => ChangeTesting.Rejected,
                         _ => ChangeTesting.Untested,
                     };
+                    // A change waits for review only while it is fresh ("Done"); once tested it was reviewed (or predates review).
+                    var review = r.Status switch
+                    {
+                        "Done" => ChangeReview.NotReviewed,
+                        "Reviewing" => ChangeReview.Reviewing,
+                        "ChangesRequested" => ChangeReview.ChangesRequested,
+                        _ => ChangeReview.Approved,
+                    };
                     var merge = s.Status == "Done" ? await prs.GetMergeStateAsync(desc, number, ct).ConfigureAwait(false) : PrMergeState.Unknown;
-                    open.Add(new PlanChange(r.Id, number, checks, report, testing, testing == ChangeTesting.Rejected ? r.Error : null, merge, r.DefaultBranch));
+                    var findings = testing == ChangeTesting.Rejected || review == ChangeReview.ChangesRequested ? r.Error : null;
+                    open.Add(new PlanChange(r.Id, number, checks, report, testing, findings, merge, r.DefaultBranch, review));
                 }
                 planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, _fixRounds.GetValueOrDefault(s.Id)));
             }
@@ -278,6 +288,12 @@ public sealed partial class ProjectOrchestrator(
                 log.Add(tenant, board.Id, error is null ? update.Why : $"Couldn't update #{update.IssueNumber}'s branch: {error}");
                 break;
             }
+            case AutopilotAction.RunReview review:
+            {
+                var reviewed = await tasks.ReviewAsync(tenant, review.SessionId, ct: ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, reviewed == TaskStart.Started ? review.Why : $"Couldn't review #{review.IssueNumber}: {reviewed}.");
+                break;
+            }
             case AutopilotAction.RunTests test:
             {
                 var tested = await tasks.TestAsync(tenant, test.SessionId, ct: ct).ConfigureAwait(false);
@@ -332,7 +348,7 @@ public sealed partial class ProjectOrchestrator(
             _orphanSeen.TryRemove(s.Id, out _);
             var children = repos[s.Id].ToList();
             var wasCoding = children.Any(r => r.Status is "Pending" or "Running");
-            foreach (var r in children.Where(r => r.Status == "Testing"))
+            foreach (var r in children.Where(r => r.Status is "Testing" or "Reviewing"))
             {
                 await sessionsRepo.UpdateRepoRunResultAsync(tenant, r.Id, "Done", r.BranchName, r.PrUrl, null, ct).ConfigureAwait(false);
             }
@@ -346,7 +362,7 @@ public sealed partial class ProjectOrchestrator(
             }
             else
             {
-                log.Add(tenant, board.Id, $"#{s.IssueNumber}'s test was cut short by a restart — it will be tested again.");
+                log.Add(tenant, board.Id, $"#{s.IssueNumber}'s review or test was cut short by a restart — it will run again.");
             }
             changed = true;
         }
