@@ -22,7 +22,7 @@ namespace AgentOs.RemoteAgent;
 internal sealed record PreviewStart(string PreviewId, string Owner, string Repo, string Branch, string Command, string Url, int ReadyTimeoutSeconds);
 
 /// <summary>Runs "Try the app" previews on this computer.</summary>
-internal sealed class PreviewHost(string root, Func<string, string, string?, Task> report)
+internal sealed class PreviewHost(string root, Func<string, string, string?, Task> report, KeepAwake? awake = null)
 {
     private const int TailLines = 30;
     private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(5);
@@ -38,6 +38,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         public string Dir { get; } = dir;
         public Process? Process { get; set; }
         public ProcessJob Job { get; } = ProcessJob.Create();
+        public IDisposable? Awake { get; set; }
         public CancellationTokenSource Stop { get; } = new();
         public Queue<string> Tail { get; } = new();
     }
@@ -66,7 +67,10 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         }
         var repoKey = $"{start.Owner}/{start.Repo}";
         if (_idByRepo.TryGetValue(repoKey, out var previous)) { Stop(previous); }
-        var run = new Running(start.PreviewId, repoKey, Path.Join(Path.GetFullPath(root), $"{start.Owner}-{start.Repo}"));
+        var run = new Running(start.PreviewId, repoKey, Path.Join(Path.GetFullPath(root), $"{start.Owner}-{start.Repo}"))
+        {
+            Awake = awake?.Hold(), // a running preview keeps the computer from idle-sleeping (KeepAwake.cs)
+        };
         _byId[run.Id] = run;
         _idByRepo[repoKey] = run.Id;
         _ = Task.Run(() => RunAsync(run, start));
@@ -187,7 +191,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             if (_byId.TryRemove(run.Id, out _))
             {
                 _idByRepo.TryRemove(new KeyValuePair<string, string>(run.RepoKey, run.Id));
-                run.Job.Dispose(); // whatever it left running in the background goes with it
+                Kill(run); // whatever it left running in the background goes with it
                 await report(run.Id, "Stopped", $"The app ended (exit {process.ExitCode}).\n{TailOf(run)}").ConfigureAwait(false);
             }
         }
@@ -325,6 +329,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
     private static void Kill(Running run)
     {
         run.Job.Dispose(); // the app's whole tree, background children included
+        run.Awake?.Dispose();
         try { File.Delete(Path.Join(run.Dir, "preview.pid")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _ = ex; }
     }
