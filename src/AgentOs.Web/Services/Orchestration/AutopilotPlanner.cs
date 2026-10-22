@@ -59,6 +59,11 @@ public static class AutopilotPlanner
     /// (seen on the lab: the second one found the ports taken and could not check its end-to-end criteria).</summary>
     public const int MaxParallelTests = 1;
 
+    /// <summary>What Autopilot does next on a board, given its tickets and tasks — a pure decision, executed by the
+    /// orchestrator.</summary>
+    /// <param name="mode">Off, Build, or BuildAndMerge.</param>
+    /// <param name="tickets">The board's tickets.</param>
+    /// <param name="tasks">The board's open tasks and their proposed changes.</param>
     /// <param name="canTest">A computer of the member is connected, so the Testing agent can run. Without one nothing
     /// is tested — and nothing untested is merged.</param>
     public static IReadOnlyList<AutopilotAction> Decide(AutopilotMode mode, IReadOnlyList<PlanTicket> tickets, IReadOnlyList<PlanTask> tasks,

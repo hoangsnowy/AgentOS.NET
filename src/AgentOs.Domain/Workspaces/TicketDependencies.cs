@@ -53,11 +53,12 @@ public static partial class TicketDependencies
             placed[i] = true;
             foreach (var j in edges[i])
             {
-                if (--indegree[j] == 0) { ready.Enqueue(j, j); }
+                indegree[j]--;
+                if (indegree[j] == 0) { ready.Enqueue(j, j); }
             }
         }
         // Whatever is left sits on a cycle: append in index order (their cyclic edges are then ignored).
-        for (var i = 0; i < count; i++) { if (!placed[i]) { order.Add(i); } }
+        order.AddRange(Enumerable.Range(0, count).Where(i => !placed[i]));
         return order;
     }
 

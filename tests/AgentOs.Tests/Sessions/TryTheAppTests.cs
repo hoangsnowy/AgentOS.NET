@@ -164,7 +164,7 @@ public class TryTheAppTests
     public void RunnerDisconnect_ReportsItsPreviewsStopped()
     {
         var broker = new InProcessRemoteAgentBroker();
-        var registration = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
+        using var registration = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         var reports = new List<PreviewStatus>();
         broker.PreviewReported += reports.Add;
         broker.StartPreview(Start(), new RunnerTarget("t1", "u1"));
@@ -218,7 +218,7 @@ public class TryTheAppTests
     [Fact]
     public async Task IsListening_TrueOnlyWhileSomethingListens()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         try

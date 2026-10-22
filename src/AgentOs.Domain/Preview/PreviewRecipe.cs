@@ -51,13 +51,11 @@ public sealed record PreviewRecipe(string Command, Uri Url, int ReadyTimeoutSeco
             if (!IsLocal(url)) { error = "The url must be on this computer (localhost)."; return null; }
 
             var timeout = DefaultReadyTimeoutSeconds;
-            if (root.TryGetProperty("readyTimeoutSeconds", out var t))
+            if (root.TryGetProperty("readyTimeoutSeconds", out var t)
+                && (t.ValueKind != JsonValueKind.Number || !t.TryGetInt32(out timeout) || timeout is < 10 or > 3600))
             {
-                if (t.ValueKind != JsonValueKind.Number || !t.TryGetInt32(out timeout) || timeout is < 10 or > 3600)
-                {
-                    error = "\"readyTimeoutSeconds\" must be a whole number from 10 to 3600.";
-                    return null;
-                }
+                error = "\"readyTimeoutSeconds\" must be a whole number from 10 to 3600.";
+                return null;
             }
             return new PreviewRecipe(command, url, timeout);
         }

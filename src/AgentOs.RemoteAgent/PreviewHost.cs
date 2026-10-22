@@ -115,7 +115,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             }
             finally
             {
-                try { File.Delete(pidFile); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                TryDeleteFile(pidFile);
             }
         }
     }
@@ -310,6 +310,15 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         catch (Exception ex) when (ex is SocketException or OperationCanceledException && !ct.IsCancellationRequested)
         {
             return false;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _ = ex; // still held by a process — the next sweep retries
         }
     }
 
