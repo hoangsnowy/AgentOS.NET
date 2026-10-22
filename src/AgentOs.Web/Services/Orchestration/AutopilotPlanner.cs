@@ -70,8 +70,11 @@ public static class AutopilotPlanner
     /// <param name="tasks">The board's open tasks and their proposed changes.</param>
     /// <param name="canTest">A computer of the member is connected, so the Testing agent can run. Without one nothing
     /// is tested — and nothing untested is merged.</param>
+    /// <param name="maxParallel">Slot cap. The Orchestrator agent asks for every legal move (no cap) and
+    /// <see cref="WithinCaps"/> applies the caps to the moves it picks, in its order.</param>
+    /// <param name="maxParallelTests">Acceptance-run cap (see <see cref="MaxParallelTests"/>).</param>
     public static IReadOnlyList<AutopilotAction> Decide(AutopilotMode mode, IReadOnlyList<PlanTicket> tickets, IReadOnlyList<PlanTask> tasks,
-        bool canTest = true)
+        bool canTest = true, int maxParallel = MaxParallel, int maxParallelTests = MaxParallelTests)
     {
         ArgumentNullException.ThrowIfNull(tickets);
         ArgumentNullException.ThrowIfNull(tasks);
@@ -95,7 +98,7 @@ public static class AutopilotPlanner
                         $"Stopped fixing #{task.IssueNumber}: it still conflicts with {conflicting[0].BaseBranch}. It needs you."));
                     continue;
                 }
-                if (running >= MaxParallel) { continue; }
+                if (running >= maxParallel) { continue; }
                 var conflictRound = task.FixRounds + 1;
                 actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
                     $"Your branch conflicts with {conflicting[0].BaseBranch} (another change was merged first). Merge origin/{conflicting[0].BaseBranch} "
@@ -115,7 +118,7 @@ public static class AutopilotPlanner
                         $"Stopped fixing #{task.IssueNumber}: its checks still fail after {MaxFixRounds} tries. It needs you."));
                     continue;
                 }
-                if (running >= MaxParallel) { continue; }
+                if (running >= maxParallel) { continue; }
                 var round = task.FixRounds + 1;
                 var report = string.Join("\n", failed.Select(c => c.FailedReport).Where(r => !string.IsNullOrWhiteSpace(r)));
                 actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber, report, round,
@@ -140,7 +143,7 @@ public static class AutopilotPlanner
                         $"Stopped fixing #{task.IssueNumber}: code review still asks for changes after {MaxFixRounds} tries. It needs you."));
                     continue;
                 }
-                if (running >= MaxParallel) { continue; }
+                if (running >= maxParallel) { continue; }
                 var round = task.FixRounds + 1;
                 actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
                     string.Join('\n', changesRequested.Select(c => c.Findings).Where(r => !string.IsNullOrWhiteSpace(r))), round,
@@ -151,7 +154,7 @@ public static class AutopilotPlanner
             if (task.OpenChanges.Any(c => c.Review == ChangeReview.NotReviewed))
             {
                 // A review only reads the code: no app, no ports — just a free slot and the member's computer.
-                if (!canTest || running >= MaxParallel) { continue; }
+                if (!canTest || running >= maxParallel) { continue; }
                 actions.Add(new AutopilotAction.RunReview(task.SessionId, task.IssueNumber,
                     $"Reviewing #{task.IssueNumber}'s change — its checks passed."));
                 running++;
@@ -167,7 +170,7 @@ public static class AutopilotPlanner
                         $"Stopped fixing #{task.IssueNumber}: it still fails acceptance testing after {MaxFixRounds} tries. It needs you."));
                     continue;
                 }
-                if (running >= MaxParallel) { continue; }
+                if (running >= maxParallel) { continue; }
                 var round = task.FixRounds + 1;
                 actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
                     string.Join('\n', rejected.Select(c => c.Findings).Where(r => !string.IsNullOrWhiteSpace(r))), round,
@@ -177,7 +180,7 @@ public static class AutopilotPlanner
             }
             if (task.OpenChanges.Any(c => c.Testing == ChangeTesting.Untested))
             {
-                if (!canTest || running >= MaxParallel || testing >= MaxParallelTests) { continue; }
+                if (!canTest || running >= maxParallel || testing >= maxParallelTests) { continue; }
                 actions.Add(new AutopilotAction.RunTests(task.SessionId, task.IssueNumber,
                     $"Testing #{task.IssueNumber} against its acceptance criteria — its checks passed."));
                 running++;
@@ -203,17 +206,62 @@ public static class AutopilotPlanner
         }
 
         // 2) Approved tickets whose dependencies are closed, while there is room: p0 first, then oldest.
+        // (Under the Orchestrator agent every one is offered; it picks the order, the caps are applied after.)
         var closed = tickets.Where(t => !t.Open).Select(t => t.Number).ToHashSet();
         var ready = tickets
             .Where(t => t.Open && t.AiReady && !t.HasLiveTask && t.DependsOn.All(closed.Contains))
             .OrderBy(t => t.Priority).ThenBy(t => t.Number);
         foreach (var t in ready)
         {
-            if (running >= MaxParallel) { break; }
+            if (running >= maxParallel) { break; }
             var after = t.DependsOn.Count == 0 ? "" : $" — {string.Join(", ", t.DependsOn.Select(d => "#" + d))} {(t.DependsOn.Count == 1 ? "is" : "are")} done";
             actions.Add(new AutopilotAction.StartTicket(t.Number, $"Started #{t.Number}{after}."));
             running++;
         }
         return actions;
     }
+
+    /// <summary>True for a move that occupies a work slot on the member's computer.</summary>
+    public static bool TakesSlot(AutopilotAction action) =>
+        action is AutopilotAction.StartTicket or AutopilotAction.FixChecks or AutopilotAction.RunReview or AutopilotAction.RunTests;
+
+    /// <summary>
+    /// The guardrail under the Orchestrator agent: the moves it picked, in its order, kept only while they fit — slots
+    /// (<see cref="MaxParallel"/>, counting <paramref name="running"/> tasks), one acceptance run at a time, and at most
+    /// one move per task in a pass.
+    /// </summary>
+    public static IReadOnlyList<AutopilotAction> WithinCaps(IEnumerable<AutopilotAction> picked, int running, int testing)
+    {
+        ArgumentNullException.ThrowIfNull(picked);
+        var kept = new List<AutopilotAction>();
+        var touched = new HashSet<Guid>();
+        foreach (var action in picked)
+        {
+            var session = SessionOf(action);
+            if (session is { } id && !touched.Add(id) && action is not AutopilotAction.Merge and not AutopilotAction.UpdateBranch) { continue; }
+            if (TakesSlot(action))
+            {
+                if (running >= MaxParallel) { continue; }
+                if (action is AutopilotAction.RunTests)
+                {
+                    if (testing >= MaxParallelTests) { continue; }
+                    testing++;
+                }
+                running++;
+            }
+            kept.Add(action);
+        }
+        return kept;
+    }
+
+    private static Guid? SessionOf(AutopilotAction action) => action switch
+    {
+        AutopilotAction.FixChecks a => a.SessionId,
+        AutopilotAction.UpdateBranch a => a.SessionId,
+        AutopilotAction.RunTests a => a.SessionId,
+        AutopilotAction.RunReview a => a.SessionId,
+        AutopilotAction.Merge a => a.SessionId,
+        AutopilotAction.NeedsPerson a => a.SessionId,
+        _ => null,
+    };
 }

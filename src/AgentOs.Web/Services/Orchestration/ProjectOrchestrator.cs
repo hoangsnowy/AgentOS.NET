@@ -230,7 +230,7 @@ public sealed partial class ProjectOrchestrator(
             {
                 _heldForPreview.TryRemove(board.Id, out _);
             }
-            var actions = AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest);
+            var actions = await DecideAsync(board, mode, member, pat, tickets, planTickets, planTasks, sessions, repos, canTest, sp, ct).ConfigureAwait(false);
             foreach (var action in actions)
             {
                 await ExecuteAsync(action, board, member, pat, tickets, sp, ct).ConfigureAwait(false);
