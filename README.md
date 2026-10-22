@@ -101,7 +101,8 @@ the next run uses it, no restart. Keys can also be seeded from the environment
 Connect this computer** shows one command with a one-time code — run it on that computer, in the helper's
 folder (`dotnet run --project src/AgentOs.RemoteAgent -- pair <address> <code>` from a checkout). The
 page turns *Connected* by itself; later starts need no arguments. Connecting the same computer again (same
-name) retires its old offline entry and token. Board tasks set to *On my computer* then
+name) retires its old offline entry and token. While the AI works on it (a task, a test, a preview), the computer doesn't idle-sleep;
+`REMOTE_AGENT_KEEP_AWAKE=off` turns that off. Board tasks set to *On my computer* then
 clone, edit, build, test and push in a private per-task folder (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`).
 
 **Try the app** (Board → a project → *Try the app*) runs the latest default branch on that same computer and opens it

@@ -56,6 +56,7 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\CliProgress.cs" Link="Linked\CliProgress.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\PreviewHost.cs" Link="Linked\PreviewHost.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ProcessJob.cs" Link="Linked\ProcessJob.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\KeepAwake.cs" Link="Linked\KeepAwake.cs" />
   </ItemGroup>
 
 </Project>

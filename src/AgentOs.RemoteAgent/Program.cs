@@ -34,6 +34,8 @@
 //                                 (default 2); their own lane, so they never queue behind a long work run
 //   REMOTE_AGENT_DATA   test data the agents may read: "NAME=C:\path;OTHER=/data/x" → env vars of each scoped run,
 //                       names (not paths) told to the agent, read-only to it (see TestData in ScopedAutonomy.cs)
+//   REMOTE_AGENT_KEEP_AWAKE  "off" lets the computer idle-sleep mid-run (default: while a run or preview is in flight,
+//                       the idle timer is reset so the machine doesn't sleep under the agent — see KeepAwake.cs)
 //   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks
 //                       Try the app after seeing the project's command); REMOTE_AGENT_PREVIEWROOT moves their folder
 //
@@ -113,6 +115,7 @@ var cliSlots = new SemaphoreSlim(maxParallel, maxParallel);
 // 15-minute coding runs they outlived the server's deadline — the ticket split fell back to the raw draft list.
 var maxAnswers = int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_MAX_ANSWERS"), out var ma) && ma > 0 ? ma : 2;
 var answerSlots = new SemaphoreSlim(maxAnswers, maxAnswers);
+using var keepAwake = new AgentOs.RemoteAgent.KeepAwake(AgentOs.RemoteAgent.KeepAwake.Allowed(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_AWAKE")));
 
 // M3 — full-prompt LLM dispatch
 connection.On<RemoteExecRequest>("Execute", request =>
@@ -123,6 +126,7 @@ connection.On<RemoteExecRequest>("Execute", request =>
     _ = Task.Run(async () =>
     {
         await lane.WaitAsync().ConfigureAwait(false);
+        using var awake = keepAwake.Hold();
         try
         {
             // Stopped while it waited for a slot: never start it.
@@ -170,7 +174,7 @@ connection.On<string>("Cancel", requestId =>
 var previewRoot = Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWROOT") ?? AgentOs.RemoteAgent.PreviewHost.DefaultRoot();
 var previewsOff = string.Equals(Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWS"), "off", StringComparison.OrdinalIgnoreCase);
 AgentOs.RemoteAgent.PreviewHost.KillLeftovers(previewRoot);
-var previews = new AgentOs.RemoteAgent.PreviewHost(previewRoot, ReportPreviewAsync);
+var previews = new AgentOs.RemoteAgent.PreviewHost(previewRoot, ReportPreviewAsync, keepAwake);
 AppDomain.CurrentDomain.ProcessExit += (_, _) => previews.StopAll();
 Console.CancelKeyPress += (_, _) => previews.StopAll();
 
