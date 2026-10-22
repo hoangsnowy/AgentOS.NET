@@ -75,6 +75,30 @@ function Stop-Lab {
         & taskkill /T /F /PID $p.Id | Out-Null
     }
     Remove-Item $PidFile -ErrorAction SilentlyContinue
+    Remove-OrphanTunnelProxies
+}
+
+# A hard-killed AppHost never removes its Aspire network tunnel-proxy containers. They piled up (77 on this box: every
+# lab update, plus every AppHost a test or preview run started) until a fresh AppHost created no containers at all and
+# the lab never became healthy. Each one records the process that created it; remove those whose creator is gone.
+# Only aspire-container-network-tunnelproxy-* containers are touched — never databases, volumes or anyone else's.
+function Remove-OrphanTunnelProxies {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return }
+    $names = docker ps -a --format '{{.Names}}' 2>$null | Where-Object { $_ -like 'aspire-container-network-tunnelproxy-*' }
+    $orphans = foreach ($n in $names) {
+        $label = docker inspect $n --format '{{index .Config.Labels "com.microsoft.developer.usvc-dev.creatorProcessId"}}|{{index .Config.Labels "com.microsoft.developer.usvc-dev.creatorProcessStartTime"}}'
+        $parts = "$label".Split('|')
+        $creatorId = 0
+        if ($parts.Count -ne 2 -or -not [int]::TryParse($parts[0], [ref]$creatorId)) { continue }
+        $creator = Get-Process -Id $creatorId -ErrorAction SilentlyContinue
+        $started = [datetime]::MinValue
+        $alive = $creator -and [datetime]::TryParse($parts[1], [ref]$started) -and [math]::Abs(($creator.StartTime - $started).TotalSeconds) -lt 2
+        if (-not $alive) { $n }
+    }
+    if ($orphans) {
+        Write-Host "Removing $(@($orphans).Count) orphaned Aspire tunnel-proxy container(s)…"
+        docker rm -f @($orphans) | Out-Null
+    }
 }
 
 function Ensure-Worktree {
