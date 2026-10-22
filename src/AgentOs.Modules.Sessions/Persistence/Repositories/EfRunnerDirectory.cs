@@ -50,4 +50,29 @@ internal sealed class EfRunnerDirectory : IRunnerDirectory
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return true;
     }
+
+    public async Task<int> RetireReplacedAsync(Guid runnerId, Func<Guid, bool> isConnected, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(isConnected);
+        var row = await _db.Runners
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null || string.Equals(row.Status, "Revoked", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(row.Label))
+        {
+            return 0;
+        }
+        // Same tenant, same member, same name, paired earlier — and not live (two machines that share a name both stay).
+        var older = await _db.Runners
+            .IgnoreQueryFilters()
+            .Where(r => r.TenantId == row.TenantId && r.OwnerUserId == row.OwnerUserId && r.Label == row.Label
+                && r.Id != row.Id && r.Status != "Revoked" && r.CreatedAtUtc < row.CreatedAtUtc)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var retired = older.Where(r => !isConnected(r.Id)).ToList();
+        foreach (var r in retired) { r.Status = "Revoked"; }
+        if (retired.Count > 0) { await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
+        return retired.Count;
+    }
 }
