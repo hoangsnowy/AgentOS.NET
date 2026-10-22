@@ -321,9 +321,17 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             await process.WaitForExitAsync().ConfigureAwait(false);
             if (final is not null)
             {
-                return final.IsError
+                // Metrics first: the CLI's own usage travels back, so the server shows real tokens, not an estimate.
+                var used = final.Tokens();
+                return (final.IsError
                     ? new RemoteExecResult(request.Id, false, string.Empty, final.Text.Length > 0 ? final.Text : streamErr.Trim())
-                    : new RemoteExecResult(request.Id, true, final.Text.Trim(), null);
+                    : new RemoteExecResult(request.Id, true, final.Text.Trim(), null)) with
+                {
+                    InputTokens = used?.Input,
+                    OutputTokens = used?.Output,
+                    CacheReadTokens = used?.CacheRead,
+                    CacheWriteTokens = used?.CacheWrite,
+                };
             }
             // No result event (killed by Stop, crashed, not logged in): fall through to the exit-code report.
             stdout = raw.ToString();
@@ -560,7 +568,14 @@ internal static partial class Program
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
 internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null);
-internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error);
+internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
+{
+    // Real usage reported by the CLI (cache reads/writes are a subset of the input); null = not reported.
+    public int? InputTokens { get; init; }
+    public int? OutputTokens { get; init; }
+    public int? CacheReadTokens { get; init; }
+    public int? CacheWriteTokens { get; init; }
+}
 internal sealed record RunnerToolCall(string RequestId, string ToolCallId, string ToolName, string JsonInput);
 internal sealed record RunnerToolResult(string RequestId, string ToolCallId, bool Ok, string JsonOutput, string? Error);
 

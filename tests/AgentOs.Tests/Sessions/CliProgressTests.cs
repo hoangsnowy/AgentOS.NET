@@ -57,6 +57,15 @@ public sealed class CliProgressTests
         final.Text.ShouldBe("{\"branch\":\"issue-7-ai-fix\",\"summary\":\"Done.\"}");
         final.CostUsd.ShouldBe(0.4213m);
         final.Usage!.Value.GetProperty("cache_read_input_tokens").GetInt32().ShouldBe(3000);
+        // Claude reports input WITHOUT cache reads/writes; normalised, the cache is a subset of the input.
+        final.Tokens().ShouldBe((3012, 900, 3000, 0));
+    }
+
+    [Fact]
+    public void Tokens_NoUsageReported_IsNull()
+    {
+        var (_, final) = CliProgress.Parse("""{"type":"result","is_error":false,"result":"ok"}""");
+        final!.Tokens().ShouldBeNull();
     }
 
     [Theory]

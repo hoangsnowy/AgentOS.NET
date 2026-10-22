@@ -147,7 +147,7 @@ else
 
         @* ── Chart: per-agent (calls + cost) ─────────────────────────────────────────────── *@
         <Panel Title="By agent">
-            @{ var agents = _summary!.ByAgent.OrderByDescending(a => a.TokensIn + a.TokensOut).ToList(); var maxAgent = agents.Count == 0 ? 1 : Math.Max(1, agents.Max(a => a.TokensIn + a.TokensOut)); }
+            @{ var agents = ByRole(_summary!.ByAgent).OrderByDescending(a => a.TokensIn + a.TokensOut).ToList(); var maxAgent = agents.Count == 0 ? 1 : Math.Max(1, agents.Max(a => a.TokensIn + a.TokensOut)); }
             @if (agents.Count == 0)
             {
                 <p class="muted ins-note">No agent calls in this range.</p>
@@ -204,7 +204,7 @@ else
 
         @* ── Chart: latency + QA rounds ──────────────────────────────────────────────────── *@
         <Panel Title="Latency & QA rounds">
-            @{ var lat = _extra?.ByAgentLatency ?? []; var maxLat = lat.Count == 0 ? 0.0 : lat.Max(l => l.AvgLatencyMs); }
+            @{ var lat = LatencyByRole(_extra?.ByAgentLatency ?? []).ToList(); var maxLat = lat.Count == 0 ? 0.0 : lat.Max(l => l.AvgLatencyMs); }
             @if (lat.Count == 0)
             {
                 <p class="muted ins-note">No latency data in this range.</p>
@@ -408,6 +408,19 @@ else
 
     private static string AgentShort(string agent) => agent
         .Replace("Agent", "", StringComparison.Ordinal).Trim() is { Length: > 0 } s ? s : agent;
+
+    // Weighted average across the role's names (calls × average latency).
+    internal static IEnumerable<AgentOs.Modules.Pipeline.Persistence.AgentLatencyBucket> LatencyByRole(IEnumerable<AgentOs.Modules.Pipeline.Persistence.AgentLatencyBucket> buckets) =>
+        buckets.GroupBy(b => AgentShort(b.Agent), StringComparer.OrdinalIgnoreCase)
+            .Select(g => new AgentOs.Modules.Pipeline.Persistence.AgentLatencyBucket(g.Key,
+                g.Sum(b => b.Calls) == 0 ? 0 : g.Sum(b => b.AvgLatencyMs * b.Calls) / g.Sum(b => b.Calls), g.Sum(b => b.Calls)))
+            .OrderByDescending(b => b.AvgLatencyMs);
+
+    // One row per role: the 5-agent pipeline files calls as "CodingAgent", the Board's agents as "Coding" — the same role.
+    internal static IEnumerable<AgentOs.Modules.Pipeline.Persistence.CostBucket> ByRole(IEnumerable<AgentOs.Modules.Pipeline.Persistence.CostBucket> buckets) =>
+        buckets.GroupBy(b => AgentShort(b.Key), StringComparer.OrdinalIgnoreCase)
+            .Select(g => new AgentOs.Modules.Pipeline.Persistence.CostBucket(g.Key, g.Sum(b => b.CostUsd), g.Sum(b => b.TokensIn),
+                g.Sum(b => b.TokensOut), g.Sum(b => b.Calls), g.Sum(b => b.CacheReadTokens), g.Sum(b => b.CacheWriteTokens)));
 
     private Badge.BadgeVariant BudgetBadge() => _budget?.State switch
     {
