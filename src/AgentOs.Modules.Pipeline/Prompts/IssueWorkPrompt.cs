@@ -160,7 +160,11 @@ internal static class IssueWorkPrompt
         !string.IsNullOrWhiteSpace(req.ChangeRequest) && !string.IsNullOrWhiteSpace(repo.ExistingBranch);
 
     internal static string BranchName(IssueWorkRequest req, WorkRepo repo) =>
-        IsRevision(req, repo) ? repo.ExistingBranch! : $"issue-{req.IssueNumber.ToString(CultureInfo.InvariantCulture)}-ai-fix";
+        IsRevision(req, repo) ? repo.ExistingBranch! : FreshBranch(req, repo);
+
+    // A fresh attempt's branch: the server's pick when an older attempt's branch is still on the remote.
+    private static string FreshBranch(IssueWorkRequest req, WorkRepo repo) =>
+        string.IsNullOrWhiteSpace(repo.NewBranch) ? WorkRepo.DefaultBranchName(req.IssueNumber) : repo.NewBranch;
 
     // Step 3 of the workflow. The prompt's steps start at column 0 with continuation lines indented by 3, so the
     // inserted text follows the same shape.
@@ -173,7 +177,7 @@ internal static class IssueWorkPrompt
             "   Read the requested changes in the user message and address every point.\n")
         : string.Concat(
             "3. Create a feature branch off the default branch (", repo.DefaultBranch, "):\n",
-            "   git checkout -b issue-", req.IssueNumber.ToString(CultureInfo.InvariantCulture), "-ai-fix\n");
+            "   git checkout -b ", FreshBranch(req, repo), "\n");
 
     // The commit type follows the ticket ("feat" for a feature, "fix" for a bug…), like the pull request title.
     private static string CommitType(IssueWorkRequest req) => AgentOs.Domain.Workspaces.PullRequestText.ConventionalType(req.TicketType);
@@ -190,9 +194,9 @@ internal static class IssueWorkPrompt
             """,
             repo.ExistingBranch, UntrustedText.Wrap("requested-changes", req.ChangeRequest!, maxChars: 16_000))
         : string.Format(CultureInfo.InvariantCulture,
-            "Implement a fix for this ticket in THIS repository. Create branch `issue-{0}-ai-fix`,\n"
+            "Implement a fix for this ticket in THIS repository. Create branch `{0}`,\n"
             + "make the minimal necessary changes, ensure the build passes, commit, and push the branch.",
-            req.IssueNumber);
+            FreshBranch(req, repo));
 
     private static string CrossServiceNote(IssueWorkRequest req, WorkRepo repo)
     {

@@ -51,6 +51,20 @@ public sealed class IssueWorkRevisionPromptTests
         user.ShouldContain("on branch `issue-4-ai-fix`");
     }
 
+    // An interrupted earlier attempt left issue-4-ai-fix on the remote: the server picks a free name and the whole prompt
+    // uses it (pushing to the old one would need a force-push the agent may not do).
+    [Fact]
+    public void FreshAttempt_ServerPickedBranch_UsedEverywhere()
+    {
+        var repo = NewRepo with { NewBranch = "issue-4-ai-fix-2" };
+        foreach (var system in new[] { IssueWorkPrompt.System(Req(repo), repo), IssueWorkPrompt.SystemCli(Req(repo), repo) })
+        {
+            system.ShouldContain("git checkout -b issue-4-ai-fix-2");
+            system.ShouldContain("{\"branch\":\"issue-4-ai-fix-2\"");
+        }
+        IssueWorkPrompt.User(Req(repo), repo).ShouldContain("Create branch `issue-4-ai-fix-2`");
+    }
+
     [Fact]
     public void FollowUp_WithoutABranch_IsAFirstRun() =>
         IssueWorkPrompt.SystemCli(Req(NewRepo, "change it"), NewRepo).ShouldContain("git checkout -b issue-4-ai-fix");
