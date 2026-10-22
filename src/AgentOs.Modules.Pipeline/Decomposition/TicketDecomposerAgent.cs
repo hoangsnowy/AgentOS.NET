@@ -23,12 +23,13 @@ namespace AgentOs.Modules.Pipeline.Decomposition;
 /// <summary>Refines a deterministic ticket seed into a right-sized, taxonomy-clean set via the LLM.</summary>
 public interface ITicketDecomposerAgent
 {
-    /// <summary>Refine <paramref name="seed"/> against <paramref name="spec"/>; returns the seed on failure.</summary>
-    Task<IReadOnlyList<TicketDraft>> RunAsync(RequirementSpec spec, IReadOnlyList<TicketDraft> seed, CancellationToken cancellationToken = default);
+    /// <summary>Refine <paramref name="seed"/> against <paramref name="spec"/>; returns the seed on failure. <paramref name="idea"/>
+    /// is the person's own text: tickets it names ("#12") can become dependencies of the new ones.</summary>
+    Task<IReadOnlyList<TicketDraft>> RunAsync(RequirementSpec spec, IReadOnlyList<TicketDraft> seed, string? idea = null, CancellationToken cancellationToken = default);
 }
 
 /// <inheritdoc />
-public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
+public sealed partial class TicketDecomposerAgent : ITicketDecomposerAgent
 {
     private const string AgentName = nameof(TicketDecomposerAgent);
 
@@ -57,7 +58,7 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<TicketDraft>> RunAsync(RequirementSpec spec, IReadOnlyList<TicketDraft> seed, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TicketDraft>> RunAsync(RequirementSpec spec, IReadOnlyList<TicketDraft> seed, string? idea = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(seed);
@@ -74,7 +75,7 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
               + AgentOs.Modules.Pipeline.Prompts.WorkspaceRules.ToPromptBlock(await _prompts.ResolveRulesAsync(cancellationToken).ConfigureAwait(false));
         var request = new LlmRequest(
             SystemPrompt: system,
-            UserPrompt: DecomposerPrompt.RenderUser(spec, seed),
+            UserPrompt: DecomposerPrompt.RenderUser(spec, seed, idea),
             Model: profile.Model,
             Temperature: profile.Temperature,
             MaxTokens: profile.MaxTokens);
@@ -88,11 +89,14 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
             var all = dto.Tickets ?? [];
             var kept = all.Select((t, i) => (t, i)).Where(x => !string.IsNullOrWhiteSpace(x.t.Title)).ToList();
             var newIndex = kept.Select((x, j) => (x.i, j)).ToDictionary(p => p.i, p => p.j);
+            // Existing tickets only as the idea names them — a number the model made up never becomes a dependency.
+            var named = IssueNumbersIn(idea);
             var tickets = kept
                 .Select(x => ToDraft(x.t) with
                 {
                     DependsOn = (x.t.DependsOn ?? []).Where(newIndex.ContainsKey).Select(d => newIndex[d])
                         .Where(d => d != newIndex[x.i]).Distinct().ToList(),
+                    DependsOnIssues = (x.t.DependsOnIssues ?? []).Where(named.Contains).Distinct().Order().ToList(),
                 })
                 .ToList();
 
@@ -112,6 +116,17 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
             return seed;
         }
     }
+
+    /// <summary>The ticket numbers a text names as "#N".</summary>
+    internal static IReadOnlySet<int> IssueNumbersIn(string? text) =>
+        string.IsNullOrEmpty(text)
+            ? new HashSet<int>()
+            : IssueRef().Matches(text)
+                .Select(m => int.TryParse(m.Groups[1].ValueSpan, global::System.Globalization.NumberStyles.None, global::System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : 0)
+                .Where(n => n > 0).ToHashSet();
+
+    [global::System.Text.RegularExpressions.GeneratedRegex(@"(?<![\w&])#(\d{1,7})\b")]
+    private static partial global::System.Text.RegularExpressions.Regex IssueRef();
 
     // Keep only taxonomy labels, then force the ai-gate label to agree with the aiReady flag.
     private static TicketDraft ToDraft(TicketDto dto)
@@ -143,5 +158,6 @@ public sealed class TicketDecomposerAgent : ITicketDecomposerAgent
         public List<string?>? Labels { get; set; }
         public bool AiReady { get; set; }
         public List<int>? DependsOn { get; set; }
+        public List<int>? DependsOnIssues { get; set; }
     }
 }

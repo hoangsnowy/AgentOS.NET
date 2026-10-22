@@ -7,6 +7,8 @@ using AgentOs.Domain.Llm;
 using AgentOs.Domain.Workspaces;
 using AgentOs.Modules.Pipeline.Agents;
 using AgentOs.Modules.Pipeline.Decomposition;
+using AgentOs.Modules.Pipeline.Prompts;
+using System.Collections.Generic;
 using AgentOs.Tests.Agents;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -103,5 +105,38 @@ public sealed class TicketDecomposerAgentTests
         var result = await Build("""{ "tickets": [] }""").RunAsync(DecompositionFixtures.Spec(), seed);
 
         result.ShouldBeSameAs(seed);
+    }
+
+    [Fact]
+    public async Task RunAsync_DependsOnIssues_KeepsOnlyNumbersTheIdeaNames()
+    {
+        var json = """
+            { "tickets": [
+              { "title": "Add the import screen", "body": "", "labels": ["type:feature","area:ui","p1"], "aiReady": true, "dependsOnIssues": [12, 99, 12] },
+              { "title": "Add search", "body": "", "labels": ["type:feature","area:ui","p1"], "aiReady": true }
+            ] }
+            """;
+
+        var result = await Build(json).RunAsync(DecompositionFixtures.Spec(), DecompositionFixtures.Seed(),
+            "Build an import screen on top of #12 (the endpoint) and search in #14's page; issue#5 is not a reference.");
+
+        result[0].DependsOnIssues.ShouldBe([12]);   // #99 is not in the idea — never a dependency
+        result[1].DependsOnIssues.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void IssueNumbersIn_FindsHashReferencesOnly()
+    {
+        TicketDecomposerAgent.IssueNumbersIn("after #12, #13 and (#16); not issue#5 or &#39; or #0").ShouldBe(new HashSet<int> { 12, 13, 16 }, ignoreOrder: true);
+        TicketDecomposerAgent.IssueNumbersIn(null).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void RenderUser_WithIdea_FencesThePersonsWords()
+    {
+        var prompt = DecomposerPrompt.RenderUser(DecompositionFixtures.Spec(), DecompositionFixtures.Seed(), "Depends on #12 please");
+        prompt.ShouldContain("<idea>");
+        prompt.ShouldContain("Depends on #12 please");
+        DecomposerPrompt.RenderUser(DecompositionFixtures.Spec(), DecompositionFixtures.Seed()).ShouldNotContain("<idea>");
     }
 }

@@ -46,7 +46,7 @@ internal sealed class IdeaBootstrapService : IIdeaBootstrapService
         var spec = await _requirement.RunAsync(story, cancellationToken).ConfigureAwait(false);
 
         var seed = TicketMapper.Map(spec);
-        var tickets = await _decomposer.RunAsync(spec, seed, cancellationToken).ConfigureAwait(false);
+        var tickets = await _decomposer.RunAsync(spec, seed, idea, cancellationToken).ConfigureAwait(false);
 
         return new BootstrapPreview(spec, tickets);
     }
