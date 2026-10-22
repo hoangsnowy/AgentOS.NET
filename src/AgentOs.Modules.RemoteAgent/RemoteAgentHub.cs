@@ -80,6 +80,9 @@ public sealed class RemoteAgentHub : Hub
         // Context.ConnectionAborted — the pairing fact has already happened, and a connection that drops
         // in the next millisecond must not roll it back.
         await _runners.MarkPairedAsync(identity.RunnerId, CancellationToken.None).ConfigureAwait(false);
+        // Re-pairing the same computer (a new code, a reinstall) used to leave one Offline row — and one still-valid
+        // token — per pairing on Board › Computers. Its older offline entries retire now.
+        await _runners.RetireReplacedAsync(identity.RunnerId, _broker.IsConnected, CancellationToken.None).ConfigureAwait(false);
 
         await base.OnConnectedAsync().ConfigureAwait(false);
     }

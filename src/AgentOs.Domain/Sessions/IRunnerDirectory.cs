@@ -22,4 +22,12 @@ public interface IRunnerDirectory
     /// last-seen stamp. Called only after the presented token has been verified. A revoked runner is
     /// left untouched. Returns <c>true</c> when a row was updated.</summary>
     Task<bool> MarkPairedAsync(Guid runnerId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The same computer connected again under a new pairing: retire (revoke) the member's OLDER entries with the same
+    /// name that are not connected right now, so Board › Computers shows one row per computer and the old tokens stop
+    /// working. Called only after the new runner's token was verified. Returns how many were retired.
+    /// </summary>
+    Task<int> RetireReplacedAsync(Guid runnerId, Func<Guid, bool> isConnected, CancellationToken cancellationToken = default) =>
+        Task.FromResult(0);
 }

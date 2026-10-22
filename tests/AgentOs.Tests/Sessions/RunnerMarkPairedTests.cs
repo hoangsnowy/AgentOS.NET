@@ -84,24 +84,74 @@ public class RunnerMarkPairedTests
         }
     }
 
+    [Fact]
+    public async Task RetireReplacedAsync_RePairedComputer_RetiresOnlyOlderOfflineSameNameEntries()
+    {
+        var options = NewOptions();
+        var tenant = new FixedTenant("t1");
+        var oldOffline = Guid.NewGuid();
+        var oldLive = Guid.NewGuid();
+        var otherName = Guid.NewGuid();
+        var otherMember = Guid.NewGuid();
+        var newer = Guid.NewGuid();
+        var current = Guid.NewGuid();
+        await SeedAsync(options, tenant, oldOffline, status: "Paired", created: 1);
+        await SeedAsync(options, tenant, oldLive, status: "Paired", created: 2);
+        await SeedAsync(options, tenant, otherName, status: "Paired", created: 3, label: "office pc");
+        await SeedAsync(options, tenant, otherMember, status: "Paired", created: 4, owner: "user-2");
+        await SeedAsync(options, tenant, current, status: "Paired", created: 5);
+        await SeedAsync(options, tenant, newer, status: "Pending", created: 6);
+
+        await using (var db = new SessionsDbContext(options, new FixedTenant("anything")))
+        {
+            (await new EfRunnerDirectory(db).RetireReplacedAsync(current, id => id == oldLive)).ShouldBe(1);
+        }
+
+        await using (var db = new SessionsDbContext(options, tenant))
+        {
+            async Task<string> StatusOf(Guid id) => (await db.Runners.IgnoreQueryFilters().FirstAsync(r => r.Id == id)).Status;
+            (await StatusOf(oldOffline)).ShouldBe("Revoked");
+            (await StatusOf(oldLive)).ShouldBe("Paired");      // connected right now: two machines may share a name
+            (await StatusOf(otherName)).ShouldBe("Paired");
+            (await StatusOf(otherMember)).ShouldBe("Paired");
+            (await StatusOf(newer)).ShouldBe("Pending");        // only OLDER entries are replaced
+            (await StatusOf(current)).ShouldBe("Paired");
+        }
+    }
+
+    [Fact]
+    public async Task RetireReplacedAsync_RevokedRunner_RetiresNothing()
+    {
+        var options = NewOptions();
+        var tenant = new FixedTenant("t1");
+        var old = Guid.NewGuid();
+        var revoked = Guid.NewGuid();
+        await SeedAsync(options, tenant, old, status: "Paired", created: 1);
+        await SeedAsync(options, tenant, revoked, status: "Revoked", created: 2);
+
+        await using var db = new SessionsDbContext(options, tenant);
+        (await new EfRunnerDirectory(db).RetireReplacedAsync(revoked, _ => false)).ShouldBe(0);
+    }
+
     private static DbContextOptions<SessionsDbContext> NewOptions() =>
         new DbContextOptionsBuilder<SessionsDbContext>()
             .UseInMemoryDatabase($"runners-paired-{Guid.NewGuid()}")
             .Options;
 
     private static async Task SeedAsync(
-        DbContextOptions<SessionsDbContext> options, ITenantContext tenant, Guid id, string status)
+        DbContextOptions<SessionsDbContext> options, ITenantContext tenant, Guid id, string status,
+        int created = 0, string label = "dev box", string owner = "user-1")
     {
         await using var db = new SessionsDbContext(options, tenant);
         db.Runners.Add(new RunnerEntity
         {
             Id = id,
             TenantId = tenant.TenantId,
-            OwnerUserId = "user-1",
-            Label = "dev box",
+            OwnerUserId = owner,
+            Label = label,
             TokenHash = "sha256$salt$hash",
             Status = status,
-            CreatedAtUtc = DateTimeOffset.UnixEpoch,
+            CreatedAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(created),
         });
         await db.SaveChangesAsync();
     }
