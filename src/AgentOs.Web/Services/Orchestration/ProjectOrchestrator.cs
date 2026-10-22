@@ -355,13 +355,14 @@ public sealed partial class ProjectOrchestrator(
 
     private async Task<IReadOnlyList<int>> DependenciesAsync(ISourceProvider? provider, WorkspaceEntity board, string tenant, string pat, BoardTicket t, CancellationToken ct)
     {
-        var key = (board.Id, t.Number!.Value);
+        if (t.Number is not { } number) { return []; }
+        var key = (board.Id, number);
         if (_deps.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < TimeSpan.FromMinutes(10)) { return cached.Deps; }
         if (provider is null) { return []; }
         string? body;
         try
         {
-            body = await provider.ReadTicketBodyAsync(BoardTaskService.RepoDescriptor(board, tenant, t.RepoOwner!, t.RepoName!, "main", pat), t.Number.Value, ct).ConfigureAwait(false);
+            body = await provider.ReadTicketBodyAsync(BoardTaskService.RepoDescriptor(board, tenant, t.RepoOwner!, t.RepoName!, "main", pat), number, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or Octokit.ApiException or InvalidOperationException or TaskCanceledException)
         {

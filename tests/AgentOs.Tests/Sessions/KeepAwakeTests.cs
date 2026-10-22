@@ -20,15 +20,17 @@ public class KeepAwakeTests
     public void Hold_CountsWorkInFlight_AndReleasesOnce()
     {
         using var awake = new KeepAwake(enabled: true);
-        var first = awake.Hold();
-        var second = awake.Hold();
-        awake.Active.ShouldBe(2);
-
-        first.Dispose();
-        first.Dispose(); // a double release must not under-count
-        awake.Active.ShouldBe(1);
-
-        second.Dispose();
-        awake.Active.ShouldBe(0);
+        using (var first = awake.Hold())
+        {
+            using (awake.Hold())
+            {
+                awake.Active.ShouldBe(2);
+                first.Dispose();
+                first.Dispose(); // a double release must not under-count
+                awake.Active.ShouldBe(1);
+            }
+            awake.Active.ShouldBe(0);
+        }
+        awake.Active.ShouldBe(0); // the outer using's second release is a no-op too
     }
 }
