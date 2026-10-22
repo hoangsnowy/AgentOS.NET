@@ -60,9 +60,7 @@ public sealed class OrchestratorLog(IServiceScopeFactory scopes, ILogger<Orchest
                 var list = _entries.GetOrAdd(key, _ => new());
                 lock (list)
                 {
-                    // Stored history first (newest first), then anything added since start that isn't in it yet.
-                    var merged = stored.Select(e => (e.AtUtc, e.Text)).Concat(list).DistinctBy(x => (x.Item1, x.Item2))
-                        .OrderByDescending(x => x.Item1).Take(Keep).ToList();
+                    var merged = Merge(stored.Select(e => (e.AtUtc, e.Text)).ToList(), list.ToList(), Keep);
                     list.Clear();
                     foreach (var e in merged) { list.AddLast(e); }
                 }
@@ -76,6 +74,20 @@ public sealed class OrchestratorLog(IServiceScopeFactory scopes, ILogger<Orchest
         if (!_entries.TryGetValue(key, out var entries)) { return []; }
         lock (entries) { return entries.Take(max).ToList(); }
     }
+
+    /// <summary>
+    /// Stored history plus what was added in memory since start, newest first. A decision added before the first read is
+    /// in both — stamped separately (here, then by the database), so equal text a few seconds apart is the same line.
+    /// </summary>
+    internal static List<(DateTimeOffset At, string Text)> Merge(
+        IReadOnlyList<(DateTimeOffset At, string Text)> stored, IReadOnlyList<(DateTimeOffset At, string Text)> memory, int keep)
+    {
+        var byText = stored.ToLookup(e => e.Text, e => e.At, StringComparer.Ordinal);
+        var fresh = memory.Where(m => !byText[m.Text].Any(at => (at - m.At).Duration() <= SameLine));
+        return [.. stored.Concat(fresh).OrderByDescending(e => e.At).Take(keep)];
+    }
+
+    private static readonly TimeSpan SameLine = TimeSpan.FromSeconds(30);
 
     private async Task PersistAsync(string tenantId, Guid boardId, string text)
     {
