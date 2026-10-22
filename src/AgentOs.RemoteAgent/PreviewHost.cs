@@ -37,6 +37,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         public string RepoKey { get; } = repoKey;
         public string Dir { get; } = dir;
         public Process? Process { get; set; }
+        public ProcessJob Job { get; } = ProcessJob.Create();
         public CancellationTokenSource Stop { get; } = new();
         public Queue<string> Tail { get; } = new();
     }
@@ -143,11 +144,19 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
                 return;
             }
 
+            // Readiness is "something answers on the port" — so the port must be free before we start, or a leftover
+            // server (another checkout's dev server) would read as this app being up.
+            if (await IsListeningAsync(recipe.Url, ct).ConfigureAwait(false))
+            {
+                await FailAsync(run, $"Something else on this computer is already using port {recipe.Url.Port}. Close that app (or stop its preview), then try again.").ConfigureAwait(false);
+                return;
+            }
             await report(run.Id, "Starting", $"Running {recipe.Command}").ConfigureAwait(false);
             Console.WriteLine($"[agent] preview {run.RepoKey}: {recipe.Command} (in {run.Dir})");
             var process = Process.Start(ShellFor(recipe.Command, run.Dir))
                 ?? throw new InvalidOperationException("The command didn't start.");
             run.Process = process;
+            run.Job.Add(process);
             WritePidFile(run.Dir, process);
             process.OutputDataReceived += (_, e) => Remember(run, e.Data);
             process.ErrorDataReceived += (_, e) => Remember(run, e.Data);
@@ -178,6 +187,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             if (_byId.TryRemove(run.Id, out _))
             {
                 _idByRepo.TryRemove(new KeyValuePair<string, string>(run.RepoKey, run.Id));
+                run.Job.Dispose(); // whatever it left running in the background goes with it
                 await report(run.Id, "Stopped", $"The app ended (exit {process.ExitCode}).\n{TailOf(run)}").ConfigureAwait(false);
             }
         }
@@ -314,8 +324,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
 
     private static void Kill(Running run)
     {
-        try { run.Process?.Kill(entireProcessTree: true); }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { _ = ex; }
+        run.Job.Dispose(); // the app's whole tree, background children included
         try { File.Delete(Path.Join(run.Dir, "preview.pid")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _ = ex; }
     }

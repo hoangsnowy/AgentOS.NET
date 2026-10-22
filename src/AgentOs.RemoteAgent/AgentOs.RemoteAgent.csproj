@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>AgentOs.RemoteAgent</RootNamespace>
+    <!-- ProcessJob.cs: source-generated P/Invoke passes the job limit struct by reference. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

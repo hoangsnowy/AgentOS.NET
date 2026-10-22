@@ -282,6 +282,9 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{cmd}'. Is the {cli} CLI installed and on PATH?");
+        // Whatever the run starts in the background (dev servers, test hosts) ends with it — see ProcessJob.cs.
+        using var job = AgentOs.RemoteAgent.ProcessJob.Create();
+        job.Add(process);
         RunningCli[request.Id] = process;
 
         if (profile.PromptViaStdin)
@@ -476,6 +479,8 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start shell process.");
+        using var job = AgentOs.RemoteAgent.ProcessJob.Create();
+        job.Add(process);
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();

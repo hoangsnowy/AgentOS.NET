@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <RootNamespace>AgentOs.Tests</RootNamespace>
+    <!-- The linked runner ProcessJob.cs uses source-generated P/Invoke. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>AgentOs.Tests</AssemblyName>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -53,6 +55,7 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunnerCredentials.cs" Link="Linked\RunnerCredentials.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\CliProgress.cs" Link="Linked\CliProgress.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\PreviewHost.cs" Link="Linked\PreviewHost.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\ProcessJob.cs" Link="Linked\ProcessJob.cs" />
   </ItemGroup>
 
 </Project>
