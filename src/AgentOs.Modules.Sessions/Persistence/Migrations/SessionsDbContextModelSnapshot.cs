@@ -18,7 +18,7 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("sessions")
-                .HasAnnotation("ProductVersion", "10.0.8")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -52,6 +52,9 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                     b.Property<string>("Error")
                         .HasColumnType("text");
 
+                    b.Property<int>("FixRounds")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("IssueNumber")
                         .HasColumnType("integer");
 
@@ -59,6 +62,9 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("MergedAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PrUrl")
                         .HasColumnType("text");

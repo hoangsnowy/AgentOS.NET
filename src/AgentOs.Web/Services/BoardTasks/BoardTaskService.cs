@@ -146,6 +146,8 @@ public sealed class BoardTaskService(
         }
 
         var change = string.IsNullOrWhiteSpace(changeRequest) ? null : changeRequest.Trim();
+        // Delivery metrics: every change sent back to the Coding agent is one more fix round of this task.
+        if (change is not null) { await sessions.IncrementFixRoundsForTenantAsync(tenantId, session.Id, ct).ConfigureAwait(false); }
         if (change is not null)
         {
             // Knowledge graph: what the review / failing checks / acceptance test said becomes a lesson of the project,

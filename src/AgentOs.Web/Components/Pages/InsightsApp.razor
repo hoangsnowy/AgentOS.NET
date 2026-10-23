@@ -15,6 +15,7 @@
 @using AgentOs.Modules.Llm
 @using AgentOs.Web.Services
 @inject IPipelineRunRepository Runs
+@inject AgentOs.Modules.Sessions.Persistence.ISessionRepository Tasks
 @inject IBudgetService Budgets
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
@@ -35,6 +36,36 @@
         </Btn>
     </div>
 </header>
+
+@* ── Delivery: is the AI team getting better? (merged tasks, first-try rate, fix rounds, time to merge) ── *@
+<Panel Title="Delivery">
+    <div class="metrics" role="list" aria-label="Delivery">
+        <div class="metric" role="listitem">
+            <div class="v">@Num(_delivery.Merged)</div>
+            <div class="k">Tasks merged</div>
+        </div>
+        <div class="metric" role="listitem">
+            <div class="v">@(_delivery.Merged == 0 ? "—" : _delivery.FirstTryRate.ToString("P0", CultureInfo.InvariantCulture))</div>
+            <div class="k">Passed first try</div>
+            <div class="metric-sub">no change sent back</div>
+        </div>
+        <div class="metric" role="listitem">
+            <div class="v">@(_delivery.Merged == 0 ? "—" : _delivery.AverageFixRounds.ToString("0.0", CultureInfo.InvariantCulture))</div>
+            <div class="k">Avg fix rounds</div>
+            <div class="metric-sub">checks · review · testing · you</div>
+        </div>
+        <div class="metric" role="listitem">
+            <div class="v">@(_delivery.Merged == 0 ? "—" : Duration(_delivery.MedianHoursToMerge))</div>
+            <div class="k">Median time to merge</div>
+        </div>
+        <div class="metric" role="listitem">
+            <div class="v">@Num(_delivery.Stuck)</div>
+            <div class="k">Waiting for you</div>
+            <div class="metric-sub">couldn't finish · needs a person</div>
+        </div>
+    </div>
+    <p class="muted ins-note">From tasks merged in this range since delivery tracking started (23 Oct 2026). Lessons the agents learn should push "passed first try" up and fix rounds down.</p>
+</Panel>
 
 @* ── Headline KPI tiles ───────────────────────────────────────────────────────────────────── *@
 <div class="metrics">
@@ -319,6 +350,7 @@ else
             // Tenant-explicit reads — a circuit's ITenantContext is blank, so pass the tenant in.
             _summary = await Runs.GetCostSummaryForTenantAsync(_tenantId, Since);
             _extra = await Runs.GetInsightsExtraForTenantAsync(_tenantId, Since);
+            _delivery = await Tasks.GetDeliveryForTenantAsync(_tenantId, Since);
             _runs = await Runs.ListForTenantAsync(_tenantId, limit: 50);
             _estApiCost = _summary.ByModel.Sum(m => WouldBe(m.Key, m.TokensIn, m.TokensOut));
         }
@@ -405,6 +437,14 @@ else
     private static string ShortDay(string isoDay)
         => DateTime.TryParse(isoDay, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var d)
             ? d.ToString("dd/MM", CultureInfo.InvariantCulture) : isoDay;
+
+    private AgentOs.Modules.Sessions.Persistence.DeliverySummary _delivery = AgentOs.Modules.Sessions.Persistence.DeliverySummary.Empty;
+
+    // "45 min", "3.5 h", "2.1 days" — the median time from task start to merge.
+    internal static string Duration(double hours) =>
+        hours < 1 ? $"{Math.Max(1, (int)Math.Round(hours * 60)).ToString(CultureInfo.InvariantCulture)} min"
+        : hours < 48 ? $"{hours.ToString("0.0", CultureInfo.InvariantCulture)} h"
+        : $"{(hours / 24).ToString("0.0", CultureInfo.InvariantCulture)} days";
 
     private static string AgentShort(string agent) => agent
         .Replace("Agent", "", StringComparison.Ordinal).Trim() is { Length: > 0 } s ? s : agent;

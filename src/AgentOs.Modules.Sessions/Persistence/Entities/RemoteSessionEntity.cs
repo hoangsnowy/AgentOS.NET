@@ -57,4 +57,9 @@ public sealed class RemoteSessionEntity
     // greenfield router can hard-gate the Quality engine even on the unattended "Run all ai:ready" path
     // where there is no per-ticket UI. Null for legacy/migrated sessions or tickets with no type label.
     public string? TicketType { get; set; }
+
+    // Delivery metrics (Insights › Delivery): how many times the change went back to the Coding agent — red checks,
+    // conflicts, review, acceptance or a person's "Ask for changes" — and when its last change merged.
+    public int FixRounds { get; set; }
+    public DateTimeOffset? MergedAtUtc { get; set; }
 }
