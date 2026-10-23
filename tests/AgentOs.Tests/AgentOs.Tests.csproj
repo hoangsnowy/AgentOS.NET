@@ -39,6 +39,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="Shouldly" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <!-- MTP reporting/coverage extensions (xunit.v3 4.0.0 runs on Microsoft.Testing.Platform).
          Every test project in a solution-wide run must understand the coverage / trx-report args,
@@ -57,6 +58,7 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\PreviewHost.cs" Link="Linked\PreviewHost.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ProcessJob.cs" Link="Linked\ProcessJob.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\KeepAwake.cs" Link="Linked\KeepAwake.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\CliModel.cs" Link="Linked\CliModel.cs" />
   </ItemGroup>
 
 </Project>

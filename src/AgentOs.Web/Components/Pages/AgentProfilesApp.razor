@@ -33,9 +33,12 @@ else
         </Btn>
     </header>
 
-    <Panel Title="Agents">
+    @foreach (var group in Groups)
+    {
+    <Panel Title="@GroupTitle(group)">
+        <p class="muted agent-profiles-intro">@GroupIntro(group)</p>
         <div class="agent-profiles-scroll">
-        <table class="data-table agent-profiles">
+        <table class="data-table agent-profiles" aria-label="@GroupTitle(group)">
             <thead>
                 <tr>
                     <th>Agent</th>
@@ -50,20 +53,24 @@ else
                 </tr>
             </thead>
             <tbody>
-                @foreach (var row in _rows)
+                @foreach (var row in _rows.Where(r => r.Group == group))
                 {
                     var locked = row.IsLocked;
-                    <tr @key="row.Role">
+                    <tr @key="row.Role" data-role="@row.Role">
                         <td>
                             <span class="agent-profiles-who">
                                 <AgentMascot Role="@row.Role" Size="30" />
-                                <span class="agent-profiles-name"><strong>@row.Role</strong><Badge Variant="@SourceVariant(row.Source)">@SourceLabel(row.Source)</Badge></span>
+                                <span class="agent-profiles-name">
+                                    <strong title="@($"Role key: {row.Role}")">@row.Label</strong>
+                                    <span class="agent-profiles-desc">@row.Description</span>
+                                    <Badge Variant="@SourceVariant(row.Source)">@SourceLabel(row.Source)</Badge>
+                                </span>
                             </span>
                         </td>
                         @if (_advanced)
                         {
                         <td>
-                            <select class="prefs-select" disabled="@locked" aria-label="@($"{row.Role} provider")"
+                            <select class="prefs-select" disabled="@locked" aria-label="@($"{row.Label} provider")"
                                     value="@row.Provider" @onchange="e => row.Provider = e.Value?.ToString() ?? string.Empty">
                                 @foreach (var p in LlmProviders.Selectable)
                                 {
@@ -77,7 +84,7 @@ else
                         <td>
                             @* Simple view: every priced model, the provider inferred from the choice (ModelRouting). *@
                             <ModelPicker Value="@row.Model" ValueChanged="v => PickModel(row, v)" Provider="@(_advanced ? row.Provider : null)"
-                                         AriaLabel="@($"{row.Role} model")" Disabled="@locked" />
+                                         AriaLabel="@($"{row.Label} model")" Disabled="@locked" />
                             <div class="prefs-hint">@PriceHint(row.Model)@(_advanced ? "" : $" · via {(row.Provider == "Anthropic" ? "Claude" : row.Provider)}")</div>
                         </td>
                         @if (_advanced)
@@ -86,7 +93,7 @@ else
                             @if (ModelCapabilities.AcceptsSamplingParameters(row.Model))
                             {
                                 <input class="prefs-input agent-profiles-num" type="number" min="0" max="2" step="0.1"
-                                       disabled="@locked" aria-label="@($"{row.Role} temperature")"
+                                       disabled="@locked" aria-label="@($"{row.Label} temperature")"
                                        value="@row.Temperature" @onchange="e => row.Temperature = e.Value?.ToString() ?? string.Empty" />
                             }
                             else
@@ -96,7 +103,7 @@ else
                         </td>
                         <td>
                             <input class="prefs-input agent-profiles-num" type="number" min="1" max="@AgentSettings.MaxOutputTokensCeiling" step="256"
-                                   disabled="@locked" aria-label="@($"{row.Role} max output tokens")"
+                                   disabled="@locked" aria-label="@($"{row.Label} max output tokens")"
                                    value="@row.MaxTokens" @onchange="e => row.MaxTokens = e.Value?.ToString() ?? string.Empty" />
                         </td>
                         }
@@ -112,8 +119,9 @@ else
         </table>
         </div>
     </Panel>
+    }
 
-    <Panel Title="Pipeline">
+    <Panel Title="Workflow pipeline · QA loop">
         <Field Label="QA loop · max iterations" Hint="How many Coding → Testing → QA rounds before a run stops (1–10).">
             <input class="prefs-input agent-profiles-num" type="number" min="1" max="10" step="1"
                    disabled="@(_iterationsSource == SettingSource.Locked)" aria-label="QA loop max iterations"
@@ -152,9 +160,24 @@ else
     private string _iterations = string.Empty;
     private SettingSource _iterationsSource;
 
-    private sealed class RoleRow(string role)
+    // One agent registry: the Board agents first, then the legacy 5-agent Workflow pipeline — separate tables, so
+    // nobody edits "Coding (Workflow pipeline)" expecting the ticket agent to change.
+    private static readonly AgentRoleGroup[] Groups = [AgentRoleGroup.Board, AgentRoleGroup.WorkflowPipeline];
+
+    private static string GroupTitle(AgentRoleGroup group) => group == AgentRoleGroup.Board
+        ? "Board agents"
+        : "Workflow pipeline agents";
+
+    private static string GroupIntro(AgentRoleGroup group) => group == AgentRoleGroup.Board
+        ? "The agents behind tickets, reviews, testing, Autopilot and New idea. Coding, Reviewer and Testing (tickets) need a paired computer for the checkout; on RemoteAgent they cost 0 server tokens, any other provider passes your budget cap."
+        : "The 5-agent pipeline of the Run and Workflow apps (and the Board's Thorough engine). These rows do not change the Board agents above.";
+
+    private sealed class RoleRow(AgentRoleInfo info)
     {
-        public string Role { get; } = role;
+        public string Role { get; } = info.Key;
+        public string Label { get; } = info.Label;
+        public string Description { get; } = info.Description;
+        public AgentRoleGroup Group { get; } = info.Group;
         public string Provider { get; set; } = string.Empty;
         public string Model { get; set; } = string.Empty;
         public string Temperature { get; set; } = string.Empty;
@@ -184,7 +207,7 @@ else
         var rows = new List<RoleRow>(AgentSettings.Roles.Count);
         foreach (var (role, _) in AgentSettings.Roles)
         {
-            var row = new RoleRow(role);
+            var row = new RoleRow(AgentRoles.Find(role) ?? new AgentRoleInfo(role, role, AgentRoleGroup.WorkflowPipeline, string.Empty));
             var present = RoleFields
                 .Select(field => (Field: field, View: byKey.GetValueOrDefault(AgentSettings.Key(role, field))))
                 .Where(p => p.View is not null);
@@ -236,7 +259,7 @@ else
                 }
                 count++;
             }
-            Toasts.Show("Agent profiles", count == 0 ? $"{role}: nothing changed." : $"{role} saved — applies to the next call.", AgentOs.Web.Shell.Services.ToastKind.Ok);
+            Toasts.Show("Agent profiles", count == 0 ? $"{AgentRoles.Label(role)}: nothing changed." : $"{AgentRoles.Label(role)} saved — applies to the next call.", AgentOs.Web.Shell.Services.ToastKind.Ok);
         }
         finally
         {

@@ -1,47 +1,79 @@
 // AgentOs.Application/Agents/AgentsOptions.cs
-// Phase 3 — Options binding for per-agent configuration (the "Agents" section in appsettings).
+// Seed defaults for every agent profile (the "Agents" section; appsettings is bootstrap-only — ADR-0011). Property
+// names ARE the role keys of AgentRoles, so Agents:<Key>:* binds here and seeds Settings → Agent profiles.
 
 namespace AgentOs.Modules.Pipeline.Agents;
 
 /// <summary>
-/// Configuration for the set of 5 agents — bound from the <c>"Agents"</c> section.
+/// Per-agent configuration — bound from the <c>"Agents"</c> section. One property per <see cref="AgentRoles"/> key.
 /// </summary>
 public sealed class AgentsOptions
 {
     /// <summary>Section name for <c>Configuration.GetSection</c>.</summary>
     public const string SectionName = "Agents";
 
-    /// <summary>Orchestrator configuration.</summary>
+    // The Board agents that need a real machine (a checkout, a browser, the repo's toolchain) or answer from one run
+    // on the member's paired computer by default — 0 server tokens.
+    private const string MembersComputer = "RemoteAgent";
+    private const string BoardModel = "claude-sonnet-4-6";
+
+    /// <summary>Workflow pipeline — Orchestrator configuration.</summary>
     public AgentOptions Orchestrator { get; set; } = new() { Model = "claude-haiku-4-5", Temperature = 0.3, MaxTokens = 2000 };
 
-    /// <summary>RequirementAgent configuration.</summary>
+    /// <summary>Workflow pipeline — RequirementAgent configuration.</summary>
     public AgentOptions Requirement { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.1, MaxTokens = 2000 };
 
-    /// <summary>CodingAgent configuration.</summary>
+    /// <summary>Workflow pipeline — CodingAgent configuration.</summary>
     public AgentOptions Coding { get; set; } = new() { Provider = "AzureOpenAI", Model = "gpt-4.1", Temperature = 0.2, MaxTokens = 4000 };
 
-    /// <summary>TestingAgent configuration.</summary>
+    /// <summary>Workflow pipeline — TestingAgent configuration.</summary>
     public AgentOptions Testing { get; set; } = new() { Provider = "AzureOpenAI", Model = "gpt-4o-mini", Temperature = 0.2, MaxTokens = 3000 };
 
-    /// <summary>QaAgent configuration.</summary>
+    /// <summary>Workflow pipeline — QaAgent configuration.</summary>
     public AgentOptions Qa { get; set; } = new() { Model = "claude-haiku-4-5", Temperature = 0.1, MaxTokens = 1500 };
 
-    /// <summary>IssueWorkAgent configuration (M5 — agentic issue→PR pipeline).</summary>
+    /// <summary>Board — Coding (tickets): IssueWorkAgent, the agentic issue→branch run.</summary>
     public AgentOptions IssueWork { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.2, MaxTokens = 32768 };
 
-    /// <summary>TicketDecomposerAgent configuration (bootstrap — RequirementSpec → board tickets).</summary>
-    public AgentOptions Decomposer { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.2, MaxTokens = 4000 };
+    /// <summary>Board — Discovery (New idea): the requirement step and the ticket split (TicketDecomposerAgent).</summary>
+    public AgentOptions Discovery { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.2, MaxTokens = 4000 };
+
+    /// <summary>Board — Reviewer (ReviewAgent). Reads the change in a checkout on the member's computer.</summary>
+    public AgentOptions Reviewer { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 32768 };
+
+    /// <summary>Board — Testing (tickets): AcceptanceAgent. Builds and tests the change on the member's computer.</summary>
+    public AgentOptions Acceptance { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 32768 };
+
+    /// <summary>Board — Autopilot lead (AutopilotOrchestratorAgent). Answer-only.</summary>
+    public AgentOptions AutopilotOrchestrator { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 4096 };
+
+    /// <summary>Board — Retrospective (RetrospectiveAgent). Answer-only.</summary>
+    public AgentOptions Retrospective { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 4096 };
+
+    /// <summary>The seed profile for <paramref name="role"/> (an <see cref="AgentRoles"/> key), or null when unknown.</summary>
+    public AgentOptions? For(string role) => role switch
+    {
+        AgentRoles.Orchestrator => Orchestrator,
+        AgentRoles.Requirement => Requirement,
+        AgentRoles.Coding => Coding,
+        AgentRoles.Testing => Testing,
+        AgentRoles.Qa => Qa,
+        AgentRoles.IssueWork => IssueWork,
+        AgentRoles.Discovery => Discovery,
+        AgentRoles.Reviewer => Reviewer,
+        AgentRoles.Acceptance => Acceptance,
+        AgentRoles.AutopilotOrchestrator => AutopilotOrchestrator,
+        AgentRoles.Retrospective => Retrospective,
+        _ => null,
+    };
 
     /// <summary>Every configured agent, for cross-cutting checks (startup validation).</summary>
     public IEnumerable<AgentOptions> All()
     {
-        yield return Orchestrator;
-        yield return Requirement;
-        yield return Coding;
-        yield return Testing;
-        yield return Qa;
-        yield return IssueWork;
-        yield return Decomposer;
+        foreach (var role in AgentRoles.All)
+        {
+            if (For(role.Key) is { } options) { yield return options; }
+        }
     }
 }
 

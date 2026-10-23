@@ -235,6 +235,9 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         : yolo ? [.. profile.DefaultArgs, .. profile.AutoArgs]
         : scoped ? [.. profile.DefaultArgs, .. AgentOs.RemoteAgent.ScopedAutonomy.ArgsFor(cmd)]
         : profile.DefaultArgs;
+    // The model the agent's profile picked (Settings → Agent profiles) — `--model` for claude, `-m` for codex (CliModel.cs).
+    var modelFlags = AgentOs.RemoteAgent.CliModel.Flags(cmd, request.Model, args);
+    args = [.. args, .. modelFlags];
     // Claude with the runner's own flags streams its events, so the Board can show what it is doing (CliProgress.cs).
     // A custom REMOTE_AGENT_ARGS keeps exactly what the operator asked for.
     var streaming = argsEnv is null && string.Equals(profile.Command, "claude", StringComparison.OrdinalIgnoreCase);
@@ -282,7 +285,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             psi.ArgumentList.Add(prompt);
         }
 
-        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")} autonomy={(argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt")} dir={runDir}");
+        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")} autonomy={(argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt")} model={(modelFlags.Length > 0 ? modelFlags[^1] : "cli default")} dir={runDir}");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{cmd}'. Is the {cli} CLI installed and on PATH?");

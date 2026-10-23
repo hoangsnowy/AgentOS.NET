@@ -36,6 +36,8 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
 
         // The connect flow is shared by the HTTP endpoint and the desktop Board app (tenant-explicit).
         services.AddScoped<IWorkspaceConnector, WorkspaceConnector>();
+        // A board's repositories for agents that see the whole board (the Autopilot lead reads their practices).
+        services.AddScoped<AgentOs.Domain.Workspaces.IBoardRepos, WorkspaceBoardRepos>();
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))

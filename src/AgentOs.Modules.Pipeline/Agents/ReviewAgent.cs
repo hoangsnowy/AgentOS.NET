@@ -2,6 +2,8 @@
 // diff against its ticket and the repository's own rules, the way a careful reviewer would, and either approves it or
 // returns must-fix findings that go back to the Coding agent. It runs on the member's paired computer under scoped
 // autonomy (it needs the checkout to read code in context and may build) and never edits, commits or pushes.
+// Its profile (Settings → Agent profiles, role "Reviewer"), its prompt (Settings → Prompts) and the budget gate apply
+// like every other agent's; the seed keeps it on the member's computer (0 server tokens).
 
 using System;
 using System.Collections.Generic;
@@ -10,15 +12,19 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Cost;
 using AgentOs.Domain.Llm;
 using AgentOs.Domain.Sessions;
+using AgentOs.Modules.Pipeline.Prompts;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace AgentOs.Modules.Pipeline.Agents;
 
 /// <inheritdoc cref="IReviewAgent"/>
 public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> logger, ISessionRunFeed? feed = null,
-    AgentOs.Domain.Memory.IMemoryStore? memory = null) : IReviewAgent
+    AgentOs.Domain.Memory.IMemoryStore? memory = null, IOptions<AgentsOptions>? options = null, IAgentProfiles? profiles = null,
+    IPromptOverrides? prompts = null, IBudgetGuard? budgetGuard = null) : IReviewAgent
 {
     // Reading a diff in context is quicker than testing it; a build fits too.
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(20);
@@ -32,25 +38,37 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
             return NotRun("There is no proposed change (branch) to review.");
         }
         var repoLabel = $"{request.Repo.Owner}/{request.Repo.Repo}";
-        Emit(request, SessionRunEventKind.Running, $"Reviewing #{request.IssueNumber} on your computer.", repoLabel);
 
+        // Live profile (Settings → Agent profiles), resolved per call.
+        var profile = await BoardAgent.ProfileAsync(profiles, options, AgentRoles.Reviewer, ct).ConfigureAwait(false);
         ILlmClient llm;
-        try { llm = factory.Create("RemoteAgent"); }
+        try { llm = factory.Create(profile.Provider); }
         catch (Exception ex) when (ex is LlmException or ArgumentException or NotSupportedException or InvalidOperationException)
         {
             return NotRun($"No computer to review on: {ex.Message}");
         }
+        var provider = AgentBudgetGate.EffectiveProvider(llm, profile.Provider);
+        if (await AgentBudgetGate.BlockedAsync(budgetGuard, request.TenantId, provider, logger, nameof(ReviewAgent), ct).ConfigureAwait(false) is not null)
+        {
+            return NotRun(AgentBudgetGate.BlockedMessage);
+        }
+        Emit(request, SessionRunEventKind.Running, AgentBudgetGate.RunsOnMembersComputer(provider)
+            ? $"Reviewing #{request.IssueNumber} on your computer."
+            : $"Reviewing #{request.IssueNumber} ({provider}).", repoLabel);
 
         var llmRequest = new LlmRequest(
-            SystemPrompt: Instructions(request) + "\n\n" + UntrustedText.SystemRule,
+            SystemPrompt: await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Reviewer, InstructionsTemplate, AcceptanceAgent.Values(request),
+                UntrustedText.SystemRule, ct).ConfigureAwait(false),
             UserPrompt: AcceptanceAgent.User(request).Replace("Test the change against these criteria and reply with the JSON verdict.",
                 "Review the change against this ticket and reply with the JSON verdict.", StringComparison.Ordinal)
                 + await PracticesAsync(request, ct).ConfigureAwait(false),
-            Model: "claude-sonnet-4-6",
-            MaxTokens: 32768,
+            Model: profile.Model,
+            Temperature: profile.Temperature,
+            MaxTokens: profile.MaxTokens,
             Timeout: RunTimeout,
             Cli: request.CliProfile)
         {
+            AgentRole = AgentRoles.Reviewer,
             Autonomy = WorkspaceAutonomy.Scoped,
             Progress = new InlineProgress<string>(step =>
             {
@@ -72,19 +90,9 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
     // The project's practices: a change that breaks one is a must-fix finding. Best-effort — none on a memory failure.
     private async Task<string> PracticesAsync(AcceptanceRequest request, CancellationToken ct)
     {
-        if (memory is null) { return string.Empty; }
-        try
-        {
-            var practices = await memory.ListAsync(request.TenantId, $"{request.Repo.Owner}/{request.Repo.Repo}",
-                AgentOs.Domain.Memory.MemoryKinds.Practice, RetrospectiveAgent.MaxPractices, ct).ConfigureAwait(false);
-            return practices.Count == 0 ? string.Empty
-                : AgentOs.Domain.Memory.ProjectMemory.PracticesBlock(practices) + "\nA change that breaks one of these practices is a must-fix finding.";
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "Reviewer: reading the practices failed");
-            return string.Empty;
-        }
+        var block = await ProjectPractices.BlockAsync(memory, request.TenantId, [$"{request.Repo.Owner}/{request.Repo.Repo}"], logger, ct)
+            .ConfigureAwait(false);
+        return block.Length == 0 ? string.Empty : block + "\nA change that breaks one of these practices is a must-fix finding.";
     }
 
     private static ReviewVerdict NotRun(string why) => new(false, false, [], why, why);
@@ -92,8 +100,12 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
     private void Emit(AcceptanceRequest r, SessionRunEventKind kind, string message, string repo) =>
         feed?.Publish(new SessionRunEvent(r.TenantId, r.SessionId, kind, message, DateTimeOffset.UtcNow, repo));
 
-    internal static string Instructions(AcceptanceRequest r) => string.Format(
-        CultureInfo.InvariantCulture,
+    /// <summary>The system prompt for one run (the built-in template, filled).</summary>
+    internal static string Instructions(AcceptanceRequest r) => PromptTemplate.Fill(InstructionsTemplate, AcceptanceAgent.Values(r));
+
+    /// <summary>The built-in system prompt template — placeholders as <see cref="AcceptanceAgent.Placeholders"/> (its first
+    /// line is the agent's routing key).</summary>
+    public const string InstructionsTemplate =
         """
         You are the Reviewer Agent of AgentOS.NET. You review a proposed change before it is tested, the way a careful
         senior reviewer would on its pull request, on the developer's own machine with your native shell and file tools.
@@ -101,10 +113,10 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
         requests.
 
         1. Get the change. The runner starts you in a fresh, empty directory made for this run:
-           git clone https://github.com/{0}/{1}.git .
-           git fetch origin {2}
-           git checkout {2}
-           git diff origin/{3}...HEAD
+           git clone https://github.com/{owner}/{repo}.git .
+           git fetch origin {branch}
+           git checkout {branch}
+           git diff origin/{defaultBranch}...HEAD
         2. Read the ticket (user message) and the repository's rules (AGENTS.md, CLAUDE.md, README, docs it points to).
         3. Review the diff in context — open the files around each change. Look for, in this order:
            - correctness: does it do what the ticket asks; broken edge cases; wrong logic; regressions;
@@ -120,10 +132,9 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
            Do not invent problems; an approval with no findings is a good outcome.
 
         Reply ONLY with this JSON (no other text):
-        {{"verdict":"approve","findings":[{{"severity":"must-fix","file":"<path>","line":42,"comment":"<what is wrong and what to do>"}}],"summary":"<one or two sentences>"}}
+        {"verdict":"approve","findings":[{"severity":"must-fix","file":"<path>","line":42,"comment":"<what is wrong and what to do>"}],"summary":"<one or two sentences>"}
         "verdict" is "approve" when there is no must-fix finding, otherwise "changes".
-        """,
-        r.Repo.Owner, r.Repo.Repo, r.Repo.ExistingBranch, r.Repo.DefaultBranch);
+        """;
 
     /// <summary>Reads the agent's JSON verdict. An approval is only trusted when no finding is must-fix.</summary>
     internal static ReviewVerdict Parse(string content)

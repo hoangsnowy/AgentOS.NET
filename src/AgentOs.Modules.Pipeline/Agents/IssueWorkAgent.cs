@@ -75,36 +75,16 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         _feed?.Publish(new SessionRunEvent(req.TenantId, req.SessionId, kind, message, DateTimeOffset.UtcNow, repo));
 
     // S1 — returns a fully-failed IssueWorkResult when the tenant is over its ENFORCED monthly LLM
-    // budget, else null (the run proceeds). Fail-open on a transient store error: a budget-store hiccup
-    // must never block a run — the cap re-applies on the next run once the store recovers.
-    private async Task<IssueWorkResult?> BudgetBlockedAsync(IssueWorkRequest request, CancellationToken ct)
+    // budget and the run would spend server tokens on effectiveProvider, else null (the run proceeds).
+    // Fail-open on a transient store error (see AgentBudgetGate).
+    private async Task<IssueWorkResult?> BudgetBlockedAsync(IssueWorkRequest request, string effectiveProvider, CancellationToken ct)
     {
-        BudgetStatus budget;
-        try
-        {
-            budget = await _budgetGuard!.EvaluateAsync(request.TenantId, ct).ConfigureAwait(false);
-        }
-        catch (Microsoft.EntityFrameworkCore.DbUpdateException ex) { return BudgetEvalFailed(ex); }
-        catch (System.Data.Common.DbException ex) { return BudgetEvalFailed(ex); }
-        catch (TimeoutException ex) { return BudgetEvalFailed(ex); }
-        catch (IOException ex) { return BudgetEvalFailed(ex); }
-        catch (InvalidOperationException ex) { return BudgetEvalFailed(ex); }
-
-        // fail-open: a transient budget-store error must not block a run — log and proceed.
-        IssueWorkResult? BudgetEvalFailed(Exception ex)
-        {
-            _logger.LogWarning(ex, "IssueWorkAgent: budget evaluation failed for tenant {Tenant}; proceeding.", request.TenantId);
-            return null;
-        }
-
-        if (budget is not { State: BudgetState.Exceeded, EnforceOn: true })
+        if (await AgentBudgetGate.BlockedAsync(_budgetGuard, request.TenantId, effectiveProvider, _logger, nameof(IssueWorkAgent), ct)
+                .ConfigureAwait(false) is not { } budget)
         {
             return null;
         }
 
-        _logger.LogWarning(
-            "IssueWorkAgent: blocking session {SessionId} — tenant {Tenant} over monthly LLM budget (${Spent} of ${Cap}).",
-            request.SessionId, request.TenantId, budget.SpentUsd, budget.CapUsd);
         Emit(request, SessionRunEventKind.Step,
             $"Blocked — monthly LLM budget exceeded (${budget.SpentUsd:0.##} of ${budget.CapUsd:0.##}). " +
             "Raise the cap in Settings, or use Run-on-machine (0 server tokens).");
@@ -134,36 +114,8 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         // the CLI-mode prompt + a long dispatch timeout, and the run costs zero server tokens.
         var opts = _profiles is null
             ? _agentOpts
-            : await _profiles.ResolveAsync(nameof(AgentsOptions.IssueWork), _agentOpts, ct).ConfigureAwait(false);
+            : await _profiles.ResolveAsync(AgentRoles.IssueWork, _agentOpts, ct).ConfigureAwait(false);
         var providerName = request.ProviderOverride ?? opts.Provider;
-        var cliMode = providerName.Trim().ToUpperInvariant() is "REMOTEAGENT" or "REMOTE" or "IDE";
-
-        // S1 — server-token budget gate. Server-side runs spend AgentOS.NET's OWN LLM tokens, so they pass
-        // the per-tenant budget gate before the expensive agentic loop (the gap the run-level pipeline
-        // gate in PersistingOrchestratorAgent never covered for this path). CLI/RemoteAgent runs execute
-        // on the member's paired machine and cost ZERO server tokens, so they are exempt.
-        if (!cliMode && _budgetGuard is not null)
-        {
-            var blocked = await BudgetBlockedAsync(request, ct).ConfigureAwait(false);
-            if (blocked is not null)
-            {
-                return blocked;
-            }
-        }
-
-        // E0.6: per-tenant admission (concurrency + burst) — applies to CLI runs too (they hold a runner + a session).
-        using var lease = _admission is null ? null : await _admission.AdmitAsync(request.TenantId, ct).ConfigureAwait(false);
-        if (lease is { Admitted: false })
-        {
-            Emit(request, SessionRunEventKind.Step, "Blocked — " + lease.Reason);
-            return new IssueWorkResult(false,
-                request.Repos.Select(r => new RepoWorkOutcome(r.SessionRepoId, false, r.Owner, r.Repo, "", "", lease.Reason)).ToList(),
-                lease.Reason);
-        }
-
-        Emit(request, SessionRunEventKind.Running, cliMode
-            ? $"Running on your machine's CLI — {request.Repos.Count} repo(s), 0 server tokens."
-            : $"Dispatched to runner — {request.Repos.Count} repo(s).");
 
         ILlmClient llm;
         try
@@ -185,6 +137,33 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 .ToList();
             return new IssueWorkResult(false, failed, $"LLM client init failed: {ex.Message}");
         }
+
+        // CLI mode and the budget gate follow the EFFECTIVE provider (after Settings' force-provider), not the name asked for.
+        var effective = AgentBudgetGate.EffectiveProvider(llm, providerName);
+        var cliMode = AgentBudgetGate.RunsOnMembersComputer(effective);
+
+        // S1 — server-token budget gate. Server-side runs spend AgentOS.NET's OWN LLM tokens, so they pass
+        // the per-tenant budget gate before the expensive agentic loop (the gap the run-level pipeline
+        // gate in PersistingOrchestratorAgent never covered for this path). CLI/RemoteAgent runs execute
+        // on the member's paired machine and cost ZERO server tokens, so they are exempt.
+        if (await BudgetBlockedAsync(request, effective, ct).ConfigureAwait(false) is { } blocked)
+        {
+            return blocked;
+        }
+
+        // E0.6: per-tenant admission (concurrency + burst) — applies to CLI runs too (they hold a runner + a session).
+        using var lease = _admission is null ? null : await _admission.AdmitAsync(request.TenantId, ct).ConfigureAwait(false);
+        if (lease is { Admitted: false })
+        {
+            Emit(request, SessionRunEventKind.Step, "Blocked — " + lease.Reason);
+            return new IssueWorkResult(false,
+                request.Repos.Select(r => new RepoWorkOutcome(r.SessionRepoId, false, r.Owner, r.Repo, "", "", lease.Reason)).ToList(),
+                lease.Reason);
+        }
+
+        Emit(request, SessionRunEventKind.Running, cliMode
+            ? $"Running on your machine's CLI — {request.Repos.Count} repo(s), 0 server tokens."
+            : $"Dispatched to runner — {request.Repos.Count} repo(s).");
 
         // Run repos with bounded concurrency. Each repo is an independent LLM run with its own
         // working_dir on the runner, so they don't collide; the broker dispatches per-call (GUID
@@ -253,11 +232,17 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         // expose no server tools, and grant a long timeout for the full clone→build→test→push run.
         // E1.6: the tenant's workspace rules apply to the Quick engine too (server and CLI mode).
         var rules = _prompts is null ? string.Empty : WorkspaceRules.ToPromptBlock(await _prompts.ResolveRulesAsync(ct).ConfigureAwait(false));
+        // Settings → Prompts: the tenant's override of this mode's template (or the built-in one), filled per repo.
+        var template = _prompts is null
+            ? null
+            : cliMode
+                ? await _prompts.ResolveAsync(AgentRoles.IssueWork, IssueWorkPrompt.CliTemplate, ct).ConfigureAwait(false)
+                : await _prompts.ResolveAsync(IssueWorkPrompt.ServerPromptKey, IssueWorkPrompt.ServerTemplate, ct).ConfigureAwait(false);
         // Knowledge graph: the lessons earlier work on this repo left behind (reviews, failing checks, acceptance tests).
         var lessons = await RecallLessonsAsync(request, repo, ct).ConfigureAwait(false);
         var req = cliMode
             ? new LlmRequest(
-                SystemPrompt: IssueWorkPrompt.SystemCli(request, repo) + rules,
+                SystemPrompt: IssueWorkPrompt.SystemCli(request, repo, template) + rules,
                 UserPrompt: IssueWorkPrompt.User(request, repo) + lessons,
                 Model: opts.Model,
                 Temperature: opts.Temperature,
@@ -266,6 +251,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 Timeout: CliRunTimeout,
                 Cli: request.CliProfile)
             {
+                AgentRole = AgentRoles.IssueWork,
                 // The only request that asks the runner for hands: clone → edit → build → test → push in its own
                 // per-run directory. Every other remote call stays answer-only.
                 Autonomy = WorkspaceAutonomy.Scoped,
@@ -279,12 +265,15 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 }),
             }
             : new LlmRequest(
-                SystemPrompt: IssueWorkPrompt.System(request, repo) + rules,
+                SystemPrompt: IssueWorkPrompt.System(request, repo, template) + rules,
                 UserPrompt: IssueWorkPrompt.User(request, repo) + lessons,
                 Model: opts.Model,
                 Temperature: opts.Temperature,
                 MaxTokens: opts.MaxTokens,
-                Tools: ["runner_shell"]);
+                Tools: ["runner_shell"])
+            {
+                AgentRole = AgentRoles.IssueWork,
+            };
 
         try
         {

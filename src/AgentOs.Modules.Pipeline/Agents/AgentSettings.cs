@@ -3,8 +3,10 @@
 // AgentsOptions / PipelineOptions so the registry and the code defaults cannot drift. Keys match the
 // existing appsettings paths, so current deployments seed straight in.
 
+using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using AgentOs.Domain.Configuration;
 using AgentOs.Domain.Llm;
 using AgentOs.Modules.Pipeline.Pipeline;
@@ -27,7 +29,8 @@ public sealed class AgentSettings : ISettingsContributor
     /// limit is enforced against the model catalog; this is the absolute ceiling.</summary>
     public const int MaxOutputTokensCeiling = 128_000;
 
-    /// <summary>Agent roles in pipeline order, paired with their code defaults.</summary>
+    /// <summary>Every agent role (Board agents first, then the Workflow pipeline — see <see cref="AgentRoles"/>), paired
+    /// with its code defaults.</summary>
     public static IReadOnlyList<(string Role, AgentOptions Defaults)> Roles { get; } = BuildRoles();
 
     /// <summary>Setting key for <paramref name="role"/>'s <paramref name="field"/> (Provider/Model/Temperature/MaxTokens).</summary>
@@ -38,23 +41,24 @@ public sealed class AgentSettings : ISettingsContributor
     {
         foreach (var (role, d) in Roles)
         {
-            yield return new(Key(role, nameof(AgentOptions.Provider)), SettingKind.Choice, Category, $"{role} · provider")
+            var label = AgentRoles.Label(role);
+            yield return new(Key(role, nameof(AgentOptions.Provider)), SettingKind.Choice, Category, $"{label} · provider")
             {
                 DefaultValue = d.Provider,
                 Choices = LlmProviders.Selectable,
             };
-            yield return new(Key(role, nameof(AgentOptions.Model)), SettingKind.Model, Category, $"{role} · model")
+            yield return new(Key(role, nameof(AgentOptions.Model)), SettingKind.Model, Category, $"{label} · model")
             {
                 DefaultValue = d.Model,
             };
-            yield return new(Key(role, nameof(AgentOptions.Temperature)), SettingKind.Number, Category, $"{role} · temperature")
+            yield return new(Key(role, nameof(AgentOptions.Temperature)), SettingKind.Number, Category, $"{label} · temperature")
             {
                 DefaultValue = d.Temperature.ToString(CultureInfo.InvariantCulture),
                 Min = 0m,
                 Max = 2m,
                 Help = "Ignored by models that reject sampling parameters (Claude 4.7+/5.x, GPT-5+).",
             };
-            yield return new(Key(role, nameof(AgentOptions.MaxTokens)), SettingKind.WholeNumber, Category, $"{role} · max output tokens")
+            yield return new(Key(role, nameof(AgentOptions.MaxTokens)), SettingKind.WholeNumber, Category, $"{label} · max output tokens")
             {
                 DefaultValue = d.MaxTokens.ToString(CultureInfo.InvariantCulture),
                 Min = 1m,
@@ -72,18 +76,11 @@ public sealed class AgentSettings : ISettingsContributor
         };
     }
 
+    // One row per registered role, each seeded from AgentsOptions (a role without a seed is a startup bug).
     private static List<(string, AgentOptions)> BuildRoles()
     {
         var o = new AgentsOptions();
-        return
-        [
-            (nameof(AgentsOptions.Orchestrator), o.Orchestrator),
-            (nameof(AgentsOptions.Requirement), o.Requirement),
-            (nameof(AgentsOptions.Coding), o.Coding),
-            (nameof(AgentsOptions.Testing), o.Testing),
-            (nameof(AgentsOptions.Qa), o.Qa),
-            (nameof(AgentsOptions.IssueWork), o.IssueWork),
-            (nameof(AgentsOptions.Decomposer), o.Decomposer),
-        ];
+        return [.. AgentRoles.All.Select(r =>
+            (r.Key, o.For(r.Key) ?? throw new InvalidOperationException($"AgentsOptions has no seed for agent role '{r.Key}'.")))];
     }
 }

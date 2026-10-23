@@ -1577,8 +1577,8 @@ else if (_tab == Tab.Sessions)
                     finally
                     {
                         var idea = _ideaText.Trim().ReplaceLineEndings(" ");
-                        await TaskService.SaveAgentRunAsync(_tenantId, _userId, "Discovery",
-                            "Discovery · " + (idea.Length > 120 ? idea[..120] + "…" : idea), started, calls.Calls);
+                        await TaskService.SaveAgentRunAsync(_tenantId, _userId, AgentOs.Modules.Pipeline.Agents.AgentRoles.Discovery,
+                            AgentOs.Modules.Pipeline.Agents.AgentRoles.Label(AgentOs.Modules.Pipeline.Agents.AgentRoles.Discovery) + " · " +(idea.Length > 120 ? idea[..120] + "…" : idea), started, calls.Calls);
                     }
                 }
 

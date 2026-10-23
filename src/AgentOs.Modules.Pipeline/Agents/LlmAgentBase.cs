@@ -101,17 +101,28 @@ public abstract class LlmAgentBase
         }
 
         // Resolve the live profile per call (an edit in Settings applies to the next call) and pick the client
-        // for its provider — never frozen at construction.
+        // for its provider — never frozen at construction. A Board agent that reuses this specialist (Discovery runs
+        // the Requirement agent) opens an AgentRunScope: its role's profile, metrics name and budget gate apply.
+        var run = AgentRunScope.Current;
+        var role = run?.Role ?? PromptKey;
+        var fallback = run?.Fallback ?? _options;
         var profile = _profiles is null
-            ? _options
-            : await _profiles.ResolveAsync(PromptKey, _options, ct).ConfigureAwait(false);
+            ? fallback
+            : await _profiles.ResolveAsync(role, fallback, ct).ConfigureAwait(false);
         var llm = _factory.Create(profile.Provider);
+        if (run?.Budget is { } budget
+            && await AgentBudgetGate.BlockedAsync(budget, null, AgentBudgetGate.EffectiveProvider(llm, profile.Provider), Logger, AgentName, ct)
+                .ConfigureAwait(false) is not null)
+        {
+            throw new LlmException(AgentBudgetGate.BlockedMessage, AgentName);
+        }
 
         var request = new LlmRequest(systemPrompt, userPrompt, profile.Model, profile.Temperature, profile.MaxTokens)
         {
-            // Carry the fixed agent role out-of-band so providers (notably the offline one) can identify the
-            // agent without parsing the system prompt — robust against per-tenant prompt overrides.
-            AgentRole = PromptKey,
+            // Carry the agent role out-of-band so providers (notably the offline one) can identify the agent without
+            // parsing the system prompt — robust against per-tenant prompt overrides — and Insights files the call
+            // under it.
+            AgentRole = role,
             Timeout = LlmRequest.AgentAnswerTimeout,
         };
         var response = await llm.SendAsync(request, ct).ConfigureAwait(false);

@@ -98,20 +98,45 @@ exists on the options type but is not honoured yet.
 
 ### Settings → Agent profiles
 
-Per role — `Orchestrator`, `Requirement`, `Coding`, `Testing`, `Qa`, `IssueWork`, `Decomposer` — keys
-`Agents:<Role>:Provider` / `Model` / `Temperature` / `MaxTokens`, tenant scope. The model field lists
-priced models for the chosen provider (plus *Custom…* for deployment aliases); `Temperature` is hidden
-for models that reject sampling params; `MaxTokens` ≤ 128 000.
+One agent registry (`AgentRoles`): every agent AgentOS.NET runs has one stable **role key**, used for its
+profile (`Agents:<Key>:Provider` / `Model` / `Temperature` / `MaxTokens`, tenant scope), its prompt in
+**Settings → Prompts** (`prompt/<Key>/system`), the `AgentRole` of its LLM calls (what **Insights → By agent**
+groups and names by) and the label of its stored runs. The page shows two tables — the **Board agents** and the
+legacy 5-agent **Workflow pipeline** — so a change to one never silently touches the other. Every profile is read
+per call (no restart). The model field lists priced models for the chosen provider (plus *Custom…* for deployment
+aliases); `Temperature` is hidden for models that reject sampling params; `MaxTokens` ≤ 128 000.
 
-| Role | Provider | Model | Temp | Max output |
-|---|---|---|---|---|
-| Orchestrator | Anthropic | `claude-haiku-4-5` | 0.3 | 2000 |
-| Requirement | Anthropic | `claude-sonnet-4-6` | 0.1 | 2000 |
-| Coding | AzureOpenAI | `gpt-4.1` | 0.2 | 4000 |
-| Testing | AzureOpenAI | `gpt-4o-mini` | 0.2 | 3000 |
-| Qa | Anthropic | `claude-haiku-4-5` | 0.1 | 1500 |
-| IssueWork | Anthropic | `claude-sonnet-4-6` | 0.2 | 32768 |
-| Decomposer | Anthropic | `claude-sonnet-4-6` | 0.2 | 4000 |
+| Shown as | Key | Provider | Model | Temp | Max output |
+|---|---|---|---|---|---|
+| Discovery (New idea: requirement + ticket split) | `Discovery` | Anthropic | `claude-sonnet-4-6` | 0.2 | 4000 |
+| Coding (tickets) | `IssueWork` | Anthropic | `claude-sonnet-4-6` | 0.2 | 32768 |
+| Reviewer | `Reviewer` | RemoteAgent | `claude-sonnet-4-6` | 0 | 32768 |
+| Testing (tickets) | `Acceptance` | RemoteAgent | `claude-sonnet-4-6` | 0 | 32768 |
+| Autopilot lead | `AutopilotOrchestrator` | RemoteAgent | `claude-sonnet-4-6` | 0 | 4096 |
+| Retrospective | `Retrospective` | RemoteAgent | `claude-sonnet-4-6` | 0 | 4096 |
+| Orchestrator (Workflow pipeline) | `Orchestrator` | Anthropic | `claude-haiku-4-5` | 0.3 | 2000 |
+| Requirement (Workflow pipeline) | `Requirement` | Anthropic | `claude-sonnet-4-6` | 0.1 | 2000 |
+| Coding (Workflow pipeline) | `Coding` | AzureOpenAI | `gpt-4.1` | 0.2 | 4000 |
+| Testing (Workflow pipeline) | `Testing` | AzureOpenAI | `gpt-4o-mini` | 0.2 | 3000 |
+| QA (Workflow pipeline) | `Qa` | Anthropic | `claude-haiku-4-5` | 0.1 | 1500 |
+
+- **The provider is honoured, the model reaches the CLI.** A Board agent on `RemoteAgent` runs on a member's paired
+  computer; the runner passes the profile's model to the CLI (`claude --model <id>`, `codex -m <id>`) when that CLI
+  can serve it, otherwise the CLI's own default applies. Reviewer and Testing (tickets) need a checkout, so keep them
+  on a paired computer unless the chosen provider can reach one.
+- **Budget gate.** Every Board agent passes the tenant's enforced monthly cap before its call, decided from the
+  *effective* provider (after `Llm:ForceProvider`); only a call that really runs on a member's computer (0 server
+  tokens) is exempt.
+- **Discovery** covers both calls of New idea: the requirement step uses the Discovery profile (and is filed under
+  Discovery in Insights) with the Requirement agent's prompt and spec contract; the ticket split uses the Discovery
+  prompt. It replaces the former `Decomposer` profile and prompt keys — re-apply a customised `Agents:Decomposer:*`
+  or Decomposer prompt under `Discovery`.
+- **Prompts.** Board prompts are templates: `{owner}`, `{repo}`, `{branch}`, `{defaultBranch}` (Reviewer, Testing
+  (tickets)) and `{issue}`, `{branchStep}`, `{commitType}`… (Coding (tickets), which has one prompt for a member's
+  computer and one — `IssueWork.Server` — for the server runner) are filled on every run. The untrusted-text rule is
+  appended by code and cannot be overridden; workspace rules follow it.
+- **Practices.** Coding, Reviewer, Testing (tickets) and the Autopilot lead read the project's practices (Board →
+  Knowledge) before they work.
 
 `Pipeline:MaxIterations` (QA-loop cap when a story sets no `NMax`) — default 3, range 1–10.
 An unpriced model is charged at the fail-closed $15/$75 per 1M rate until added to `CostCalculator`.
