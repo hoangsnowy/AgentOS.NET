@@ -34,6 +34,13 @@ public enum TaskStart
     NoGitHubAccess,
 }
 
+/// <summary>A started task step: why it did or didn't start, and the work itself (completed when nothing started) —
+/// awaited by a per-ticket MAF workflow, ignored by fire-and-forget callers.</summary>
+public sealed record TaskRun(TaskStart Status, Task Completion)
+{
+    public static implicit operator TaskRun(TaskStart status) => new(status, Task.CompletedTask);
+}
+
 /// <summary>Starts Board tasks and follow-ups. Singleton; every call is tenant-explicit.</summary>
 public sealed class BoardTaskService(
     IServiceScopeFactory scopes,
@@ -41,6 +48,14 @@ public sealed class BoardTaskService(
     TaskStopRegistry stops,
     IOptions<PipelineOptions> pipelineOptions)
 {
+    private readonly SemaphoreSlim _testSlot = new(1, 1);
+
+    private sealed class SlotRelease(SemaphoreSlim slot) : IDisposable
+    {
+        private int _done;
+        public void Dispose() { if (Interlocked.Exchange(ref _done, 1) == 0) { slot.Release(); } }
+    }
+
     /// <summary>A repo a new task works in (the first one is the task's primary repo).</summary>
     public sealed record TaskRepo(string Owner, string Repo, string DefaultBranch, Guid? WorkspaceRepoId);
 
@@ -98,6 +113,11 @@ public sealed class BoardTaskService(
     /// pull request continues on its branch. Returns once the work is under way; the run reports on the session feed.
     /// </summary>
     public async Task<TaskStart> StartAsync(string tenantId, Guid sessionId, string? changeRequest = null, string? cliProfile = null,
+        CancellationToken ct = default) =>
+        (await BeginStartAsync(tenantId, sessionId, changeRequest, cliProfile, ct).ConfigureAwait(false)).Status;
+
+    /// <summary><see cref="StartAsync"/>, returning the running work too.</summary>
+    public async Task<TaskRun> BeginStartAsync(string tenantId, Guid sessionId, string? changeRequest = null, string? cliProfile = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
@@ -139,18 +159,22 @@ public sealed class BoardTaskService(
         var stopLease = stops.Begin(tenantId, session.Id);
         // Fire-and-forget in a fresh scope, independent of whoever asked (a circuit, or the orchestrator).
         // The Thorough engine stores its own pipeline run + metrics; every other run is recorded here for Insights.
-        _ = Task.Run(() => EngineSelection.IsQuality(session.Brain)
+        var completion = Task.Run(() => EngineSelection.IsQuality(session.Brain)
             ? RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease)
             : RecordedAsync(tenantId, session, "Coding", () => RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease)),
             CancellationToken.None);
-        return TaskStart.Started;
+        return new TaskRun(TaskStart.Started, completion);
     }
 
     /// <summary>
     /// Agentic Testing: test every open proposed change of a task against its ticket's acceptance criteria on the
     /// member's computer, post the evidence on each pull request, and mark it Accepted or Rejected.
     /// </summary>
-    public async Task<TaskStart> TestAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
+    public async Task<TaskStart> TestAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default) =>
+        (await BeginTestAsync(tenantId, sessionId, cliProfile, ct).ConfigureAwait(false)).Status;
+
+    /// <summary><see cref="TestAsync"/>, returning the running work too.</summary>
+    public async Task<TaskRun> BeginTestAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         using var scope = scopes.CreateScope();
@@ -174,9 +198,9 @@ public sealed class BoardTaskService(
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Testing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
         var stopLease = stops.Begin(tenantId, session.Id);
-        _ = Task.Run(() => RecordedAsync(tenantId, session, "Testing", () => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+        var completion = Task.Run(() => RecordedAsync(tenantId, session, "Testing", () => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
             CancellationToken.None);
-        return TaskStart.Started;
+        return new TaskRun(TaskStart.Started, completion);
     }
 
     /// <summary>
@@ -184,7 +208,11 @@ public sealed class BoardTaskService(
     /// the member's computer, posts the review on each pull request, and marks it Reviewed or ChangesRequested (its
     /// must-fix findings become the change request the Coding agent gets next).
     /// </summary>
-    public async Task<TaskStart> ReviewAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
+    public async Task<TaskStart> ReviewAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default) =>
+        (await BeginReviewAsync(tenantId, sessionId, cliProfile, ct).ConfigureAwait(false)).Status;
+
+    /// <summary><see cref="ReviewAsync"/>, returning the running work too.</summary>
+    public async Task<TaskRun> BeginReviewAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         using var scope = scopes.CreateScope();
@@ -208,9 +236,9 @@ public sealed class BoardTaskService(
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Reviewing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
         var stopLease = stops.Begin(tenantId, session.Id);
-        _ = Task.Run(() => RecordedAsync(tenantId, session, "Reviewer", () => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+        var completion = Task.Run(() => RecordedAsync(tenantId, session, "Reviewer", () => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
             CancellationToken.None);
-        return TaskStart.Started;
+        return new TaskRun(TaskStart.Started, completion);
     }
 
     private async Task ReviewChangesAsync(string tenantId, RemoteSessionEntity session, WorkspaceEntity board, string pat,
@@ -270,6 +298,10 @@ public sealed class BoardTaskService(
             using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(tenantId, session.MemberUserId, session.Id);
             var sessRepo = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
             var tester = scope.ServiceProvider.GetRequiredService<IAcceptanceAgent>();
+            // One acceptance run at a time, whoever asks (a MAF ticket workflow or a step-by-step pass): each brings the
+            // app up on the computer's fixed ports.
+            await _testSlot.WaitAsync(stopLease.Token).ConfigureAwait(false);
+            using var _slot = new SlotRelease(_testSlot);
             var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
             var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
             foreach (var change in changes)

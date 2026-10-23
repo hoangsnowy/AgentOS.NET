@@ -111,7 +111,8 @@ public sealed partial class ProjectOrchestrator(
     IRemoteAgentBroker broker,
     OrchestratorLog log,
     ILogger<ProjectOrchestrator> logger,
-    AgentOs.Web.Services.Preview.PreviewService previews)
+    AgentOs.Web.Services.Preview.PreviewService previews,
+    TicketWorkflowRunner workflows)
 {
     // Tasks seen "Running" with no live run here, by pass: one pass of grace (a run registers right after it is marked).
     private readonly ConcurrentDictionary<Guid, int> _orphanSeen = new();
@@ -166,6 +167,12 @@ public sealed partial class ProjectOrchestrator(
             var planTasks = new List<PlanTask>();
             foreach (var s in sessions.Where(s => s.Status is "Running" or "Done"))
             {
+                // Its MAF workflow drives it: a running slot, and no step-by-step moves on it.
+                if (workflows.IsRunning(tenant, s.Id))
+                {
+                    planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, "Running", [], _fixRounds.GetValueOrDefault(s.Id)));
+                    continue;
+                }
                 var open = new List<PlanChange>();
                 foreach (var r in repos[s.Id].Where(r => r.Status is "Done" or "Reviewing" or "Reviewed" or "ChangesRequested" or "Testing" or "Accepted" or "Rejected"
                     && PrNumber(r.PrUrl) is not null))
@@ -267,6 +274,15 @@ public sealed partial class ProjectOrchestrator(
                 var session = await tasks.CreateAsync(tenant, member, board.Id, ticket.Number, $"#{ticket.Number} {ticket.Title}", ticket.ItemNodeId,
                     ticket.Kind.ToString(), [new BoardTaskService.TaskRepo(ticket.RepoOwner!, ticket.RepoName!, curated?.DefaultBranch ?? "main", curated?.Id)],
                     onComputer, ticketType: ticket.Labels.FirstOrDefault(l => l.StartsWith("type:", StringComparison.OrdinalIgnoreCase)), ct: ct).ConfigureAwait(false);
+                // A MAF workflow runs the ticket's whole agent flow (TicketWorkflow); step by step, the passes drive it.
+                var engine = await sp.GetRequiredService<AgentOs.Domain.Configuration.ISettings>()
+                    .GetAsync(AgentOs.Modules.Pipeline.Agents.AutopilotSettings.TicketEngineKey, tenant, ct).ConfigureAwait(false);
+                if (AgentOs.Modules.Pipeline.Agents.AutopilotSettings.UsesMafWorkflow(engine.Value)
+                    && workflows.Start(board, pat, session.Id, start.Number, ParseMode(board.Autopilot) == AutopilotMode.BuildAndMerge))
+                {
+                    log.Add(tenant, board.Id, start.Why + (onComputer ? " (on your computer)" : " (on our servers)") + " — a MAF workflow runs it.");
+                    break;
+                }
                 var started = await tasks.StartAsync(tenant, session.Id, ct: ct).ConfigureAwait(false);
                 log.Add(tenant, board.Id, started == TaskStart.Started
                     ? start.Why + (onComputer ? " (on your computer)" : " (on our servers)")
@@ -344,7 +360,7 @@ public sealed partial class ProjectOrchestrator(
         var changed = false;
         foreach (var s in sessions.Where(s => s.Status == "Running"))
         {
-            if (stops.IsRunning(tenant, s.Id)) { _orphanSeen.TryRemove(s.Id, out _); continue; }
+            if (stops.IsRunning(tenant, s.Id) || workflows.IsRunning(tenant, s.Id)) { _orphanSeen.TryRemove(s.Id, out _); continue; }
             if (_orphanSeen.AddOrUpdate(s.Id, 1, (_, n) => n + 1) < 2) { continue; }
             _orphanSeen.TryRemove(s.Id, out _);
             var children = repos[s.Id].ToList();

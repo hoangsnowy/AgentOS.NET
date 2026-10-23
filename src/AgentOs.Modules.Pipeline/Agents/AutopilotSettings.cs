@@ -18,9 +18,27 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// <summary>The fixed rules decide.</summary>
     public const string Rules = "Rules";
 
+    /// <summary>How each started ticket runs.</summary>
+    public const string TicketEngineKey = "Autopilot:TicketEngine";
+
+    /// <summary>A Microsoft Agent Framework workflow runs the ticket's whole agent flow.</summary>
+    public const string MafWorkflow = "MAF workflow";
+
+    /// <summary>Autopilot drives each step itself, pass by pass.</summary>
+    public const string StepByStep = "Step by step";
+
+    /// <summary>True when the stored value means a MAF workflow (anything but "Step by step").</summary>
+    public static bool UsesMafWorkflow(string? value) => !string.Equals(value?.Trim(), StepByStep, System.StringComparison.OrdinalIgnoreCase);
+
     /// <inheritdoc />
     public IEnumerable<SettingDescriptor> Describe()
     {
+        yield return new(TicketEngineKey, SettingKind.Choice, "Autopilot", "Each ticket runs as")
+        {
+            DefaultValue = MafWorkflow,
+            Choices = [MafWorkflow, StepByStep],
+            Help = "MAF workflow: a Microsoft Agent Framework graph runs Coding → checks → Reviewer → Testing → merge for the ticket, routing every verdict. Step by step: Autopilot drives each step itself every minute. Both use the same agents, rules and evidence.",
+        };
         yield return new(DecidedByKey, SettingKind.Choice, "Autopilot", "Decided by")
         {
             DefaultValue = Agent,

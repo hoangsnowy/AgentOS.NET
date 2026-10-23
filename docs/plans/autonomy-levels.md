@@ -40,6 +40,11 @@ others learned. The board shows each ticket's phase (Discovery → Coding → Te
    `docs/ACCEPTANCE.md`, run the unit tests, bring the stack up and run the Playwright specs, run data checks
    (e.g. the CBL corpus), and post the evidence on the PR. Pass → approve; fail → *Ask for changes* with the
    findings.
+3c. ✅ (#270) **One ticket = one MAF workflow.** The Autopilot Orchestrator agent decides which ticket starts; a
+   Microsoft Agent Framework Workflow (`TicketWorkflow`) then runs it — Coding → checks → Reviewer → Testing → merge —
+   with conditional edges back to Coding (red checks, conflicts, requested changes, failed acceptance; 3 rounds). A
+   flow that ends without a merge, or one a restart cut short, is picked up step by step. Settings › Autopilot › *Each
+   ticket runs as* (MAF workflow / Step by step).
 3b. ✅ (#264) **Reviewer agent.** Between green CI and acceptance testing: a read-only agent reviews the diff in
    context and posts its review on the PR; must-fix findings go back to the Coding agent (same 3 bounded rounds).
 4. ✅ (#242, *Build and merge*: on green CI; acceptance agent next) **Merge policy.** Per project: merge on green + acceptance pass (squash, delete branch), or wait for a person.
