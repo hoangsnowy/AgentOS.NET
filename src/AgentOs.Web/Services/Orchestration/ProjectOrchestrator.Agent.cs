@@ -48,14 +48,14 @@ public sealed partial class ProjectOrchestrator
         var candidates = AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest, int.MaxValue, int.MaxValue);
         var running = planTasks.Count(t => t.Status == "Running");
         var testing = planTasks.Count(t => t.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing));
-        var stuck = StuckTasks(tickets, planTickets, sessions, repos, candidates);
+        var stuck = await WithAnswersAsync(StuckTasks(tickets, planTickets, sessions, repos, candidates), board, pat, sessions, sp, ct).ConfigureAwait(false);
         var moves = candidates.Where(a => a is not AutopilotAction.NeedsPerson)
             .Select((a, i) => (Id: "M" + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), Action: a)).ToList();
         if (moves.Count == 0 && stuck.Count == 0) { return []; }
 
         var freeSlots = Math.Max(0, AutopilotPlanner.MaxParallel - running);
         // Ask only when something changed: the same picture gets the same answer (and costs the member's quota).
-        var signature = Signature(moves.Select(m => m.Action.Why), stuck.Select(s => $"{s.IssueNumber}:{s.Situation}:{s.RetriesLeft}"), freeSlots);
+        var signature = Signature(moves.Select(m => m.Action.Why), stuck.Select(s => $"{s.IssueNumber}:{s.Situation}:{s.RetriesLeft}:{s.PersonAnswer}"), freeSlots);
         if (_lastSignature.TryGetValue(board.Id, out var last) && last == signature) { return []; }
 
         var recent = (await log.RecentAsync(tenant, board.Id, 12).ConfigureAwait(false)).Select(e => e.Text).ToList();
@@ -101,6 +101,26 @@ public sealed partial class ProjectOrchestrator
             retried.Add(task.IssueNumber);
             running++;
             log.Add(tenant, board.Id, $"Orchestrator started #{task.IssueNumber} again with guidance: {Short(retry.Guidance)}");
+            // The reply is used up: a signed acknowledgement after it, so a failed attempt leads to a new question.
+            if (task.PersonAnswer is not null)
+            {
+                await CommentOnTicketAsync(board, pat, sessions.First(s => s.Id == task.SessionId),
+                    PersonAnswers.Acknowledgement("trying again with your answer."), sp, ct).ConfigureAwait(false);
+            }
+        }
+        // A person said a ticket is done or no longer wanted: close it (with their reason) and the task with it.
+        foreach (var close in decision.Closes)
+        {
+            var task = stuck.First(s => s.IssueNumber == close.IssueNumber);
+            var session = sessions.First(s => s.Id == task.SessionId);
+            if (!await CloseTicketAsync(board, pat, session, PersonAnswers.Acknowledgement($"closing #{close.IssueNumber}: {close.Reason}"), sp, ct).ConfigureAwait(false))
+            {
+                continue;
+            }
+            await sp.GetRequiredService<AgentOs.Modules.Sessions.Persistence.ISessionRepository>()
+                .UpdateRunResultAsync(tenant, session.Id, "Closed", session.PrUrl, null, ct).ConfigureAwait(false);
+            retried.Add(close.IssueNumber);
+            log.Add(tenant, board.Id, $"Closed #{close.IssueNumber} after your answer: {close.Reason}");
         }
         foreach (var question in decision.Questions)
         {
@@ -113,6 +133,78 @@ public sealed partial class ProjectOrchestrator
         var handled = retried.Concat(decision.Questions.Select(q => q.IssueNumber)).ToHashSet();
         picked.AddRange(candidates.OfType<AutopilotAction.NeedsPerson>().Where(n => !handled.Contains(n.IssueNumber)));
         return picked;
+    }
+
+    // Each stuck task's ticket is read for a person's reply to the agent's last question (one comments call per task).
+    private static async Task<List<OrchestratorStuckTask>> WithAnswersAsync(List<OrchestratorStuckTask> stuck, WorkspaceEntity board, string pat,
+        IReadOnlyList<RemoteSessionEntity> sessions, IServiceProvider sp, CancellationToken ct)
+    {
+        var prs = sp.GetRequiredService<IPrCreationService>();
+        for (var i = 0; i < stuck.Count; i++)
+        {
+            var session = sessions.First(s => s.Id == stuck[i].SessionId);
+            if (Ticket(board, pat, session) is not { } repo) { continue; }
+            var answer = PersonAnswers.Latest(await prs.ListCommentsAsync(repo, stuck[i].IssueNumber, ct).ConfigureAwait(false));
+            if (answer is null) { continue; }
+            // New information from a person is worth one more attempt even when the automatic ones are used up.
+            stuck[i] = stuck[i] with { PersonAnswer = answer, RetriesLeft = Math.Max(1, stuck[i].RetriesLeft) };
+        }
+        return stuck;
+    }
+
+    private static WorkspaceDescriptor? Ticket(WorkspaceEntity board, string pat, RemoteSessionEntity session) =>
+        session.IssueNumber is null || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName)
+            ? null
+            : BoardTaskService.RepoDescriptor(board, board.TenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat);
+
+    private static async Task CommentOnTicketAsync(WorkspaceEntity board, string pat, RemoteSessionEntity session, string body, IServiceProvider sp, CancellationToken ct)
+    {
+        if (Ticket(board, pat, session) is { } repo)
+        {
+            await sp.GetRequiredService<IPrCreationService>().CommentAsync(repo, session.IssueNumber!.Value, body, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<bool> CloseTicketAsync(WorkspaceEntity board, string pat, RemoteSessionEntity session, string comment, IServiceProvider sp, CancellationToken ct) =>
+        Ticket(board, pat, session) is { } repo
+        && await sp.GetRequiredService<IPrCreationService>().CloseAsync(repo, session.IssueNumber!.Value, comment, ct).ConfigureAwait(false);
+
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _supersededSweep = new();
+
+    /// <summary>
+    /// An attempt that ended without AgentOS learning its pull request (a run cut short after it pushed) left that PR
+    /// open, and the next attempt opened another on a fresh branch: two PRs for one ticket (seen on the lab: #53 next to
+    /// the merged #56, #54 next to #55). Every 10 minutes per board, an open PR on an AgentOS attempt branch
+    /// (issue-N-ai-fix…) is closed as superseded when AgentOS knows a newer PR for the same ticket. Only attempt
+    /// branches are touched; best-effort.
+    /// </summary>
+    private async Task CloseSupersededAsync(WorkspaceEntity board, string pat, IReadOnlyList<RemoteSessionEntity> sessions,
+        ILookup<Guid, SessionRepoEntity> repos, IServiceProvider sp, CancellationToken ct)
+    {
+        if (_supersededSweep.TryGetValue(board.Id, out var last) && DateTimeOffset.UtcNow - last < TimeSpan.FromMinutes(10)) { return; }
+        _supersededSweep[board.Id] = DateTimeOffset.UtcNow;
+        var prs = sp.GetRequiredService<IPrCreationService>();
+        // The pull request AgentOS tracks for each (repo, ticket): the one its task points at now.
+        var current = sessions.Where(s => s.IssueNumber is not null)
+            .SelectMany(s => repos[s.Id].Where(r => r.Status is not "Failed" && PrNumber(r.PrUrl) is not null)
+                .Select(r => (Key: (r.Owner, r.Repo, Issue: s.IssueNumber!.Value), Pr: PrNumber(r.PrUrl)!.Value, Repo: r)))
+            .GroupBy(x => x.Key).ToDictionary(g => g.Key, g => g.First());
+        foreach (var repo in current.Values.Select(c => c.Repo).DistinctBy(r => (r.Owner, r.Repo)))
+        {
+            var desc = BoardTaskService.RepoDescriptor(board, board.TenantId, repo.Owner, repo.Repo, repo.DefaultBranch, pat);
+            foreach (var open in await prs.ListOpenPullRequestsAsync(desc, "issue-", ct).ConfigureAwait(false))
+            {
+                if (PersonAnswers.TicketOfAttemptBranch(open.HeadBranch) is not { } issue
+                    || !current.TryGetValue((repo.Owner, repo.Repo, issue), out var known) || known.Pr == open.Number)
+                {
+                    continue;
+                }
+                var closed = await prs.CloseAsync(desc, open.Number,
+                    $"Superseded by #{known.Pr} — a later attempt at #{issue}.\n\n<sub>Closed by the AgentOS.NET Orchestrator: an earlier attempt's pull request that a newer one replaces.</sub>\n",
+                    ct).ConfigureAwait(false);
+                if (closed) { log.Add(board.TenantId, board.Id, $"Closed PR #{open.Number}: an earlier attempt at #{issue}, superseded by #{known.Pr}."); }
+            }
+        }
     }
 
     // Tasks that stopped: couldn't finish, or blocked for a person — plus those the rules give up on this very pass.

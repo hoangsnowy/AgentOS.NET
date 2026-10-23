@@ -186,6 +186,67 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<TicketComment>> ListCommentsAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return []; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var comments = await client.Issue.Comment.GetAllForIssue(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            return comments.Select(c => new TicketComment(c.User?.Login ?? "", c.Body ?? "", c.CreatedAt)).OrderBy(c => c.CreatedAt).ToList();
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Reading comments failed on {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return [];
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<OpenPullRequest>> ListOpenPullRequestsAsync(WorkspaceDescriptor workspace, string headPrefix, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || string.IsNullOrWhiteSpace(headPrefix)) { return []; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var open = await client.PullRequest.GetAllForRepository(workspace.Owner, workspace.Repo,
+                new PullRequestRequest { State = ItemStateFilter.Open }, new ApiOptions { PageSize = 100, PageCount = 1 }).ConfigureAwait(false);
+            return open.Where(p => p.Head?.Ref?.StartsWith(headPrefix, StringComparison.Ordinal) == true)
+                .Select(p => new OpenPullRequest(p.Number, p.Head.Ref, p.HtmlUrl)).ToList();
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Listing open pull requests failed on {Owner}/{Repo}", workspace.Owner, workspace.Repo);
+            return [];
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> CloseAsync(WorkspaceDescriptor workspace, int number, string comment, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return false; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            if (!string.IsNullOrWhiteSpace(comment))
+            {
+                await client.Issue.Comment.Create(workspace.Owner, workspace.Repo, number, comment).ConfigureAwait(false);
+            }
+            // Issues and pull requests share the issue endpoint for their state.
+            await client.Issue.Update(workspace.Owner, workspace.Repo, number, new IssueUpdate { State = ItemState.Closed }).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Closing failed on {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);

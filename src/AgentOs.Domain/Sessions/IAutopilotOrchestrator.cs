@@ -17,7 +17,12 @@ public sealed record OrchestratorMove(string Id, string Kind, int IssueNumber, s
 
 /// <summary>A task that is stuck (couldn't finish, or out of automatic fix rounds) — the agent may retry it with
 /// guidance or ask a person a question about it.</summary>
-public sealed record OrchestratorStuckTask(Guid SessionId, int IssueNumber, string Title, string Situation, int RetriesLeft);
+public sealed record OrchestratorStuckTask(Guid SessionId, int IssueNumber, string Title, string Situation, int RetriesLeft)
+{
+    /// <summary>A person's reply to the agent's last question on this ticket, when there is one — new information
+    /// that can justify one more retry, or closing the ticket when the person says so.</summary>
+    public string? PersonAnswer { get; init; }
+}
 
 /// <summary>Everything the Orchestrator agent sees on one board.</summary>
 /// <param name="Project">Board / repository name.</param>
@@ -45,6 +50,9 @@ public sealed record OrchestratorRetry(int IssueNumber, string Guidance);
 /// <summary>A question for a person about a stuck task (posted on its ticket).</summary>
 public sealed record OrchestratorQuestion(int IssueNumber, string Question);
 
+/// <summary>A ticket to close because a person's answer says it is done or no longer wanted.</summary>
+public sealed record OrchestratorClose(int IssueNumber, string Reason);
+
 /// <summary>The Orchestrator agent's decision. <see cref="Ran"/> is false when it couldn't decide (no computer,
 /// timed out, unreadable answer) — Autopilot then follows the rules for this pass.</summary>
 public sealed record OrchestratorDecision(
@@ -55,6 +63,9 @@ public sealed record OrchestratorDecision(
     IReadOnlyList<OrchestratorQuestion> Questions,
     string? Error)
 {
+    /// <summary>Tickets to close — only ever ones a person answered about.</summary>
+    public IReadOnlyList<OrchestratorClose> Closes { get; init; } = [];
+
     /// <summary>A decision that couldn't be made.</summary>
     public static OrchestratorDecision NotRun(string why) => new(false, string.Empty, [], [], [], why);
 }

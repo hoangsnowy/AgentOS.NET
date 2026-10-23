@@ -1,6 +1,7 @@
 // M5 — domain seam for creating a PR from an already-pushed branch. The runner pushes the branch;
 // the server creates the PR via the source-control API. Implemented by Integration module.
 
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -100,4 +101,22 @@ public interface IPrCreationService
     /// <summary>Squash-merge pull request <paramref name="number"/> and delete its branch. Null on success, else the reason.</summary>
     Task<string?> MergeAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult<string?>("Merging is not supported for this provider.");
+
+    /// <summary>The comments on issue (or pull request) <paramref name="number"/>, oldest first. Empty when unavailable.</summary>
+    Task<IReadOnlyList<TicketComment>> ListCommentsAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<TicketComment>>([]);
+
+    /// <summary>The repository's open pull requests whose head branch starts with <paramref name="headPrefix"/>.</summary>
+    Task<IReadOnlyList<OpenPullRequest>> ListOpenPullRequestsAsync(WorkspaceDescriptor workspace, string headPrefix, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OpenPullRequest>>([]);
+
+    /// <summary>Close issue or pull request <paramref name="number"/> after posting <paramref name="comment"/>. Never throws.</summary>
+    Task<bool> CloseAsync(WorkspaceDescriptor workspace, int number, string comment, CancellationToken ct = default) =>
+        Task.FromResult(false);
 }
+
+/// <summary>A comment on an issue or pull request.</summary>
+public sealed record TicketComment(string Author, string Body, System.DateTimeOffset CreatedAt);
+
+/// <summary>An open pull request and the branch it comes from.</summary>
+public sealed record OpenPullRequest(int Number, string HeadBranch, string HtmlUrl);

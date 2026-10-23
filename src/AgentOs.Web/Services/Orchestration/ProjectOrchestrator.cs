@@ -160,6 +160,7 @@ public sealed partial class ProjectOrchestrator(
                 sessions = (await sessionsRepo.ListForTenantAsync(tenant, ct).ConfigureAwait(false)).Where(s => s.WorkspaceId == board.Id).ToList();
                 repos = (await sessionsRepo.ListAllReposForTenantAsync(tenant, ct).ConfigureAwait(false)).ToLookup(r => r.SessionId);
             }
+            await CloseSupersededAsync(board, pat, sessions, repos, sp, ct).ConfigureAwait(false);
 
             // Proposed changes: merged ones are recorded; open ones get their check state.
             var planTasks = new List<PlanTask>();
