@@ -112,7 +112,8 @@ public sealed partial class ProjectOrchestrator(
     OrchestratorLog log,
     ILogger<ProjectOrchestrator> logger,
     AgentOs.Web.Services.Preview.PreviewService previews,
-    TicketWorkflowRunner workflows)
+    TicketWorkflowRunner workflows,
+    RetrospectiveService retrospectives)
 {
     // Tasks seen "Running" with no live run here, by pass: one pass of grace (a run registers right after it is marked).
     private readonly ConcurrentDictionary<Guid, int> _orphanSeen = new();
@@ -329,6 +330,8 @@ public sealed partial class ProjectOrchestrator(
                     await sessions.RecomputeSessionStatusForTenantAsync(tenant, merge.SessionId, ct).ConfigureAwait(false);
                     _fixRounds.TryRemove(merge.SessionId, out _);
                     log.Add(tenant, board.Id, merge.Why);
+                    // Self-improvement: what this ticket taught becomes the project's practices.
+                    retrospectives.AfterMerge(tenant, member, board.Id, $"{repo.Owner}/{repo.Repo}", $"#{merge.IssueNumber}");
                 }
                 else
                 {

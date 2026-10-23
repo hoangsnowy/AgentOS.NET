@@ -16,6 +16,9 @@ public static class MemoryKinds
     public const string PullRequest = "PullRequest";
     /// <summary>Something the agents must not repeat: a review comment, a CI failure and its cause, an acceptance finding.</summary>
     public const string Lesson = "Lesson";
+    /// <summary>A project practice the Retrospective agent distilled from lessons: short, durable, actionable — read by
+    /// every agent before it works on the project.</summary>
+    public const string Practice = "Practice";
 }
 
 /// <summary>Edge relations.</summary>
@@ -57,6 +60,11 @@ public interface IMemoryStore
     /// <summary>The lessons an agent should read before working on <paramref name="repoKey"/>: pinned first, then the
     /// ones closest to <paramref name="query"/> (full-text), then the most recent. Marks them used.</summary>
     Task<IReadOnlyList<MemoryNode>> RecallLessonsAsync(string tenantId, string repoKey, string query, int max, CancellationToken ct = default);
+
+    /// <summary>A project's live nodes of one <paramref name="kind"/> (pinned first, then newest), at most <paramref name="max"/>.</summary>
+    async Task<IReadOnlyList<MemoryNode>> ListAsync(string tenantId, string repoKey, string kind, int max, CancellationToken ct = default) =>
+        (await GraphAsync(tenantId, repoKey, Math.Max(max * 4, 200), ct).ConfigureAwait(false)).Nodes
+            .Where(n => n.Kind == kind).OrderByDescending(n => n.Pinned).Take(max).ToList();
 
     /// <summary>The graph around a project (or the whole tenant when <paramref name="repoKey"/> is null), newest first.</summary>
     Task<MemoryGraph> GraphAsync(string tenantId, string? repoKey, int maxNodes, CancellationToken ct = default);

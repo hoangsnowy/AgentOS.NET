@@ -89,6 +89,16 @@ internal sealed class EfMemoryStore(MemoryDbContext db, TimeProvider clock) : IM
         return picked.Select(ToView).ToList();
     }
 
+    public async Task<IReadOnlyList<MemoryNode>> ListAsync(string tenantId, string repoKey, string kind, int max, CancellationToken ct = default)
+    {
+        if (max <= 0) { return []; }
+        var nodes = await db.Nodes.IgnoreQueryFilters().AsNoTracking()
+            .Where(n => n.TenantId == tenantId && n.RetractedAt == null && n.Kind == kind && n.RepoKey == repoKey)
+            .OrderByDescending(n => n.Pinned).ThenByDescending(n => n.RecordedAt).Take(max)
+            .ToListAsync(ct).ConfigureAwait(false);
+        return nodes.Select(ToView).ToList();
+    }
+
     public async Task<MemoryGraph> GraphAsync(string tenantId, string? repoKey, int maxNodes, CancellationToken ct = default)
     {
         var nodes = await db.Nodes.IgnoreQueryFilters().AsNoTracking()

@@ -18,7 +18,8 @@ using Microsoft.Extensions.Logging;
 namespace AgentOs.Web.Services.Orchestration;
 
 /// <summary>Runs ticket workflows. Singleton.</summary>
-public sealed class TicketWorkflowRunner(IServiceScopeFactory scopes, BoardTaskService tasks, OrchestratorLog log, ILogger<TicketWorkflowRunner> logger)
+public sealed class TicketWorkflowRunner(IServiceScopeFactory scopes, BoardTaskService tasks, OrchestratorLog log, ILogger<TicketWorkflowRunner> logger,
+    RetrospectiveService retrospectives)
 {
     private readonly ConcurrentDictionary<(string Tenant, Guid Session), Task> _running = new();
     /// <summary>How long a workflow waits for a pull request's checks.</summary>
@@ -71,6 +72,18 @@ public sealed class TicketWorkflowRunner(IServiceScopeFactory scopes, BoardTaskS
             _ => $"#{flow.IssueNumber} · MAF workflow paused: {flow.Reason}{steps} — Autopilot continues step by step.",
         };
         log.Add(board.TenantId, board.Id, line);
+        if (flow.Stage == TicketStage.Merged)
+        {
+            // Self-improvement: what this ticket taught becomes the project's practices.
+            using var s = scopes.CreateScope();
+            var task = (await s.ServiceProvider.GetRequiredService<ISessionRepository>().ListForTenantAsync(board.TenantId).ConfigureAwait(false))
+                .FirstOrDefault(t => t.Id == flow.SessionId);
+            if (task is { RepoOwner: { } owner, RepoName: { } name })
+            {
+                retrospectives.AfterMerge(board.TenantId, task.MemberUserId, board.Id, $"{owner}/{name}", task.Title);
+            }
+            return;
+        }
         if (flow.Stage != TicketStage.NeedsPerson) { return; }
         // Same as the rules' "needs a person": the open changes are blocked, which the Orchestrator agent sees as stuck.
         using var scope = scopes.CreateScope();
