@@ -30,7 +30,21 @@ namespace AgentOs.Modules.RemoteAgent;
 public sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null);
 
 /// <summary>A remote runner's reply for a <see cref="RemoteExecRequest"/>.</summary>
-public sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error);
+public sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
+{
+    /// <summary>Real input tokens the runner's CLI reported (cache reads/writes included); null = not reported
+    /// (an older runner, or a CLI that reports no usage) and the server estimates.</summary>
+    public int? InputTokens { get; init; }
+
+    /// <summary>Real output tokens the CLI reported; null = not reported.</summary>
+    public int? OutputTokens { get; init; }
+
+    /// <summary>Input tokens served from the prompt cache (a subset of <see cref="InputTokens"/>).</summary>
+    public int? CacheReadTokens { get; init; }
+
+    /// <summary>Input tokens written to the prompt cache (a subset of <see cref="InputTokens"/>).</summary>
+    public int? CacheWriteTokens { get; init; }
+}
 
 /// <summary>Identity of a connected runner, established by the hub's pairing handshake.</summary>
 public sealed record RunnerConnection(Guid RunnerId, string TenantId, string OwnerUserId);

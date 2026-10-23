@@ -127,6 +127,41 @@ public class RemoteAgentTests
         steps.ShouldBe(["testing"]);
     }
 
+    // Metrics first: a current runner sends the CLI's real usage; the ~4-chars-per-token estimate is only a fallback.
+    [Fact]
+    public async Task Client_RunnerReportsUsage_UsesTheRealTokens()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", Conn());
+        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null)
+        {
+            InputTokens = 250_000, OutputTokens = 9_000, CacheReadTokens = 200_000, CacheWriteTokens = 30_000,
+        });
+        var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
+
+        var r = await client.SendAsync(new LlmRequest("s", "u", "m"));
+
+        r.InputTokens.ShouldBe(250_000);
+        r.OutputTokens.ShouldBe(9_000);
+        r.CacheReadTokens.ShouldBe(200_000);
+        r.CacheWriteTokens.ShouldBe(30_000);
+        r.CostUsd.ShouldBe(0m); // the member's subscription — never billed on the server
+    }
+
+    [Fact]
+    public async Task Client_OlderRunnerWithoutUsage_Estimates()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", Conn());
+        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, true, new string('x', 400), null));
+        var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
+
+        var r = await client.SendAsync(new LlmRequest("s", "u", "m"));
+
+        r.OutputTokens.ShouldBe(100);
+        r.CacheReadTokens.ShouldBe(0);
+    }
+
     [Fact]
     public async Task Broker_NoRunner_DispatchThrows()
     {

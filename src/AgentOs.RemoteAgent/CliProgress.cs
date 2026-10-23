@@ -28,7 +28,21 @@ internal static class CliProgress
     ];
 
     /// <summary>The final event of a stream-json run.</summary>
-    internal sealed record Result(bool IsError, string Text, JsonElement? Usage, decimal? CostUsd);
+    internal sealed record Result(bool IsError, string Text, JsonElement? Usage, decimal? CostUsd)
+    {
+        /// <summary>The run's real token usage, normalised so cache reads/writes are a subset of the input (Claude's
+        /// usage reports input_tokens WITHOUT them). Null when the CLI reported none.</summary>
+        public (int Input, int Output, int CacheRead, int CacheWrite)? Tokens()
+        {
+            if (Usage is not { } u) { return null; }
+            int Get(string name) => u.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
+            var fresh = Get("input_tokens");
+            var read = Get("cache_read_input_tokens");
+            var write = Get("cache_creation_input_tokens");
+            var output = Get("output_tokens");
+            return fresh + read + write + output == 0 ? null : (fresh + read + write, output, read, write);
+        }
+    }
 
     /// <summary>The step a tool call belongs to, or null when it doesn't move the task along (e.g. a `pwd`).</summary>
     internal static string? StepFor(string tool, JsonElement input)

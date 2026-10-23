@@ -125,11 +125,14 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         // the standard rough heuristic). These counts are honest estimates — they let the UI show a real
         // token figure and derive a "what this would have cost on a metered API" number, without ever
         // claiming a billed spend. The estimate is deliberately NOT folded into CostUsd.
-        var inTok = EstimateTokens(request.SystemPrompt) + EstimateTokens(request.UserPrompt);
-        var outTok = EstimateTokens(result.Content);
+        // A current runner sends the CLI's real usage (the whole agentic run: every tool turn, cache reads included);
+        // only an older runner, or a CLI that reports none, falls back to the estimate.
+        var real = result.InputTokens is not null && result.OutputTokens is not null;
+        var inTok = real ? result.InputTokens!.Value : EstimateTokens(request.SystemPrompt) + EstimateTokens(request.UserPrompt);
+        var outTok = real ? result.OutputTokens!.Value : EstimateTokens(result.Content);
         LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, request.Model, inTok, outTok, 0m, stopwatch.Elapsed.TotalSeconds);
-        _logger.LogInformation("[RemoteAgent] request {Id} handled by a remote agent ({Count} connected); ~{In}->{Out} est. tokens, 0 API cost.",
-            id, _broker.AgentCount, inTok, outTok);
+        _logger.LogInformation("[RemoteAgent] request {Id} handled by a remote agent ({Count} connected); {In}->{Out} tokens ({Kind}), 0 API cost.",
+            id, _broker.AgentCount, inTok, outTok, real ? "reported by the CLI" : "estimated");
 
         return new LlmResponse(
             Content: result.Content,
@@ -138,7 +141,11 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             CostUsd: 0m,
             Latency: stopwatch.Elapsed,
             Model: request.Model,
-            Provider: Provider);
+            Provider: Provider)
+        {
+            CacheReadTokens = real ? result.CacheReadTokens ?? 0 : 0,
+            CacheWriteTokens = real ? result.CacheWriteTokens ?? 0 : 0,
+        };
     }
 
     // Rough token estimate for text the CLI produced no usage numbers for: ~4 characters per token, the
