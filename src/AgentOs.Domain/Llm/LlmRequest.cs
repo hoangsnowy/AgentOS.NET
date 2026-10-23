@@ -78,6 +78,20 @@ public sealed record LlmRequest(
     /// </summary>
     public void Validate()
     {
+        ValidateAllowingNoModel();
+        if (string.IsNullOrWhiteSpace(Model))
+        {
+            throw new System.ArgumentException("Model must not be null or whitespace.", nameof(Model));
+        }
+    }
+
+    /// <summary>
+    /// Validates required values but accepts an empty <see cref="Model"/>: a provider that chooses the model itself (a
+    /// member's paired CLI runs its own default) accepts "no model chosen". Server providers resolve an empty model to
+    /// their configured one and then call <see cref="Validate"/>.
+    /// </summary>
+    public void ValidateAllowingNoModel()
+    {
         if (SystemPrompt is null)
         {
             throw new System.ArgumentException("SystemPrompt must not be null.", nameof(SystemPrompt));
@@ -86,11 +100,6 @@ public sealed record LlmRequest(
         if (string.IsNullOrWhiteSpace(UserPrompt))
         {
             throw new System.ArgumentException("UserPrompt must not be null or whitespace.", nameof(UserPrompt));
-        }
-
-        if (string.IsNullOrWhiteSpace(Model))
-        {
-            throw new System.ArgumentException("Model must not be null or whitespace.", nameof(Model));
         }
 
         if (Temperature is < 0.0 or > 2.0)

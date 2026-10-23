@@ -109,7 +109,7 @@ public sealed class BoardAgentRegistryTests
     {
         var seed = new AgentsOptions().For(role).ShouldNotBeNull();
         seed.Provider.ShouldBe("RemoteAgent");
-        seed.Model.ShouldBe("claude-sonnet-4-6");
+        seed.Model.ShouldBeEmpty();   // the computer's own model — never a pinned, older id
         seed.MaxTokens.ShouldBe(maxTokens);
     }
 

@@ -18,20 +18,24 @@ namespace AgentOs.Modules.Llm;
 public sealed class ChatClientLlmClient : ILlmClient
 {
     private readonly IChatClient _chat;
+    private readonly string? _defaultModel;
 
     /// <inheritdoc />
     public string Provider { get; }
 
-    public ChatClientLlmClient(IChatClient chat, string provider)
+    /// <summary>Create. <paramref name="defaultModel"/> is used when a request chose no model.</summary>
+    public ChatClientLlmClient(IChatClient chat, string provider, string? defaultModel = null)
     {
         _chat = chat ?? throw new ArgumentNullException(nameof(chat));
         Provider = string.IsNullOrWhiteSpace(provider) ? "ChatClient" : provider;
+        _defaultModel = defaultModel;
     }
 
     /// <inheritdoc />
     public async Task<LlmResponse> SendAsync(LlmRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        request = ProviderDefaultModel.Apply(request, _defaultModel);
         request.Validate();
 
         var messages = new List<ChatMessage>(2);

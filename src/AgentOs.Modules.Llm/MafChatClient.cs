@@ -56,6 +56,12 @@ public sealed class MafChatClient : ILlmClient
     public async Task<LlmResponse> SendAsync(LlmRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        // No model chosen in the agent's profile → the configured Azure deployment (live setting, else the option).
+        if (string.IsNullOrWhiteSpace(request.Model))
+        {
+            request = ProviderDefaultModel.Apply(request,
+                (_settings is null ? null : LiveSettings.Read(_settings, LlmSettings.AzureModel, AmbientIdentity.Current?.TenantId)) ?? _options.Model);
+        }
         request.Validate();
 
         // Resolve credentials with the SAME tenant-override-first precedence as the AzureOpenAI pool — a tenant

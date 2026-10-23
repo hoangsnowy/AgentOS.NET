@@ -33,6 +33,10 @@ public sealed class RemoteAgentLlmClient : ILlmClient
     /// <inheritdoc />
     public string Provider => "RemoteAgent";
 
+    /// <summary>The model a response reports when the request chose none and the member's CLI ran its own default
+    /// (metrics then show this name rather than an empty model).</summary>
+    public const string ComputerDefaultModel = "computer-default";
+
     public RemoteAgentLlmClient(IRemoteAgentBroker broker, IServiceProvider services, ILogger<RemoteAgentLlmClient> logger)
     {
         _broker = broker ?? throw new ArgumentNullException(nameof(broker));
@@ -53,7 +57,8 @@ public sealed class RemoteAgentLlmClient : ILlmClient
     public async Task<LlmResponse> SendAsync(LlmRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        request.Validate();
+        // No model chosen is valid here: the member's CLI then runs its own default model (the runner adds no flag).
+        request.ValidateAllowingNoModel();
 
         // Background session work (a Blazor circuit's Task.Run) has no HttpContext, so ITenantContext is
         // blank there; the session seeds AmbientIdentity so the dispatch targets the member's own runner.
@@ -140,7 +145,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             OutputTokens: outTok,
             CostUsd: 0m,
             Latency: stopwatch.Elapsed,
-            Model: request.Model,
+            Model: string.IsNullOrWhiteSpace(request.Model) ? ComputerDefaultModel : request.Model,
             Provider: Provider)
         {
             CacheReadTokens = real ? result.CacheReadTokens ?? 0 : 0,

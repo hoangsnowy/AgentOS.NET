@@ -68,8 +68,10 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         Func<Exception, LlmErrorKind>? classifyError = null,
         Func<string>? cacheKeyDiscriminator = null,
         Func<string, string>? modelResolver = null,
-        Func<string, TokenUsage, decimal?>? costOverride = null)
+        Func<string, TokenUsage, decimal?>? costOverride = null,
+        Func<string?>? defaultModel = null)
     {
+        _defaultModel = defaultModel;
         Provider = string.IsNullOrWhiteSpace(provider) ? throw new ArgumentException("provider required", nameof(provider)) : provider;
         _clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
         _keyProvider = keyProvider ?? throw new ArgumentNullException(nameof(keyProvider));
@@ -97,6 +99,9 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
     private readonly Func<string, string>? _modelResolver;
     private readonly Func<string, TokenUsage, decimal?>? _costOverride;
 
+    // The provider's configured model (read live per call), used when the agent's profile chose none.
+    private readonly Func<string?>? _defaultModel;
+
     // The tenant for tool tagging / telemetry when there is no AmbientIdentity on the call. Prefer a
     // directly-supplied ITenantContext (tests); otherwise resolve the request-scoped one inside a fresh
     // scope off the root provider (safe from a singleton — IHttpContextAccessor is itself a singleton, so
@@ -113,6 +118,8 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
     public async Task<LlmResponse> SendAsync(LlmRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        // No model chosen in the agent's profile → this provider's configured model (before validation).
+        request = ProviderDefaultModel.Apply(request, string.IsNullOrWhiteSpace(request.Model) ? _defaultModel?.Invoke() : null);
         request.Validate();
 
         var keys = await _keyProvider(cancellationToken).ConfigureAwait(false);

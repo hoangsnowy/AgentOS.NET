@@ -29,6 +29,10 @@ public sealed class AgentSettings : ISettingsContributor
     /// limit is enforced against the model catalog; this is the absolute ceiling.</summary>
     public const int MaxOutputTokensCeiling = 128_000;
 
+    /// <summary>What an empty Board-agent model means ("Computer's default" in Agent profiles).</summary>
+    public const string ComputersDefaultHelp =
+        "Empty = the computer's own model (the member's CLI default). On our servers: the provider's model from Settings → Model keys.";
+
     /// <summary>Every agent role (Board agents first, then the Workflow pipeline — see <see cref="AgentRoles"/>), paired
     /// with its code defaults.</summary>
     public static IReadOnlyList<(string Role, AgentOptions Defaults)> Roles { get; } = BuildRoles();
@@ -49,7 +53,9 @@ public sealed class AgentSettings : ISettingsContributor
             };
             yield return new(Key(role, nameof(AgentOptions.Model)), SettingKind.Model, Category, $"{label} · model")
             {
-                DefaultValue = d.Model,
+                // No default model (a Board agent) = "Computer's default" — not an empty-string value.
+                DefaultValue = string.IsNullOrWhiteSpace(d.Model) ? null : d.Model,
+                Help = AgentsOptions.ModelIsOptional(role) ? ComputersDefaultHelp : null,
             };
             yield return new(Key(role, nameof(AgentOptions.Temperature)), SettingKind.Number, Category, $"{label} · temperature")
             {

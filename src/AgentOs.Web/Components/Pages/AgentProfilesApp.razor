@@ -11,6 +11,7 @@
 @using AgentOs.Modules.Llm
 @using AgentOs.Modules.Pipeline.Agents
 @inject ISettings Settings
+@inject LegacyAgentSettings Legacy
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 
 @if (!_resolved)
@@ -64,6 +65,10 @@ else
                                     <strong title="@($"Role key: {row.Role}")">@row.Label</strong>
                                     <span class="agent-profiles-desc">@row.Description</span>
                                     <Badge Variant="@SourceVariant(row.Source)">@SourceLabel(row.Source)</Badge>
+                                    @if (row.Legacy)
+                                    {
+                                        <Badge Variant="Badge.BadgeVariant.Info">Saved as “@LegacyAgentSettings.Decomposer” — still applies</Badge>
+                                    }
                                 </span>
                             </span>
                         </td>
@@ -84,8 +89,9 @@ else
                         <td>
                             @* Simple view: every priced model, the provider inferred from the choice (ModelRouting). *@
                             <ModelPicker Value="@row.Model" ValueChanged="v => PickModel(row, v)" Provider="@(_advanced ? row.Provider : null)"
-                                         AriaLabel="@($"{row.Label} model")" Disabled="@locked" />
-                            <div class="prefs-hint">@PriceHint(row.Model)@(_advanced ? "" : $" · via {(row.Provider == "Anthropic" ? "Claude" : row.Provider)}")</div>
+                                         AriaLabel="@($"{row.Label} model")" Disabled="@locked"
+                                         AllowInherit="@row.ModelOptional" InheritLabel="Computer's default" />
+                            <div class="prefs-hint">@(string.IsNullOrWhiteSpace(row.Model) && row.ModelOptional ? AgentSettings.ComputersDefaultHelp : PriceHint(row.Model))@(_advanced ? "" : $" · via {(row.Provider == "Anthropic" ? "Claude" : row.Provider)}")</div>
                         </td>
                         @if (_advanced)
                         {
@@ -110,7 +116,7 @@ else
                         <td>
                             <div class="agent-profiles-actions">
                                 <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@(locked || _saving)" OnClick="() => SaveRow(row)">Save</Btn>
-                                <Btn Size="Btn.ButtonSize.Sm" Disabled="@(locked || _saving || row.Source != SettingSource.Tenant)" OnClick="() => ResetRow(row)">Reset</Btn>
+                                <Btn Size="Btn.ButtonSize.Sm" Disabled="@(locked || _saving || (row.Source != SettingSource.Tenant && !row.Legacy))" OnClick="() => ResetRow(row)">Reset</Btn>
                             </div>
                         </td>
                     </tr>
@@ -178,6 +184,8 @@ else
         public string Label { get; } = info.Label;
         public string Description { get; } = info.Description;
         public AgentRoleGroup Group { get; } = info.Group;
+        public bool ModelOptional { get; } = AgentsOptions.ModelIsOptional(info.Key);
+        public bool Legacy { get; set; }
         public string Provider { get; set; } = string.Empty;
         public string Model { get; set; } = string.Empty;
         public string Temperature { get; set; } = string.Empty;
@@ -217,6 +225,19 @@ else
                 row.Source = Max(row.Source, v.Source);
                 row.IsLocked |= v.Source == SettingSource.Locked;
             }
+            // A renamed role (Decomposer → Discovery): a field with nothing stored under the new key shows — and uses —
+            // what the tenant saved under the former one, exactly as the agents resolve it.
+            if (LegacyAgentSettings.LegacyRoleOf(role) is not null)
+            {
+                foreach (var field in RoleFields.Where(f => byKey.GetValueOrDefault(AgentSettings.Key(role, f))?.Source is null or SettingSource.Default))
+                {
+                    if (await Legacy.ReadAsync(role, field, _tenantId) is { } old)
+                    {
+                        row.Loaded[field] = old;
+                        row.Legacy = true;
+                    }
+                }
+            }
             row.Provider = row.Loaded.GetValueOrDefault(ProviderField, string.Empty);
             row.Model = row.Loaded.GetValueOrDefault(ModelField, string.Empty);
             row.Temperature = row.Loaded.GetValueOrDefault(TemperatureField, string.Empty);
@@ -240,8 +261,12 @@ else
         await SaveAsync(row.Role, changes.Where(c => !string.Equals(c.Value, row.Loaded.GetValueOrDefault(c.Field), StringComparison.Ordinal)));
     }
 
-    private Task ResetRow(RoleRow row) =>
-        SaveAsync(row.Role, [(ProviderField, ""), (ModelField, ""), (TemperatureField, ""), (MaxTokensField, "")]);
+    private async Task ResetRow(RoleRow row)
+    {
+        // Reset returns to the inherited value — including what the row still carried under its former key.
+        if (row.Legacy) { await Legacy.ClearTenantAsync(row.Role, _tenantId); }
+        await SaveAsync(row.Role, [(ProviderField, ""), (ModelField, ""), (TemperatureField, ""), (MaxTokensField, "")]);
+    }
 
     private async Task SaveAsync(string role, IEnumerable<(string Field, string Value)> changes)
     {

@@ -15,7 +15,12 @@ public sealed class AgentsOptions
     // The Board agents that need a real machine (a checkout, a browser, the repo's toolchain) or answer from one run
     // on the member's paired computer by default — 0 server tokens.
     private const string MembersComputer = "RemoteAgent";
-    private const string BoardModel = "claude-sonnet-4-6";
+
+    // Board agents choose NO model by default (ComputersDefault): on a member's computer the CLI runs its own model (the
+    // member's choice, usually newer than any id we would pin); on our servers the provider's configured model applies
+    // (Settings → Model keys / Llm:<Provider>:Model, resolved in the LLM gateway). Picking a model in Agent profiles
+    // passes it explicitly (claude --model / codex -m on a computer).
+    private const string ComputersDefault = "";
 
     /// <summary>Workflow pipeline — Orchestrator configuration.</summary>
     public AgentOptions Orchestrator { get; set; } = new() { Model = "claude-haiku-4-5", Temperature = 0.3, MaxTokens = 2000 };
@@ -33,22 +38,25 @@ public sealed class AgentsOptions
     public AgentOptions Qa { get; set; } = new() { Model = "claude-haiku-4-5", Temperature = 0.1, MaxTokens = 1500 };
 
     /// <summary>Board — Coding (tickets): IssueWorkAgent, the agentic issue→branch run.</summary>
-    public AgentOptions IssueWork { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.2, MaxTokens = 32768 };
+    public AgentOptions IssueWork { get; set; } = new() { Model = ComputersDefault, Temperature = 0.2, MaxTokens = 32768 };
 
     /// <summary>Board — Discovery (New idea): the requirement step and the ticket split (TicketDecomposerAgent).</summary>
-    public AgentOptions Discovery { get; set; } = new() { Model = "claude-sonnet-4-6", Temperature = 0.2, MaxTokens = 4000 };
+    public AgentOptions Discovery { get; set; } = new() { Model = ComputersDefault, Temperature = 0.2, MaxTokens = 4000 };
 
     /// <summary>Board — Reviewer (ReviewAgent). Reads the change in a checkout on the member's computer.</summary>
-    public AgentOptions Reviewer { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 32768 };
+    public AgentOptions Reviewer { get; set; } = new() { Provider = MembersComputer, Model = ComputersDefault, Temperature = 0, MaxTokens = 32768 };
 
     /// <summary>Board — Testing (tickets): AcceptanceAgent. Builds and tests the change on the member's computer.</summary>
-    public AgentOptions Acceptance { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 32768 };
+    public AgentOptions Acceptance { get; set; } = new() { Provider = MembersComputer, Model = ComputersDefault, Temperature = 0, MaxTokens = 32768 };
 
     /// <summary>Board — Autopilot lead (AutopilotOrchestratorAgent). Answer-only.</summary>
-    public AgentOptions AutopilotOrchestrator { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 4096 };
+    public AgentOptions AutopilotOrchestrator { get; set; } = new() { Provider = MembersComputer, Model = ComputersDefault, Temperature = 0, MaxTokens = 4096 };
 
     /// <summary>Board — Retrospective (RetrospectiveAgent). Answer-only.</summary>
-    public AgentOptions Retrospective { get; set; } = new() { Provider = MembersComputer, Model = BoardModel, Temperature = 0, MaxTokens = 4096 };
+    public AgentOptions Retrospective { get; set; } = new() { Provider = MembersComputer, Model = ComputersDefault, Temperature = 0, MaxTokens = 4096 };
+
+    /// <summary>True when <paramref name="role"/> may leave its model empty ("the computer's default"): the Board agents.</summary>
+    public static bool ModelIsOptional(string role) => AgentRoles.Find(role)?.Group == AgentRoleGroup.Board;
 
     /// <summary>The seed profile for <paramref name="role"/> (an <see cref="AgentRoles"/> key), or null when unknown.</summary>
     public AgentOptions? For(string role) => role switch
@@ -66,6 +74,14 @@ public sealed class AgentsOptions
         AgentRoles.Retrospective => Retrospective,
         _ => null,
     };
+
+    /// <summary>Startup validation: every agent has a provider, Temperature in [0, 2] and MaxTokens &gt; 0; every
+    /// Workflow-pipeline agent has a model (a Board agent may leave it empty — see <see cref="ModelIsOptional"/>).</summary>
+    public bool IsValid() => AgentRoles.All.All(r => For(r.Key) is { } a
+        && !string.IsNullOrWhiteSpace(a.Provider)
+        && (ModelIsOptional(r.Key) || !string.IsNullOrWhiteSpace(a.Model))
+        && a.Temperature is >= 0 and <= 2
+        && a.MaxTokens > 0);
 
     /// <summary>Every configured agent, for cross-cutting checks (startup validation).</summary>
     public IEnumerable<AgentOptions> All()

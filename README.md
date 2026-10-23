@@ -295,8 +295,8 @@ so a key saved in Settings is used by the next call.
 
 | Agent | Provider | Model |
 |---|---|---|
-| Board: Discovery, Coding (tickets) | Claude | `claude-sonnet-4-6` |
-| Board: Reviewer, Testing (tickets), Autopilot lead, Retrospective | RemoteAgent (a paired computer, 0 server tokens) | `claude-sonnet-4-6` |
+| Board: Discovery, Coding (tickets) | Claude | *Computer's default* (on our servers: Claude's configured model) |
+| Board: Reviewer, Testing (tickets), Autopilot lead, Retrospective | RemoteAgent (a paired computer, 0 server tokens) | *Computer's default* (the member's CLI model) |
 | Workflow pipeline: Orchestrator | Claude | `claude-haiku-4-5` |
 | Workflow pipeline: Requirement | Claude | `claude-sonnet-4-6` |
 | Workflow pipeline: Coding | AzureOpenAI | `gpt-4.1` |
@@ -304,8 +304,9 @@ so a key saved in Settings is used by the next call.
 | Workflow pipeline: QA | Claude | `claude-haiku-4-5` |
 
 Every agent — Board and pipeline — reads its profile and its prompt (Settings → Prompts) per call, passes the budget
-gate unless it really runs on a member's computer, and appears in Insights under the same name. On a paired computer
-the runner passes the profile's model to the CLI (`claude --model`, `codex -m`). See [CONFIG.md](docs/CONFIG.md#settings--agent-profiles).
+gate unless it really runs on a member's computer, and appears in Insights under the same name. A Board agent chooses
+no model until someone picks one: a paired computer's CLI then runs its own default, our servers the provider's
+configured model; a picked model reaches the CLI as `claude --model` / `codex -m`. See [CONFIG.md](docs/CONFIG.md#settings--agent-profiles).
 
 The model picker lists every priced model for the chosen provider with its list price (e.g.
 `claude-haiku-5-5 · $0.1 / $0.5` per 1M tokens), plus *Custom…* for Azure deployment aliases.

@@ -71,7 +71,9 @@ public sealed class LlmModule : IModule
                 tenantProvider: sp,
                 // Classify SDK errors so the key pool fails over on transient (5xx/timeout) + auth errors,
                 // not only 429.
-                classifyError: SdkChatClients.Classify);
+                classifyError: SdkChatClients.Classify,
+                // An agent profile left on "no model chosen" runs Claude's configured model.
+                defaultModel: () => opts.Value.Claude.Model);
         });
         services.AddKeyedSingleton<ILlmClient>("AzureOpenAI", (sp, _) =>
         {
@@ -107,7 +109,9 @@ public sealed class LlmModule : IModule
                 // Fold the tenant's resolved endpoint into the client cache key (read per call from the same
                 // override source the factory uses) so two tenants sharing a key but not an endpoint never
                 // share a client bound to the wrong Azure resource.
-                cacheKeyDiscriminator: () => !string.IsNullOrWhiteSpace(ov.AzureEndpoint) ? ov.AzureEndpoint! : opts.Value.AzureOpenAi.Endpoint);
+                cacheKeyDiscriminator: () => !string.IsNullOrWhiteSpace(ov.AzureEndpoint) ? ov.AzureEndpoint! : opts.Value.AzureOpenAi.Endpoint,
+                // An agent profile left on "no model chosen" runs the tenant's default deployment.
+                defaultModel: DefaultDeployment);
         });
 
         // BYOK vendors (OpenAI, Gemini, xAI): fixed endpoints, tenant-scoped keys read live per call, the profile's
@@ -132,7 +136,8 @@ public sealed class LlmModule : IModule
                     toolInvocationLog: sp.GetService<AgentOs.Domain.Tools.IToolInvocationLog>(),
                     tenantProvider: sp,
                     classifyError: SdkChatClients.Classify,
-                    modelResolver: requested => vendor.ResolveModel(requested, Read(vendor.ModelSetting)));
+                    modelResolver: requested => vendor.ResolveModel(requested, Read(vendor.ModelSetting)),
+                    defaultModel: () => vendor.ResolveModel(null, Read(vendor.ModelSetting)));
             });
         }
 
@@ -160,7 +165,8 @@ public sealed class LlmModule : IModule
                 classifyError: SdkChatClients.Classify,
                 cacheKeyDiscriminator: () => Read(LlmSettings.CompatEndpoint) ?? string.Empty,
                 modelResolver: requested => OpenAiCompatibleModels.Resolve(requested, Read(LlmSettings.CompatModel)),
-                costOverride: (_, usage) => OpenAiCompatibleModels.Cost(usage, Read(LlmSettings.CompatInputPrice), Read(LlmSettings.CompatOutputPrice)));
+                costOverride: (_, usage) => OpenAiCompatibleModels.Cost(usage, Read(LlmSettings.CompatInputPrice), Read(LlmSettings.CompatOutputPrice)),
+                defaultModel: () => Read(LlmSettings.CompatModel));
         });
 
         services.AddSingleton<ILlmClientFactory, LlmClientFactory>();
