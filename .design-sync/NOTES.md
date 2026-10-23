@@ -17,3 +17,5 @@
   `localPath`. Update the pushed-screens list in CLAUDE.md (Design workflow section) with the new paths and date.
 - 2026-10-22: pushed `board.html` (tabs incl. Autopilot + Knowledge), `board-try-the-app.html`, `board-autopilot.html`,
   `board-knowledge.html`.
+- 2026-10-23: pushed `insights-delivery.html` (#272) and `board-knowledge-practices.html` (#273). The MVP dock (#271:
+  Home · Board · Insights · Settings) is app data, not a component — no card shows the dock's items.
