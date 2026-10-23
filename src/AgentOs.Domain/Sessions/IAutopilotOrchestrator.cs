@@ -24,6 +24,9 @@ public sealed record OrchestratorStuckTask(Guid SessionId, int IssueNumber, stri
     public string? PersonAnswer { get; init; }
 }
 
+/// <summary>An open umbrella ticket (labelled for a person) the agent may close once its scope is fully delivered.</summary>
+public sealed record OrchestratorEpic(int IssueNumber, string Title, string Body);
+
 /// <summary>Everything the Orchestrator agent sees on one board.</summary>
 /// <param name="Project">Board / repository name.</param>
 /// <param name="Mode">Build or BuildAndMerge.</param>
@@ -42,7 +45,11 @@ public sealed record OrchestratorBrief(
     IReadOnlyList<OrchestratorMove> Moves,
     IReadOnlyList<OrchestratorStuckTask> Stuck,
     int FreeSlots,
-    IReadOnlyList<string> RecentDecisions);
+    IReadOnlyList<string> RecentDecisions)
+{
+    /// <summary>Open umbrella tickets — closable by the agent once every piece of their scope is closed or merged.</summary>
+    public IReadOnlyList<OrchestratorEpic> Epics { get; init; } = [];
+}
 
 /// <summary>A stuck task to run again, with what to do differently.</summary>
 public sealed record OrchestratorRetry(int IssueNumber, string Guidance);

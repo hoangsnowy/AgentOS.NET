@@ -55,18 +55,21 @@ public sealed partial class ProjectOrchestrator
         var stuck = await WithAnswersAsync(StuckTasks(tickets, planTickets, sessions, repos, candidates), board, pat, sessions, sp, ct).ConfigureAwait(false);
         var moves = candidates.Where(a => a is not AutopilotAction.NeedsPerson)
             .Select((a, i) => (Id: "M" + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), Action: a)).ToList();
-        if (moves.Count == 0 && stuck.Count == 0) { return []; }
+        var epics = await EpicsAsync(board, tenant, pat, tickets, sp, ct).ConfigureAwait(false);
+        if (moves.Count == 0 && stuck.Count == 0 && epics.Count == 0) { return []; }
 
         var freeSlots = Math.Max(0, AutopilotPlanner.MaxParallel - running);
         // Ask only when something changed: the same picture gets the same answer (and costs the member's quota).
-        var signature = Signature(moves.Select(m => m.Action.Why), stuck.Select(s => $"{s.IssueNumber}:{s.Situation}:{s.RetriesLeft}:{s.PersonAnswer}"), freeSlots);
+        var signature = Signature(moves.Select(m => m.Action.Why), stuck.Select(s => $"{s.IssueNumber}:{s.Situation}:{s.RetriesLeft}:{s.PersonAnswer}")
+            .Concat(epics.Select(e => $"epic {e.IssueNumber}"))
+            .Concat(tickets.Where(t => string.Equals(t.State, "CLOSED", StringComparison.OrdinalIgnoreCase)).Select(t => $"closed {t.Number}")), freeSlots);
         if (_lastSignature.TryGetValue(board.Id, out var last) && last == signature) { return []; }
 
         var recent = (await log.RecentAsync(tenant, board.Id, 12).ConfigureAwait(false)).Select(e => e.Text).ToList();
         var brief = new OrchestratorBrief(board.Id, tenant, member, board.Name, mode.ToString(),
             Snapshot(tickets, planTickets, planTasks, sessions),
             moves.Select(m => new OrchestratorMove(m.Id, KindOf(m.Action), IssueOf(m.Action), m.Action.Why)).ToList(),
-            stuck, freeSlots, recent);
+            stuck, freeSlots, recent) { Epics = epics };
         // Metrics first: the decision's LLM call is an agent run in Insights like every other agent's.
         OrchestratorDecision decision;
         var decidedAt = DateTimeOffset.UtcNow;
@@ -114,6 +117,20 @@ public sealed partial class ProjectOrchestrator
         // A person said a ticket is done or no longer wanted: close it (with their reason) and the task with it.
         foreach (var close in decision.Closes)
         {
+            // An epic whose scope is delivered: closed with the agent's summary — no person needed (reopen to undo).
+            if (stuck.All(s => s.IssueNumber != close.IssueNumber))
+            {
+                var epic = tickets.FirstOrDefault(t => t.Number == close.IssueNumber);
+                if (epic is { RepoOwner: { } eo, RepoName: { } en } && await sp.GetRequiredService<IPrCreationService>().CloseAsync(
+                        BoardTaskService.RepoDescriptor(board, tenant, eo, en, "main", pat), close.IssueNumber,
+                        $"Closing — {close.Reason}\n\n<sub>Closed by the AgentOS.NET Orchestrator agent: every piece of this epic is delivered. Reopen it if anything is missing.</sub>\n",
+                        ct).ConfigureAwait(false))
+                {
+                    retried.Add(close.IssueNumber);
+                    log.Add(tenant, board.Id, $"Closed epic #{close.IssueNumber}: {close.Reason}");
+                }
+                continue;
+            }
             var task = stuck.First(s => s.IssueNumber == close.IssueNumber);
             var session = sessions.First(s => s.Id == task.SessionId);
             if (!await CloseTicketAsync(board, pat, session, PersonAnswers.Acknowledgement($"closing #{close.IssueNumber}: {close.Reason}"), sp, ct).ConfigureAwait(false))
@@ -123,7 +140,9 @@ public sealed partial class ProjectOrchestrator
             await sp.GetRequiredService<AgentOs.Modules.Sessions.Persistence.ISessionRepository>()
                 .UpdateRunResultAsync(tenant, session.Id, "Closed", session.PrUrl, null, ct).ConfigureAwait(false);
             retried.Add(close.IssueNumber);
-            log.Add(tenant, board.Id, $"Closed #{close.IssueNumber} after your answer: {close.Reason}");
+            log.Add(tenant, board.Id, task.PersonAnswer is null
+                ? $"Closed #{close.IssueNumber}: {close.Reason}"
+                : $"Closed #{close.IssueNumber} after your answer: {close.Reason}");
         }
         foreach (var question in decision.Questions)
         {
@@ -136,6 +155,39 @@ public sealed partial class ProjectOrchestrator
         var handled = retried.Concat(decision.Questions.Select(q => q.IssueNumber)).ToHashSet();
         picked.AddRange(candidates.OfType<AutopilotAction.NeedsPerson>().Where(n => !handled.Contains(n.IssueNumber)));
         return picked;
+    }
+
+    private readonly ConcurrentDictionary<(Guid Board, int Issue), (DateTimeOffset At, string Body)> _epicBodies = new();
+
+    // Open umbrella tickets (labelled for a person) with their text — read at most every 10 minutes each.
+    private async Task<List<OrchestratorEpic>> EpicsAsync(WorkspaceEntity board, string tenant, string pat, IReadOnlyList<BoardTicket> tickets,
+        IServiceProvider sp, CancellationToken ct)
+    {
+        var epics = new List<OrchestratorEpic>();
+        var resolver = sp.GetRequiredService<ISourceProviderResolver>();
+        if (!resolver.TryResolve(board.Kind, out var provider) || provider is null) { return epics; }
+        foreach (var t in tickets.Where(t => t.Number.HasValue && t.RepoOwner is not null && t.RepoName is not null
+                     && !string.Equals(t.State, "CLOSED", StringComparison.OrdinalIgnoreCase) && t.Labels.Contains(StandardLabels.NeedsHuman)))
+        {
+            var number = t.Number.GetValueOrDefault();
+            if (!_epicBodies.TryGetValue((board.Id, number), out var cached) || DateTimeOffset.UtcNow - cached.At > TimeSpan.FromMinutes(10))
+            {
+                string body;
+                try
+                {
+                    body = await provider.ReadTicketBodyAsync(BoardTaskService.RepoDescriptor(board, tenant, t.RepoOwner!, t.RepoName!, "main", pat), number, ct)
+                        .ConfigureAwait(false) ?? "";
+                }
+                catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or Octokit.ApiException or InvalidOperationException or TaskCanceledException)
+                {
+                    continue;
+                }
+                cached = (DateTimeOffset.UtcNow, body);
+                _epicBodies[(board.Id, number)] = cached;
+            }
+            epics.Add(new OrchestratorEpic(number, t.Title, cached.Body));
+        }
+        return epics;
     }
 
     // Each stuck task's ticket is read for a person's reply to the agent's last question (one comments call per task).
@@ -190,14 +242,10 @@ public sealed partial class ProjectOrchestrator
         var prs = sp.GetRequiredService<IPrCreationService>();
         // The pull request AgentOS tracks for each (repo, ticket): the one its task points at now.
         var current = new Dictionary<(string Owner, string Repo, int Issue), (int Pr, SessionRepoEntity Repo)>();
-        foreach (var s in sessions)
-        {
-            if (s.IssueNumber is not { } issue) { continue; }
-            foreach (var r in repos[s.Id].Where(r => r.Status is not "Failed"))
-            {
-                if (PrNumber(r.PrUrl) is { } pr) { current.TryAdd((r.Owner, r.Repo, issue), (pr, r)); }
-            }
-        }
+        var tracked = sessions.Where(s => s.IssueNumber.HasValue)
+            .SelectMany(s => repos[s.Id].Where(r => r.Status is not "Failed" && PrNumber(r.PrUrl).HasValue)
+                .Select(r => (Issue: s.IssueNumber.GetValueOrDefault(), Pr: PrNumber(r.PrUrl).GetValueOrDefault(), Repo: r)));
+        foreach (var t in tracked) { current.TryAdd((t.Repo.Owner, t.Repo.Repo, t.Issue), (t.Pr, t.Repo)); }
         foreach (var repo in current.Values.Select(c => c.Repo).DistinctBy(r => (r.Owner, r.Repo)))
         {
             var desc = BoardTaskService.RepoDescriptor(board, board.TenantId, repo.Owner, repo.Repo, repo.DefaultBranch, pat);
@@ -221,12 +269,12 @@ public sealed partial class ProjectOrchestrator
         IReadOnlyList<RemoteSessionEntity> sessions, ILookup<Guid, SessionRepoEntity> repos, IReadOnlyList<AutopilotAction> candidates)
     {
         var openTickets = planTickets.Where(t => t.Open).Select(t => t.Number).ToHashSet();
-        var titles = new Dictionary<int, string>();
-        foreach (var t in tickets) { if (t.Number is { } number) { titles.TryAdd(number, t.Title); } }
+        var titles = tickets.Where(t => t.Number.HasValue).GroupBy(t => t.Number.GetValueOrDefault()).ToDictionary(g => g.Key, g => g.First().Title);
         var stuck = new List<OrchestratorStuckTask>();
-        foreach (var s in sessions.Where(s => s.Status is "Failed" or "Blocked" && !workflows.IsRunning(s.TenantId, s.Id)))
+        foreach (var s in sessions.Where(s => s.Status is "Failed" or "Blocked" && !workflows.IsRunning(s.TenantId, s.Id)
+                     && s.IssueNumber.HasValue && openTickets.Contains(s.IssueNumber.GetValueOrDefault())))
         {
-            if (s.IssueNumber is not { } issue || !openTickets.Contains(issue)) { continue; }
+            var issue = s.IssueNumber.GetValueOrDefault();
             var why = string.Join(" | ", repos[s.Id].Select(r => r.Error).Prepend(s.Error).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct());
             stuck.Add(new OrchestratorStuckTask(s.Id, issue, titles.GetValueOrDefault(issue, s.Title),
                 $"{(s.Status == "Failed" ? "Couldn't finish" : "Waiting for a person")}: {(why.Length == 0 ? "no reason recorded" : why)}",
@@ -249,9 +297,9 @@ public sealed partial class ProjectOrchestrator
         var sb = new StringBuilder();
         var plan = planTickets.ToDictionary(t => t.Number);
         sb.Append("Tickets:\n");
-        foreach (var t in tickets.OrderBy(t => t.Number))
+        foreach (var t in tickets.Where(t => t.Number.HasValue).OrderBy(t => t.Number))
         {
-            if (t.Number is not { } number) { continue; }
+            var number = t.Number.GetValueOrDefault();
             var p = plan.GetValueOrDefault(number);
             sb.Append("#").Append(t.Number).Append(' ').Append(p?.Open == false ? "[closed]" : "[open]")
               .Append(" [").Append(string.Join(", ", t.Labels)).Append(']');
