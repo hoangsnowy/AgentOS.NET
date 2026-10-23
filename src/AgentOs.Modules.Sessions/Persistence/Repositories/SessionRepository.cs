@@ -205,6 +205,26 @@ internal sealed class SessionRepository : ISessionRepository
         return true;
     }
 
+    public async Task IncrementFixRoundsForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default)
+    {
+        var session = await _db.Sessions.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.TenantId == tenantId, ct).ConfigureAwait(false);
+        if (session is null) { return; }
+        session.FixRounds++;
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<DeliverySummary> GetDeliveryForTenantAsync(string tenantId, DateTimeOffset? since = null, CancellationToken ct = default)
+    {
+        var merged = await _db.Sessions.IgnoreQueryFilters()
+            .Where(s => s.TenantId == tenantId && s.MergedAtUtc != null && (since == null || s.MergedAtUtc >= since))
+            .Select(s => new { s.FixRounds, s.CreatedAtUtc, s.MergedAtUtc })
+            .ToListAsync(ct).ConfigureAwait(false);
+        var stuck = await _db.Sessions.IgnoreQueryFilters()
+            .CountAsync(s => s.TenantId == tenantId && (s.Status == "Failed" || s.Status == "Blocked"), ct).ConfigureAwait(false);
+        return DeliverySummary.From(merged.Select(m => (m.FixRounds, (m.MergedAtUtc!.Value - m.CreatedAtUtc).TotalHours)).ToList(), stuck);
+    }
+
     public async Task<bool> RecomputeSessionStatusForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default)
     {
         var session = await _db.Sessions
@@ -233,6 +253,7 @@ internal sealed class SessionRepository : ISessionRepository
             // (or reviewed: Reviewed / ChangesRequested by the Reviewer agent).
             : repos.All(r => r.Status is "Done" or "Merged" or "Accepted" or "Rejected" or "Reviewed" or "ChangesRequested") ? "Done"
             : "Running";
+        if (session.Status == "Merged") { session.MergedAtUtc ??= DateTimeOffset.UtcNow; }
 
         // Mirror the first PR + first error onto the parent for back-compat display.
         session.PrUrl = repos.FirstOrDefault(r => !string.IsNullOrEmpty(r.PrUrl))?.PrUrl;

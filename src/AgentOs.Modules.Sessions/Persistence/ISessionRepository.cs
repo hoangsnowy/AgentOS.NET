@@ -54,4 +54,11 @@ public interface ISessionRepository
     /// <summary>Roll the child repo statuses up into the parent session: any Failed → Failed; all Done → Done;
     /// else Running. Also mirrors the first repo's PR onto the parent for back-compat display.</summary>
     Task<bool> RecomputeSessionStatusForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default);
+
+    /// <summary>Count one more round of fixes on the task (its change went back to the Coding agent).</summary>
+    Task IncrementFixRoundsForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>Delivery of the tenant's tasks merged since <paramref name="since"/> (null = all time).</summary>
+    Task<DeliverySummary> GetDeliveryForTenantAsync(string tenantId, DateTimeOffset? since = null, CancellationToken ct = default) =>
+        Task.FromResult(DeliverySummary.Empty);
 }
