@@ -58,13 +58,19 @@ public static class TaskFailure
             TaskFailureAction.TryAgain, "Try again"),
     ];
 
-    private static readonly TaskFailureInfo Unknown = new("unknown", "The AI couldn't finish this task",
+    private static readonly TaskFailureInfo PlanLimit = new("plan-limit", "Your computer's AI plan hit its limit",
+        "Your Claude or Codex plan is used up for now. Nothing is lost — Autopilot picks this up again after the reset, or try again then.",
+        TaskFailureAction.TryAgain, "Try again");
+
+    private static readonly TaskFailureInfo Unknown =new("unknown", "The AI couldn't finish this task",
         "See the details below. Trying again often works.", TaskFailureAction.TryAgain, "Try again");
 
     /// <summary>Explain <paramref name="error"/>; null/blank → null (nothing failed).</summary>
     public static TaskFailureInfo? Explain(string? error)
     {
         if (string.IsNullOrWhiteSpace(error)) { return null; }
+        // The member's Claude/Codex plan said "not now" — nothing failed (the same detector Autopilot waits on).
+        if (AgentOs.Modules.RemoteAgent.PlanLimitDetector.IsPlanLimit(error)) { return PlanLimit; }
         foreach (var r in Rules)
         {
             foreach (var needle in r.Needles)

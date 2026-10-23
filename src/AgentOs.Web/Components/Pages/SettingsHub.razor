@@ -40,6 +40,7 @@
                 break;
             case "agents":   <AgentProfilesApp />; break;
             case "prompts":  <PromptsApp />;  break;
+            case "autopilot": <AutopilotSettingsApp />; break;
             case "mcp":      <McpApp />;      break;
             case "plugins":  <PluginsApp />;  break;
             case "policy":   <PolicyApp />;   break;
@@ -76,6 +77,7 @@
         new("routing",     "AI",            "Routing",        "lightning",        Access.Admin, Host: true),
         new("agents",      "AI",            "Agent profiles", "diamond",          Access.Admin),
         new("prompts",     "AI",            "Prompts",        "file",             Access.Admin),
+        new("autopilot",   "AI",            "Autopilot",      "play",             Access.Admin),
         new("github",      "Connections",   "GitHub",         "git-pull-request", Access.Admin, Host: true),
         new("mcp",         "Connections",   "MCP servers",    "arrow-square-out", Access.Admin),
         new("plugins",     "Connections",   "Plugins",        "squares-stack",    Access.Everyone),

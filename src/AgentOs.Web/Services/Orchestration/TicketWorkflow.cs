@@ -1,10 +1,12 @@
 // One ticket's whole agent flow as a Microsoft Agent Framework Workflow: the Autopilot Orchestrator agent decides
 // WHICH ticket starts; this graph then runs it — Coding → checks → Reviewer → Testing → merge — routing each verdict
 // along a conditional edge (red checks, conflicts, requested changes and failed acceptance go back to the Coding agent,
-// bounded by the same 3 rounds the rules use). Each step is one of the existing agents (ITicketSteps — the Board's
+// bounded by the same fix rounds the rules use — Settings › Autopilot, counted from the task's persisted FixRounds, so
+// the cap is the true total across engines and restarts). Each step is one of the existing agents (ITicketSteps — the Board's
 // BoardTicketSteps in production), so governance, metrics (Insights) and evidence on the PR are unchanged. When the
 // graph ends without a merge — "needs a person", or an agent that couldn't run — the task is handed back to the
-// Orchestrator agent and the step-by-step rules, which also pick up any flow a restart cut short.
+// Orchestrator agent and the step-by-step rules, which also pick up any flow a restart cut short. A member's plan limit
+// (their computer's Claude/Codex plan said "no more for now") pauses the flow before it spends a round on it.
 
 using System;
 using System.Collections.Generic;
@@ -38,6 +40,8 @@ public enum TicketStage
     NeedsPerson,
     /// <summary>An agent couldn't run or finish — handed back to the step-by-step path.</summary>
     Stopped,
+    /// <summary>The member's AI plan hit its limit — handed back; Autopilot picks it up after the reset.</summary>
+    PlanLimited,
 }
 
 /// <summary>The state a ticket's workflow threads along every edge.</summary>
@@ -49,8 +53,11 @@ public sealed class TicketFlow(string tenantId, Guid boardId, Guid sessionId, in
     public int IssueNumber { get; } = issueNumber;
     public bool MayMerge { get; } = mayMerge;
     public TicketStage Stage { get; set; } = TicketStage.Fix;
-    /// <summary>Automatic fix rounds used.</summary>
+    /// <summary>Automatic fix rounds used — seeded from the task's persisted fix rounds, so a flow started after a
+    /// restart (or after step-by-step rounds) has only what is left of the cap.</summary>
     public int Round { get; set; }
+    /// <summary>The cap on <see cref="Round"/> (Settings › Autopilot › Automatic fix rounds).</summary>
+    public int MaxRounds { get; init; } = AgentOs.Modules.Pipeline.Agents.AutopilotLimits.Default.MaxFixRounds;
     /// <summary>What the Coding agent is asked to change next (null = the ticket itself, first attempt).</summary>
     public string? NextChange { get; set; }
     /// <summary>Why the flow stopped (plain language), when it did.</summary>
@@ -61,22 +68,29 @@ public sealed class TicketFlow(string tenantId, Guid boardId, Guid sessionId, in
     /// <summary>Send the change back to the Coding agent with <paramref name="change"/> — or stop when the rounds are used up.</summary>
     public TicketFlow SendBack(string what, string change)
     {
-        if (Round >= AutopilotPlanner.MaxFixRounds)
+        if (Round >= MaxRounds)
         {
             Stage = TicketStage.NeedsPerson;
-            Reason = $"{what} after {AutopilotPlanner.MaxFixRounds} automatic fixes — needs a person.";
+            Reason = $"{what} after {MaxRounds} automatic fixes — needs a person.";
             return this;
         }
         Round++;
         NextChange = change;
         Stage = TicketStage.Fix;
-        Trail.Add($"{what.ToLowerInvariant()} → back to Coding (try {Round} of {AutopilotPlanner.MaxFixRounds})");
+        Trail.Add($"{what.ToLowerInvariant()} → back to Coding (try {Round} of {MaxRounds})");
         return this;
     }
 
     internal TicketFlow Stop(string why)
     {
         Stage = TicketStage.Stopped;
+        Reason = why;
+        return this;
+    }
+
+    internal TicketFlow PausedForPlan(string why)
+    {
+        Stage = TicketStage.PlanLimited;
         Reason = why;
         return this;
     }
@@ -108,6 +122,9 @@ public interface ITicketSteps
     Task UpdateBranchAsync(TicketFlow flow, TicketChange change, CancellationToken ct);
     /// <summary>Merge a change and record it; null on success, else the reason.</summary>
     Task<string?> MergeAsync(TicketFlow flow, TicketChange change, CancellationToken ct);
+
+    /// <summary>Why no agent should run now — the member's AI plan is at its limit (plain words) — or null.</summary>
+    string? PlanLimited(TicketFlow flow) => null;
 }
 
 /// <summary>Builds and runs a ticket's MAF workflow.</summary>
@@ -148,13 +165,19 @@ public static class TicketWorkflow
         return run.NewEvents.OfType<WorkflowOutputEvent>().Select(e => e.Data).OfType<TicketFlow>().LastOrDefault() ?? flow;
     }
 
+    // The member's plan is at its limit: stop before an agent runs (and after one ran into it) — a round spent then
+    // would be spent on nothing.
+    private static TicketFlow? PlanPause(ITicketSteps steps, TicketFlow f) => steps.PlanLimited(f) is { } why ? f.PausedForPlan(why) : null;
+
     private sealed class CodeExecutor(ITicketSteps steps) : Executor<TicketFlow, TicketFlow>("code")
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            if (PlanPause(steps, f) is { } before) { return before; }
             var run = await steps.CodeAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Coding agent couldn't start: {run.Status}."); }
             await run.Completion.ConfigureAwait(false);
+            if (PlanPause(steps, f) is { } after) { return after; }
             var changes = await steps.ChangesAsync(f, ct).ConfigureAwait(false);
             if (changes.Count == 0 || changes.Any(c => c.Status is "Failed" or "Blocked" || c.Pr is null))
             {
@@ -216,9 +239,11 @@ public static class TicketWorkflow
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            if (PlanPause(steps, f) is { } before) { return before; }
             var run = await steps.ReviewAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Reviewer agent couldn't start: {run.Status}."); }
             await run.Completion.ConfigureAwait(false);
+            if (PlanPause(steps, f) is { } after) { return after; }
             var changes = await steps.ChangesAsync(f, ct).ConfigureAwait(false);
             if (changes.Any(c => c.Status == "ChangesRequested"))
             {
@@ -239,9 +264,11 @@ public static class TicketWorkflow
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            if (PlanPause(steps, f) is { } before) { return before; }
             var run = await steps.TestAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Testing agent couldn't start: {run.Status}."); }
             await run.Completion.ConfigureAwait(false);
+            if (PlanPause(steps, f) is { } after) { return after; }
             var changes = await steps.ChangesAsync(f, ct).ConfigureAwait(false);
             if (changes.Any(c => c.Status == "Rejected"))
             {

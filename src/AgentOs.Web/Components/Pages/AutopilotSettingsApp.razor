@@ -1,0 +1,81 @@
+@* AutopilotSettingsApp — Settings › AI › Autopilot (ADR-0011): how Autopilot runs a project once a person turns it on
+   in Board › Autopilot. Who decides the next moves, how each ticket runs, the bounds every engine keeps (tasks at once,
+   acceptance tests at once, fix rounds, the Orchestrator agent's retries) and how long a MAF workflow waits for checks
+   — all rendered from the Autopilot:* descriptors (SettingsFields), read by Autopilot on its next pass. The rules that
+   are not settings (when it merges, what a plan limit does) are stated here in plain words, so the screen says what
+   Autopilot really does. Admins only: these apply to every project of the tenant. *@
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using AgentOs.Modules.Pipeline.Agents
+
+@if (!_resolved)
+{
+    <Spinner />
+}
+else if (!_isAdmin)
+{
+    <div class="login-error">Admin role required. Autopilot's settings apply to every project of your workspace.</div>
+}
+else
+{
+    <header class="page-head">
+        <div>
+            <h1 class="page-title">Autopilot</h1>
+            <p class="page-sub">How the AI works on a project by itself once Autopilot is on (Board › Autopilot). Changes apply to its next pass — within a minute, no restart.</p>
+        </div>
+    </header>
+
+    <Panel Title="Who decides">
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@DecisionKeys" />
+    </Panel>
+
+    <Panel Title="Limits">
+        <p class="muted platform-hint">Every engine keeps these bounds: the Orchestrator agent, the fixed rules and a ticket's MAF workflow. Fix rounds are counted per task in total — whichever engine sent the change back, and across restarts.</p>
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@LimitKeys" />
+    </Panel>
+
+    <Panel Title="Waiting for checks">
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@CheckKeys" />
+    </Panel>
+
+    <Panel Title="Rules that always apply">
+        <ul class="autopilot-rules" aria-label="Autopilot's fixed rules">
+            <li><strong>Merging.</strong> With <em>Build and merge</em>, a change is merged only when its checks are green, the Reviewer agent approved it and the Testing agent passed it against the ticket's acceptance criteria — which needs a connected computer. Nothing untested is merged.</li>
+            <li><strong>Order.</strong> Approved tickets start p0 first, then oldest — never before the tickets they depend on are done. Tickets marked for a person are never touched.</li>
+            <li><strong>Plan limits.</strong> When your computer's Claude or Codex plan hits its limit, Autopilot waits until the plan resets: no new work, and no fix round or retry is spent. Work it cut short picks up again after the reset — nothing is lost.</li>
+        </ul>
+    </Panel>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private static readonly string[] DecisionKeys = [AutopilotSettings.DecidedByKey, AutopilotSettings.TicketEngineKey];
+
+    private static readonly string[] LimitKeys =
+    [
+        AutopilotSettings.MaxParallelKey,
+        AutopilotSettings.MaxParallelTestsKey,
+        AutopilotSettings.MaxFixRoundsKey,
+        AutopilotSettings.MaxAgentRetriesKey,
+    ];
+
+    private static readonly string[] CheckKeys = [AutopilotSettings.ChecksTimeoutMinutesKey, AutopilotSettings.ChecksPollSecondsKey];
+
+    private bool _resolved;
+    private bool _isAdmin;
+    private string _tenantId = string.Empty;
+    private string _actor = "admin";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var user = (await AuthState).User;
+            _isAdmin = user.IsAdmin();
+            _tenantId = user.GetTenantId() ?? string.Empty;
+            _actor = user.GetUserId() ?? user.Identity?.Name ?? _actor;
+        }
+        _resolved = true;
+    }
+}

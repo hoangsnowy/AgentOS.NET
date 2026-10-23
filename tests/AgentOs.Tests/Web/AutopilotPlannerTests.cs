@@ -2,6 +2,7 @@
 // only when the board allows it, and a person asked when the agent can't get there.
 
 using AgentOs.Domain.Workspaces;
+using AgentOs.Modules.Pipeline.Agents;
 using AgentOs.Web.Services.Orchestration;
 using Shouldly;
 using Xunit;
@@ -12,6 +13,75 @@ public sealed class AutopilotPlannerTests
 {
     private static PlanTicket T(int n, bool open = true, bool ai = true, int p = 1, int[]? deps = null, bool live = false) =>
         new(n, open, ai, p, deps ?? [], live);
+
+    // ── Settings › Autopilot bounds ──
+
+    [Fact]
+    public void Limits_FromSettings_CapSlots()
+    {
+        var limits = AutopilotLimits.Default with { MaxParallel = 3 };
+
+        AutopilotPlanner.Decide(AutopilotMode.Build, [T(1), T(2), T(3), T(4)], [], limits: limits).Count.ShouldBe(3);
+        AutopilotPlanner.Decide(AutopilotMode.Build, [T(1), T(2), T(3), T(4)], []).Count.ShouldBe(2); // the default
+    }
+
+    [Fact]
+    public void Limits_FromSettings_CapFixRounds_AndTheLogSaysTheRealNumber()
+    {
+        var limits = AutopilotLimits.Default with { MaxFixRounds = 1 };
+        var red = Task(9, "Done", Pr(PrChecksState.Failed));
+
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [red], limits: limits).ShouldHaveSingleItem()
+            .ShouldBeOfType<AutopilotAction.FixChecks>().Why.ShouldContain("try 1 of 1");
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [red with { FixRounds = 1 }], limits: limits).ShouldHaveSingleItem()
+            .ShouldBeOfType<AutopilotAction.NeedsPerson>().Why.ShouldContain("after 1 tries");
+    }
+
+    [Fact]
+    public void Limits_FromSettings_CapAcceptanceRuns()
+    {
+        PlanTask Green(int issue) => Task(issue, "Done", new PlanChange(Guid.NewGuid(), issue + 20, PrChecksState.Passed, null));
+        var limits = AutopilotLimits.Default with { MaxParallel = 4, MaxParallelTests = 2 };
+
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [Green(1), Green(2), Green(3)], limits: limits)
+            .OfType<AutopilotAction.RunTests>().Count().ShouldBe(2);
+    }
+
+    [Fact]
+    public void WithinCaps_UsesTheConfiguredCaps()
+    {
+        AutopilotAction[] picked = [new AutopilotAction.StartTicket(1, "a"), new AutopilotAction.StartTicket(2, "b"), new AutopilotAction.StartTicket(3, "c")];
+
+        AutopilotPlanner.WithinCaps(picked, 0, 0, AutopilotLimits.Default with { MaxParallel = 3 }).Count.ShouldBe(3);
+        AutopilotPlanner.WithinCaps(picked, 0, 0, AutopilotLimits.Default with { MaxParallel = 1 }).ShouldHaveSingleItem();
+    }
+
+    // ── Plan limits ──
+
+    // Work the member's plan limit cut short picks up first once the plan resets — as a plain restart, no fix round.
+    [Fact]
+    public void CutShortByPlanLimit_ResumesFirst_WithinTheSlots()
+    {
+        var cut = Task(7, "Failed") with { CutShortByPlanLimit = true, FixRounds = 2 };
+
+        var actions = AutopilotPlanner.Decide(AutopilotMode.Build, [T(1), T(2)], [cut]);
+
+        actions.Count.ShouldBe(2);
+        actions[0].ShouldBeOfType<AutopilotAction.ResumeTask>().IssueNumber.ShouldBe(7);
+        actions[1].ShouldBeOfType<AutopilotAction.StartTicket>().Number.ShouldBe(1);
+        actions.OfType<AutopilotAction.FixChecks>().ShouldBeEmpty();
+        AutopilotPlanner.TakesSlot(actions[0]).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CutShortByPlanLimit_WaitsForASlot_AndAPlainFailureIsLeftAlone()
+    {
+        var cut = Task(7, "Failed") with { CutShortByPlanLimit = true };
+
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [Task(8, "Running"), Task(9, "Running"), cut]).ShouldBeEmpty();
+        AutopilotPlanner.Decide(AutopilotMode.Build, [], [Task(7, "Failed")]).ShouldBeEmpty(); // the Orchestrator agent's to retry
+        AutopilotPlanner.Decide(AutopilotMode.Off, [], [cut]).ShouldBeEmpty();
+    }
 
     private static PlanTask Task(int issue, string status, params PlanChange[] changes) =>
         new(Guid.NewGuid(), issue, status, changes, 0);
@@ -60,7 +130,7 @@ public sealed class AutopilotPlannerTests
     [Fact]
     public void FailedChecks_AfterThreeFixes_AskAPerson()
     {
-        var task = Task(9, "Done", Pr(PrChecksState.Failed)) with { FixRounds = AutopilotPlanner.MaxFixRounds };
+        var task = Task(9, "Done", Pr(PrChecksState.Failed)) with { FixRounds = AutopilotLimits.Default.MaxFixRounds };
 
         AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [task]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.NeedsPerson>();
     }
@@ -92,7 +162,7 @@ public sealed class AutopilotPlannerTests
         var fix = AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [rejected]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.FixChecks>();
         fix.Report.ShouldBe("- F-4: duplicate email accepted");
         fix.Why.ShouldContain("failed acceptance testing");
-        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [rejected with { FixRounds = AutopilotPlanner.MaxFixRounds }])
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [rejected with { FixRounds = AutopilotLimits.Default.MaxFixRounds }])
             .ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.NeedsPerson>();
     }
 

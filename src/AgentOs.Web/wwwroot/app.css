@@ -2721,6 +2721,10 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 /* Autopilot decisions — newest first, time then sentence. */
 .autopilot-log { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--fs-xs); max-height: 22rem; overflow: auto; }
 .autopilot-log li { display: flex; gap: var(--space-2); }
+/* Settings › Autopilot — the rules that are not settings, in plain words. */
+.autopilot-rules { margin: 0; padding-left: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--fs-sm); max-width: 72ch; }
+/* A plan-limit wait is not a failure: the card reads as a warning (Board › Autopilot / Tasks). */
+.board-failure[data-kind="plan-limit"] { border-left-color: var(--warn); }
 /* Ask for changes — a short review in words for the open proposed change. */
 .board-changes { display: flex; flex-direction: column; gap: var(--space-2); max-width: 72ch; }
 .board-changes textarea { width: 100%; box-sizing: border-box; resize: vertical; }

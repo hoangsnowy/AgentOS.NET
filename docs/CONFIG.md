@@ -116,6 +116,31 @@ for models that reject sampling params; `MaxTokens` ≤ 128 000.
 `Pipeline:MaxIterations` (QA-loop cap when a story sets no `NMax`) — default 3, range 1–10.
 An unpriced model is charged at the fail-closed $15/$75 per 1M rate until added to `CostCalculator`.
 
+### Settings → Autopilot
+
+How Autopilot runs a project once a person turns it on in **Board › Autopilot**. Tenant scope (admins); read on every
+pass / call, so a change applies within a minute, no restart. The Board's Autopilot tab shows the live values.
+
+| Key | Default | Range | Notes |
+|---|---|---|---|
+| `Autopilot:DecidedBy` | `Orchestrator agent` | `Orchestrator agent` / `Rules` | Who picks the next moves. The agent works within the rules; `Rules` = the fixed rules alone (saves the member's plan). |
+| `Autopilot:TicketEngine` | `MAF workflow` | `MAF workflow` / `Step by step` | How each started ticket runs: one Microsoft Agent Framework graph per ticket, or Autopilot driving each step every minute. |
+| `Autopilot:MaxParallel` | `2` | 1–6 | Tasks running at once on a board (coding, fixing, reviewing, testing). |
+| `Autopilot:MaxParallelTests` | `1` | 1–3 | Acceptance runs at once **per member's computer** (each brings the app up on its fixed ports). |
+| `Autopilot:MaxFixRounds` | `3` | 0–10 | Times a change goes back to the Coding agent (red checks, conflicts, review / acceptance findings) before a person is asked. Counted **per task in total** from the persisted `FixRounds` — the same count in both engines and across restarts. |
+| `Autopilot:MaxAgentRetries` | `2` | 0–5 | Extra guided retries the Orchestrator agent may give a stuck task after the fix rounds are used up. |
+| `Autopilot:ChecksTimeoutMinutes` | `60` | 5–240 | How long a ticket's MAF workflow waits for a pull request's checks before handing it back to the step-by-step passes. |
+| `Autopilot:ChecksPollSeconds` | `60` | 15–600 | How often it looks at them. |
+
+Fixed rules (not settings): *Build and merge* merges a change only when its checks are green, the Reviewer agent
+approved it and the Testing agent passed it — which needs the member's computer connected. When that computer's
+Claude / Codex **plan hits its limit** (e.g. `You've hit your session limit · resets 11:50pm (Asia/Ho_Chi_Minh)`), the
+RemoteAgent provider raises a typed `PlanLimitException` and records the member's wait (`IPlanLimits`); Autopilot
+then starts nothing, retries nothing and spends no fix round until the reset (+1 minute; 30 minutes when the CLI gives
+no time), logs one line in the Autopilot activity, shows it on Board › Autopilot and Board › Computers, and picks the
+cut-short work up again afterwards. The wait is in memory: after a restart the next run meets the limit again (an
+immediate answer) and the wait is back.
+
 ### Settings → Platform (platform admins)
 
 **Run limits (per tenant)** — `Pipeline:Limits:MaxConcurrentRuns` (default `4`) and `Pipeline:Limits:RunsPerMinute`
