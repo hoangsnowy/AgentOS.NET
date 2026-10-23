@@ -1599,7 +1599,7 @@ else if (_tab == Tab.Sessions)
                 }
                 _ideaStep = IdeaStep.Review;
             },
-            ex => _ideaError = $"Generation failed: {ex.Message}");
+            ex => _ideaError = $"The AI couldn't write the spec, so nothing was created — {ex.Message} Try again once it is back.");
         _ideaBusy = false;
     }
 
