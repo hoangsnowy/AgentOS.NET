@@ -246,6 +246,8 @@ builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.OrchestratorLog
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.ProjectOrchestrator>();
 // Per-ticket Microsoft Agent Framework workflows (Coding → checks → Reviewer → Testing → merge), started by Autopilot.
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.TicketWorkflowRunner>();
+// Self-improvement: after a merge, the Retrospective agent distils the project's lessons into its practices.
+builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.RetrospectiveService>();
 builder.Services.AddHostedService<AgentOs.Web.Services.Orchestration.ProjectOrchestratorWorker>();
 // Per-circuit UI state: each user's desktop has its own open windows. Singleton would bleed windows
 // (and their Z-order) across every connected circuit/user on the server.

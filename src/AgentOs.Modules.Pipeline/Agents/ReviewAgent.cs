@@ -17,7 +17,8 @@ using Microsoft.Extensions.Logging;
 namespace AgentOs.Modules.Pipeline.Agents;
 
 /// <inheritdoc cref="IReviewAgent"/>
-public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> logger, ISessionRunFeed? feed = null) : IReviewAgent
+public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> logger, ISessionRunFeed? feed = null,
+    AgentOs.Domain.Memory.IMemoryStore? memory = null) : IReviewAgent
 {
     // Reading a diff in context is quicker than testing it; a build fits too.
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(20);
@@ -43,7 +44,8 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
         var llmRequest = new LlmRequest(
             SystemPrompt: Instructions(request) + "\n\n" + UntrustedText.SystemRule,
             UserPrompt: AcceptanceAgent.User(request).Replace("Test the change against these criteria and reply with the JSON verdict.",
-                "Review the change against this ticket and reply with the JSON verdict.", StringComparison.Ordinal),
+                "Review the change against this ticket and reply with the JSON verdict.", StringComparison.Ordinal)
+                + await PracticesAsync(request, ct).ConfigureAwait(false),
             Model: "claude-sonnet-4-6",
             MaxTokens: 32768,
             Timeout: RunTimeout,
@@ -64,6 +66,24 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
         {
             logger.LogWarning(ex, "Review run failed for session {SessionId}", request.SessionId);
             return NotRun(ex.Message);
+        }
+    }
+
+    // The project's practices: a change that breaks one is a must-fix finding. Best-effort — none on a memory failure.
+    private async Task<string> PracticesAsync(AcceptanceRequest request, CancellationToken ct)
+    {
+        if (memory is null) { return string.Empty; }
+        try
+        {
+            var practices = await memory.ListAsync(request.TenantId, $"{request.Repo.Owner}/{request.Repo.Repo}",
+                AgentOs.Domain.Memory.MemoryKinds.Practice, RetrospectiveAgent.MaxPractices, ct).ConfigureAwait(false);
+            return practices.Count == 0 ? string.Empty
+                : AgentOs.Domain.Memory.ProjectMemory.PracticesBlock(practices) + "\nA change that breaks one of these practices is a must-fix finding.";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Reviewer: reading the practices failed");
+            return string.Empty;
         }
     }
 

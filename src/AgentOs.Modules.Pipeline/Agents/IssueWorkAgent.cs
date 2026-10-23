@@ -229,12 +229,15 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         if (_memory is null) { return string.Empty; }
         try
         {
-            var found = await _memory.RecallLessonsAsync(request.TenantId, $"{repo.Owner}/{repo.Repo}", request.IssueTitle, 6, ct).ConfigureAwait(false);
+            var repoKey = $"{repo.Owner}/{repo.Repo}";
+            // The project's practices (what the Retrospective agent distilled) first, then the raw lessons closest to this ticket.
+            var practices = await _memory.ListAsync(request.TenantId, repoKey, AgentOs.Domain.Memory.MemoryKinds.Practice, AgentOs.Modules.Pipeline.Agents.RetrospectiveAgent.MaxPractices, ct).ConfigureAwait(false);
+            var found = await _memory.RecallLessonsAsync(request.TenantId, repoKey, request.IssueTitle, 6, ct).ConfigureAwait(false);
             if (found.Count > 0)
             {
                 Emit(request, SessionRunEventKind.Step, $"Remembered {found.Count} lesson(s) from earlier work on {repo.Owner}/{repo.Repo}.", $"{repo.Owner}/{repo.Repo}");
             }
-            return AgentOs.Domain.Memory.ProjectMemory.PromptBlock(found);
+            return AgentOs.Domain.Memory.ProjectMemory.PracticesBlock(practices) + AgentOs.Domain.Memory.ProjectMemory.PromptBlock(found);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

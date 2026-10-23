@@ -61,6 +61,39 @@ else
         </ul>
     </Panel>
 
+    var practices = Practices();
+    <Panel Title="@($"Practices on {_repo}")">
+        @if (practices.Count == 0)
+        {
+            <p class="muted">No practices yet. After a ticket merges, the Retrospective agent turns the lessons below into a short list every agent follows.</p>
+        }
+        else
+        {
+            <p class="muted">Every agent reads these before it works on this project — distilled from the lessons by the Retrospective agent. Pin one to keep it word for word.</p>
+            <table class="data-table">
+                <thead><tr><th>Practice</th><th>Since</th><th class="actions">Actions</th></tr></thead>
+                <tbody>
+                    @foreach (var p in practices)
+                    {
+                        <tr>
+                            <td>@(p.Body ?? p.Title)</td>
+                            <td title="@p.RecordedAt.ToString("u")">@p.RecordedAt.ToString("yyyy-MM-dd")</td>
+                            <td class="actions">
+                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => Pin(p, !p.Pinned))"
+                                     aria-label="@(p.Pinned ? "Unpin this practice" : "Pin this practice — kept word for word")">
+                                    <Icon Name="star" Size="13" /> @(p.Pinned ? "Unpin" : "Pin")
+                                </Btn>
+                                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => Forget(p))" aria-label="Forget this practice">
+                                    <Icon Name="x" Size="13" /> Forget
+                                </Btn>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Panel>
+
     <Panel Title="@($"Lessons on {_repo}")">
         @if (lessons.Count == 0)
         {
@@ -115,6 +148,10 @@ else
     }
 
     private int Count(string kind) => _graph?.Nodes.Count(n => n.RepoKey == _repo && n.Kind == kind) ?? 0;
+
+    private List<MemoryNode> Practices() => (_graph?.Nodes ?? [])
+        .Where(n => n.RepoKey == _repo && n.Kind == MemoryKinds.Practice)
+        .OrderByDescending(n => n.Pinned).ThenBy(n => n.RecordedAt).ToList();
 
     private List<MemoryNode> Lessons() => (_graph?.Nodes ?? [])
         .Where(n => n.RepoKey == _repo && n.Kind == MemoryKinds.Lesson)

@@ -69,6 +69,28 @@ public static class ProjectMemory
         }
     }
 
+    /// <summary>A project practice (content-keyed: the same text is one practice). Returns its node id.</summary>
+    public static async Task<Guid> RecordPracticeAsync(IMemoryStore store, string tenantId, string repoKey, string text, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        var clean = (text ?? "").Replace("\r", "", StringComparison.Ordinal).Trim();
+        if (clean.Length == 0) { return Guid.Empty; }
+        var key = "practice:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(repoKey + "\n" + clean.ToLowerInvariant())))[..24].ToLowerInvariant();
+        var title = clean.Length > 140 ? clean[..140] + "…" : clean;
+        return await store.RecordAsync(tenantId, new MemoryNodeInput(MemoryKinds.Practice, key, title, clean, repoKey), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The project's practices as a prompt block, fenced as data. Empty when there are none.</summary>
+    public static string PracticesBlock(IReadOnlyList<MemoryNode> practices)
+    {
+        ArgumentNullException.ThrowIfNull(practices);
+        if (practices.Count == 0) { return string.Empty; }
+        var text = string.Join("\n", practices.Select(p => "- " + (p.Body ?? p.Title).Replace("\n", " ", StringComparison.Ordinal).Trim()
+            + (p.Pinned ? " (pinned by the team)" : "")));
+        return "\n\nThis project's practices — distilled from earlier reviews, failing checks and acceptance tests. Follow them:\n"
+            + UntrustedText.Wrap("project-practices", text, maxChars: 6_000);
+    }
+
     /// <summary>Where a lesson came from, from the way the request was worded.</summary>
     public static string SourceOf(string text) =>
         text.StartsWith("The pull request's automated checks failed", StringComparison.Ordinal) ? "checks"
