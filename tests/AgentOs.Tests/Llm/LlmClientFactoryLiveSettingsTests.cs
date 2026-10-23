@@ -12,6 +12,7 @@ using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using Shouldly;
 using Xunit;
 
@@ -89,6 +90,37 @@ public sealed class LlmClientFactoryLiveSettingsTests
 
         // Tenants can't flip a platform-only safety switch.
         (await settings.SetAsync(LlmSettings.OfflineFallback, "false", SettingScope.Tenant, "acme", "admin")).Ok.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Create_InsideBoardAgentRun_NeverFallsOverToTheOfflineDemo()
+    {
+        // 2026-10-23 on the lab: the member's Claude plan hit its session limit, the Offline client answered New idea
+        // with its canned spec, and three junk tickets landed on a real repo. A Board agent run must fail instead.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Llm:Provider"] = "Claude", ["Llm:OfflineFallback"] = "true" })
+            .Build();
+        services.AddModulesFromAssemblies(config, typeof(LlmModule).Assembly, typeof(AgentOs.Modules.AppConfig.AppConfigModule).Assembly);
+        var limited = Substitute.For<ILlmClient>();
+        limited.Provider.Returns("Limited");
+        limited.SendAsync(Arg.Any<LlmRequest>(), Arg.Any<System.Threading.CancellationToken>())
+            .Returns<Task<LlmResponse>>(_ => throw new LlmException("You've hit your session limit · resets 11:50pm"));
+        services.AddKeyedSingleton("Limited", limited);
+        var factory = services.BuildServiceProvider().GetRequiredService<ILlmClientFactory>();
+        var request = new LlmRequest("You are the Requirement Agent of an SDLC pipeline.", "An idea", "claude-sonnet-5", MaxTokens: 1000);
+        using var _ = AmbientIdentity.Push("acme", "u");
+
+        // Outside a Board run (Workflow demo, standalone) the canned safety net still answers.
+        (await factory.Create("Limited").SendAsync(request)).Provider.ShouldBe(OfflineLlmClient.ProviderName);
+
+        using (var run = LlmCallScope.Begin())
+        {
+            var ex = await Should.ThrowAsync<LlmException>(() => factory.Create("Limited").SendAsync(request));
+            ex.Message.ShouldContain("session limit");
+            run.Calls.ShouldHaveSingleItem().Success.ShouldBeFalse();   // Insights still sees the failed call
+        }
     }
 
     // FailoverLlmClient is internal; a chain reports the primary's provider, so detect it by type name.

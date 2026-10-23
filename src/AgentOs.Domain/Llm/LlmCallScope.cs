@@ -25,7 +25,9 @@ public sealed record LlmCallRecord(
     string? Error,
     DateTimeOffset At);
 
-/// <summary>Collects the LLM calls made in the current async flow while it is open (innermost scope wins).</summary>
+/// <summary>Collects the LLM calls made in the current async flow while it is open (innermost scope wins). An open
+/// scope also marks the flow as a Board agent run on a real project: the gateway never lets the keyless offline demo
+/// answer in place of the real model there (see LlmClientFactory).</summary>
 public sealed class LlmCallScope : IDisposable
 {
     private static readonly AsyncLocal<LlmCallScope?> CurrentScope = new();

@@ -284,7 +284,7 @@ Agents depend only on `ILlmClient`; `LlmClientFactory` resolves a keyed implemen
 | `OpenAICompatible` (aliases `Ollama`, `vLLM`, `Local`) | Any `/v1/chat/completions` server via the OpenAI SDK — self-hosted / air-gapped, your own prices | `Modules.Llm` |
 | `MAF` | Microsoft Agent Framework over Azure OpenAI | `Modules.Llm` |
 | `RemoteAgent` | SignalR-dispatched dev-machine agent | `Modules.RemoteAgent` |
-| `Offline` | Keyless canned output — only at the end of a failover chain when offline fallback is on | `Modules.Llm` |
+| `Offline` | Keyless canned output — only at the end of a failover chain when offline fallback is on, and never for Board agent runs | `Modules.Llm` |
 
 Routing per call: `Llm:ForceProvider` (if set) → the agent profile's provider → `Llm:Provider`.
 `Llm:Fallbacks` adds inter-provider failover (e.g. Claude → AzureOpenAI) above each provider's own
