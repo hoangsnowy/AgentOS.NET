@@ -22,7 +22,7 @@
 <header class="page-head">
     <div>
         <h1 class="page-title">Insights</h1>
-        <p class="page-sub">Runs, agent utilisation and LLM cost at a glance — the control plane for the pipeline.</p>
+        <p class="page-sub">What your AI team did, how long it took and what it cost — every agent run, by agent and by model.</p>
     </div>
     <div class="ins-head-actions">
         <div class="seg" role="group" aria-label="Time range">
@@ -40,7 +40,7 @@
 <div class="metrics">
     <div class="metric">
         <div class="v">@(_summary is null ? "—" : Num(_summary.RunCount))</div>
-        <div class="k">Pipeline runs</div>
+        <div class="k">Agent runs</div>
     </div>
     <div class="metric">
         <div class="v">@SuccessLabel()</div>
@@ -85,10 +85,10 @@ else if (_summary is null || _summary.CallCount == 0)
     <Panel Title="No activity yet">
         <EmptyState Icon="graph"
                     Title="No runs recorded"
-                    Hint="Open the Workflow app and run the pipeline — this dashboard fills in with charts as runs complete." />
+                    Hint="Start a task on the Board — every Coding, Reviewer, Testing and Discovery run shows up here with its tokens, time and cost." />
         <div class="ins-empty-cta">
-            <Btn Variant="Btn.ButtonVariant.Primary" OnClick="@(() => Open("workflow"))">
-                <Icon Name="graph" Size="14" /> Open Workflow
+            <Btn Variant="Btn.ButtonVariant.Primary" OnClick="@(() => Open("board"))">
+                <Icon Name="git-pull-request" Size="14" /> Open Board
             </Btn>
         </div>
     </Panel>
@@ -141,7 +141,7 @@ else
                         </div>
                     }
                 </div>
-                <div class="ins-legend"><span class="ins-legend-dot" style="background:var(--accent)"></span> Pipeline runs / day</div>
+                <div class="ins-legend"><span class="ins-legend-dot" style="background:var(--accent)"></span> Agent runs / day</div>
             }
         </Panel>
 

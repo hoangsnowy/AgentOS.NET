@@ -12,7 +12,8 @@ namespace AgentOs.Web.Services;
 /// <summary>The catalog of apps the AgentOS.NET shell can launch — built-ins plus any registered by plugins.</summary>
 public static class AppCatalog
 {
-    // Four apps are Pinned (the GNOME Dash): Home · Workflow · Board · Settings. Terminal and Files are tabs of
+    // Four apps are Pinned (the GNOME Dash) — the MVP loop (docs/plans/mvp.md): Home · Board · Insights · Settings. The
+    // Workflow studio (the 5-agent pipeline as a graph) is outside the MVP and stays one Activities / Ctrl+K search away. Terminal and Files are tabs of
     // Board (Log, Files) and stay launchable on their own from Activities. Everything else is unpinned — still launchable via Activities search / deep
     // links, and the admin/system surfaces are collected behind the Settings hub. Pinned defaults to
     // true on the DesktopApp record, so unpinned apps MUST say Pinned: false explicitly.
@@ -23,9 +24,9 @@ public static class AppCatalog
         // standalone Overview + Cost admin windows are folded in here.
         // Home is the task-first landing (UX phase 2): describe a change → Run now; recent runs; setup checklist.
         new("home",     "Home",     "house", "Describe a change and run the agents — recent runs and setup", "Agents", 1000, 760, Pinned: true, ComponentType: typeof(HomeApp), Color: "#3584e4"),
-        new("insights", "Insights", "chart", "Runs, agent utilisation and LLM cost — analytics + budget", "Agents", 1180, 760, Pinned: false, ComponentType: typeof(InsightsApp), Color: "#1c71d8"),
-        new("workflow", "Workflow", "graph", "Build & run the agent pipeline as a visual graph", "Agents", 1320, 840, Pinned: true, ComponentType: typeof(OrchestrationStudio), Color: "#9141ac"),
+        new("workflow", "Workflow", "graph", "Build & run the agent pipeline as a visual graph", "Agents", 1320, 840, Pinned: false, ComponentType: typeof(OrchestrationStudio), Color: "#9141ac"),
         new("board",    "Board",    "git-pull-request", "Boards → tickets → AI sessions → PRs", "Agents", 1000, 660, Pinned: true, ComponentType: typeof(BoardApp), Color: "#2ec27e"),
+        new("insights", "Insights", "chart", "Runs, agent utilisation and LLM cost — analytics + budget", "Agents", 1180, 760, Pinned: true, ComponentType: typeof(InsightsApp), Color: "#1c71d8"),
         new("settings", "Settings", "gear",  "Model keys, agents, governance, people and personal preferences",   "System", 1060, 700, Pinned: true, ComponentType: typeof(SettingsHub), Color: "#5e5c64"),
         new("terminal", "Terminal", "terminal", "Live read-only tail of the runner's session feed", "Agents", 780, 520, Pinned: false, ComponentType: typeof(TerminalApp), Color: "#2b2b2e"),
         new("files",    "Files",    "folder", "Browse a connected repo's files (read-only)", "Agents", 880, 600, Pinned: false, ComponentType: typeof(FilesApp), Color: "#4a86d8"),
