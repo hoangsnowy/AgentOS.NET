@@ -28,8 +28,12 @@ public sealed partial class ProjectOrchestrator
     /// <summary>Agent-led retries per stuck task (beyond the rules' fix rounds).</summary>
     internal const int MaxAgentRetries = 2;
 
+    /// <summary>The retries the agent may still spend on a task: its persisted fix rounds (every change sent back to the
+    /// Coding agent, by anyone) count against the rules' rounds plus the agent's own — so a restart grants nothing new.</summary>
+    internal static int RetriesLeft(int fixRounds) =>
+        Math.Clamp(AutopilotPlanner.MaxFixRounds + MaxAgentRetries - fixRounds, 0, MaxAgentRetries);
+
     private readonly ConcurrentDictionary<Guid, string> _lastSignature = new();
-    private readonly ConcurrentDictionary<Guid, int> _agentRetries = new();
     private readonly ConcurrentDictionary<Guid, string> _asked = new();
     private readonly ConcurrentDictionary<Guid, bool> _agentDown = new();
 
@@ -96,7 +100,6 @@ public sealed partial class ProjectOrchestrator
             var task = stuck.First(s => s.IssueNumber == retry.IssueNumber);
             var started = await tasks.StartAsync(tenant, task.SessionId, changeRequest: retry.Guidance, ct: ct).ConfigureAwait(false);
             if (started != TaskStart.Started) { continue; }
-            _agentRetries.AddOrUpdate(task.SessionId, 1, (_, n) => n + 1);
             _fixRounds.TryRemove(task.SessionId, out _);
             retried.Add(task.IssueNumber);
             running++;
@@ -227,14 +230,14 @@ public sealed partial class ProjectOrchestrator
             var why = string.Join(" | ", repos[s.Id].Select(r => r.Error).Prepend(s.Error).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct());
             stuck.Add(new OrchestratorStuckTask(s.Id, issue, titles.GetValueOrDefault(issue, s.Title),
                 $"{(s.Status == "Failed" ? "Couldn't finish" : "Waiting for a person")}: {(why.Length == 0 ? "no reason recorded" : why)}",
-                MaxAgentRetries - _agentRetries.GetValueOrDefault(s.Id)));
+                RetriesLeft(s.FixRounds)));
         }
         foreach (var n in candidates.OfType<AutopilotAction.NeedsPerson>().Where(n => stuck.All(s => s.SessionId != n.SessionId)))
         {
             var s = sessions.First(x => x.Id == n.SessionId);
             var findings = string.Join(" | ", repos[s.Id].Select(r => r.Error).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct());
             stuck.Add(new OrchestratorStuckTask(s.Id, n.IssueNumber, titles.GetValueOrDefault(n.IssueNumber, s.Title),
-                $"{n.Reason} {findings}".Trim(), MaxAgentRetries - _agentRetries.GetValueOrDefault(s.Id)));
+                $"{n.Reason} {findings}".Trim(), RetriesLeft(s.FixRounds)));
         }
         return stuck;
     }
