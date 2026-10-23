@@ -143,8 +143,8 @@ public sealed partial class ProjectOrchestrator
         for (var i = 0; i < stuck.Count; i++)
         {
             var session = sessions.First(s => s.Id == stuck[i].SessionId);
-            if (Ticket(board, pat, session) is not { } repo) { continue; }
-            var answer = PersonAnswers.Latest(await prs.ListCommentsAsync(repo, stuck[i].IssueNumber, ct).ConfigureAwait(false));
+            if (Ticket(board, pat, session) is not { } ticket) { continue; }
+            var answer = PersonAnswers.Latest(await prs.ListCommentsAsync(ticket.Repo, ticket.Issue, ct).ConfigureAwait(false));
             if (answer is null) { continue; }
             // New information from a person is worth one more attempt even when the automatic ones are used up.
             stuck[i] = stuck[i] with { PersonAnswer = answer, RetriesLeft = Math.Max(1, stuck[i].RetriesLeft) };
@@ -152,22 +152,23 @@ public sealed partial class ProjectOrchestrator
         return stuck;
     }
 
-    private static WorkspaceDescriptor? Ticket(WorkspaceEntity board, string pat, RemoteSessionEntity session) =>
-        session.IssueNumber is null || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName)
+    // The ticket's repo and number, when the task has a ticket.
+    private static (WorkspaceDescriptor Repo, int Issue)? Ticket(WorkspaceEntity board, string pat, RemoteSessionEntity session) =>
+        session.IssueNumber is not { } issue || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName)
             ? null
-            : BoardTaskService.RepoDescriptor(board, board.TenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat);
+            : (BoardTaskService.RepoDescriptor(board, board.TenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat), issue);
 
     private static async Task CommentOnTicketAsync(WorkspaceEntity board, string pat, RemoteSessionEntity session, string body, IServiceProvider sp, CancellationToken ct)
     {
-        if (Ticket(board, pat, session) is { } repo)
+        if (Ticket(board, pat, session) is { } t)
         {
-            await sp.GetRequiredService<IPrCreationService>().CommentAsync(repo, session.IssueNumber!.Value, body, ct).ConfigureAwait(false);
+            await sp.GetRequiredService<IPrCreationService>().CommentAsync(t.Repo, t.Issue, body, ct).ConfigureAwait(false);
         }
     }
 
     private static async Task<bool> CloseTicketAsync(WorkspaceEntity board, string pat, RemoteSessionEntity session, string comment, IServiceProvider sp, CancellationToken ct) =>
-        Ticket(board, pat, session) is { } repo
-        && await sp.GetRequiredService<IPrCreationService>().CloseAsync(repo, session.IssueNumber!.Value, comment, ct).ConfigureAwait(false);
+        Ticket(board, pat, session) is { } t
+        && await sp.GetRequiredService<IPrCreationService>().CloseAsync(t.Repo, t.Issue, comment, ct).ConfigureAwait(false);
 
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _supersededSweep = new();
 
@@ -185,10 +186,15 @@ public sealed partial class ProjectOrchestrator
         _supersededSweep[board.Id] = DateTimeOffset.UtcNow;
         var prs = sp.GetRequiredService<IPrCreationService>();
         // The pull request AgentOS tracks for each (repo, ticket): the one its task points at now.
-        var current = sessions.Where(s => s.IssueNumber is not null)
-            .SelectMany(s => repos[s.Id].Where(r => r.Status is not "Failed" && PrNumber(r.PrUrl) is not null)
-                .Select(r => (Key: (r.Owner, r.Repo, Issue: s.IssueNumber!.Value), Pr: PrNumber(r.PrUrl)!.Value, Repo: r)))
-            .GroupBy(x => x.Key).ToDictionary(g => g.Key, g => g.First());
+        var current = new Dictionary<(string Owner, string Repo, int Issue), (int Pr, SessionRepoEntity Repo)>();
+        foreach (var s in sessions)
+        {
+            if (s.IssueNumber is not { } issue) { continue; }
+            foreach (var r in repos[s.Id].Where(r => r.Status is not "Failed"))
+            {
+                if (PrNumber(r.PrUrl) is { } pr) { current.TryAdd((r.Owner, r.Repo, issue), (pr, r)); }
+            }
+        }
         foreach (var repo in current.Values.Select(c => c.Repo).DistinctBy(r => (r.Owner, r.Repo)))
         {
             var desc = BoardTaskService.RepoDescriptor(board, board.TenantId, repo.Owner, repo.Repo, repo.DefaultBranch, pat);
@@ -212,12 +218,14 @@ public sealed partial class ProjectOrchestrator
         IReadOnlyList<RemoteSessionEntity> sessions, ILookup<Guid, SessionRepoEntity> repos, IReadOnlyList<AutopilotAction> candidates)
     {
         var openTickets = planTickets.Where(t => t.Open).Select(t => t.Number).ToHashSet();
-        var titles = tickets.Where(t => t.Number is not null).GroupBy(t => t.Number!.Value).ToDictionary(g => g.Key, g => g.First().Title);
+        var titles = new Dictionary<int, string>();
+        foreach (var t in tickets) { if (t.Number is { } number) { titles.TryAdd(number, t.Title); } }
         var stuck = new List<OrchestratorStuckTask>();
-        foreach (var s in sessions.Where(s => s.Status is "Failed" or "Blocked" && s.IssueNumber is { } n && openTickets.Contains(n)))
+        foreach (var s in sessions.Where(s => s.Status is "Failed" or "Blocked" && !workflows.IsRunning(s.TenantId, s.Id)))
         {
+            if (s.IssueNumber is not { } issue || !openTickets.Contains(issue)) { continue; }
             var why = string.Join(" | ", repos[s.Id].Select(r => r.Error).Prepend(s.Error).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct());
-            stuck.Add(new OrchestratorStuckTask(s.Id, s.IssueNumber!.Value, titles.GetValueOrDefault(s.IssueNumber.Value, s.Title),
+            stuck.Add(new OrchestratorStuckTask(s.Id, issue, titles.GetValueOrDefault(issue, s.Title),
                 $"{(s.Status == "Failed" ? "Couldn't finish" : "Waiting for a person")}: {(why.Length == 0 ? "no reason recorded" : why)}",
                 MaxAgentRetries - _agentRetries.GetValueOrDefault(s.Id)));
         }
@@ -238,9 +246,10 @@ public sealed partial class ProjectOrchestrator
         var sb = new StringBuilder();
         var plan = planTickets.ToDictionary(t => t.Number);
         sb.Append("Tickets:\n");
-        foreach (var t in tickets.Where(t => t.Number is not null).OrderBy(t => t.Number))
+        foreach (var t in tickets.OrderBy(t => t.Number))
         {
-            var p = plan.GetValueOrDefault(t.Number!.Value);
+            if (t.Number is not { } number) { continue; }
+            var p = plan.GetValueOrDefault(number);
             sb.Append("#").Append(t.Number).Append(' ').Append(p?.Open == false ? "[closed]" : "[open]")
               .Append(" [").Append(string.Join(", ", t.Labels)).Append(']');
             if (p is { DependsOn.Count: > 0 }) { sb.Append(" depends on ").Append(string.Join(", ", p.DependsOn.Select(d => "#" + d))); }
