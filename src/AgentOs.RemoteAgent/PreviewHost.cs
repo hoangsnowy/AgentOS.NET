@@ -157,7 +157,11 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             }
             await report(run.Id, "Starting", $"Running {recipe.Command}").ConfigureAwait(false);
             Console.WriteLine($"[agent] preview {run.RepoKey}: {recipe.Command} (in {run.Dir})");
-            var process = Process.Start(ShellFor(recipe.Command, run.Dir))
+            var psi = ShellFor(recipe.Command, run.Dir);
+            // The test data this computer offers the agents (REMOTE_AGENT_DATA) reaches the app too: a project that loads
+            // real data when it is there (e.g. TeacherHub's CHESS_LIBRARY_PATH library) shows it in Try the app.
+            foreach (var (name, path) in TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA"))) { psi.Environment[name] = path; }
+            var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("The command didn't start.");
             run.Process = process;
             run.Job.Add(process);

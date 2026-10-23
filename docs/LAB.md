@@ -114,6 +114,8 @@ this machine from `%LOCALAPPDATA%\AgentOS.NET\previews\<owner>-<repo>` (a reused
 and shows *Open the app* once the recipe's url accepts connections. *Stop* kills the whole process tree; the runner
 also stops its previews when it exits and kills leftovers from a hard kill on its next start (`preview.pid`).
 Autopilot holds acceptance testing on that board while a preview runs and says so in the Autopilot log.
+The test data the runner was paired with (`-Data`, e.g. `CHESS_LIBRARY_PATH`) reaches the app too, so a project that loads
+real data when it is there shows it.
 
 ## Run the lab tests
 
