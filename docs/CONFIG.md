@@ -78,7 +78,7 @@ Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant
 |---|---|---|---|
 | `Llm:Provider` | `Claude` | Tenant | Used by any agent whose profile names no provider. `Anthropic` is an alias of `Claude`. |
 | `Llm:ForceProvider` | empty | Tenant | Route every agent to one provider. |
-| `Llm:OfflineFallback` | **`true` in Development, else `false`** | Platform | Keyless provider → canned, schema-valid output, labelled Offline everywhere (runs, Workflow chip, PR refusal). Lets a fresh checkout run with no secrets. Locked off in Production. |
+| `Llm:OfflineFallback` | **`true` in Development, else `false`** | Platform | Keyless provider → canned, schema-valid output, labelled Offline everywhere (runs, Workflow chip, PR refusal). Lets a fresh checkout run with no secrets. Locked off in Production. Never applies to Board agent runs (New idea, Coding, Reviewer, Testing, the Autopilot lead, Retrospective): those act on a real project, so they fail with the real reason (e.g. a plan limit) instead of getting canned text. |
 | `Llm:Claude:ApiKey` / `ApiKeys` | empty | Tenant | Secret, write-only in the UI. Pool = round-robin with 429 failover. |
 | `Llm:AzureOpenAi:Endpoint` / `ApiKey` / `ApiKeys` | empty | Tenant | Endpoint must be absolute `https://`. |
 | `Llm:AzureOpenAi:Model` | `gpt-4.1` | Tenant | Default deployment. |

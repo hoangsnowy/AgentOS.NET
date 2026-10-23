@@ -61,9 +61,13 @@ public sealed class LlmClientFactory : ILlmClientFactory
         // to the END of the chain so a no-key LlmException falls through to canned schema-valid output instead
         // of failing the run. Skipped when the effective provider already IS Offline, or it's already a
         // configured fallback, so it never appears twice.
-        var offlineFallback = _settings is null
+        // Never for a Board agent run (an open LlmCallScope: Discovery, Coding, Reviewer, Testing, the Autopilot lead,
+        // Retrospective): those write tickets, reviews and merges on a real project, so canned demo text standing in
+        // for a model that hit its plan limit or went offline would become junk tickets or a false verdict. They fail
+        // with the real reason instead ("session limit · resets 23:50") and the Board says so.
+        var offlineFallback = AgentOs.Domain.Llm.LlmCallScope.Current is null && (_settings is null
             ? _options.OfflineFallback
-            : LiveSettings.ReadBool(_settings, LlmSettings.OfflineFallback, tenant, _options.OfflineFallback);
+            : LiveSettings.ReadBool(_settings, LlmSettings.OfflineFallback, tenant, _options.OfflineFallback));
         if (offlineFallback
             && !string.Equals(NormalizeKey(effective), OfflineLlmClient.ProviderName, StringComparison.Ordinal))
         {
