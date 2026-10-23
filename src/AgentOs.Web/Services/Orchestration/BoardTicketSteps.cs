@@ -15,8 +15,13 @@ using Microsoft.Extensions.DependencyInjection;
 namespace AgentOs.Web.Services.Orchestration;
 
 /// <summary>Ticket workflow steps on a board.</summary>
-public sealed class BoardTicketSteps(BoardTaskService tasks, IServiceScopeFactory scopes, WorkspaceEntity board, string pat) : ITicketSteps
+public sealed class BoardTicketSteps(BoardTaskService tasks, IServiceScopeFactory scopes, WorkspaceEntity board, string pat,
+    AgentOs.Modules.RemoteAgent.IPlanLimits? planLimits = null) : ITicketSteps
 {
+    /// <summary>The board's Autopilot member's plan limit, when their computer reported one that hasn't reset yet.</summary>
+    public string? PlanLimited(TicketFlow flow) =>
+        planLimits?.Current(board.TenantId, board.AutopilotUserId ?? board.CreatedByUserId ?? string.Empty)?.Sentence;
+
     public Task<TaskRun> CodeAsync(TicketFlow flow, CancellationToken ct) =>
         tasks.BeginStartAsync(flow.TenantId, flow.SessionId, flow.NextChange, ct: ct);
 
@@ -33,17 +38,17 @@ public sealed class BoardTicketSteps(BoardTaskService tasks, IServiceScopeFactor
     }
 
     public Task<(PrChecksState Checks, PrMergeState Merge)> PrStateAsync(TicketFlow flow, TicketChange change, CancellationToken ct) =>
-        WithPrAsync(flow, change, ct, async (prs, desc, pr) =>
-            (await prs.GetChecksStateAsync(desc, pr, ct).ConfigureAwait(false), await prs.GetMergeStateAsync(desc, pr, ct).ConfigureAwait(false)));
+        WithPrAsync(flow, change, async (prs, desc, pr) =>
+            (await prs.GetChecksStateAsync(desc, pr, ct).ConfigureAwait(false), await prs.GetMergeStateAsync(desc, pr, ct).ConfigureAwait(false)), ct);
 
     public Task<string?> FailedChecksAsync(TicketFlow flow, TicketChange change, CancellationToken ct) =>
-        WithPrAsync(flow, change, ct, (prs, desc, pr) => prs.GetFailedChecksAsync(desc, pr, ct));
+        WithPrAsync<string?>(flow, change, async (prs, desc, pr) => await prs.GetFailedChecksAsync(desc, pr, ct).ConfigureAwait(false), ct);
 
     public Task UpdateBranchAsync(TicketFlow flow, TicketChange change, CancellationToken ct) =>
-        WithPrAsync<string?>(flow, change, ct, (prs, desc, pr) => prs.UpdateBranchAsync(desc, pr, ct));
+        WithPrAsync<string?>(flow, change, (prs, desc, pr) => prs.UpdateBranchAsync(desc, pr, ct), ct);
 
     public Task<string?> MergeAsync(TicketFlow flow, TicketChange change, CancellationToken ct) =>
-        WithPrAsync(flow, change, ct, async (prs, desc, pr) =>
+        WithPrAsync<string?>(flow, change, async (prs, desc, pr) =>
         {
             if (await prs.MergeAsync(desc, pr, ct).ConfigureAwait(false) is { } error) { return error; }
             using var scope = scopes.CreateScope();
@@ -51,12 +56,12 @@ public sealed class BoardTicketSteps(BoardTaskService tasks, IServiceScopeFactor
             var repo = (await sessions.ListReposForTenantAsync(flow.TenantId, flow.SessionId, ct).ConfigureAwait(false)).First(r => r.Id == change.RepoId);
             await sessions.UpdateRepoRunResultAsync(flow.TenantId, repo.Id, "Merged", repo.BranchName, repo.PrUrl, null, ct).ConfigureAwait(false);
             await sessions.RecomputeSessionStatusForTenantAsync(flow.TenantId, flow.SessionId, ct).ConfigureAwait(false);
-            return (string?)null;
-        });
+            return null;
+        }, ct);
 
     // Run a pull-request call for one change inside a scope (the source-control service and the change's repo).
-    private async Task<T> WithPrAsync<T>(TicketFlow flow, TicketChange change, CancellationToken ct,
-        Func<IPrCreationService, WorkspaceDescriptor, int, Task<T>> call)
+    private async Task<T> WithPrAsync<T>(TicketFlow flow, TicketChange change,
+        Func<IPrCreationService, WorkspaceDescriptor, int, Task<T>> call, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(flow);
         ArgumentNullException.ThrowIfNull(change);

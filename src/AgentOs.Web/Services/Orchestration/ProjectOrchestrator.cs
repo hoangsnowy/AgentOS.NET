@@ -1,7 +1,10 @@
 // The project orchestrator: for a board with Autopilot on, it does what a person did by hand on the lab — reads the
 // board, decides (AutopilotPlanner), and acts through the same BoardTaskService the Board uses. Every decision is
 // logged in plain words for the Autopilot tab. One step = one pass over a board; ProjectOrchestratorWorker runs a
-// step per autopilot board every minute, and "Check now" runs one on demand.
+// step per autopilot board every minute, and "Check now" runs one on demand. Its bounds (tasks at once, fix rounds,
+// retries) are the tenant's Settings › Autopilot, read every pass. When the member's computer reports a Claude/Codex
+// plan limit (IPlanLimits), a pass does nothing until the plan resets — no new work, no retries, no fix rounds — and
+// then picks up the work the limit cut short.
 
 using System;
 using System.Collections.Concurrent;
@@ -9,9 +12,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Configuration;
 using AgentOs.Domain.Workspaces;
 using AgentOs.Modules.AppConfig;
 using AgentOs.Modules.Integration;
+using AgentOs.Modules.Pipeline.Agents;
 using AgentOs.Modules.RemoteAgent;
 using AgentOs.Modules.Sessions.Persistence;
 using AgentOs.Modules.Sessions.Persistence.Entities;
@@ -113,14 +118,18 @@ public sealed partial class ProjectOrchestrator(
     ILogger<ProjectOrchestrator> logger,
     AgentOs.Web.Services.Preview.PreviewService previews,
     TicketWorkflowRunner workflows,
-    RetrospectiveService retrospectives)
+    RetrospectiveService retrospectives,
+    IPlanLimits planLimits) : IDisposable
 {
+    /// <inheritdoc />
+    public void Dispose() => _oneAtATime.Dispose();
+
     // Tasks seen "Running" with no live run here, by pass: one pass of grace (a run registers right after it is marked).
     private readonly ConcurrentDictionary<Guid, int> _orphanSeen = new();
     // Boards whose testing is held for a running "Try the app" preview (logged once per hold, not every pass).
     private readonly ConcurrentDictionary<Guid, bool> _heldForPreview = new();
-    // Automatic fix rounds per task (in memory: a restart grants at most another MaxFixRounds — bounded either way).
-    private readonly ConcurrentDictionary<Guid, int> _fixRounds = new();
+    // Boards waiting out their member's plan limit (logged once when the wait starts, once when it ends).
+    private readonly PlanLimitPause _planPause = new();
     // Ticket bodies (for dependencies) change rarely; read each at most every 10 minutes.
     private readonly ConcurrentDictionary<(Guid, int), (DateTimeOffset At, IReadOnlyList<int> Deps)> _deps = new();
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
@@ -138,6 +147,8 @@ public sealed partial class ProjectOrchestrator(
         try
         {
             var member = board.AutopilotUserId ?? board.CreatedByUserId ?? string.Empty;
+            // The member's AI plan hit its limit: nothing starts, nothing is retried, until it resets.
+            if (WaitsForPlan(board, member)) { return []; }
             using var identity = AmbientIdentity.Push(board.TenantId, member);
             using var scope = scopes.CreateScope();
             var sp = scope.ServiceProvider;
@@ -150,6 +161,7 @@ public sealed partial class ProjectOrchestrator(
             }
             var sessionsRepo = sp.GetRequiredService<ISessionRepository>();
             var prs = sp.GetRequiredService<IPrCreationService>();
+            var limits = await AutopilotSettings.ReadLimitsAsync(sp.GetRequiredService<ISettings>(), tenant, ct).ConfigureAwait(false);
             var boardDesc = new BoardDescriptor(board.Id, tenant, board.Kind, board.ProjectOwner, board.ProjectScope,
                 board.ProjectNumber, board.ProjectNodeId, pat, board.Project);
             var tickets = (await sp.GetRequiredService<IBoardTicketService>().ListTicketsAsync(boardDesc, ct).ConfigureAwait(false)).Items
@@ -164,14 +176,19 @@ public sealed partial class ProjectOrchestrator(
             }
             await CloseSupersededAsync(board, pat, sessions, repos, sp, ct).ConfigureAwait(false);
 
-            // Proposed changes: merged ones are recorded; open ones get their check state.
+            // Proposed changes: merged ones are recorded; open ones get their check state. Every task carries its
+            // persisted fix rounds — the one counter the caps read, whichever engine sent the change back.
             var planTasks = new List<PlanTask>();
+            foreach (var s in sessions.Where(s => s.Status is "Failed" && !workflows.IsRunning(tenant, s.Id) && CutShortByPlanLimit(s, repos)))
+            {
+                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, "Failed", [], s.FixRounds) { CutShortByPlanLimit = true });
+            }
             foreach (var s in sessions.Where(s => s.Status is "Running" or "Done"))
             {
                 // Its MAF workflow drives it: a running slot, and no step-by-step moves on it.
                 if (workflows.IsRunning(tenant, s.Id))
                 {
-                    planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, "Running", [], _fixRounds.GetValueOrDefault(s.Id)));
+                    planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, "Running", [], s.FixRounds));
                     continue;
                 }
                 var open = new List<PlanChange>();
@@ -207,7 +224,7 @@ public sealed partial class ProjectOrchestrator(
                     var findings = testing == ChangeTesting.Rejected || review == ChangeReview.ChangesRequested ? r.Error : null;
                     open.Add(new PlanChange(r.Id, number, checks, report, testing, findings, merge, r.DefaultBranch, review));
                 }
-                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, _fixRounds.GetValueOrDefault(s.Id)));
+                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds));
             }
 
             // Tickets: a ticket with any task that isn't closed is the person's or already handled — never doubled.
@@ -239,7 +256,9 @@ public sealed partial class ProjectOrchestrator(
             {
                 _heldForPreview.TryRemove(board.Id, out _);
             }
-            var actions = await DecideAsync(board, mode, member, pat, tickets, planTickets, planTasks, sessions, repos, canTest, sp, ct).ConfigureAwait(false);
+            var actions = await DecideAsync(board, mode, member, pat, tickets, planTickets, planTasks, sessions, repos, canTest, limits, sp, ct).ConfigureAwait(false);
+            // Deciding may itself have hit the limit (the Orchestrator agent answers on the member's computer).
+            if (WaitsForPlan(board, member)) { return []; }
             foreach (var action in actions)
             {
                 await ExecuteAsync(action, board, member, pat, tickets, sp, ct).ConfigureAwait(false);
@@ -290,8 +309,15 @@ public sealed partial class ProjectOrchestrator(
                     : $"Couldn't start #{start.Number}: {started}.");
                 break;
             }
+            case AutopilotAction.ResumeTask resume:
+            {
+                // A plain restart: no change request, so no fix round is counted.
+                var resumed = await tasks.StartAsync(tenant, resume.SessionId, ct: ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, resumed == TaskStart.Started ? resume.Why : $"Couldn't pick #{resume.IssueNumber} up again: {resumed}.");
+                break;
+            }
             case AutopilotAction.FixChecks fix:
-                _fixRounds[fix.SessionId] = fix.Round;
+                // The round is counted (persisted) by the restart itself: BoardTaskService increments FixRounds.
                 var restarted = await tasks.StartAsync(tenant, fix.SessionId,
                     "The pull request's automated checks failed. Fix the cause (not the test, unless the test itself is wrong) so they pass:\n\n" + fix.Report,
                     ct: ct).ConfigureAwait(false);
@@ -328,7 +354,6 @@ public sealed partial class ProjectOrchestrator(
                 {
                     await sessions.UpdateRepoRunResultAsync(tenant, repo.Id, "Merged", repo.BranchName, repo.PrUrl, null, ct).ConfigureAwait(false);
                     await sessions.RecomputeSessionStatusForTenantAsync(tenant, merge.SessionId, ct).ConfigureAwait(false);
-                    _fixRounds.TryRemove(merge.SessionId, out _);
                     log.Add(tenant, board.Id, merge.Why);
                     // Self-improvement: what this ticket taught becomes the project's practices.
                     retrospectives.AfterMerge(tenant, member, board.Id, $"{repo.Owner}/{repo.Repo}", $"#{merge.IssueNumber}");
@@ -388,6 +413,18 @@ public sealed partial class ProjectOrchestrator(
         }
         return changed;
     }
+
+    // True while the board's member waits out a plan limit (and logs the start and the end of the wait once each).
+    private bool WaitsForPlan(WorkspaceEntity board, string member)
+    {
+        var (paused, line) = _planPause.Observe(board.Id, planLimits.Current(board.TenantId, member));
+        if (line is not null) { log.Add(board.TenantId, board.Id, line); }
+        return paused;
+    }
+
+    // A failed task whose run the member's plan limit cut short (its error is the CLI's limit notice) — nothing failed.
+    internal static bool CutShortByPlanLimit(RemoteSessionEntity session, ILookup<Guid, SessionRepoEntity> repos) =>
+        PlanLimitDetector.IsPlanLimit(session.Error) || repos[session.Id].Any(r => r.Status == "Failed" && PlanLimitDetector.IsPlanLimit(r.Error));
 
     private async Task<IReadOnlyList<int>> DependenciesAsync(ISourceProvider? provider, WorkspaceEntity board, string tenant, string pat, BoardTicket t, CancellationToken ct)
     {

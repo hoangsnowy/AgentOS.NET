@@ -1,7 +1,8 @@
 // Autopilot's decision step. By default the Orchestrator agent decides (Settings › Autopilot › Decided by): it gets the
 // board's whole state and every legal move the rules allow — uncapped — picks the moves and their order, retries stuck
 // tasks with guidance and asks a person precise questions. The rules stay the guardrail: only legal moves can be
-// picked, AutopilotPlanner.WithinCaps applies the slot caps to its picks, and retries are bounded per task. The agent
+// picked, AutopilotPlanner.WithinCaps applies the slot caps to its picks, and retries are bounded per task (Settings ›
+// Autopilot: fix rounds + Orchestrator retries, against the task's persisted fix rounds). The agent
 // is asked only when the board changed; when it can't answer (no computer, timeout), that pass follows the rules.
 
 using System;
@@ -25,13 +26,11 @@ namespace AgentOs.Web.Services.Orchestration;
 
 public sealed partial class ProjectOrchestrator
 {
-    /// <summary>Agent-led retries per stuck task (beyond the rules' fix rounds).</summary>
-    internal const int MaxAgentRetries = 2;
-
     /// <summary>The retries the agent may still spend on a task: its persisted fix rounds (every change sent back to the
-    /// Coding agent, by anyone) count against the rules' rounds plus the agent's own — so a restart grants nothing new.</summary>
-    internal static int RetriesLeft(int fixRounds) =>
-        Math.Clamp(AutopilotPlanner.MaxFixRounds + MaxAgentRetries - fixRounds, 0, MaxAgentRetries);
+    /// Coding agent, by anyone) count against the rules' rounds plus the agent's own (Settings › Autopilot) — so a
+    /// restart grants nothing new.</summary>
+    internal static int RetriesLeft(int fixRounds, AutopilotLimits limits) =>
+        Math.Clamp(limits.MaxFixRounds + limits.MaxAgentRetries - fixRounds, 0, limits.MaxAgentRetries);
 
     private readonly ConcurrentDictionary<Guid, string> _lastSignature = new();
     private readonly ConcurrentDictionary<Guid, string> _asked = new();
@@ -39,31 +38,34 @@ public sealed partial class ProjectOrchestrator
 
     private async Task<IReadOnlyList<AutopilotAction>> DecideAsync(WorkspaceEntity board, AutopilotMode mode, string member, string pat,
         IReadOnlyList<BoardTicket> tickets, IReadOnlyList<PlanTicket> planTickets, IReadOnlyList<PlanTask> planTasks,
-        IReadOnlyList<RemoteSessionEntity> sessions, ILookup<Guid, SessionRepoEntity> repos, bool canTest, IServiceProvider sp, CancellationToken ct)
+        IReadOnlyList<RemoteSessionEntity> sessions, ILookup<Guid, SessionRepoEntity> repos, bool canTest, AutopilotLimits limits,
+        IServiceProvider sp, CancellationToken ct)
     {
         var tenant = board.TenantId;
         var decidedBy = await sp.GetRequiredService<ISettings>().GetAsync(AutopilotSettings.DecidedByKey, tenant, ct).ConfigureAwait(false);
         // The agent answers on the member's computer: without one, the rules decide (and nothing gets tested anyway).
         if (!AutopilotSettings.AgentDecides(decidedBy.Value) || !canTest)
         {
-            return AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest);
+            return AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest, limits);
         }
 
-        var candidates = AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest, int.MaxValue, int.MaxValue);
+        var candidates = AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest, limits.Uncapped);
         var running = planTasks.Count(t => t.Status == "Running");
         var testing = planTasks.Count(t => t.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing));
-        var stuck = await WithAnswersAsync(StuckTasks(tickets, planTickets, sessions, repos, candidates), board, pat, sessions, sp, ct).ConfigureAwait(false);
-        var moves = candidates.Where(a => a is not AutopilotAction.NeedsPerson)
+        // Work a plan limit cut short is picked up by rule, first — it isn't a decision, and must not wait on one.
+        var resumes = candidates.OfType<AutopilotAction.ResumeTask>().ToList();
+        var stuck = await WithAnswersAsync(StuckTasks(tickets, planTickets, sessions, repos, candidates, limits), board, pat, sessions, sp, ct).ConfigureAwait(false);
+        var moves = candidates.Where(a => a is not AutopilotAction.NeedsPerson and not AutopilotAction.ResumeTask)
             .Select((a, i) => (Id: "M" + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), Action: a)).ToList();
         var epics = await EpicsAsync(board, tenant, pat, tickets, sp, ct).ConfigureAwait(false);
-        if (moves.Count == 0 && stuck.Count == 0 && epics.Count == 0) { return []; }
+        if (moves.Count == 0 && stuck.Count == 0 && epics.Count == 0) { return AutopilotPlanner.WithinCaps(resumes, running, testing, limits); }
 
-        var freeSlots = Math.Max(0, AutopilotPlanner.MaxParallel - running);
+        var freeSlots = Math.Max(0, limits.MaxParallel - running - resumes.Count);
         // Ask only when something changed: the same picture gets the same answer (and costs the member's quota).
         var signature = Signature(moves.Select(m => m.Action.Why), stuck.Select(s => $"{s.IssueNumber}:{s.Situation}:{s.RetriesLeft}:{s.PersonAnswer}")
             .Concat(epics.Select(e => $"epic {e.IssueNumber}"))
             .Concat(tickets.Where(t => string.Equals(t.State, "CLOSED", StringComparison.OrdinalIgnoreCase)).Select(t => $"closed {t.Number}")), freeSlots);
-        if (_lastSignature.TryGetValue(board.Id, out var last) && last == signature) { return []; }
+        if (_lastSignature.TryGetValue(board.Id, out var last) && last == signature) { return AutopilotPlanner.WithinCaps(resumes, running, testing, limits); }
 
         var recent = (await log.RecentAsync(tenant, board.Id, 12).ConfigureAwait(false)).Select(e => e.Text).ToList();
         var brief = new OrchestratorBrief(board.Id, tenant, member, board.Name, mode.ToString(),
@@ -80,18 +82,20 @@ public sealed partial class ProjectOrchestrator
         }
         if (!decision.Ran)
         {
+            // The member's plan hit its limit while the agent decided: the pass waits (StepAsync logs it), no fallback.
+            if (planLimits.Current(tenant, member) is not null) { return []; }
             if (_agentDown.TryAdd(board.Id, true))
             {
                 log.Add(tenant, board.Id, $"The Orchestrator agent couldn't decide ({decision.Error}) — following the rules until it can.");
             }
-            return AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest);
+            return AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest, limits);
         }
         _agentDown.TryRemove(board.Id, out _);
         _lastSignature[board.Id] = signature;
         if (!string.IsNullOrWhiteSpace(decision.Reasoning)) { log.Add(tenant, board.Id, "Orchestrator: " + decision.Reasoning); }
 
         var byId = moves.ToDictionary(m => m.Id, m => m.Action, StringComparer.Ordinal);
-        var picked = AutopilotPlanner.WithinCaps(decision.MoveIds.Select(id => byId[id]), running, testing).ToList();
+        var picked = AutopilotPlanner.WithinCaps(resumes.Concat(decision.MoveIds.Select(id => byId[id])), running, testing, limits).ToList();
         running += picked.Count(AutopilotPlanner.TakesSlot);
 
         // Stuck tasks: retried with the agent's guidance (bounded), asked about, or — when it did neither — marked for a
@@ -99,11 +103,11 @@ public sealed partial class ProjectOrchestrator
         var retried = new HashSet<int>();
         foreach (var retry in decision.Retries)
         {
-            if (running >= AutopilotPlanner.MaxParallel) { break; }
+            if (running >= limits.MaxParallel) { break; }
             var task = stuck.First(s => s.IssueNumber == retry.IssueNumber);
+            // A guided retry is a change request: it counts as one more (persisted) fix round of the task.
             var started = await tasks.StartAsync(tenant, task.SessionId, changeRequest: retry.Guidance, ct: ct).ConfigureAwait(false);
             if (started != TaskStart.Started) { continue; }
-            _fixRounds.TryRemove(task.SessionId, out _);
             retried.Add(task.IssueNumber);
             running++;
             log.Add(tenant, board.Id, $"Orchestrator started #{task.IssueNumber} again with guidance: {Short(retry.Guidance)}");
@@ -265,27 +269,30 @@ public sealed partial class ProjectOrchestrator
     }
 
     // Tasks that stopped: couldn't finish, or blocked for a person — plus those the rules give up on this very pass.
+    // Work a plan limit cut short isn't stuck (it resumes by rule after the reset), so no retry is spent on it.
     private List<OrchestratorStuckTask> StuckTasks(IReadOnlyList<BoardTicket> tickets, IReadOnlyList<PlanTicket> planTickets,
-        IReadOnlyList<RemoteSessionEntity> sessions, ILookup<Guid, SessionRepoEntity> repos, IReadOnlyList<AutopilotAction> candidates)
+        IReadOnlyList<RemoteSessionEntity> sessions, ILookup<Guid, SessionRepoEntity> repos, IReadOnlyList<AutopilotAction> candidates,
+        AutopilotLimits limits)
     {
         var openTickets = planTickets.Where(t => t.Open).Select(t => t.Number).ToHashSet();
         var titles = tickets.Where(t => t.Number.HasValue).GroupBy(t => t.Number.GetValueOrDefault()).ToDictionary(g => g.Key, g => g.First().Title);
         var stuck = new List<OrchestratorStuckTask>();
         foreach (var s in sessions.Where(s => s.Status is "Failed" or "Blocked" && !workflows.IsRunning(s.TenantId, s.Id)
-                     && s.IssueNumber.HasValue && openTickets.Contains(s.IssueNumber.GetValueOrDefault())))
+                     && s.IssueNumber.HasValue && openTickets.Contains(s.IssueNumber.GetValueOrDefault())
+                     && !(s.Status == "Failed" && CutShortByPlanLimit(s, repos))))
         {
             var issue = s.IssueNumber.GetValueOrDefault();
             var why = string.Join(" | ", repos[s.Id].Select(r => r.Error).Prepend(s.Error).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct());
             stuck.Add(new OrchestratorStuckTask(s.Id, issue, titles.GetValueOrDefault(issue, s.Title),
                 $"{(s.Status == "Failed" ? "Couldn't finish" : "Waiting for a person")}: {(why.Length == 0 ? "no reason recorded" : why)}",
-                RetriesLeft(s.FixRounds)));
+                RetriesLeft(s.FixRounds, limits)));
         }
         foreach (var n in candidates.OfType<AutopilotAction.NeedsPerson>().Where(n => stuck.All(s => s.SessionId != n.SessionId)))
         {
             var s = sessions.First(x => x.Id == n.SessionId);
             var findings = string.Join(" | ", repos[s.Id].Select(r => r.Error).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct());
             stuck.Add(new OrchestratorStuckTask(s.Id, n.IssueNumber, titles.GetValueOrDefault(n.IssueNumber, s.Title),
-                $"{n.Reason} {findings}".Trim(), RetriesLeft(s.FixRounds)));
+                $"{n.Reason} {findings}".Trim(), RetriesLeft(s.FixRounds, limits)));
         }
         return stuck;
     }
@@ -301,7 +308,7 @@ public sealed partial class ProjectOrchestrator
         {
             var number = t.Number.GetValueOrDefault();
             var p = plan.GetValueOrDefault(number);
-            sb.Append("#").Append(t.Number).Append(' ').Append(p?.Open == false ? "[closed]" : "[open]")
+            sb.Append('#').Append(t.Number).Append(' ').Append(p?.Open == false ? "[closed]" : "[open]")
               .Append(" [").Append(string.Join(", ", t.Labels)).Append(']');
             if (p is { DependsOn.Count: > 0 }) { sb.Append(" depends on ").Append(string.Join(", ", p.DependsOn.Select(d => "#" + d))); }
             if (p is { HasLiveTask: true }) { sb.Append(" (has a task)"); }
@@ -310,7 +317,7 @@ public sealed partial class ProjectOrchestrator
         sb.Append("\nTasks in progress:\n");
         foreach (var task in planTasks)
         {
-            sb.Append("#").Append(task.IssueNumber).Append(' ').Append(task.Status).Append(", fix rounds used ").Append(task.FixRounds).Append('\n');
+            sb.Append('#').Append(task.IssueNumber).Append(' ').Append(task.Status).Append(", fix rounds used ").Append(task.FixRounds).Append('\n');
             foreach (var c in task.OpenChanges)
             {
                 sb.Append("  PR #").Append(c.PrNumber).Append(": checks ").Append(c.Checks).Append(", review ").Append(c.Review)
@@ -322,7 +329,7 @@ public sealed partial class ProjectOrchestrator
         }
         foreach (var s in sessions.Where(s => s.Status is "Failed" or "Blocked"))
         {
-            sb.Append("#").Append(s.IssueNumber).Append(' ').Append(s.Status).Append(": ").Append(Short(s.Error ?? "", 300)).Append('\n');
+            sb.Append('#').Append(s.IssueNumber).Append(' ').Append(s.Status).Append(": ").Append(Short(s.Error ?? "", 300)).Append('\n');
         }
         return sb.ToString();
     }
@@ -347,6 +354,7 @@ public sealed partial class ProjectOrchestrator
     private static string KindOf(AutopilotAction a) => a switch
     {
         AutopilotAction.StartTicket => "start",
+        AutopilotAction.ResumeTask => "resume",
         AutopilotAction.FixChecks => "fix",
         AutopilotAction.RunReview => "review",
         AutopilotAction.RunTests => "test",
@@ -358,6 +366,7 @@ public sealed partial class ProjectOrchestrator
     private static int IssueOf(AutopilotAction a) => a switch
     {
         AutopilotAction.StartTicket x => x.Number,
+        AutopilotAction.ResumeTask x => x.IssueNumber,
         AutopilotAction.FixChecks x => x.IssueNumber,
         AutopilotAction.RunReview x => x.IssueNumber,
         AutopilotAction.RunTests x => x.IssueNumber,

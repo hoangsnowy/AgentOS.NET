@@ -100,7 +100,7 @@ public sealed class AutopilotOrchestratorTests
         PlanTicket[] tickets = [new(41, true, true, 1, [], false), new(42, true, true, 1, [], false), new(43, true, true, 2, [], false)];
 
         AutopilotPlanner.Decide(AutopilotMode.Build, tickets, []).Count.ShouldBe(2);
-        AutopilotPlanner.Decide(AutopilotMode.Build, tickets, [], true, int.MaxValue, int.MaxValue).Count.ShouldBe(3);
+        AutopilotPlanner.Decide(AutopilotMode.Build, tickets, [], true, AutopilotLimits.Default.Uncapped).Count.ShouldBe(3);
     }
 
     [Fact]
@@ -120,5 +120,5 @@ public sealed class AutopilotOrchestratorTests
     [InlineData(5, 0)]
     [InlineData(9, 0)]
     public void RetriesLeft_ComesFromPersistedFixRounds(int fixRounds, int expected) =>
-        ProjectOrchestrator.RetriesLeft(fixRounds).ShouldBe(expected);
+        ProjectOrchestrator.RetriesLeft(fixRounds, AutopilotLimits.Default).ShouldBe(expected);
 }

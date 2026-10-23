@@ -25,6 +25,8 @@ public sealed class RemoteAgentModule : IModule, IEndpointModule
         // Fail-closed: deny remote/runner exec outside Development unless RemoteAgent:AutoApprove=true.
         // (AutoApproveRemoteExec is retained for tests + explicit dev wiring.)
         services.TryAddSingleton<IRemoteExecApprover, ConfigGatedRemoteExecApprover>();
+        // A member's Claude/Codex plan limit, as their computer reported it — Autopilot waits it out (PlanLimit.cs).
+        services.TryAddSingleton<IPlanLimits>(_ => new PlanLimitTracker(TimeProvider.System));
         services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor>(
             new RemoteAgentSettings(AgentOs.SharedKernel.Modularity.ModuleEnvironment.IsDevelopment(configuration)));
 

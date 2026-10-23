@@ -58,6 +58,9 @@ public interface ISessionRepository
     /// <summary>Count one more round of fixes on the task (its change went back to the Coding agent).</summary>
     Task IncrementFixRoundsForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
 
+    /// <summary>Take back a round that never happened (the member's AI plan was at its limit) — never below zero.</summary>
+    Task DecrementFixRoundsForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>Delivery of the tenant's tasks merged since <paramref name="since"/> (null = all time).</summary>
     Task<DeliverySummary> GetDeliveryForTenantAsync(string tenantId, DateTimeOffset? since = null, CancellationToken ct = default) =>
         Task.FromResult(DeliverySummary.Empty);

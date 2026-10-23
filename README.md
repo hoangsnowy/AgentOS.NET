@@ -147,7 +147,7 @@ All shots are the standalone Web (`dotnet run --project src/AgentOs.Web`).
 | Boards → Tickets → Sessions | Settings |
 |:---:|:---:|
 | [![Board — connect a GitHub/ADO board and drive remote repo execution](docs/images/app-board.png)](docs/images/app-board.png) | [![Settings — agent profiles, providers, governance, platform](docs/images/app-settings.png)](docs/images/app-settings.png) |
-| Connect a GitHub / Azure DevOps board, decompose an idea into tickets, drive repo-execution sessions. | One searchable rail: AI (Model keys, Routing, Agent profiles, Prompts) · Connections · Governance · People & data · Personal · System. Ctrl+K finds any setting. Changes apply on the next call. |
+| Connect a GitHub / Azure DevOps board, decompose an idea into tickets, drive repo-execution sessions. | One searchable rail: AI (Model keys, Routing, Agent profiles, Prompts, Autopilot) · Connections · Governance · People & data · Personal · System. Ctrl+K finds any setting. Changes apply on the next call. |
 
 | Platform governance | Terminal — runner session feed |
 |:---:|:---:|
@@ -325,6 +325,10 @@ in the desktop and applies on the next call:
 - **Settings → Platform** (`platform-admin` only) — remote auto-approve, fail-closed tool policy,
   allowed self-hosted Git hosts, build sandbox (mode, image, quotas), offline fallback.
 - **Settings → Prompts** — per-tenant system prompts for the Requirement, Coding, Testing and QA agents.
+- **Settings → Autopilot** — how Autopilot runs a project (Board › Autopilot): who decides (Orchestrator agent or the
+  fixed rules), how each ticket runs (MAF workflow or step by step), tasks and acceptance tests at once, automatic fix
+  rounds (one count per task across engines and restarts), Orchestrator retries, and the checks wait. When your
+  computer's Claude / Codex plan hits its limit, Autopilot waits for the reset — no tries spent — and carries on.
 - **Settings → Audit log** — who changed what (settings, keys — never their values —, members, sign-in), CSV export.
 
 **Your repo's own rules.** When a Board ticket runs against a repo, every agent follows the repo's agent

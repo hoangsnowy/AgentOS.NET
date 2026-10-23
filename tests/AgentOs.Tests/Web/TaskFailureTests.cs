@@ -21,6 +21,8 @@ public sealed class TaskFailureTests
     [InlineData("Stopped — you pressed Stop. Nothing was pushed for the unfinished parts; Try again to restart.", "stopped", TaskFailureAction.TryAgain)]
     [InlineData("src/A.cs(3,1): error CS1002: ; expected", "build", TaskFailureAction.TryAgain)]
     [InlineData("exit -1: ", "unknown", TaskFailureAction.TryAgain)]
+    // The member's computer answered with its Claude plan's limit (claude -p, 2026-10).
+    [InlineData("LLM call failed: You've hit your session limit · resets 11:50pm (Asia/Ho_Chi_Minh)", "plan-limit", TaskFailureAction.TryAgain)]
     public void Explain_RealErrors_ClassifiedWithOneAction(string error, string kind, TaskFailureAction action)
     {
         var info = TaskFailure.Explain(error);

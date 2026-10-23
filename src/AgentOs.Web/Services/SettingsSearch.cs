@@ -40,6 +40,7 @@ public static class SettingsSearch
         new("routing", "Routing", Ai, "lightning", "force provider default provider routing test connection offline fallback remoteagent remote agent paired", Access.Admin),
         new("agents", "Agent profiles", Ai, "diamond", "agent model per agent temperature max tokens output qa loop iterations cap profile coding testing requirement orchestrator", Access.Admin),
         new("prompts", "Prompts", Ai, "file", "prompt system prompt workspace rules instructions version history rollback", Access.Admin),
+        new("autopilot", "Autopilot", Ai, "play", "autopilot orchestrator decided by rules maf workflow step by step tasks at once parallel acceptance tests fix rounds retries checks timeout poll merge plan limit", Access.Admin),
         new("github", "GitHub", Conn, "git-pull-request", "github token pat pull request repo owner pipeline", Access.Admin),
         new("mcp", "MCP servers", Conn, "arrow-square-out", "mcp model context protocol tool servers upstream", Access.Admin),
         new("plugins", "Plugins", Conn, "squares-stack", "plugins extensions add-ons", Access.Everyone),
@@ -79,6 +80,7 @@ public static class SettingsSearch
         { Category: "Agent profiles" or "Pipeline" } => "agents",
         { Category: "LLM providers" } => ModelKeySettings.Contains(d.Key) ? "keys" : "routing",
         { Category: "Build sandbox" or "Platform" } => "platform",
+        { Category: AgentOs.Modules.Pipeline.Agents.AutopilotSettings.Category } => SettingsLinks.Autopilot,
         _ => null,
     };
 

@@ -37,6 +37,8 @@
 @inject AgentOs.Web.Services.Orchestration.OrchestratorLog OrchestratorLog
 @inject AgentOs.Modules.Sessions.Pairing.IComputerPairingCodes PairingCodes
 @inject AgentOs.Modules.RemoteAgent.IRemoteAgentBroker Broker
+@inject AgentOs.Modules.RemoteAgent.IPlanLimits PlanLimits
+@inject AgentOs.Domain.Configuration.ISettings SettingsStore
 @inject AgentOs.Web.Services.Preview.PreviewService Previews
 @inject NavigationManager Nav
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
@@ -619,7 +621,14 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                     <tr>
                         <td>@r.Label</td>
                         @if (_isAdmin) { <td title="@r.OwnerUserId">@MemberLabel(r.OwnerUserId)</td> }
-                        <td><Badge>@ComputerStatus(r)</Badge></td>
+                        <td>
+                            <Badge>@ComputerStatus(r)</Badge>
+                            @if (PlanLimits.Current(_tenantId, r.OwnerUserId) is { } hold)
+                            {
+                                @* The plan, not the computer, is the limit: shown as a warning with when it resets. *@
+                                <Badge Variant="Badge.BadgeVariant.Warn"><span title="@hold.Limit.Message">@hold.Limit.Plan plan limit · until @hold.WaitsUntilText</span></Badge>
+                            }
+                        </td>
                         <td title="@((r.LastSeenUtc ?? r.CreatedAtUtc).ToString("u"))">@(Broker.IsConnected(r.Id) ? "now" : Ago(r.LastSeenUtc ?? r.CreatedAtUtc))</td>
                         <td class="actions">
                             <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger"
@@ -674,19 +683,35 @@ else if (_tab == Tab.Autopilot)
                         <label class="board-repo-option">
                             <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Build)"
                                    @onchange="@(() => SetAutopilot(b, "Build"))" />
-                            <span><strong>Build</strong> <span class="muted">— start approved tickets in order, two at a time, and fix failing checks. You merge.</span></span>
+                            <span><strong>Build</strong> <span class="muted">— start approved tickets in order, @AtATime(_autopilotLimits.MaxParallel), and send red checks, conflicts and review or test findings back to the AI (up to @Rounds(_autopilotLimits.MaxFixRounds) per task). You merge.</span></span>
                         </label>
                         <label class="board-repo-option">
                             <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.BuildAndMerge)"
                                    @onchange="@(() => SetAutopilot(b, "BuildAndMerge"))" />
-                            <span><strong>Build and merge</strong> <span class="muted">— also merge each change once all its checks pass.</span></span>
+                            <span><strong>Build and merge</strong> <span class="muted">— also merge each change once its checks are green, the Reviewer agent approved it and the Testing agent passed it on your connected computer.</span></span>
                         </label>
                     </div>
-                    <p class="muted board-form-hint">The Orchestrator agent reads the whole project whenever it changes and decides the next moves — within fixed rules: nothing untested is merged, no ticket starts before what it depends on. It retries stuck work with guidance, asks you precise questions on the ticket, and never touches tickets marked for a person. (Settings › Autopilot › Decided by switches to the fixed rules alone.)</p>
+                    <p class="muted board-form-hint">@(_autopilotAgentDecides
+                        ? "The Orchestrator agent reads the whole project whenever it changes and decides the next moves — within fixed rules: nothing untested is merged, no ticket starts before what it depends on. It retries stuck work with guidance, asks you precise questions on the ticket, and never touches tickets marked for a person."
+                        : "The fixed rules decide the next moves: approved tickets in dependency order, p0 first; nothing untested is merged; tickets marked for a person are never touched.")
+                        @(_isAdmin ? "" : " An admin sets how Autopilot runs in Settings › Autopilot.")</p>
+                    @if (PlanLimits.Current(_tenantId, b.AutopilotUserId ?? b.CreatedByUserId ?? "") is { } hold && mode != AgentOs.Web.Services.Orchestration.AutopilotMode.Off)
+                    {
+                        <div class="board-failure" data-kind="plan-limit" role="status">
+                            <strong><Icon Name="clock" Size="13" /> Waiting for the AI plan</strong>
+                            <span>@hold.Sentence</span>
+                        </div>
+                    }
                     <div class="form-actions">
                         <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => AutopilotNow(b))" Disabled="@(_busy || mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off)">
                             <Icon Name="arrow-clockwise" Size="13" /> Check now
                         </Btn>
+                        @if (_isAdmin)
+                        {
+                            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => AgentOs.Web.Services.SettingsLinks.Open(WM, AgentOs.Web.Services.SettingsLinks.Autopilot))">
+                                <Icon Name="gear" Size="13" /> Autopilot settings
+                            </Btn>
+                        }
                     </div>
                 </div>
                 @{ var decisions = _autopilotLog.GetValueOrDefault(b.Id) ?? []; }
@@ -2411,11 +2436,28 @@ else if (_tab == Tab.Sessions)
     // ── Autopilot ────────────────────────────────────────────────────────────────────────────────────
     private readonly Dictionary<Guid, IReadOnlyList<(DateTimeOffset At, string Text)>> _autopilotLog = new();
 
+    // The tenant's Autopilot settings, read when the tab opens, so the screen says what Autopilot will really do.
+    private AgentOs.Modules.Pipeline.Agents.AutopilotLimits _autopilotLimits = AgentOs.Modules.Pipeline.Agents.AutopilotLimits.Default;
+    private bool _autopilotAgentDecides = true;
+
     private async Task ShowAutopilot()
     {
         _tab = Tab.Autopilot;
+        _autopilotLimits = await AgentOs.Modules.Pipeline.Agents.AutopilotSettings.ReadLimitsAsync(SettingsStore, _tenantId);
+        _autopilotAgentDecides = AgentOs.Modules.Pipeline.Agents.AutopilotSettings.AgentDecides(
+            (await SettingsStore.GetAsync(AgentOs.Modules.Pipeline.Agents.AutopilotSettings.DecidedByKey, _tenantId)).Value);
         await LoadAutopilotLogAsync();
     }
+
+    private static string AtATime(int n) => n switch
+    {
+        1 => "one at a time",
+        2 => "two at a time",
+        3 => "three at a time",
+        _ => n.ToString(System.Globalization.CultureInfo.InvariantCulture) + " at a time",
+    };
+
+    private static string Rounds(int n) => n == 1 ? "1 round" : n.ToString(System.Globalization.CultureInfo.InvariantCulture) + " rounds";
 
     private async Task LoadAutopilotLogAsync()
     {
@@ -2436,7 +2478,7 @@ else if (_tab == Tab.Sessions)
         OrchestratorLog.Add(_tenantId, board.Id, mode switch
         {
             "Build" => "Autopilot on: building approved tickets in order; you merge.",
-            "BuildAndMerge" => "Autopilot on: building and merging when all checks pass.",
+            "BuildAndMerge" => "Autopilot on: building, and merging each change once its checks, review and acceptance testing pass.",
             _ => "Autopilot off.",
         });
         await LoadAutopilotLogAsync();
