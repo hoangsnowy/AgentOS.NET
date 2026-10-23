@@ -111,4 +111,14 @@ public sealed class AutopilotOrchestratorTests
         ProjectOrchestrator.Signature(["y", "x"], ["15:s:1"], 2).ShouldNotBe(a);
         ProjectOrchestrator.Signature(["y", "x"], ["15:s:2"], 1).ShouldNotBe(a);
     }
+
+    // The retry budget comes from the task's persisted fix rounds — a restart of the server grants nothing new.
+    [Theory]
+    [InlineData(0, 2)]
+    [InlineData(3, 2)]
+    [InlineData(4, 1)]
+    [InlineData(5, 0)]
+    [InlineData(9, 0)]
+    public void RetriesLeft_ComesFromPersistedFixRounds(int fixRounds, int expected) =>
+        ProjectOrchestrator.RetriesLeft(fixRounds).ShouldBe(expected);
 }
