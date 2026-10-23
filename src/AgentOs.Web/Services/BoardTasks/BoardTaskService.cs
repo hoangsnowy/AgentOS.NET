@@ -48,13 +48,8 @@ public sealed class BoardTaskService(
     TaskStopRegistry stops,
     IOptions<PipelineOptions> pipelineOptions)
 {
-    private readonly SemaphoreSlim _testSlot = new(1, 1);
-
-    private sealed class SlotRelease(SemaphoreSlim slot) : IDisposable
-    {
-        private int _done;
-        public void Dispose() { if (Interlocked.Exchange(ref _done, 1) == 0) { slot.Release(); } }
-    }
+    // Acceptance runs at once per member's computer (Settings › Autopilot › Acceptance tests at once), whoever asks.
+    private readonly RunGate _testGate = new();
 
     /// <summary>A repo a new task works in (the first one is the task's primary repo).</summary>
     public sealed record TaskRepo(string Owner, string Repo, string DefaultBranch, Guid? WorkspaceRepoId);
@@ -300,10 +295,12 @@ public sealed class BoardTaskService(
             using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(tenantId, session.MemberUserId, session.Id);
             var sessRepo = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
             var tester = scope.ServiceProvider.GetRequiredService<IAcceptanceAgent>();
-            // One acceptance run at a time, whoever asks (a MAF ticket workflow or a step-by-step pass): each brings the
-            // app up on the computer's fixed ports.
-            await _testSlot.WaitAsync(stopLease.Token).ConfigureAwait(false);
-            using var _slot = new SlotRelease(_testSlot);
+            // Acceptance runs on one computer are capped, whoever asks (a MAF ticket workflow or a step-by-step pass): each
+            // brings the app up on the computer's fixed ports. The cap is the tenant's setting, read now.
+            var settings = scope.ServiceProvider.GetService<AgentOs.Domain.Configuration.ISettings>();
+            var testCap = settings is null ? AgentOs.Modules.Pipeline.Agents.AutopilotLimits.Default.MaxParallelTests
+                : (await AgentOs.Modules.Pipeline.Agents.AutopilotSettings.ReadLimitsAsync(settings, tenantId, stopLease.Token).ConfigureAwait(false)).MaxParallelTests;
+            using var _slot = await _testGate.EnterAsync(tenantId + "/" + session.MemberUserId, testCap, stopLease.Token).ConfigureAwait(false);
             var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
             var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
             foreach (var change in changes)
@@ -520,6 +517,26 @@ public sealed class BoardTaskService(
             foreach (var outcome in workResult.Repos)
             {
                 var repoLabel = $"{outcome.Owner}/{outcome.Repo}";
+                if (!outcome.Ok && AgentOs.Modules.RemoteAgent.PlanLimitDetector.IsPlanLimit(outcome.Error))
+                {
+                    // Nothing failed — the member's AI plan said "not now". A follow-up's change goes back to where it
+                    // stood (its checks / findings intact), so the same move is made after the reset; a fresh start
+                    // waits as cut short, and Autopilot picks it up again once the plan resets.
+                    var before = children.FirstOrDefault(c => c.Id == outcome.SessionRepoId);
+                    if (change is not null && before is { PrUrl.Length: > 0, Status: "Done" or "Reviewed" or "ChangesRequested" or "Accepted" or "Rejected" or "Blocked" })
+                    {
+                        await sessRepo.UpdateRepoRunResultAsync(tenantId, before.Id, before.Status, before.BranchName, before.PrUrl, before.Error).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        anyFailure = true;
+                        await sessRepo.UpdateRepoRunResultAsync(tenantId, outcome.SessionRepoId, "Failed", outcome.BranchName,
+                            change is not null ? before?.PrUrl : null, outcome.Error).ConfigureAwait(false);
+                    }
+                    Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — paused: your computer's AI plan hit its limit. Nothing was changed.", repoLabel,
+                        before?.Status ?? "Failed", before?.PrUrl);
+                    continue;
+                }
                 if (!outcome.Ok)
                 {
                     anyFailure = true;
@@ -572,6 +589,13 @@ public sealed class BoardTaskService(
                 }
             }
 
+            // A follow-up the plan limit stopped everywhere never happened: its fix round is taken back, so the cap
+            // (Settings › Autopilot) counts only rounds that ran.
+            if (change is not null && workResult.Repos.Count > 0
+                && workResult.Repos.All(o => !o.Ok && AgentOs.Modules.RemoteAgent.PlanLimitDetector.IsPlanLimit(o.Error)))
+            {
+                await sessRepo.DecrementFixRoundsForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
+            }
             await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
             Publish(anyFailure ? SessionRunEventKind.Failed : SessionRunEventKind.Done,
                 anyFailure ? "Session finished with failures." : "Session complete — all repos done.");
@@ -635,7 +659,7 @@ public sealed class BoardTaskService(
         if (cls != TicketClass.Greenfield)
         {
             var reason = TicketClassifier.RefusalMessage(cls);
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, reason).ConfigureAwait(false);
+            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, reason, CancellationToken.None).ConfigureAwait(false);
             Publish(SessionRunEventKind.Failed, reason);
             return;
         }
@@ -644,7 +668,7 @@ public sealed class BoardTaskService(
         if (primary is null)
         {
             const string noRepo = "Quality run has no target repo — recreate the session from a board ticket.";
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, noRepo).ConfigureAwait(false);
+            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, noRepo, CancellationToken.None).ConfigureAwait(false);
             Publish(SessionRunEventKind.Failed, noRepo);
             return;
         }
@@ -687,8 +711,8 @@ public sealed class BoardTaskService(
         if (result is null || result.Status == PipelineStatus.Failed)
         {
             var msg = error ?? "Quality pipeline failed — see the server log.";
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Failed", null, null, msg).ConfigureAwait(false);
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, msg).ConfigureAwait(false);
+            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Failed", null, null, msg, CancellationToken.None).ConfigureAwait(false);
+            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, msg, CancellationToken.None).ConfigureAwait(false);
             Publish(SessionRunEventKind.Failed, $"{repoLabel} — {msg}", repoLabel, "Failed");
             return;
         }
@@ -697,8 +721,8 @@ public sealed class BoardTaskService(
         var gate = PrGate.Evaluate(result);
         if (!gate.Allowed)
         {
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Blocked", null, null, gate.Reason).ConfigureAwait(false);
-            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
+            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Blocked", null, null, gate.Reason, CancellationToken.None).ConfigureAwait(false);
+            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id, CancellationToken.None).ConfigureAwait(false);
             Publish(SessionRunEventKind.Failed, $"{repoLabel} — {gate.Reason}", repoLabel, "Blocked");
             return;
         }
@@ -710,15 +734,15 @@ public sealed class BoardTaskService(
         try
         {
             var pr = await prService.OpenPrAsync(result, descriptor, title, body, CancellationToken.None).ConfigureAwait(false);
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Done", pr.Branch, pr.HtmlUrl, null).ConfigureAwait(false);
-            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
+            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Done", pr.Branch, pr.HtmlUrl, null, CancellationToken.None).ConfigureAwait(false);
+            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id, CancellationToken.None).ConfigureAwait(false);
             Publish(SessionRunEventKind.Done, $"{repoLabel} — PR opened.", repoLabel, "Done", pr.HtmlUrl);
         }
         catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException
                                    or InvalidOperationException or ArgumentException or System.IO.IOException or TimeoutException)
         {
-            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Failed", null, null, $"PR creation failed: {ex.Message}").ConfigureAwait(false);
-            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, $"PR creation failed: {ex.Message}").ConfigureAwait(false);
+            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Failed", null, null, $"PR creation failed: {ex.Message}", CancellationToken.None).ConfigureAwait(false);
+            await sessRepo.UpdateRunResultAsync(tenantId, session.Id, "Failed", null, $"PR creation failed: {ex.Message}", CancellationToken.None).ConfigureAwait(false);
             Publish(SessionRunEventKind.Failed, $"{repoLabel} — PR creation failed: {ex.Message}", repoLabel, "Failed");
         }
     }

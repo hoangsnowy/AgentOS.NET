@@ -19,6 +19,9 @@ public static class SettingsLinks
     /// <summary>Settings → AI → Model keys: where every "no usable key" message points.</summary>
     public const string ModelKeys = "keys";
 
+    /// <summary>Settings → AI → Autopilot: where Board › Autopilot points for how Autopilot runs.</summary>
+    public const string Autopilot = "autopilot";
+
     // The old two-level targets → the flat page keys.
     private static readonly FrozenDictionary<string, string> Legacy = new Dictionary<string, string>(StringComparer.Ordinal)
     {

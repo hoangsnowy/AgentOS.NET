@@ -15,7 +15,7 @@ namespace AgentOs.Tests.Web;
 public sealed class SettingsSearchTests
 {
     private static readonly SettingDescriptor[] Descriptors =
-        [.. new LlmSettings().Describe(), .. new AgentSettings().Describe()];
+        [.. new LlmSettings().Describe(), .. new AgentSettings().Describe(), .. new AutopilotSettings().Describe()];
 
     [Theory]
     [InlineData("gemini key", "keys")]
@@ -26,6 +26,9 @@ public sealed class SettingsSearchTests
     [InlineData("who changed", "audit")]
     [InlineData("service account", "tokens")]
     [InlineData("qa loop", "agents")]
+    [InlineData("autopilot", "autopilot")]
+    [InlineData("fix rounds", "autopilot")]
+    [InlineData("decided by", "autopilot")]
     public void Find_Admin_TopHitIsThePageThatEditsIt(string query, string target)
         => SettingsSearch.Find(query, Descriptors, isAdmin: true, isPlatformAdmin: false)[0].Target.ShouldBe(target);
 
@@ -76,6 +79,7 @@ public sealed class SettingsSearchTests
     [InlineData("system/appearance", "appearance")]
     [InlineData("system", "general")]
     [InlineData("audit", "audit")]
+    [InlineData("autopilot", "autopilot")]
     public void Normalize_MapsLegacyTargetsToFlatPages(string target, string page)
         => SettingsLinks.Normalize(target).ShouldBe(page);
 }

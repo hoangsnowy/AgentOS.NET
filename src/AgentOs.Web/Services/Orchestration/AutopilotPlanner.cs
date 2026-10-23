@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using AgentOs.Domain.Workspaces;
+using AgentOs.Modules.Pipeline.Agents;
 
 namespace AgentOs.Web.Services.Orchestration;
 
@@ -16,7 +17,7 @@ public enum AutopilotMode
     Off,
     /// <summary>Start approved tickets in dependency order and fix failing checks; a person merges.</summary>
     Build,
-    /// <summary>Build, and merge a proposed change once all its checks pass.</summary>
+    /// <summary>Build, and merge a proposed change once its checks pass, review approved it and acceptance testing passed it.</summary>
     BuildAndMerge,
 }
 
@@ -36,12 +37,20 @@ public sealed record PlanChange(Guid RepoId, int PrNumber, PrChecksState Checks,
     string BaseBranch = "main", ChangeReview Review = ChangeReview.Approved);
 
 /// <summary>A task as the planner sees it.</summary>
-public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IReadOnlyList<PlanChange> OpenChanges, int FixRounds);
+/// <param name="FixRounds">The task's persisted fix rounds (every change sent back to the Coding agent, by any engine,
+/// before or after a restart) — the one counter every cap reads.</param>
+public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IReadOnlyList<PlanChange> OpenChanges, int FixRounds)
+{
+    /// <summary>Its last run was cut short by the member's plan limit (nothing failed): it resumes once the plan
+    /// resets, without spending a fix round or a retry.</summary>
+    public bool CutShortByPlanLimit { get; init; }
+}
 
 /// <summary>One thing to do, and the sentence that explains it.</summary>
 public abstract record AutopilotAction(string Why)
 {
     public sealed record StartTicket(int Number, string Why) : AutopilotAction(Why);
+    public sealed record ResumeTask(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record FixChecks(Guid SessionId, int IssueNumber, string Report, int Round, string Why) : AutopilotAction(Why);
     public sealed record UpdateBranch(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
@@ -53,16 +62,6 @@ public abstract record AutopilotAction(string Why)
 /// <summary>The rules.</summary>
 public static class AutopilotPlanner
 {
-    /// <summary>Automatic "Fix the failing checks" rounds before a person is asked.</summary>
-    public const int MaxFixRounds = 3;
-
-    /// <summary>Tasks running at once on a board.</summary>
-    public const int MaxParallel = 2;
-
-    /// <summary>Acceptance runs at once: a test brings the app up on fixed ports, so two at once on one computer collide
-    /// (seen on the lab: the second one found the ports taken and could not check its end-to-end criteria).</summary>
-    public const int MaxParallelTests = 1;
-
     /// <summary>What Autopilot does next on a board, given its tickets and tasks — a pure decision, executed by the
     /// orchestrator.</summary>
     /// <param name="mode">Off, Build, or BuildAndMerge.</param>
@@ -70,19 +69,33 @@ public static class AutopilotPlanner
     /// <param name="tasks">The board's open tasks and their proposed changes.</param>
     /// <param name="canTest">A computer of the member is connected, so the Testing agent can run. Without one nothing
     /// is tested — and nothing untested is merged.</param>
-    /// <param name="maxParallel">Slot cap. The Orchestrator agent asks for every legal move (no cap) and
-    /// <see cref="WithinCaps"/> applies the caps to the moves it picks, in its order.</param>
-    /// <param name="maxParallelTests">Acceptance-run cap (see <see cref="MaxParallelTests"/>).</param>
+    /// <param name="limits">The tenant's bounds (Settings › Autopilot; null = the defaults): slots, acceptance runs and
+    /// fix rounds. The Orchestrator agent asks with <see cref="AutopilotLimits.Uncapped"/> for every legal move and
+    /// <see cref="WithinCaps"/> applies the caps to the moves it picks, in its order. An acceptance run brings the app
+    /// up on fixed ports, so two at once on one computer collide (seen on the lab) — hence its own cap.</param>
     public static IReadOnlyList<AutopilotAction> Decide(AutopilotMode mode, IReadOnlyList<PlanTicket> tickets, IReadOnlyList<PlanTask> tasks,
-        bool canTest = true, int maxParallel = MaxParallel, int maxParallelTests = MaxParallelTests)
+        bool canTest = true, AutopilotLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(tickets);
         ArgumentNullException.ThrowIfNull(tasks);
         var actions = new List<AutopilotAction>();
         if (mode == AutopilotMode.Off) { return actions; }
+        var caps = limits ?? AutopilotLimits.Default;
+        var maxParallel = caps.MaxParallel;
+        var maxParallelTests = caps.MaxParallelTests;
+        var maxFixRounds = caps.MaxFixRounds;
 
         var running = tasks.Count(t => t.Status == "Running");
         var testing = tasks.Count(t => t.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing));
+
+        // 0) Work a plan limit cut short resumes first — it was already under way, and spends no fix round or retry.
+        foreach (var task in tasks.Where(t => t.Status == "Failed" && t.CutShortByPlanLimit))
+        {
+            if (running >= maxParallel) { break; }
+            actions.Add(new AutopilotAction.ResumeTask(task.SessionId, task.IssueNumber,
+                $"Picked #{task.IssueNumber} up again — your computer's AI plan is open again (no fix round used)."));
+            running++;
+        }
 
         // 1) Proposed changes waiting on their checks: fix red ones (bounded), merge green ones (when allowed).
         foreach (var task in tasks.Where(t => t.Status == "Done"))
@@ -91,7 +104,7 @@ public static class AutopilotPlanner
             var conflicting = task.OpenChanges.Where(c => c.Merge == PrMergeState.Conflicts).ToList();
             if (conflicting.Count > 0)
             {
-                if (task.FixRounds >= MaxFixRounds)
+                if (task.FixRounds >= maxFixRounds)
                 {
                     actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
                         "Still conflicts with its base after automatic fixes — needs a person.",
@@ -104,25 +117,25 @@ public static class AutopilotPlanner
                     $"Your branch conflicts with {conflicting[0].BaseBranch} (another change was merged first). Merge origin/{conflicting[0].BaseBranch} "
                     + "into it, resolve every conflict keeping the intent of both changes, build, run the tests, commit and push.",
                     conflictRound,
-                    $"#{task.IssueNumber} conflicts with {conflicting[0].BaseBranch} — asked the AI to bring it up to date (try {conflictRound} of {MaxFixRounds})."));
+                    $"#{task.IssueNumber} conflicts with {conflicting[0].BaseBranch} — asked the AI to bring it up to date (try {conflictRound} of {maxFixRounds})."));
                 running++;
                 continue;
             }
             var failed = task.OpenChanges.Where(c => c.Checks == PrChecksState.Failed).ToList();
             if (failed.Count > 0)
             {
-                if (task.FixRounds >= MaxFixRounds)
+                if (task.FixRounds >= maxFixRounds)
                 {
                     actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
-                        $"Checks still fail after {MaxFixRounds} automatic fixes — needs a person.",
-                        $"Stopped fixing #{task.IssueNumber}: its checks still fail after {MaxFixRounds} tries. It needs you."));
+                        $"Checks still fail after {maxFixRounds} automatic fixes — needs a person.",
+                        $"Stopped fixing #{task.IssueNumber}: its checks still fail after {maxFixRounds} tries. It needs you."));
                     continue;
                 }
                 if (running >= maxParallel) { continue; }
                 var round = task.FixRounds + 1;
                 var report = string.Join("\n", failed.Select(c => c.FailedReport).Where(r => !string.IsNullOrWhiteSpace(r)));
                 actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber, report, round,
-                    $"#{task.IssueNumber}'s checks failed — asked the AI to fix them (try {round} of {MaxFixRounds})."));
+                    $"#{task.IssueNumber}'s checks failed — asked the AI to fix them (try {round} of {maxFixRounds})."));
                 running++;
                 continue;
             }
@@ -136,18 +149,18 @@ public static class AutopilotPlanner
             var changesRequested = task.OpenChanges.Where(c => c.Review == ChangeReview.ChangesRequested).ToList();
             if (changesRequested.Count > 0)
             {
-                if (task.FixRounds >= MaxFixRounds)
+                if (task.FixRounds >= maxFixRounds)
                 {
                     actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
-                        $"Code review still asks for changes after {MaxFixRounds} automatic fixes — needs a person.",
-                        $"Stopped fixing #{task.IssueNumber}: code review still asks for changes after {MaxFixRounds} tries. It needs you."));
+                        $"Code review still asks for changes after {maxFixRounds} automatic fixes — needs a person.",
+                        $"Stopped fixing #{task.IssueNumber}: code review still asks for changes after {maxFixRounds} tries. It needs you."));
                     continue;
                 }
                 if (running >= maxParallel) { continue; }
                 var round = task.FixRounds + 1;
                 actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
                     string.Join('\n', changesRequested.Select(c => c.Findings).Where(r => !string.IsNullOrWhiteSpace(r))), round,
-                    $"Code review asked for changes on #{task.IssueNumber} — sent back to the AI (try {round} of {MaxFixRounds})."));
+                    $"Code review asked for changes on #{task.IssueNumber} — sent back to the AI (try {round} of {maxFixRounds})."));
                 running++;
                 continue;
             }
@@ -163,18 +176,18 @@ public static class AutopilotPlanner
             var rejected = task.OpenChanges.Where(c => c.Testing == ChangeTesting.Rejected).ToList();
             if (rejected.Count > 0)
             {
-                if (task.FixRounds >= MaxFixRounds)
+                if (task.FixRounds >= maxFixRounds)
                 {
                     actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
-                        $"Acceptance testing still fails after {MaxFixRounds} automatic fixes — needs a person.",
-                        $"Stopped fixing #{task.IssueNumber}: it still fails acceptance testing after {MaxFixRounds} tries. It needs you."));
+                        $"Acceptance testing still fails after {maxFixRounds} automatic fixes — needs a person.",
+                        $"Stopped fixing #{task.IssueNumber}: it still fails acceptance testing after {maxFixRounds} tries. It needs you."));
                     continue;
                 }
                 if (running >= maxParallel) { continue; }
                 var round = task.FixRounds + 1;
                 actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber,
                     string.Join('\n', rejected.Select(c => c.Findings).Where(r => !string.IsNullOrWhiteSpace(r))), round,
-                    $"#{task.IssueNumber} failed acceptance testing — sent back to the AI with the findings (try {round} of {MaxFixRounds})."));
+                    $"#{task.IssueNumber} failed acceptance testing — sent back to the AI with the findings (try {round} of {maxFixRounds})."));
                 running++;
                 continue;
             }
@@ -223,16 +236,17 @@ public static class AutopilotPlanner
 
     /// <summary>True for a move that occupies a work slot on the member's computer.</summary>
     public static bool TakesSlot(AutopilotAction action) =>
-        action is AutopilotAction.StartTicket or AutopilotAction.FixChecks or AutopilotAction.RunReview or AutopilotAction.RunTests;
+        action is AutopilotAction.StartTicket or AutopilotAction.ResumeTask or AutopilotAction.FixChecks or AutopilotAction.RunReview or AutopilotAction.RunTests;
 
     /// <summary>
     /// The guardrail under the Orchestrator agent: the moves it picked, in its order, kept only while they fit — slots
-    /// (<see cref="MaxParallel"/>, counting <paramref name="running"/> tasks), one acceptance run at a time, and at most
-    /// one move per task in a pass.
+    /// (<see cref="AutopilotLimits.MaxParallel"/>, counting <paramref name="running"/> tasks), the acceptance-run cap,
+    /// and at most one move per task in a pass.
     /// </summary>
-    public static IReadOnlyList<AutopilotAction> WithinCaps(IEnumerable<AutopilotAction> picked, int running, int testing)
+    public static IReadOnlyList<AutopilotAction> WithinCaps(IEnumerable<AutopilotAction> picked, int running, int testing, AutopilotLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(picked);
+        var caps = limits ?? AutopilotLimits.Default;
         var kept = new List<AutopilotAction>();
         var touched = new HashSet<Guid>();
         foreach (var action in picked)
@@ -241,10 +255,10 @@ public static class AutopilotPlanner
             if (session is { } id && !touched.Add(id) && action is not AutopilotAction.Merge and not AutopilotAction.UpdateBranch) { continue; }
             if (TakesSlot(action))
             {
-                if (running >= MaxParallel) { continue; }
+                if (running >= caps.MaxParallel) { continue; }
                 if (action is AutopilotAction.RunTests)
                 {
-                    if (testing >= MaxParallelTests) { continue; }
+                    if (testing >= caps.MaxParallelTests) { continue; }
                     testing++;
                 }
                 running++;
@@ -257,6 +271,7 @@ public static class AutopilotPlanner
     private static Guid? SessionOf(AutopilotAction action) => action switch
     {
         AutopilotAction.FixChecks a => a.SessionId,
+        AutopilotAction.ResumeTask a => a.SessionId,
         AutopilotAction.UpdateBranch a => a.SessionId,
         AutopilotAction.RunTests a => a.SessionId,
         AutopilotAction.RunReview a => a.SessionId,

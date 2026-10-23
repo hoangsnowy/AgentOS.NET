@@ -1,14 +1,45 @@
-// Who decides Autopilot's next moves on a board (ADR-0011: a UI setting, per tenant). The Orchestrator agent by
-// default; "Rules" keeps the fixed rules only (the agent's guardrails), e.g. to save the member's subscription.
+// How Autopilot runs a board (ADR-0011: UI settings, per tenant — Settings › Autopilot). Who decides the next moves
+// (the Orchestrator agent by default; "Rules" keeps the fixed rules only, e.g. to save the member's subscription), how
+// each ticket runs (a MAF workflow, or step by step), and the bounds every engine keeps: tasks at once, acceptance runs
+// at once, automatic fix rounds, the Orchestrator agent's extra retries, and how long to wait for a pull request's
+// checks. Read per pass / per call, so a change applies to the next pass without a restart.
 
+using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Threading;
+using System.Threading.Tasks;
 using AgentOs.Domain.Configuration;
 
 namespace AgentOs.Modules.Pipeline.Agents;
 
-/// <summary>Declares <c>Autopilot:DecidedBy</c>.</summary>
+/// <summary>The bounds Autopilot keeps on a board, as configured (<see cref="AutopilotSettings"/>).</summary>
+/// <param name="MaxParallel">Tasks running at once on a board.</param>
+/// <param name="MaxParallelTests">Acceptance runs at once on a member's computer (each brings the app up on fixed ports).</param>
+/// <param name="MaxFixRounds">Automatic "send it back to the Coding agent" rounds before a person is asked — the total
+/// across engines and restarts (a task's persisted fix rounds count against it).</param>
+/// <param name="MaxAgentRetries">Extra retries the Orchestrator agent may spend on a stuck task, with guidance.</param>
+/// <param name="ChecksTimeout">How long a ticket's MAF workflow waits for a pull request's checks.</param>
+/// <param name="ChecksPoll">How often it looks at them.</param>
+public sealed record AutopilotLimits(int MaxParallel, int MaxParallelTests, int MaxFixRounds, int MaxAgentRetries, TimeSpan ChecksTimeout, TimeSpan ChecksPoll)
+{
+    /// <summary>The built-in values (the settings' defaults).</summary>
+    public static AutopilotLimits Default { get; } = new(
+        AutopilotSettings.DefaultMaxParallel, AutopilotSettings.DefaultMaxParallelTests, AutopilotSettings.DefaultMaxFixRounds,
+        AutopilotSettings.DefaultMaxAgentRetries, TimeSpan.FromMinutes(AutopilotSettings.DefaultChecksTimeoutMinutes),
+        TimeSpan.FromSeconds(AutopilotSettings.DefaultChecksPollSeconds));
+
+    /// <summary>These limits with no slot caps — every legal move is offered (the Orchestrator agent picks, then
+    /// the caps are applied to its picks).</summary>
+    public AutopilotLimits Uncapped => this with { MaxParallel = int.MaxValue, MaxParallelTests = int.MaxValue };
+}
+
+/// <summary>Declares the <c>Autopilot:*</c> settings.</summary>
 public sealed class AutopilotSettings : ISettingsContributor
 {
+    /// <summary>The settings category (and the Settings › Autopilot page).</summary>
+    public const string Category = "Autopilot";
+
     /// <summary>The setting key.</summary>
     public const string DecidedByKey = "Autopilot:DecidedBy";
 
@@ -27,26 +58,99 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// <summary>Autopilot drives each step itself, pass by pass.</summary>
     public const string StepByStep = "Step by step";
 
+    /// <summary>Tasks running at once on a board.</summary>
+    public const string MaxParallelKey = "Autopilot:MaxParallel";
+
+    /// <summary>Acceptance runs at once on a member's computer.</summary>
+    public const string MaxParallelTestsKey = "Autopilot:MaxParallelTests";
+
+    /// <summary>Automatic fix rounds per task.</summary>
+    public const string MaxFixRoundsKey = "Autopilot:MaxFixRounds";
+
+    /// <summary>The Orchestrator agent's extra retries per stuck task.</summary>
+    public const string MaxAgentRetriesKey = "Autopilot:MaxAgentRetries";
+
+    /// <summary>How long to wait for a pull request's checks (minutes).</summary>
+    public const string ChecksTimeoutMinutesKey = "Autopilot:ChecksTimeoutMinutes";
+
+    /// <summary>How often to look at them (seconds).</summary>
+    public const string ChecksPollSecondsKey = "Autopilot:ChecksPollSeconds";
+
+    internal const int DefaultMaxParallel = 2;
+    internal const int DefaultMaxParallelTests = 1;
+    internal const int DefaultMaxFixRounds = 3;
+    internal const int DefaultMaxAgentRetries = 2;
+    internal const int DefaultChecksTimeoutMinutes = 60;
+    internal const int DefaultChecksPollSeconds = 60;
+
+    /// <summary>Each bound's key, range and default — the descriptors and the typed read share it.</summary>
+    private static readonly (string Key, int Min, int Max, int Default)[] Bounds =
+    [
+        (MaxParallelKey, 1, 6, DefaultMaxParallel),
+        (MaxParallelTestsKey, 1, 3, DefaultMaxParallelTests),
+        (MaxFixRoundsKey, 0, 10, DefaultMaxFixRounds),
+        (MaxAgentRetriesKey, 0, 5, DefaultMaxAgentRetries),
+        (ChecksTimeoutMinutesKey, 5, 240, DefaultChecksTimeoutMinutes),
+        (ChecksPollSecondsKey, 15, 600, DefaultChecksPollSeconds),
+    ];
+
     /// <summary>True when the stored value means a MAF workflow (anything but "Step by step").</summary>
-    public static bool UsesMafWorkflow(string? value) => !string.Equals(value?.Trim(), StepByStep, System.StringComparison.OrdinalIgnoreCase);
+    public static bool UsesMafWorkflow(string? value) => !string.Equals(value?.Trim(), StepByStep, StringComparison.OrdinalIgnoreCase);
 
     /// <inheritdoc />
     public IEnumerable<SettingDescriptor> Describe()
     {
-        yield return new(TicketEngineKey, SettingKind.Choice, "Autopilot", "Each ticket runs as")
-        {
-            DefaultValue = MafWorkflow,
-            Choices = [MafWorkflow, StepByStep],
-            Help = "MAF workflow: a Microsoft Agent Framework graph runs Coding → checks → Reviewer → Testing → merge for the ticket, routing every verdict. Step by step: Autopilot drives each step itself every minute. Both use the same agents, rules and evidence.",
-        };
-        yield return new(DecidedByKey, SettingKind.Choice, "Autopilot", "Decided by")
+        yield return new(DecidedByKey, SettingKind.Choice, Category, "Decided by")
         {
             DefaultValue = Agent,
             Choices = [Agent, Rules],
             Help = "Orchestrator agent: an AI lead reads the whole project and picks the next moves, retries stuck tasks with guidance and asks you precise questions — always within the rules. Rules: the fixed rules alone.",
         };
+        yield return new(TicketEngineKey, SettingKind.Choice, Category, "Each ticket runs as")
+        {
+            DefaultValue = MafWorkflow,
+            Choices = [MafWorkflow, StepByStep],
+            Help = "MAF workflow: a Microsoft Agent Framework graph runs Coding → checks → Reviewer → Testing → merge for the ticket, routing every verdict. Step by step: Autopilot drives each step itself every minute. Both use the same agents, rules and evidence.",
+        };
+        yield return Bound(MaxParallelKey, "Tasks at once",
+            "How many tickets the AI works on at the same time on a project (coding, fixing, reviewing or testing). Each one uses your computer.");
+        yield return Bound(MaxParallelTestsKey, "Acceptance tests at once",
+            "How many changes the Testing agent tries at the same time on one computer. Each brings the app up on its usual ports, so more than one only works when the app can run twice.");
+        yield return Bound(MaxFixRoundsKey, "Automatic fix rounds",
+            "How many times a change goes back to the Coding agent (red checks, a conflict, review or acceptance findings) before a person is asked. Counted per task, in total — a restart grants no new rounds.");
+        yield return Bound(MaxAgentRetriesKey, "Orchestrator retries",
+            "Extra tries the Orchestrator agent may give a stuck task, with its own guidance, after the automatic fix rounds are used up.");
+        yield return Bound(ChecksTimeoutMinutesKey, "Wait for checks (minutes)",
+            "How long a ticket's MAF workflow waits for the pull request's checks before handing it back to Autopilot's step-by-step passes.");
+        yield return Bound(ChecksPollSecondsKey, "Look at checks every (seconds)",
+            "How often the MAF workflow looks at the pull request's checks while it waits.");
+    }
+
+    private static SettingDescriptor Bound(string key, string label, string help)
+    {
+        var b = Array.Find(Bounds, x => x.Key == key);
+        return new(key, SettingKind.WholeNumber, Category, label)
+        {
+            DefaultValue = b.Default.ToString(CultureInfo.InvariantCulture),
+            Min = b.Min,
+            Max = b.Max,
+            Help = help,
+        };
     }
 
     /// <summary>True when the stored value means the agent decides (anything but "Rules").</summary>
-    public static bool AgentDecides(string? value) => !string.Equals(value?.Trim(), Rules, System.StringComparison.OrdinalIgnoreCase);
+    public static bool AgentDecides(string? value) => !string.Equals(value?.Trim(), Rules, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The tenant's Autopilot bounds, read now (each clamped to its range — a seeded value can't escape it).</summary>
+    public static async ValueTask<AutopilotLimits> ReadLimitsAsync(ISettings settings, string tenantId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var v = new int[Bounds.Length];
+        for (var i = 0; i < Bounds.Length; i++)
+        {
+            var (key, min, max, fallback) = Bounds[i];
+            v[i] = Math.Clamp(await settings.GetIntAsync(key, tenantId, fallback, ct).ConfigureAwait(false), min, max);
+        }
+        return new AutopilotLimits(v[0], v[1], v[2], v[3], TimeSpan.FromMinutes(v[4]), TimeSpan.FromSeconds(v[5]));
+    }
 }

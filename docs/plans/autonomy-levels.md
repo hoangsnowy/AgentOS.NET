@@ -35,25 +35,32 @@ others learned. The board shows each ticket's phase (Discovery → Coding → Te
    approved* starts only tickets whose dependencies are merged, at most N at a time, and re-checks when one merges.
    Today it starts everything at once — #12 (import) would race #11 (the module it needs).
 2. ✅ (#242, Autopilot) **Self-repair on CI.** When a task's pull request goes red, run *Fix the failing checks* automatically, at most
-   3 rounds, then escalate (a failure card with "This needs a person").
+   *Automatic fix rounds* (Settings › Autopilot, default 3), then escalate (a failure card with "This needs a person").
+   The rounds are the task's persisted `FixRounds` — one count for both engines and across restarts.
 3. ✅ (#244) **Acceptance agent.** What a human reviewer did by hand on the lab: read the ticket's criteria and the project's
    `docs/ACCEPTANCE.md`, run the unit tests, bring the stack up and run the Playwright specs, run data checks
    (e.g. the CBL corpus), and post the evidence on the PR. Pass → approve; fail → *Ask for changes* with the
    findings.
 3c. ✅ (#270) **One ticket = one MAF workflow.** The Autopilot Orchestrator agent decides which ticket starts; a
    Microsoft Agent Framework Workflow (`TicketWorkflow`) then runs it — Coding → checks → Reviewer → Testing → merge —
-   with conditional edges back to Coding (red checks, conflicts, requested changes, failed acceptance; 3 rounds). A
-   flow that ends without a merge, or one a restart cut short, is picked up step by step. Settings › Autopilot › *Each
-   ticket runs as* (MAF workflow / Step by step).
+   with conditional edges back to Coding (red checks, conflicts, requested changes, failed acceptance; the same fix
+   rounds, seeded from the task's persisted count). A flow that ends without a merge, or one a restart cut short, is
+   picked up step by step. Settings › Autopilot › *Each ticket runs as* (MAF workflow / Step by step); its checks wait
+   and poll are settings too.
 3b. ✅ (#264) **Reviewer agent.** Between green CI and acceptance testing: a read-only agent reviews the diff in
-   context and posts its review on the PR; must-fix findings go back to the Coding agent (same 3 bounded rounds).
-4. ✅ (#242, *Build and merge*: on green CI; acceptance agent next) **Merge policy.** Per project: merge on green + acceptance pass (squash, delete branch), or wait for a person.
+   context and posts its review on the PR; must-fix findings go back to the Coding agent (same bounded rounds).
+4. ✅ (#242, #264, #244) **Merge policy.** Per project: *Build and merge* merges only on green checks + review approved +
+   acceptance passed (which needs the member's computer connected) — squash, delete branch — or *Build* waits for a person.
+4b. ✅ **Plan limits.** When the member's computer answers with its Claude / Codex plan limit, Autopilot waits until the
+   reset (+1 min) — no new work, no retries, no fix rounds spent — says so once in the Autopilot activity and on the
+   Board (Autopilot + Computers tabs), and picks the cut-short work up again afterwards.
 5. **Environment care.** The known stack landmines (stale Keycloak/Postgres volumes, orphaned containers, ports)
    handled by the acceptance agent's stack step, not by a person.
 
 ## What L5 adds
 
 - **Autopilot** per board: a loop that runs 1–4 whenever there is a ready ticket, inside a monthly budget and a
-  parallelism cap, with Stop.
+  parallelism cap (Settings › Autopilot: tasks at once, acceptance tests at once, fix rounds, Orchestrator retries,
+  checks wait), with Stop.
 - **Escalation** in words: a "Needs you" badge + notification with the one decision required.
 - **Report**: a daily summary per project — merged, in progress, blocked and why, spend.

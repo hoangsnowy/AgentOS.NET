@@ -113,6 +113,16 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         }
         stopwatch.Stop();
 
+        // The member's Claude/Codex plan said "no more for now": a typed signal, not a failure of the work — the
+        // member's wait is recorded so Autopilot holds off until the reset instead of burning its tries.
+        if (PlanLimitDetector.FromReply(result.Ok, result.Content, result.Error, request.Cli, DateTimeOffset.UtcNow) is { } limit)
+        {
+            LlmTelemetry.RecordError(activity, "plan limit");
+            _services.GetService<IPlanLimits>()?.Report(target.TenantId, target.MemberUserId, limit);
+            _logger.LogWarning("[RemoteAgent] request {Id}: the member's {Plan} plan hit its limit (resets {Reset}).", id, limit.Plan, limit.ResetText ?? "unknown");
+            throw new PlanLimitException(limit, Provider);
+        }
+
         if (!result.Ok)
         {
             LlmTelemetry.RecordError(activity, result.Error ?? "remote agent failure");
