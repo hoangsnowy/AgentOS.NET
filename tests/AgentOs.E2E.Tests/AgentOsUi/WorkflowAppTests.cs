@@ -24,7 +24,7 @@ public sealed class WorkflowAppTests : IClassFixture<AgentOsPageFixture>
     {
         await _fx.GotoDesktopAsync();
         await EnsureCircuitConnectedAsync();
-        await _fx.Page.Locator(".dock-item[title=\"Workflow\"]").First.ClickAsync();
+        await _fx.Page.OpenAppAsync("Workflow");
         var win = _fx.Page.Locator(".appwin.focused");
         await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Workflow");
         // The studio graph dropdown is populated once the component's circuit is interactive — wait for it

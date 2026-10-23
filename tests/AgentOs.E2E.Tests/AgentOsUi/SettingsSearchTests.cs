@@ -60,7 +60,7 @@ public sealed class SettingsSearchTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(win.Locator(".prefs-h", new() { HasTextString = "Model keys" })).ToBeVisibleAsync();
 
         // With the Workflow window focused, Ctrl+K is the builder's "Add a node" palette, not the shell search.
-        await _fx.Page.Locator(".dock-item[title=\"Workflow\"]").First.ClickAsync();
+        await _fx.Page.OpenAppAsync("Workflow");
         await Assertions.Expect(_fx.Page.Locator(".appwin.focused .syn-toolbar")).ToBeVisibleAsync();
         // The builder registers its key handler after its first render — wait for it, not just for the toolbar.
         await _fx.Page.WaitForFunctionAsync("() => !!(window.agentosWorkflowKeys && window.agentosWorkflowKeys._handler)");
