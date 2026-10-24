@@ -166,6 +166,13 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:CodingRunMinutes` | `60` | 10–240 | The longest one Coding (tickets) run may take on a computer — clone, change, build, test, push (was a fixed 20 minutes). |
 | `Autopilot:ReviewRunMinutes` | `30` | 5–120 | The longest one Reviewer run may take (was a fixed 20). |
 | `Autopilot:TestingRunMinutes` | `45` | 10–180 | The longest one Testing (tickets) run may take (was a fixed 30). |
+| `TicketFiles:MaxFileMegabytes` | `10` | 1–100 | *Files for the AI* — the largest single file a person can attach to a ticket ([ADR-0015](adr/0015-ticket-files.md)). |
+| `TicketFiles:MaxTotalMegabytes` | `50` | 1–500 | All files of one ticket together. They are copied to the computer for every run of the ticket. |
+| `TicketFiles:MaxFiles` | `500` | 1–2000 | Files per ticket (an uploaded folder counts each file in it). |
+
+The three `TicketFiles:*` limits are declared by the Sessions module (`TicketFileSettings`) and shown in their own
+*Files for the AI* panel on this page; they are read on every upload (desktop and `PUT /workspaces/{boardId}/tickets/{n}/files/{path}`),
+so lowering one never deletes stored files — a run still carries at most 512 MB, whatever the limits say.
 
 Fixed rules (not settings): *Build and merge* merges a change only when its checks are green and its ticket flow's
 gates passed — by default the Reviewer agent approved it and the Testing agent passed it, which needs the member's

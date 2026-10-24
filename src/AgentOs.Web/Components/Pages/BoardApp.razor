@@ -20,6 +20,7 @@
 @using AgentOs.Domain.Pipeline
 @using AgentOs.Modules.Pipeline.Pipeline
 @using AgentOs.Modules.Pipeline.Sessions
+@using AgentOs.Domain.Files
 @inject IWorkspaceRepository Workspaces
 @inject IWorkspaceConnector Connector
 @inject IRunnerRepository Runners
@@ -41,6 +42,7 @@
 @inject AgentOs.Modules.RemoteAgent.IPlanLimits PlanLimits
 @inject AgentOs.Domain.Configuration.ISettings SettingsStore
 @inject AgentOs.Web.Services.Preview.PreviewService Previews
+@inject ITicketFiles TicketFiles
 @inject NavigationManager Nav
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @implements IDisposable
@@ -450,6 +452,8 @@ else if (_tab == Tab.Idea)
                 <textarea rows="5" @bind="_ideaText"
                           placeholder="Describe the feature or product you want to build. The Requirement agent turns this into a spec, then tickets."></textarea>
             </Field>
+            <TicketFilesPanel TenantId="@_tenantId" ScopeKey="@TicketFileScope.ForDraft(_ideaDraftId)" UploadedBy="@_userLabel"
+                              Note="Every ticket created from this idea gets them." />
             @if (_ideaError is not null) { <p class="login-error">@_ideaError</p> }
             <div class="form-actions">
                 <Btn Variant="Btn.ButtonVariant.Primary" OnClick="GenerateIdea" Disabled="_ideaBusy">
@@ -515,6 +519,8 @@ else if (_tab == Tab.Idea)
                 </tbody>
             </table>
 
+            <TicketFilesPanel TenantId="@_tenantId" ScopeKey="@TicketFileScope.ForDraft(_ideaDraftId)" UploadedBy="@_userLabel"
+                              Note="Every ticket created from this idea gets them." />
             @if (_ideaError is not null) { <p class="login-error">@_ideaError</p> }
             @WhereToWork
             <div class="form-actions">
@@ -849,6 +855,10 @@ else if (_tab == Tab.Sessions)
                                     <Icon Name="pencil" Size="13" /> Ask for changes
                                 </Btn>
                             }
+                            <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => ToggleFiles(s.Id))" aria-expanded="@(_filesFor == s.Id)"
+                                 aria-label="@($"Files for the AI on task #{s.IssueNumber}")">
+                                <Icon Name="file" Size="13" /> Files
+                            </Btn>
                             <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => CloseSession(s))"
                                  Disabled="@(_busyId == s.Id || s.Status is "Closed" or "Running")">
                                 <Icon Name="check" Size="13" /> Close
@@ -888,6 +898,15 @@ else if (_tab == Tab.Sessions)
                                         </Btn>
                                     </div>
                                 </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (_filesFor == s.Id)
+                    {
+                        <tr class="board-activity-tr">
+                            <td colspan="@(_isAdmin ? 7 : 6)">
+                                <TicketFilesPanel TenantId="@_tenantId" ScopeKey="@TicketFileScope.ForTask(s.WorkspaceId, s.IssueNumber, s.Id)"
+                                                  UploadedBy="@_userLabel" Note="Every run of this task gets them — the next one too." />
                             </td>
                         </tr>
                     }
@@ -934,6 +953,10 @@ else if (_tab == Tab.Sessions)
             }
         </div>
         @WhereToWork
+        @if (_selectedBoard is not null && _workTicket is { Number: > 0 })
+        {
+            <TicketFilesPanel TenantId="@_tenantId" ScopeKey="@TicketFileScope.ForTicket(_selectedBoard.Id, _workTicket.Number ?? 0)" UploadedBy="@_userLabel" />
+        }
         @if (_workTicket is not null && NeedsPerson(_workTicket))
         {
             <div class="board-where" role="alert">
@@ -977,6 +1000,12 @@ else if (_tab == Tab.Sessions)
 
     private string _tenantId = "default";
     private string _userId = "";
+    // Who adds ticket files (shown in their list): the signed-in name, else the user id.
+    private string _userLabel = "";
+    // Ticket files of the New idea draft, before its tickets exist (copied onto each created ticket).
+    private Guid _ideaDraftId = Guid.NewGuid();
+    // The task whose "Files for the AI" are open.
+    private Guid? _filesFor;
     private bool _isAdmin;
 
     // ── Data ────────────────────────────────────────────────────────────────────────────────
@@ -1207,6 +1236,7 @@ else if (_tab == Tab.Sessions)
             var user = state.User;
             _tenantId = user.GetTenantId() ?? string.Empty;
             _userId = user.GetUserId() ?? "";
+            _userLabel = string.IsNullOrWhiteSpace(user.Identity?.Name) ? _userId : user.Identity!.Name!;
             _isAdmin = user.IsAdmin();
         }
         _resolved = true;
@@ -1702,6 +1732,16 @@ else if (_tab == Tab.Sessions)
             }
             _createdTickets = created.Where(c => c is not null).Select(c => c!).ToList();
 
+            // The idea's files go with every ticket made from it — before any of them runs.
+            var draftScope = TicketFileScope.ForDraft(_ideaDraftId);
+            if ((await TicketFiles.ListAsync(_tenantId, draftScope)).Count > 0)
+            {
+                foreach (var t in _createdTickets)
+                {
+                    await TicketFiles.CopyScopeAsync(_tenantId, draftScope, TicketFileScope.ForTicket(board.Id, t.Number));
+                }
+            }
+
             Toasts.Show("Board", $"Created {_createdTickets.Count} ticket(s) on {repo.Owner}/{repo.Repo}.", ToastKind.Ok);
 
             // Auto-run: one session per ai:ready created ticket (created order matches the drafts sent).
@@ -1752,6 +1792,10 @@ else if (_tab == Tab.Sessions)
 
     private void ResetIdea()
     {
+        // The draft's files were copied onto its tickets (or the idea is dropped): a new idea starts with none.
+        var oldDraft = TicketFileScope.ForDraft(_ideaDraftId);
+        _ideaDraftId = Guid.NewGuid();
+        _ = DropDraftFilesAsync(oldDraft);
         _ideaStep = IdeaStep.Input;
         _ideaText = "";
         _preview = null;
@@ -2254,6 +2298,15 @@ else if (_tab == Tab.Sessions)
     private bool _loadingChecks;
 
     private bool HasOpenChange(Guid sessionId) => SessionReposFor(sessionId).Any(r => !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName));
+
+    private void ToggleFiles(Guid sessionId) => _filesFor = _filesFor == sessionId ? null : sessionId;
+
+    // Best-effort: a draft's files that can't be removed now only take room until the tenant's data is cleaned.
+    private async Task DropDraftFilesAsync(string scope)
+    {
+        try { await TicketFiles.DeleteScopeAsync(_tenantId, scope); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or TimeoutException or System.Data.Common.DbException) { _ = ex; }
+    }
 
     private void ToggleChanges(Guid sessionId)
     {

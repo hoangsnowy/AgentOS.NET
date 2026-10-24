@@ -107,6 +107,11 @@ public sealed class RemoteAgentHub : Hub
     public void ReportPreview(string previewId, string state, string? message) =>
         (_broker as IRunnerPreviewBroker)?.ReportPreview(Context.ConnectionId, previewId, state, message);
 
+    /// <summary>Runner → server: a piece of a ticket file of the request it is running (ADR-0015). Answers only the
+    /// connection the request was dispatched to; null for anything else (an unknown id, another runner).</summary>
+    public RunFileChunk? ReadRunFile(string requestId, int index, long offset) =>
+        _broker.ReadRunFile(Context.ConnectionId, requestId, index, offset);
+
     /// <summary>Invoked by the runner when it has finished executing a tool call (M4).</summary>
     public void CompleteToolCall(RunnerToolResult result) => _broker.CompleteToolCall(result);
 }

@@ -46,6 +46,11 @@ internal static class ScopedAutonomy
         "Bash(npx playwright *)", "Bash(npm exec playwright *)", "Bash(curl * http://localhost*)", "Bash(curl * https://localhost*)",
         "Bash(curl * http://127.0.0.1*)", "BashOutput", "KillShell",
         "Bash(cd *)", "Bash(ls*)", "Bash(pwd)", "Bash(wc *)", "Bash(mkdir *)",
+        // Ticket files (ADR-0015): copy what a person attached (a logo, a picture, a skill folder) into the checkout —
+        // ONLY through the runner's own helper (RunFiles.CopyHelperScript, rewritten every run), which keeps source and
+        // destination inside the run directory. Never a "cp" rule: a Bash rule is a prefix match on the command and the
+        // permission mode confines only the edit tools, so "cp .agentos/files/x ~/.ssh/authorized_keys" would pass.
+        "Bash(sh .agentos/bin/copy-in *)",
     ];
 
     /// <summary>Denied even when an allow rule would match — deny rules take precedence in claude.</summary>

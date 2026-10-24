@@ -59,7 +59,11 @@ public sealed record IssueWorkRequest(
     string? ProviderOverride = null,
     string? CliProfile = null,
     string? TicketType = null,
-    string? ChangeRequest = null);
+    string? ChangeRequest = null)
+{
+    /// <summary>The files a person attached to the ticket (ADR-0015) — copied into each run's working folder.</summary>
+    public IReadOnlyList<AgentOs.Domain.Files.RunFile> Files { get; init; } = [];
+}
 
 /// <summary>The agent's outcome for one repo.</summary>
 /// <param name="SessionRepoId">The session-repo row this outcome belongs to.</param>

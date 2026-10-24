@@ -74,6 +74,13 @@ public sealed record LlmRequest(
     public System.IProgress<string>? Progress { get; init; }
 
     /// <summary>
+    /// Ticket files sent with this run (ADR-0015): the paired runner writes them under
+    /// <c>&lt;run dir&gt;/<see cref="AgentOs.Domain.Files.RunFile.Folder"/>/&lt;path&gt;</c> before the CLI starts. Only
+    /// <c>RemoteAgentLlmClient</c> honours it; other providers ignore it (their prompt then carries no file section).
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile>? Files { get; init; }
+
+    /// <summary>
     /// Validates required values. Throws <see cref="System.ArgumentException"/> if invalid.
     /// </summary>
     public void Validate()

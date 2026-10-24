@@ -250,12 +250,13 @@ public sealed class BoardTaskService(
             var reviewer = scope.ServiceProvider.GetRequiredService<IReviewAgent>();
             var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
             var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            var ticketFiles = await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false);
             foreach (var change in changes)
             {
                 var repoLabel = $"{change.Owner}/{change.Repo}";
                 var verdict = await reviewer.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
                     new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
-                    session.IssueNumber ?? 0, session.Title, body, cliProfile), stopLease.Token).ConfigureAwait(false);
+                    session.IssueNumber ?? 0, session.Title, body, cliProfile) { Files = ticketFiles }, stopLease.Token).ConfigureAwait(false);
                 if (!verdict.Ran)
                 {
                     await sessRepo.UpdateRepoRunResultAsync(tenantId, change.Id, "Done", change.BranchName, change.PrUrl, null).ConfigureAwait(false);
@@ -303,12 +304,13 @@ public sealed class BoardTaskService(
             using var _slot = await _testGate.EnterAsync(tenantId + "/" + session.MemberUserId, testCap, stopLease.Token).ConfigureAwait(false);
             var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
             var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            var ticketFiles = await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false);
             foreach (var change in changes)
             {
                 var repoLabel = $"{change.Owner}/{change.Repo}";
                 var verdict = await tester.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
                     new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
-                    session.IssueNumber ?? 0, session.Title, body, cliProfile), stopLease.Token).ConfigureAwait(false);
+                    session.IssueNumber ?? 0, session.Title, body, cliProfile) { Files = ticketFiles }, stopLease.Token).ConfigureAwait(false);
                 if (!verdict.Ran)
                 {
                     // Couldn't test (no computer, timed out): the change stays as it was, the reason is on the feed.
@@ -490,6 +492,11 @@ public sealed class BoardTaskService(
             var agent = scope.ServiceProvider.GetRequiredService<IIssueWorkAgent>();
             var prService = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
             var issueBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
+            var ticketFiles = await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false);
+            if (ticketFiles.Count > 0)
+            {
+                Publish(SessionRunEventKind.Step, $"Sending the {ticketFiles.Count} file(s) attached to this ticket with the run — they are copied into the agent's working folder.");
+            }
 
             // Ask for changes: each repo that already has a pull request continues on its branch.
             var workRepos = new List<WorkRepo>(children.Count);
@@ -515,7 +522,10 @@ public sealed class BoardTaskService(
                 ProviderOverride: session.RunOnMachine ? "RemoteAgent" : null,
                 CliProfile: session.RunOnMachine ? cliProfile : null,
                 TicketType: session.TicketType,
-                ChangeRequest: change);
+                ChangeRequest: change)
+            {
+                Files = ticketFiles,
+            };
 
             var workResult = await agent.RunAsync(issueRequest, stopLease.Token).ConfigureAwait(false);
 
@@ -711,6 +721,10 @@ public sealed class BoardTaskService(
         var prService = scope.ServiceProvider.GetRequiredService<IGitHubPrService>();
 
         Publish(SessionRunEventKind.Running, $"Quality engine — 5-agent pipeline on {repoLabel}.", repoLabel);
+        if ((await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false)).Count > 0)
+        {
+            Publish(SessionRunEventKind.Step, "The files attached to this ticket are used by runs on a computer — the Thorough engine works on our servers without them.", repoLabel);
+        }
 
         var ticketBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
         var story = IssueToStoryAdapter.ToUserStory(session.Title, ticketBody, QualityNMax());
@@ -813,6 +827,24 @@ public sealed class BoardTaskService(
         catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or Octokit.ApiException or InvalidOperationException or TaskCanceledException)
         {
             return null;
+        }
+    }
+
+    // Ticket files (ADR-0015): what a person attached to this task's ticket, sent with every run of it. Best-effort: a
+    // store failure is said on the feed and the run goes on without them.
+    private async Task<IReadOnlyList<AgentOs.Domain.Files.RunFile>> TicketFilesAsync(IServiceScope scope, string tenantId, RemoteSessionEntity session)
+    {
+        if (scope.ServiceProvider.GetService<AgentOs.Domain.Files.ITicketFiles>() is not { } files) { return []; }
+        try
+        {
+            return await files.ForRunAsync(tenantId,
+                AgentOs.Domain.Files.TicketFileScope.ForTask(session.WorkspaceId, session.IssueNumber, session.Id)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or TimeoutException or System.Data.Common.DbException)
+        {
+            feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step,
+                $"Couldn't read the files attached to this ticket ({ex.Message}) — the run goes on without them.", DateTimeOffset.UtcNow));
+            return [];
         }
     }
 

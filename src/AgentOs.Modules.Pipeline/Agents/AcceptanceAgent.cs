@@ -56,10 +56,13 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
             ? $"Testing #{request.IssueNumber} on your computer."
             : $"Testing #{request.IssueNumber} ({provider}).", repoLabel);
 
+        // Ticket files (ADR-0015) reach the run only on the member's computer — only then does the prompt mention them.
+        var onComputer = AgentBudgetGate.RunsOnMembersComputer(provider);
         var llmRequest = new LlmRequest(
             SystemPrompt: await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Acceptance, InstructionsTemplate, Values(request),
                 UntrustedText.SystemRule, ct).ConfigureAwait(false),
             UserPrompt: User(request)
+                + (onComputer ? TicketFilesPrompt.ForRunDirectory(request.Files, TicketFilesPrompt.Use.Check) : string.Empty)
                 + await ProjectPractices.BlockAsync(memory, request.TenantId, [repoLabel], logger, ct).ConfigureAwait(false),
             Model: profile.Model,
             Temperature: profile.Temperature,
@@ -69,6 +72,7 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
         {
             AgentRole = AgentRoles.Acceptance,
             Autonomy = WorkspaceAutonomy.Scoped,
+            Files = onComputer && request.Files.Count > 0 ? request.Files : null,
             Progress = new InlineProgress<string>(step =>
             {
                 if (TaskSteps.LabelFor(step) is { } label) { Emit(request, SessionRunEventKind.Step, "Testing — " + label, repoLabel); }

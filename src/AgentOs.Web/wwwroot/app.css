@@ -2757,6 +2757,28 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 .board-preview-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1); }
 .board-preview-actions a.btn { text-decoration: none; }
 
+/* "Files for the AI" — ticket files (TicketFilesPanel, ADR-0015). The pickers are real file inputs laid transparently
+   over their visible control (native keyboard + drop); the control shows the focus ring and the drag-over state. */
+.ticket-files { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); max-width: 80ch; white-space: normal; }
+.ticket-files-title { margin: 0; display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); }
+.ticket-files-hint { margin: 0; font-size: var(--fs-xs); }
+.ticket-files-pickers { display: flex; align-items: stretch; gap: var(--space-2); flex-wrap: wrap; }
+.ticket-files-drop {
+  position: relative; flex: 1 1 18rem; min-height: 56px; display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); background: var(--bg-sunk); color: var(--txt-dim);
+  font-size: var(--fs-xs); transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
+}
+.ticket-files-drop:hover, .ticket-files-drop.is-over { border-color: var(--accent); background: var(--accent-soft); color: var(--txt); }
+.ticket-files-drop:focus-within, .ticket-files-pick:focus-within { box-shadow: var(--focus-ring); }
+.ticket-files-drop-text { display: inline-flex; align-items: center; gap: var(--space-1); pointer-events: none; }
+.ticket-files-pick { position: relative; align-self: center; overflow: hidden; }
+.ticket-files-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.ticket-files-input:disabled { cursor: progress; }
+.ticket-files-status { margin: 0; font-size: var(--fs-xs); }
+.ticket-files-errors { display: flex; flex-direction: column; gap: 2px; }
+.ticket-files-table code { word-break: break-all; }
+@media (prefers-reduced-motion: reduce) { .ticket-files-drop { transition: none; } }
+
 /* ===== Brand mark (BrandMark.razor) — the AgentOS.NET product icon =====
    An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once
    on hover (of the mark or the brand row around it). favicon.svg / the Keycloak tile are its static twins. */

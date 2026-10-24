@@ -39,7 +39,7 @@ public static partial class RowLevelSecurity
     public static IReadOnlyList<(string Schema, string Table)> Tables { get; } =
     [
         ("pipeline", "pipeline_runs"), ("pipeline", "run_metrics"), ("pipeline", "orchestrations"), ("pipeline", "scheduled_runs"),
-        ("sessions", "sessions"), ("sessions", "session_repos"), ("sessions", "runners"),
+        ("sessions", "sessions"), ("sessions", "session_repos"), ("sessions", "runners"), ("sessions", "ticket_files"),
         ("tools", "tool_invocations"),
         ("workspaces", "workspaces"), ("workspaces", "workspace_repos"), ("workspaces", "autopilot_events"), ("workspaces", "ticket_flows"),
         ("memory", "nodes"), ("memory", "edges"),
