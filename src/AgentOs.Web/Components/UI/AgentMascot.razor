@@ -151,13 +151,14 @@
     /// <summary>Rendered size in CSS pixels.</summary>
     [Parameter] public int Size { get; set; } = 40;
 
+    // The Board agents (AgentRoles keys) wear the character of the pipeline role they mirror.
     private string RoleClass => Role?.Trim().ToUpperInvariant() switch
     {
-        "ORCHESTRATOR" or "DECOMPOSER" => "orchestrator",
-        "REQUIREMENT" => "requirement",
+        "ORCHESTRATOR" or "DECOMPOSER" or "AUTOPILOTORCHESTRATOR" => "orchestrator",
+        "REQUIREMENT" or "DISCOVERY" => "requirement",
         "CODING" or "ISSUEWORK" => "coding",
-        "TESTING" => "testing",
-        "QA" => "qa",
+        "TESTING" or "ACCEPTANCE" => "testing",
+        "QA" or "REVIEWER" => "qa",
         _ => "generic",
     };
 

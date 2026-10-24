@@ -108,7 +108,8 @@ public sealed class PromptsV2Tests
         prompts[0].ShouldContain("<workspace_rules>\nNever use FluentAssertions.");
     }
 
+    // The ticket split is the Discovery agent's prompt (one key with its Agent profiles row and its Insights name).
     [Fact]
-    public void Catalog_NowIncludesTheDecomposer()
-        => PromptCatalog.All.Select(e => e.Key).ShouldContain("Decomposer");
+    public void Catalog_IncludesTheDiscoveryPrompt()
+        => PromptCatalog.All.Single(e => e.Key == AgentRoles.Discovery).DefaultPrompt.ShouldBe(DecomposerPrompt.System);
 }

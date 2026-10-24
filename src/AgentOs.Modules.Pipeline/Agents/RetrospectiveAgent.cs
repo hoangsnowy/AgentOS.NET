@@ -1,6 +1,8 @@
 // The Retrospective agent (see IRetrospectiveAgent). Answer-only on the member's paired computer — it reasons over the
 // lessons it is given and replies with JSON — so it costs no API tokens. The caller keeps the guardrails: pinned
-// practices stay, absorbed ids must be lessons it was shown, and an empty answer never wipes the practices.
+// practices stay, absorbed ids must be lessons it was shown, and an empty answer never wipes the practices. Its profile
+// (Settings → Agent profiles, role "Retrospective"), its prompt (Settings → Prompts) and the budget gate apply like every
+// other agent's.
 
 using System;
 using System.Collections.Generic;
@@ -10,14 +12,19 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Cost;
 using AgentOs.Domain.Llm;
 using AgentOs.Domain.Memory;
+using AgentOs.Modules.Pipeline.Prompts;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace AgentOs.Modules.Pipeline.Agents;
 
 /// <inheritdoc cref="IRetrospectiveAgent"/>
-public sealed class RetrospectiveAgent(ILlmClientFactory factory, ILogger<RetrospectiveAgent> logger) : IRetrospectiveAgent
+public sealed class RetrospectiveAgent(ILlmClientFactory factory, ILogger<RetrospectiveAgent> logger,
+    IOptions<AgentsOptions>? options = null, IAgentProfiles? profiles = null, IPromptOverrides? prompts = null,
+    IBudgetGuard? budgetGuard = null) : IRetrospectiveAgent
 {
     /// <summary>Practices a project keeps at most — few enough that every agent reads all of them.</summary>
     public const int MaxPractices = 15;
@@ -49,16 +56,24 @@ public sealed class RetrospectiveAgent(ILlmClientFactory factory, ILogger<Retros
     {
         ArgumentNullException.ThrowIfNull(input);
         if (input.Lessons.Count == 0) { return RetrospectiveResult.NotRun("No new lessons to distil."); }
+        // Live profile (Settings → Agent profiles), resolved per call.
+        var profile = await BoardAgent.ProfileAsync(profiles, options, AgentRoles.Retrospective, ct).ConfigureAwait(false);
         ILlmClient llm;
-        try { llm = factory.Create("RemoteAgent"); }
+        try { llm = factory.Create(profile.Provider); }
         catch (Exception ex) when (ex is LlmException or ArgumentException or NotSupportedException or InvalidOperationException)
         {
             return RetrospectiveResult.NotRun($"No computer for the Retrospective agent: {ex.Message}");
         }
-        var request = new LlmRequest(Instructions + "\n\n" + UntrustedText.SystemRule, User(input), "claude-sonnet-4-6",
-            MaxTokens: 4096, Timeout: LlmRequest.AgentAnswerTimeout)
+        var provider = AgentBudgetGate.EffectiveProvider(llm, profile.Provider);
+        if (await AgentBudgetGate.BlockedAsync(budgetGuard, input.TenantId, provider, logger, nameof(RetrospectiveAgent), ct).ConfigureAwait(false) is not null)
         {
-            AgentRole = "Retrospective",
+            return RetrospectiveResult.NotRun(AgentBudgetGate.BlockedMessage);
+        }
+        var request = new LlmRequest(
+            await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Retrospective, Instructions, null, UntrustedText.SystemRule, ct).ConfigureAwait(false),
+            User(input), profile.Model, profile.Temperature, profile.MaxTokens, Timeout: LlmRequest.AgentAnswerTimeout)
+        {
+            AgentRole = AgentRoles.Retrospective,
         };
         try
         {

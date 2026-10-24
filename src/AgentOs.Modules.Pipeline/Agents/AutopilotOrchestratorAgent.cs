@@ -1,6 +1,8 @@
 // The Orchestrator agent — Autopilot's decision maker (see IAutopilotOrchestrator). It answers on the member's paired
 // computer in answer-only mode (no tools: it reasons over the brief and replies with JSON), so it costs no API tokens.
-// Every move it picks is re-checked by the caller against the rules before anything runs.
+// Every move it picks is re-checked by the caller against the rules before anything runs. Its profile (Settings →
+// Agent profiles, role "AutopilotOrchestrator" — "Autopilot lead"), its prompt (Settings → Prompts) and the budget gate
+// apply like every other agent's, and it reads the board's project practices.
 
 using System;
 using System.Collections.Generic;
@@ -10,14 +12,21 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Cost;
 using AgentOs.Domain.Llm;
+using AgentOs.Domain.Memory;
 using AgentOs.Domain.Sessions;
+using AgentOs.Domain.Workspaces;
+using AgentOs.Modules.Pipeline.Prompts;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace AgentOs.Modules.Pipeline.Agents;
 
 /// <inheritdoc cref="IAutopilotOrchestrator"/>
-public sealed class AutopilotOrchestratorAgent(ILlmClientFactory factory, ILogger<AutopilotOrchestratorAgent> logger) : IAutopilotOrchestrator
+public sealed class AutopilotOrchestratorAgent(ILlmClientFactory factory, ILogger<AutopilotOrchestratorAgent> logger,
+    IOptions<AgentsOptions>? options = null, IAgentProfiles? profiles = null, IPromptOverrides? prompts = null,
+    IBudgetGuard? budgetGuard = null, IMemoryStore? memory = null, IBoardRepos? boardRepos = null) : IAutopilotOrchestrator
 {
     private const int MaxGuidanceChars = 2_000;
     private const int MaxQuestionChars = 600;
@@ -56,16 +65,25 @@ public sealed class AutopilotOrchestratorAgent(ILlmClientFactory factory, ILogge
     public async Task<OrchestratorDecision> DecideAsync(OrchestratorBrief brief, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(brief);
+        // Live profile (Settings → Agent profiles), resolved per call.
+        var profile = await BoardAgent.ProfileAsync(profiles, options, AgentRoles.AutopilotOrchestrator, ct).ConfigureAwait(false);
         ILlmClient llm;
-        try { llm = factory.Create("RemoteAgent"); }
+        try { llm = factory.Create(profile.Provider); }
         catch (Exception ex) when (ex is LlmException or ArgumentException or NotSupportedException or InvalidOperationException)
         {
             return OrchestratorDecision.NotRun($"No computer for the Orchestrator agent: {ex.Message}");
         }
-        var request = new LlmRequest(Instructions + "\n\n" + UntrustedText.SystemRule, User(brief), "claude-sonnet-4-6",
-            MaxTokens: 4096, Timeout: LlmRequest.AgentAnswerTimeout)
+        var provider = AgentBudgetGate.EffectiveProvider(llm, profile.Provider);
+        if (await AgentBudgetGate.BlockedAsync(budgetGuard, brief.TenantId, provider, logger, nameof(AutopilotOrchestratorAgent), ct).ConfigureAwait(false) is not null)
         {
-            AgentRole = "AutopilotOrchestrator",
+            return OrchestratorDecision.NotRun(AgentBudgetGate.BlockedMessage);
+        }
+        var request = new LlmRequest(
+            await BoardAgent.SystemPromptAsync(prompts, AgentRoles.AutopilotOrchestrator, Instructions, null, UntrustedText.SystemRule, ct).ConfigureAwait(false),
+            User(brief) + await PracticesAsync(brief, ct).ConfigureAwait(false),
+            profile.Model, profile.Temperature, profile.MaxTokens, Timeout: LlmRequest.AgentAnswerTimeout)
+        {
+            AgentRole = AgentRoles.AutopilotOrchestrator,
         };
         try
         {
@@ -77,6 +95,21 @@ public sealed class AutopilotOrchestratorAgent(ILlmClientFactory factory, ILogge
             logger.LogWarning(ex, "Orchestrator agent failed for board {Board}", brief.BoardId);
             return OrchestratorDecision.NotRun(ex.Message);
         }
+    }
+
+    // The practices of the board's repositories: the lead's retry guidance and choices follow them like the agents it runs.
+    private async Task<string> PracticesAsync(OrchestratorBrief brief, CancellationToken ct)
+    {
+        if (memory is null || boardRepos is null) { return string.Empty; }
+        IReadOnlyList<string> repos;
+        try { repos = await boardRepos.RepoKeysAsync(brief.TenantId, brief.BoardId, ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Orchestrator agent: listing the board's repositories failed; deciding without the practices.");
+            return string.Empty;
+        }
+        var block = await ProjectPractices.BlockAsync(memory, brief.TenantId, repos, logger, ct).ConfigureAwait(false);
+        return block.Length == 0 ? string.Empty : block + "\nWrite retry guidance that follows these practices.";
     }
 
     /// <summary>The brief as the agent reads it.</summary>

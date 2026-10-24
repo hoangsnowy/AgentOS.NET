@@ -98,20 +98,52 @@ exists on the options type but is not honoured yet.
 
 ### Settings → Agent profiles
 
-Per role — `Orchestrator`, `Requirement`, `Coding`, `Testing`, `Qa`, `IssueWork`, `Decomposer` — keys
-`Agents:<Role>:Provider` / `Model` / `Temperature` / `MaxTokens`, tenant scope. The model field lists
-priced models for the chosen provider (plus *Custom…* for deployment aliases); `Temperature` is hidden
-for models that reject sampling params; `MaxTokens` ≤ 128 000.
+One agent registry (`AgentRoles`): every agent AgentOS.NET runs has one stable **role key**, used for its
+profile (`Agents:<Key>:Provider` / `Model` / `Temperature` / `MaxTokens`, tenant scope), its prompt in
+**Settings → Prompts** (`prompt/<Key>/system`), the `AgentRole` of its LLM calls (what **Insights → By agent**
+groups and names by) and the label of its stored runs. The page shows two tables — the **Board agents** and the
+legacy 5-agent **Workflow pipeline** — so a change to one never silently touches the other. Every profile is read
+per call (no restart). The model field lists priced models for the chosen provider (plus *Custom…* for deployment
+aliases); `Temperature` is hidden for models that reject sampling params; `MaxTokens` ≤ 128 000.
 
-| Role | Provider | Model | Temp | Max output |
-|---|---|---|---|---|
-| Orchestrator | Anthropic | `claude-haiku-4-5` | 0.3 | 2000 |
-| Requirement | Anthropic | `claude-sonnet-4-6` | 0.1 | 2000 |
-| Coding | AzureOpenAI | `gpt-4.1` | 0.2 | 4000 |
-| Testing | AzureOpenAI | `gpt-4o-mini` | 0.2 | 3000 |
-| Qa | Anthropic | `claude-haiku-4-5` | 0.1 | 1500 |
-| IssueWork | Anthropic | `claude-sonnet-4-6` | 0.2 | 32768 |
-| Decomposer | Anthropic | `claude-sonnet-4-6` | 0.2 | 4000 |
+| Shown as | Key | Provider | Model | Temp | Max output |
+|---|---|---|---|---|---|
+| Discovery (New idea: requirement + ticket split) | `Discovery` | Anthropic | *Computer's default* | 0.2 | 4000 |
+| Coding (tickets) | `IssueWork` | Anthropic | *Computer's default* | 0.2 | 32768 |
+| Reviewer | `Reviewer` | RemoteAgent | *Computer's default* | 0 | 32768 |
+| Testing (tickets) | `Acceptance` | RemoteAgent | *Computer's default* | 0 | 32768 |
+| Autopilot lead | `AutopilotOrchestrator` | RemoteAgent | *Computer's default* | 0 | 4096 |
+| Retrospective | `Retrospective` | RemoteAgent | *Computer's default* | 0 | 4096 |
+| Orchestrator (Workflow pipeline) | `Orchestrator` | Anthropic | `claude-haiku-4-5` | 0.3 | 2000 |
+| Requirement (Workflow pipeline) | `Requirement` | Anthropic | `claude-sonnet-4-6` | 0.1 | 2000 |
+| Coding (Workflow pipeline) | `Coding` | AzureOpenAI | `gpt-4.1` | 0.2 | 4000 |
+| Testing (Workflow pipeline) | `Testing` | AzureOpenAI | `gpt-4o-mini` | 0.2 | 3000 |
+| QA (Workflow pipeline) | `Qa` | Anthropic | `claude-haiku-4-5` | 0.1 | 1500 |
+
+- **Computer's default (Board agents).** A Board agent chooses **no model** unless someone picks one. On a member's
+  paired computer (`RemoteAgent`) the request carries no model and the runner passes no flag, so the CLI runs its
+  own default — the member's choice, usually newer than any id AgentOS.NET would pin. On our servers the LLM gateway
+  fills in the provider's configured model (`Llm:Claude:Model`, the Azure default deployment, the vendor's / the
+  OpenAI-compatible server's model from **Settings → Model keys**) before the request is validated. A model picked
+  in the profile is always passed: `claude --model <id>`, `codex -m <id>` (only when that CLI can serve it). The
+  Workflow-pipeline agents always name a model. Reviewer and Testing (tickets) need a checkout, so keep them on a
+  paired computer unless the chosen provider can reach one.
+- **Budget gate.** Every Board agent passes the tenant's enforced monthly cap before its call, decided from the
+  *effective* provider (after `Llm:ForceProvider`); only a call that really runs on a member's computer (0 server
+  tokens) is exempt.
+- **Discovery** covers both calls of New idea: the requirement step uses the Discovery profile (and is filed under
+  Discovery in Insights) with the Requirement agent's prompt and spec contract; the ticket split uses the Discovery
+  prompt. It replaces the former `Decomposer` keys, which **keep working**: while a Discovery field has no stored
+  value, the tenant's (then the platform's, then the appsettings) `Agents:Decomposer:<Field>` applies, and the
+  Decomposer prompt override applies while no Discovery override is saved. Agent profiles marks the row *Saved as
+  "Decomposer" — still applies*; saving a field stores it under Discovery, and **Reset** (profile or prompt) clears
+  the tenant's Decomposer values too.
+- **Prompts.** Board prompts are templates: `{owner}`, `{repo}`, `{branch}`, `{defaultBranch}` (Reviewer, Testing
+  (tickets)) and `{issue}`, `{branchStep}`, `{commitType}`… (Coding (tickets), which has one prompt for a member's
+  computer and one — `IssueWork.Server` — for the server runner) are filled on every run. The untrusted-text rule is
+  appended by code and cannot be overridden; workspace rules follow it.
+- **Practices.** Coding, Reviewer, Testing (tickets) and the Autopilot lead read the project's practices (Board →
+  Knowledge) before they work.
 
 `Pipeline:MaxIterations` (QA-loop cap when a story sets no `NMax`) — default 3, range 1–10.
 An unpriced model is charged at the fail-closed $15/$75 per 1M rate until added to `CostCalculator`.

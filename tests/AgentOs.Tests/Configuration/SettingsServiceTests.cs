@@ -189,7 +189,8 @@ public sealed class SettingsServiceTests
         foreach (var (role, defaults) in AgentSettings.Roles)
         {
             catalog.TryGet(AgentSettings.Key(role, "Model"), out var model).ShouldBeTrue();
-            model.DefaultValue.ShouldBe(defaults.Model);
+            // A Board agent's empty seed is "no default" (the computer's / provider's model), never an empty-string value.
+            model.DefaultValue.ShouldBe(string.IsNullOrEmpty(defaults.Model) ? null : defaults.Model);
             catalog.TryGet(AgentSettings.Key(role, "MaxTokens"), out var max).ShouldBeTrue();
             max.Max.ShouldBe(AgentSettings.MaxOutputTokensCeiling);
         }

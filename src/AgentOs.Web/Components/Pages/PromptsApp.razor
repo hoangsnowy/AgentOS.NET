@@ -1,12 +1,14 @@
 @* PromptsApp — admin: shape how this tenant's agents work.
-   • Workspace rules — one block of engineering rules applied to EVERY agent of every run (pipeline agents,
-     Quick engine, Decomposer), after the agent's own prompt and before the repo's AGENTS.md / CLAUDE.md.
-   • Per-agent system prompts — override the built-in prompt; Reset reverts to it.
+   • Workspace rules — one block of engineering rules applied to EVERY agent of every run (the Board agents and the
+     Workflow pipeline), after the agent's own prompt and before the repo's AGENTS.md / CLAUDE.md.
+   • Per-agent system prompts — override the built-in prompt; Reset reverts to it. Grouped like Agent profiles (Board
+     agents, then the Workflow pipeline); Board prompts are templates whose {placeholders} are filled per run.
    Every save is versioned (who, when, what — last 20) with one-click Restore, and lands in the audit trail.
    Tenant read from AuthenticationState (a circuit has no HttpContext) → tenant-explicit IPromptOverrideService. *@
 
 @using Microsoft.AspNetCore.Components.Authorization
 @using AgentOs.Modules.Pipeline.Prompts
+@using AgentOs.Modules.Pipeline.Agents
 @inject IPromptOverrideService Prompts
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 
@@ -30,7 +32,7 @@ else
     <Panel Title="Workspace rules — every agent follows these">
         <p class="muted prompt-hint">
             Your engineering rules: libraries, style, structure, what never to touch. Added to every agent's prompt
-            (pipeline, Quick engine, Decomposer), before the target repo's own <code>AGENTS.md</code> / <code>CLAUDE.md</code>.
+            (the Board agents and the Workflow pipeline), before the target repo's own <code>AGENTS.md</code> / <code>CLAUDE.md</code>.
             They shape choices — they never change an agent's role or output format.
         </p>
         <textarea class="prefs-input prompt-text" rows="6" aria-label="Workspace rules"
@@ -43,7 +45,15 @@ else
         <PromptHistoryList Versions="@HistoryFor(WorkspaceRules.Key)" OnRestore="v => RestoreRules(v)" />
     </Panel>
 
-    @foreach (var entry in PromptCatalog.All)
+    @foreach (var group in Groups)
+    {
+        <div class="prefs-section">
+            <h2 class="prefs-h">@(group == AgentRoleGroup.Board ? "Board agents" : "Workflow pipeline agents")</h2>
+            <p class="prefs-sub">@(group == AgentRoleGroup.Board
+                ? "Tickets, reviews, testing, Autopilot, retrospectives and New idea — the same agents as in Agent profiles and Insights."
+                : "The 5-agent pipeline of the Run and Workflow apps. These prompts do not change the Board agents.")</p>
+        </div>
+    @foreach (var entry in PromptCatalog.All.Where(e => e.Group == group))
     {
         <Panel Title="@entry.DisplayName">
             <div class="prompt-status">
@@ -51,6 +61,21 @@ else
                     @(_overridden.Contains(entry.Key) ? "Overridden" : "Default")
                 </Badge>
             </div>
+            @if (entry.Note is { } note)
+            {
+                <p class="muted prompt-hint">@note</p>
+            }
+            @if (entry.Placeholders.Count > 0)
+            {
+                <p class="muted prompt-hint">
+                    Filled in on every run:
+                    @foreach (var p in entry.Placeholders)
+                    {
+                        <code>@("{" + p + "}")</code>@(" ")
+                    }
+                    — keep the ones the agent needs (the branch it checks out, the reply format).
+                </p>
+            }
             <textarea class="prefs-input prompt-text" rows="8" aria-label="@($"{entry.DisplayName} system prompt")"
                       value="@CurrentText(entry)"
                       @onchange="e => _text[entry.Key] = e.Value?.ToString() ?? string.Empty"></textarea>
@@ -61,10 +86,14 @@ else
             <PromptHistoryList Versions="@HistoryFor(entry.Key)" OnRestore="v => Restore(entry, v)" />
         </Panel>
     }
+    }
 }
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    // Board agents first, then the legacy Workflow pipeline (the same split as Agent profiles).
+    private static readonly AgentRoleGroup[] Groups = [AgentRoleGroup.Board, AgentRoleGroup.WorkflowPipeline];
 
     private bool _resolved;
     private bool _isAdmin;

@@ -191,7 +191,7 @@ Light and dark are first-class (top bar → appearance toggle, or System → App
 | Concept | Lives in | Notes |
 |---|---|---|
 | **Module** | `IModule` (SharedKernel) | One assembly = one module. Optional `IEndpointModule` (HTTP), `IInitializableModule` (startup hook), `ISettingsContributor` (settings it owns). |
-| **Agent** | `Modules.Pipeline.Agents` | A specialist — Requirement, Coding, Testing, QA, Orchestrator (+ IssueWork, Decomposer). Talks to models only through `ILlmClientFactory`. |
+| **Agent** | `Modules.Pipeline.Agents` | One registry (`AgentRoles`): the Board agents (Discovery, Coding (tickets), Reviewer, Testing (tickets), Autopilot lead, Retrospective) and the 5-agent Workflow pipeline (Orchestrator, Requirement, Coding, Testing, QA). Each role key names its profile, prompt and Insights row. Talks to models only through `ILlmClientFactory`. |
 | **LLM client** | `Domain.Llm.ILlmClient` | `SendAsync(LlmRequest, ct) → LlmResponse`, registered as a keyed service under its provider name. |
 | **Setting** | `Domain.Configuration.SettingDescriptor` | Key, kind, scope, default, validation, UI label. Resolved lock → tenant → platform → seed → default ([ADR-0011](docs/adr/0011-ui-first-configuration.md)). |
 | **Tool** | `Domain.Tools.ITool` | Invoked by models via the gateway, always through `IToolGateway` (policy → invoke → evidence). |
@@ -295,12 +295,18 @@ so a key saved in Settings is used by the next call.
 
 | Agent | Provider | Model |
 |---|---|---|
-| Orchestrator | Claude | `claude-haiku-4-5` |
-| Requirement | Claude | `claude-sonnet-4-6` |
-| Coding | AzureOpenAI | `gpt-4.1` |
-| Testing | AzureOpenAI | `gpt-4o-mini` |
-| QA | Claude | `claude-haiku-4-5` |
-| IssueWork / Decomposer | Claude | `claude-sonnet-4-6` |
+| Board: Discovery, Coding (tickets) | Claude | *Computer's default* (on our servers: Claude's configured model) |
+| Board: Reviewer, Testing (tickets), Autopilot lead, Retrospective | RemoteAgent (a paired computer, 0 server tokens) | *Computer's default* (the member's CLI model) |
+| Workflow pipeline: Orchestrator | Claude | `claude-haiku-4-5` |
+| Workflow pipeline: Requirement | Claude | `claude-sonnet-4-6` |
+| Workflow pipeline: Coding | AzureOpenAI | `gpt-4.1` |
+| Workflow pipeline: Testing | AzureOpenAI | `gpt-4o-mini` |
+| Workflow pipeline: QA | Claude | `claude-haiku-4-5` |
+
+Every agent — Board and pipeline — reads its profile and its prompt (Settings → Prompts) per call, passes the budget
+gate unless it really runs on a member's computer, and appears in Insights under the same name. A Board agent chooses
+no model until someone picks one: a paired computer's CLI then runs its own default, our servers the provider's
+configured model; a picked model reaches the CLI as `claude --model` / `codex -m`. See [CONFIG.md](docs/CONFIG.md#settings--agent-profiles).
 
 The model picker lists every priced model for the chosen provider with its list price (e.g.
 `claude-haiku-5-5 · $0.1 / $0.5` per 1M tokens), plus *Custom…* for Azure deployment aliases.
@@ -397,8 +403,10 @@ The most used routes:
 ### Add a pipeline agent
 
 Use the bundled `agent-scaffold` skill (`/agent-scaffold {Name}`) — it generates the contract,
-implementation, DI registration and xUnit stubs. Give it an agent profile in `AgentsOptions` so it
-appears in Settings → Agent profiles.
+implementation, DI registration and xUnit stubs. Register its role in `AgentRoles` (key, label, Board or
+Workflow pipeline) and give it a seed in `AgentsOptions` (property named after the key) so it appears in Settings →
+Agent profiles; resolve its profile per call (`BoardAgent.ProfileAsync` / `IAgentProfiles`) — `AgentRegistryGuardTests`
+fails the build on a hard-coded provider or model.
 
 ### Add a setting
 

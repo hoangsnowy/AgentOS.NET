@@ -59,7 +59,8 @@ public sealed class RetrospectiveService(IServiceScopeFactory scopes, BoardTaskS
             using (var calls = AgentOs.Domain.Llm.LlmCallScope.Begin())
             {
                 result = await scope.ServiceProvider.GetRequiredService<IRetrospectiveAgent>().RunAsync(input, ct).ConfigureAwait(false);
-                await tasks.SaveAgentRunAsync(tenantId, memberId, "Retrospective", $"Retrospective · {repoKey}", started, calls.Calls).ConfigureAwait(false);
+                await tasks.SaveAgentRunAsync(tenantId, memberId, AgentRoles.Retrospective, $"{AgentRoles.Label(AgentRoles.Retrospective)} · {repoKey}",
+                    started, calls.Calls).ConfigureAwait(false);
             }
             if (!result.Ran) { return RetrospectiveOutcome.None; }
 

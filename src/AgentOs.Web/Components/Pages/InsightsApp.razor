@@ -189,7 +189,7 @@ else
                     @foreach (var a in agents)
                     {
                         <div class="ins-bar-row">
-                            <div class="ins-bar-label ins-bar-agent"><AgentMascot Role="@AgentShort(a.Key)" Size="22" /><span>@AgentShort(a.Key)</span></div>
+                            <div class="ins-bar-label ins-bar-agent" title="@a.Key"><AgentMascot Role="@a.Key" Size="22" /><span>@AgentOs.Modules.Pipeline.Agents.AgentRoles.Label(a.Key)</span></div>
                             <div class="ins-bar-track" title="@($"{Num(a.TokensIn)} in · {Num(a.TokensOut)} out")"><div class="ins-bar-fill" style="width:@(Pct(a.TokensIn + a.TokensOut, maxAgent))%"></div></div>
                             <div class="ins-bar-val" title="@($"{Num(a.TokensIn)} input (of which {Num((int)a.CacheReadTokens)} cache read, {Num((int)a.CacheWriteTokens)} cache write) · {Num(a.TokensOut)} output")">@Num(a.TokensIn + a.TokensOut) tok · @Num(a.Calls) calls · @Money(a.CostUsd)</div>
                         </div>
@@ -246,7 +246,7 @@ else
                     @foreach (var l in lat)
                     {
                         <div class="ins-bar-row">
-                            <div class="ins-bar-label ins-bar-agent"><AgentMascot Role="@AgentShort(l.Agent)" Size="22" /><span>@AgentShort(l.Agent)</span></div>
+                            <div class="ins-bar-label ins-bar-agent" title="@l.Agent"><AgentMascot Role="@l.Agent" Size="22" /><span>@AgentOs.Modules.Pipeline.Agents.AgentRoles.Label(l.Agent)</span></div>
                             <div class="ins-bar-track"><div class="ins-bar-fill alt" style="width:@(Pct((decimal)l.AvgLatencyMs, (decimal)maxLat))%"></div></div>
                             <div class="ins-bar-val">@Ms(l.AvgLatencyMs)</div>
                         </div>
@@ -446,8 +446,10 @@ else
         : hours < 48 ? $"{hours.ToString("0.0", CultureInfo.InvariantCulture)} h"
         : $"{(hours / 24).ToString("0.0", CultureInfo.InvariantCulture)} days";
 
-    private static string AgentShort(string agent) => agent
-        .Replace("Agent", "", StringComparison.Ordinal).Trim() is { Length: > 0 } s ? s : agent;
+    // One agent registry (AgentRoles): every stored name maps to its role key — the pipeline files calls as "CodingAgent",
+    // older Board rows as "Decomposer" — and the key's label is the name Agent profiles shows. Board agents keep their own
+    // keys ("IssueWork", "Acceptance"…), so they are never merged into the Workflow pipeline's roles.
+    private static string AgentShort(string agent) => AgentOs.Modules.Pipeline.Agents.AgentRoles.Canonical(agent) is { Length: > 0 } s ? s : agent;
 
     // Weighted average across the role's names (calls × average latency).
     internal static IEnumerable<AgentOs.Modules.Pipeline.Persistence.AgentLatencyBucket> LatencyByRole(IEnumerable<AgentOs.Modules.Pipeline.Persistence.AgentLatencyBucket> buckets) =>
@@ -456,7 +458,7 @@ else
                 g.Sum(b => b.Calls) == 0 ? 0 : g.Sum(b => b.AvgLatencyMs * b.Calls) / g.Sum(b => b.Calls), g.Sum(b => b.Calls)))
             .OrderByDescending(b => b.AvgLatencyMs);
 
-    // One row per role: the 5-agent pipeline files calls as "CodingAgent", the Board's agents as "Coding" — the same role.
+    // One row per role key (see AgentShort).
     internal static IEnumerable<AgentOs.Modules.Pipeline.Persistence.CostBucket> ByRole(IEnumerable<AgentOs.Modules.Pipeline.Persistence.CostBucket> buckets) =>
         buckets.GroupBy(b => AgentShort(b.Key), StringComparer.OrdinalIgnoreCase)
             .Select(g => new AgentOs.Modules.Pipeline.Persistence.CostBucket(g.Key, g.Sum(b => b.CostUsd), g.Sum(b => b.TokensIn),

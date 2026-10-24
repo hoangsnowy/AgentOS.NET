@@ -20,7 +20,7 @@ else
     <select class="prefs-select" disabled="@Disabled" aria-label="@AriaLabel" value="@SelectValue" @onchange="OnSelect">
         @if (AllowInherit)
         {
-            <option value="">— inherit —</option>
+            <option value="">@InheritLabel</option>
         }
         @if (IsUnlisted)
         {
@@ -54,6 +54,9 @@ else
 
     /// <summary>Offer an empty "inherit" choice (settings that may be cleared).</summary>
     [Parameter] public bool AllowInherit { get; set; }
+
+    /// <summary>The empty choice's text (e.g. "Computer's default" for an agent that may leave its model unset).</summary>
+    [Parameter] public string InheritLabel { get; set; } = "— inherit —";
 
     private bool _custom;
 

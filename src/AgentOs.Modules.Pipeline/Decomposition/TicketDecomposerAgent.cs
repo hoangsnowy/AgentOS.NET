@@ -41,20 +41,23 @@ public sealed partial class TicketDecomposerAgent : ITicketDecomposerAgent
     private readonly ILogger<TicketDecomposerAgent> _logger;
     private readonly IAgentProfiles? _profiles;
     private readonly AgentOs.Modules.Pipeline.Prompts.IPromptOverrides? _prompts;
+    private readonly AgentOs.Domain.Cost.IBudgetGuard? _budgetGuard;
 
     public TicketDecomposerAgent(
         ILlmClientFactory factory,
         IOptions<AgentsOptions> options,
         ILogger<TicketDecomposerAgent> logger,
         IAgentProfiles? profiles = null,
-        AgentOs.Modules.Pipeline.Prompts.IPromptOverrides? prompts = null)
+        AgentOs.Modules.Pipeline.Prompts.IPromptOverrides? prompts = null,
+        AgentOs.Domain.Cost.IBudgetGuard? budgetGuard = null)
     {
         _prompts = prompts;
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         ArgumentNullException.ThrowIfNull(options);
-        _options = options.Value.Decomposer;
+        _options = options.Value.Discovery;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _profiles = profiles;
+        _budgetGuard = budgetGuard;
     }
 
     /// <inheritdoc />
@@ -63,23 +66,30 @@ public sealed partial class TicketDecomposerAgent : ITicketDecomposerAgent
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(seed);
 
-        // Live profile (Settings → Agent profiles), resolved per call.
+        // Live profile (Settings → Agent profiles, the "Discovery" row), resolved per call.
         var profile = _profiles is null
             ? _options
-            : await _profiles.ResolveAsync(nameof(AgentsOptions.Decomposer), _options, cancellationToken).ConfigureAwait(false);
+            : await _profiles.ResolveAsync(AgentRoles.Discovery, _options, cancellationToken).ConfigureAwait(false);
         var llm = _factory.Create(profile.Provider);
-        // E1.6: the tenant may override this prompt and its workspace rules apply here too.
-        var system = _prompts is null
-            ? DecomposerPrompt.System
-            : await _prompts.ResolveAsync("Decomposer", DecomposerPrompt.System, cancellationToken).ConfigureAwait(false)
-              + AgentOs.Modules.Pipeline.Prompts.WorkspaceRules.ToPromptBlock(await _prompts.ResolveRulesAsync(cancellationToken).ConfigureAwait(false));
+        // S1 — a split that would spend server tokens passes the tenant's budget gate; blocked → the deterministic seed.
+        if (await AgentBudgetGate.BlockedAsync(_budgetGuard, null, AgentBudgetGate.EffectiveProvider(llm, profile.Provider), _logger, AgentName,
+                cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return seed;
+        }
+        // E1.6: the tenant may override this prompt (Settings → Prompts, "Discovery") and its workspace rules apply here too.
+        var system = await BoardAgent.SystemPromptAsync(_prompts, AgentRoles.Discovery, DecomposerPrompt.System, null, null, cancellationToken)
+            .ConfigureAwait(false);
         var request = new LlmRequest(
             SystemPrompt: system,
             UserPrompt: DecomposerPrompt.RenderUser(spec, seed, idea),
             Model: profile.Model,
             Temperature: profile.Temperature,
             MaxTokens: profile.MaxTokens,
-            Timeout: LlmRequest.AgentAnswerTimeout);
+            Timeout: LlmRequest.AgentAnswerTimeout)
+        {
+            AgentRole = AgentRoles.Discovery,
+        };
 
         try
         {

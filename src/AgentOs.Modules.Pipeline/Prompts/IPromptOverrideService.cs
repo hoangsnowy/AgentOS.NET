@@ -32,8 +32,15 @@ internal sealed class PromptOverrideService(IAppConfigStore config, TimeProvider
     private readonly IAppConfigStore _config = config ?? throw new ArgumentNullException(nameof(config));
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
+    // A role renamed by the agent registry (Decomposer → Discovery) shows — and applies — the override saved under its
+    // former key until one is saved under the new key; Reset clears both.
     public async Task<string?> GetAsync(string tenantId, string agentKey, CancellationToken cancellationToken = default)
-        => await _config.GetForTenantAsync(tenantId, AppConfigPromptOverrides.Key(agentKey), cancellationToken).ConfigureAwait(false);
+    {
+        var value = await _config.GetForTenantAsync(tenantId, AppConfigPromptOverrides.Key(agentKey), cancellationToken).ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(value) && Agents.LegacyAgentSettings.LegacyRoleOf(agentKey) is { } legacy
+            ? await _config.GetForTenantAsync(tenantId, AppConfigPromptOverrides.Key(legacy), cancellationToken).ConfigureAwait(false)
+            : value;
+    }
 
     public async Task SetAsync(string tenantId, string agentKey, string prompt, string actor = "admin", CancellationToken cancellationToken = default)
     {
@@ -49,11 +56,20 @@ internal sealed class PromptOverrideService(IAppConfigStore config, TimeProvider
     public async Task ClearAsync(string tenantId, string agentKey, string actor = "admin", CancellationToken cancellationToken = default)
     {
         await _config.DeleteForTenantAsync(tenantId, AppConfigPromptOverrides.Key(agentKey), cancellationToken).ConfigureAwait(false);
+        if (Agents.LegacyAgentSettings.LegacyRoleOf(agentKey) is { } legacy)
+        {
+            await _config.DeleteForTenantAsync(tenantId, AppConfigPromptOverrides.Key(legacy), cancellationToken).ConfigureAwait(false);
+        }
         await RecordAsync(tenantId, agentKey, actor, string.Empty, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<PromptVersion>> GetHistoryAsync(string tenantId, string agentKey, CancellationToken cancellationToken = default)
-        => WorkspaceRules.Parse(await _config.GetForTenantAsync(tenantId, WorkspaceRules.HistoryKey(agentKey), cancellationToken).ConfigureAwait(false));
+    {
+        var history = WorkspaceRules.Parse(await _config.GetForTenantAsync(tenantId, WorkspaceRules.HistoryKey(agentKey), cancellationToken).ConfigureAwait(false));
+        return history.Count == 0 && Agents.LegacyAgentSettings.LegacyRoleOf(agentKey) is { } legacy
+            ? WorkspaceRules.Parse(await _config.GetForTenantAsync(tenantId, WorkspaceRules.HistoryKey(legacy), cancellationToken).ConfigureAwait(false))
+            : history;
+    }
 
     private async Task RecordAsync(string tenantId, string agentKey, string actor, string text, CancellationToken ct)
     {

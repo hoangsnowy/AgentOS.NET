@@ -126,6 +126,9 @@
     <PackageVersion Include="Shouldly" Version="4.3.0" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
     <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.5.1" />
+    <!-- Source guards: the tests parse agent sources with Roslyn (syntax only) — e.g. no agent may hard-code the
+         provider or model of its LLM call (AgentRegistryGuardTests). -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
 
     <!-- Aspire orchestration + service defaults (.NET 10). HELD at 13.5.3: Aspire 13.6.x builds but the
          AppHost fails at startup on this stack (DCP object creation times out after 60s in

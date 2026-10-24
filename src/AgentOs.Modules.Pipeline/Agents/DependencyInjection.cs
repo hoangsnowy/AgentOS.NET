@@ -34,12 +34,8 @@ public static class AgentsServiceCollectionExtensions
         services.AddOptions<AgentsOptions>()
             .Bind(configuration.GetSection(AgentsOptions.SectionName))
             .Validate(
-                o => o.All().All(a =>
-                    !string.IsNullOrWhiteSpace(a.Provider)
-                    && !string.IsNullOrWhiteSpace(a.Model)
-                    && a.Temperature is >= 0 and <= 2
-                    && a.MaxTokens > 0),
-                "Agents:* — every agent needs a Provider and Model, Temperature in [0, 2], and MaxTokens > 0.")
+                o => o.IsValid(),
+                "Agents:* — every agent needs a Provider, Temperature in [0, 2] and MaxTokens > 0; every Workflow-pipeline agent needs a Model (a Board agent's empty Model = the computer's / provider's default).")
             .ValidateOnStart();
         // UI-first settings (ADR-0011): agent profiles + pipeline knobs, editable in the desktop.
         services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, AgentSettings>();
@@ -47,9 +43,12 @@ public static class AgentsServiceCollectionExtensions
         services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, Limits.RunLimitSettings>();
         services.TryAddSingleton<AgentOs.Domain.Pipeline.IRunAdmission>(sp =>
             new Limits.RunAdmission(sp.GetService<AgentOs.Domain.Configuration.ISettings>(), sp.GetService<TimeProvider>()));
+        // Values a renamed role saved under its former key (Decomposer → Discovery) keep applying until re-saved.
+        services.TryAddSingleton(sp => new LegacyAgentSettings(
+            sp.GetService<AgentOs.Modules.AppConfig.IAppConfigStore>(), sp.GetService<IConfiguration>()));
         services.AddSingleton<IAgentProfiles>(sp =>
             sp.GetService<AgentOs.Domain.Configuration.ISettings>() is { } settings
-                ? new SettingsAgentProfiles(settings, sp.GetService<IServiceScopeFactory>())
+                ? new SettingsAgentProfiles(settings, sp.GetService<IServiceScopeFactory>(), sp.GetService<LegacyAgentSettings>())
                 : StaticAgentProfiles.Instance);
 
         services.AddOptions<PipelineOptions>()

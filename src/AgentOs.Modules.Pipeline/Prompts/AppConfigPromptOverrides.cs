@@ -42,6 +42,12 @@ internal sealed class AppConfigPromptOverrides : IPromptOverrides
         {
             var tenant = AmbientIdentity.Current?.TenantId ?? ITenantContext.DefaultTenantId;
             var overridden = await _config.GetForTenantAsync(tenant, Key(agentKey), cancellationToken).ConfigureAwait(false);
+            // A role renamed by the agent registry (Decomposer → Discovery): the override saved under its former key
+            // applies until one is saved under the new key.
+            if (string.IsNullOrWhiteSpace(overridden) && AgentOs.Modules.Pipeline.Agents.LegacyAgentSettings.LegacyRoleOf(agentKey) is { } legacy)
+            {
+                overridden = await _config.GetForTenantAsync(tenant, Key(legacy), cancellationToken).ConfigureAwait(false);
+            }
             return string.IsNullOrWhiteSpace(overridden) ? defaultPrompt : overridden;
         }
         catch (Microsoft.EntityFrameworkCore.DbUpdateException ex) { return OnLookupFailed(ex); }

@@ -2,6 +2,8 @@
 // build it, run its tests, check each acceptance criterion the way the criterion says (bringing the app up for an
 // end-to-end check), and report evidence. It runs on the member's paired computer (it needs a real machine: a
 // browser, containers, the repo's own toolchain) under scoped autonomy, and never edits, commits or pushes.
+// Its profile (Settings → Agent profiles, role "Acceptance" — "Testing (tickets)"), its prompt (Settings → Prompts) and
+// the budget gate apply like every other agent's; the seed keeps it on the member's computer (0 server tokens).
 
 using System;
 using System.Collections.Generic;
@@ -10,14 +12,20 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Cost;
 using AgentOs.Domain.Llm;
+using AgentOs.Domain.Memory;
 using AgentOs.Domain.Sessions;
+using AgentOs.Modules.Pipeline.Prompts;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace AgentOs.Modules.Pipeline.Agents;
 
 /// <inheritdoc cref="IAcceptanceAgent"/>
-public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<AcceptanceAgent> logger, ISessionRunFeed? feed = null) : IAcceptanceAgent
+public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<AcceptanceAgent> logger, ISessionRunFeed? feed = null,
+    IOptions<AgentsOptions>? options = null, IAgentProfiles? profiles = null, IPromptOverrides? prompts = null,
+    IBudgetGuard? budgetGuard = null, IMemoryStore? memory = null) : IAcceptanceAgent
 {
     // Building, starting a stack and running end-to-end specs takes longer than writing the change.
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(30);
@@ -31,23 +39,36 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
             return NotRun("There is no proposed change (branch) to test.");
         }
         var repoLabel = $"{request.Repo.Owner}/{request.Repo.Repo}";
-        Emit(request, SessionRunEventKind.Running, $"Testing #{request.IssueNumber} on your computer.", repoLabel);
 
+        // Live profile (Settings → Agent profiles), resolved per call.
+        var profile = await BoardAgent.ProfileAsync(profiles, options, AgentRoles.Acceptance, ct).ConfigureAwait(false);
         ILlmClient llm;
-        try { llm = factory.Create("RemoteAgent"); }
+        try { llm = factory.Create(profile.Provider); }
         catch (Exception ex) when (ex is LlmException or ArgumentException or NotSupportedException or InvalidOperationException)
         {
             return NotRun($"No computer to test on: {ex.Message}");
         }
+        var provider = AgentBudgetGate.EffectiveProvider(llm, profile.Provider);
+        if (await AgentBudgetGate.BlockedAsync(budgetGuard, request.TenantId, provider, logger, nameof(AcceptanceAgent), ct).ConfigureAwait(false) is not null)
+        {
+            return NotRun(AgentBudgetGate.BlockedMessage);
+        }
+        Emit(request, SessionRunEventKind.Running, AgentBudgetGate.RunsOnMembersComputer(provider)
+            ? $"Testing #{request.IssueNumber} on your computer."
+            : $"Testing #{request.IssueNumber} ({provider}).", repoLabel);
 
         var llmRequest = new LlmRequest(
-            SystemPrompt: Instructions(request) + "\n\n" + UntrustedText.SystemRule,
-            UserPrompt: User(request),
-            Model: "claude-sonnet-4-6",
-            MaxTokens: 32768,
+            SystemPrompt: await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Acceptance, InstructionsTemplate, Values(request),
+                UntrustedText.SystemRule, ct).ConfigureAwait(false),
+            UserPrompt: User(request)
+                + await ProjectPractices.BlockAsync(memory, request.TenantId, [repoLabel], logger, ct).ConfigureAwait(false),
+            Model: profile.Model,
+            Temperature: profile.Temperature,
+            MaxTokens: profile.MaxTokens,
             Timeout: RunTimeout,
             Cli: request.CliProfile)
         {
+            AgentRole = AgentRoles.Acceptance,
             Autonomy = WorkspaceAutonomy.Scoped,
             Progress = new InlineProgress<string>(step =>
             {
@@ -71,18 +92,33 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
     private void Emit(AcceptanceRequest r, SessionRunEventKind kind, string message, string repo) =>
         feed?.Publish(new SessionRunEvent(r.TenantId, r.SessionId, kind, message, DateTimeOffset.UtcNow, repo));
 
-    internal static string Instructions(AcceptanceRequest r) => string.Format(
-        CultureInfo.InvariantCulture,
+    /// <summary>The placeholders <see cref="InstructionsTemplate"/> (and an override of it) may use.</summary>
+    public static readonly IReadOnlyList<string> Placeholders = ["owner", "repo", "branch", "defaultBranch"];
+
+    /// <summary>The per-run values of <see cref="Placeholders"/>.</summary>
+    internal static Dictionary<string, string> Values(AcceptanceRequest r) => new(StringComparer.Ordinal)
+    {
+        ["owner"] = r.Repo.Owner,
+        ["repo"] = r.Repo.Repo,
+        ["branch"] = r.Repo.ExistingBranch ?? string.Empty,
+        ["defaultBranch"] = r.Repo.DefaultBranch,
+    };
+
+    /// <summary>The system prompt for one run (the built-in template, filled).</summary>
+    internal static string Instructions(AcceptanceRequest r) => PromptTemplate.Fill(InstructionsTemplate, Values(r));
+
+    /// <summary>The built-in system prompt template (its first line is the agent's routing key).</summary>
+    public const string InstructionsTemplate =
         """
         You are the Testing Agent of AgentOS.NET. You ACCEPT or REJECT a proposed change against its ticket's
         acceptance criteria, on the developer's own machine, with your native shell and file tools. You NEVER change
         the code: do not edit tracked files, do not commit, do not push, do not open or comment on pull requests.
 
         1. Get the change. The runner starts you in a fresh, empty directory made for this run:
-           git clone https://github.com/{0}/{1}.git .
-           git fetch origin {2}
-           git checkout {2}
-           (default branch: {3})
+           git clone https://github.com/{owner}/{repo}.git .
+           git fetch origin {branch}
+           git checkout {branch}
+           (default branch: {defaultBranch})
         2. Read the ticket (user message), the repository's agent instructions (AGENTS.md, CLAUDE.md, README) and
            docs/ACCEPTANCE.md if present — criterion IDs such as F-4 or LIB-1 refer to it.
         3. Build and run the unit tests the way the repository does (e.g. `dotnet build` + `dotnet test`,
@@ -95,17 +131,16 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
            images or any data outside this directory.
         5. A criterion you cannot check here — a data set or secret that is not available, an external service —
            is "not-checked" with the reason. Never report "pass" for something you did not run.
-        6. When a test fails, check whether it already fails on the default branch: `git worktree add ../base origin/{3}`,
+        6. When a test fails, check whether it already fails on the default branch: `git worktree add ../base origin/{defaultBranch}`,
            run the same test there. If it fails the same way, it is a pre-existing failure, not this change's:
            list it under "baseFailures" and do not let it fail the verdict.
 
         Reply ONLY with this JSON (no other text):
-        {{"verdict":"pass","criteria":[{{"criterion":"<ID or the criterion's words>","result":"pass","evidence":"<command and the key output line, or why it was not checked>"}}],"baseFailures":[{{"test":"<fully qualified test name>","evidence":"<the failure, and that it fails the same on {3}>"}}],"summary":"<one or two sentences>"}}
+        {"verdict":"pass","criteria":[{"criterion":"<ID or the criterion's words>","result":"pass","evidence":"<command and the key output line, or why it was not checked>"}],"baseFailures":[{"test":"<fully qualified test name>","evidence":"<the failure, and that it fails the same on {defaultBranch}>"}],"summary":"<one or two sentences>"}
         "verdict" is "pass" only when the build passed, every failing test is a pre-existing failure, and no criterion
         failed; otherwise "fail".
         "result" is one of "pass", "fail", "not-checked".
-        """,
-        r.Repo.Owner, r.Repo.Repo, r.Repo.ExistingBranch, r.Repo.DefaultBranch);
+        """;
 
     internal static string User(AcceptanceRequest r) => string.Format(
         CultureInfo.InvariantCulture,

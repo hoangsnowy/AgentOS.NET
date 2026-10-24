@@ -158,7 +158,7 @@ public sealed class BoardTaskService(
         // The Thorough engine stores its own pipeline run + metrics; every other run is recorded here for Insights.
         var completion = Task.Run(() => EngineSelection.IsQuality(session.Brain)
             ? RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease)
-            : RecordedAsync(tenantId, session, "Coding", () => RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease)),
+            : RecordedAsync(tenantId, session, AgentOs.Modules.Pipeline.Agents.AgentRoles.IssueWork, () => RunAsync(tenantId, session, board, pat, children, cliProfile, change, stopLease)),
             CancellationToken.None);
         return new TaskRun(TaskStart.Started, completion);
     }
@@ -195,7 +195,7 @@ public sealed class BoardTaskService(
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Testing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
         var stopLease = stops.Begin(tenantId, session.Id);
-        var completion = Task.Run(() => RecordedAsync(tenantId, session, "Testing", () => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+        var completion = Task.Run(() => RecordedAsync(tenantId, session, AgentOs.Modules.Pipeline.Agents.AgentRoles.Acceptance, () => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
             CancellationToken.None);
         return new TaskRun(TaskStart.Started, completion);
     }
@@ -233,7 +233,7 @@ public sealed class BoardTaskService(
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Reviewing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
         var stopLease = stops.Begin(tenantId, session.Id);
-        var completion = Task.Run(() => RecordedAsync(tenantId, session, "Reviewer", () => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+        var completion = Task.Run(() => RecordedAsync(tenantId, session, AgentOs.Modules.Pipeline.Agents.AgentRoles.Reviewer, () => ReviewChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
             CancellationToken.None);
         return new TaskRun(TaskStart.Started, completion);
     }
@@ -424,7 +424,8 @@ public sealed class BoardTaskService(
         }
         finally
         {
-            await SaveAgentRunAsync(tenantId, session.MemberUserId, agent, $"{agent} · #{session.IssueNumber} {session.Title}", started, calls.Calls)
+            await SaveAgentRunAsync(tenantId, session.MemberUserId, agent,
+                    $"{AgentOs.Modules.Pipeline.Agents.AgentRoles.Label(agent)} · #{session.IssueNumber} {session.Title}", started, calls.Calls)
                 .ConfigureAwait(false);
         }
     }

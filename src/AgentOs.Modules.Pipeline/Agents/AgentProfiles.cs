@@ -28,12 +28,15 @@ public sealed class SettingsAgentProfiles : IAgentProfiles
 {
     private readonly ISettings _settings;
     private readonly IServiceScopeFactory? _scopes;
+    private readonly LegacyAgentSettings? _legacy;
 
-    /// <summary>Create. <paramref name="scopes"/> resolves the request tenant when no ambient identity is pushed.</summary>
-    public SettingsAgentProfiles(ISettings settings, IServiceScopeFactory? scopes = null)
+    /// <summary>Create. <paramref name="scopes"/> resolves the request tenant when no ambient identity is pushed;
+    /// <paramref name="legacy"/> reads values a renamed role saved under its former key.</summary>
+    public SettingsAgentProfiles(ISettings settings, IServiceScopeFactory? scopes = null, LegacyAgentSettings? legacy = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _scopes = scopes;
+        _legacy = legacy;
     }
 
     /// <inheritdoc />
@@ -43,10 +46,10 @@ public sealed class SettingsAgentProfiles : IAgentProfiles
         ArgumentNullException.ThrowIfNull(fallback);
         var tenant = CurrentTenant();
 
-        var provider = await _settings.GetStringAsync(AgentSettings.Key(role, nameof(AgentOptions.Provider)), tenant, null, cancellationToken).ConfigureAwait(false);
-        var model = await _settings.GetStringAsync(AgentSettings.Key(role, nameof(AgentOptions.Model)), tenant, null, cancellationToken).ConfigureAwait(false);
-        var temperature = await _settings.GetStringAsync(AgentSettings.Key(role, nameof(AgentOptions.Temperature)), tenant, null, cancellationToken).ConfigureAwait(false);
-        var maxTokens = await _settings.GetStringAsync(AgentSettings.Key(role, nameof(AgentOptions.MaxTokens)), tenant, null, cancellationToken).ConfigureAwait(false);
+        var provider = await FieldAsync(role, nameof(AgentOptions.Provider), tenant, cancellationToken).ConfigureAwait(false);
+        var model = await FieldAsync(role, nameof(AgentOptions.Model), tenant, cancellationToken).ConfigureAwait(false);
+        var temperature = await FieldAsync(role, nameof(AgentOptions.Temperature), tenant, cancellationToken).ConfigureAwait(false);
+        var maxTokens = await FieldAsync(role, nameof(AgentOptions.MaxTokens), tenant, cancellationToken).ConfigureAwait(false);
 
         return new AgentOptions
         {
@@ -56,6 +59,19 @@ public sealed class SettingsAgentProfiles : IAgentProfiles
             MaxTokens = int.TryParse(maxTokens, NumberStyles.Integer, CultureInfo.InvariantCulture, out var m) && m > 0 ? m : fallback.MaxTokens,
             MaxParallelRepos = fallback.MaxParallelRepos,
         };
+    }
+
+    // The field's effective value. Only when nothing is stored for it (it would be the built-in default) does a value
+    // the role saved under its former key apply (Decomposer → Discovery).
+    private async ValueTask<string?> FieldAsync(string role, string field, string? tenant, CancellationToken ct)
+    {
+        var value = await _settings.GetAsync(AgentSettings.Key(role, field), tenant, ct).ConfigureAwait(false);
+        if (value.Source == SettingSource.Default && _legacy is not null
+            && await _legacy.ReadAsync(role, field, tenant, ct).ConfigureAwait(false) is { } legacy)
+        {
+            return legacy;
+        }
+        return value.HasValue ? value.Value : null;
     }
 
     /// <inheritdoc />

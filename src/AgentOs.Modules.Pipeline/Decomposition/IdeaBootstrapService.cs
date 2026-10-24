@@ -35,11 +35,16 @@ internal sealed class IdeaBootstrapService : IIdeaBootstrapService
 {
     private readonly IRequirementAgent _requirement;
     private readonly ITicketDecomposerAgent _decomposer;
+    private readonly AgentOptions? _discovery;
+    private readonly AgentOs.Domain.Cost.IBudgetGuard? _budgetGuard;
 
-    public IdeaBootstrapService(IRequirementAgent requirement, ITicketDecomposerAgent decomposer)
+    public IdeaBootstrapService(IRequirementAgent requirement, ITicketDecomposerAgent decomposer,
+        Microsoft.Extensions.Options.IOptions<AgentsOptions>? options = null, AgentOs.Domain.Cost.IBudgetGuard? budgetGuard = null)
     {
         _requirement = requirement ?? throw new ArgumentNullException(nameof(requirement));
         _decomposer = decomposer ?? throw new ArgumentNullException(nameof(decomposer));
+        _discovery = options?.Value.Discovery;
+        _budgetGuard = budgetGuard;
     }
 
     /// <inheritdoc />
@@ -48,7 +53,13 @@ internal sealed class IdeaBootstrapService : IIdeaBootstrapService
         ArgumentException.ThrowIfNullOrWhiteSpace(idea);
 
         var story = new UserStory(idea, NMax: 1, Locale: string.IsNullOrWhiteSpace(locale) ? "en-US" : locale);
-        var spec = await _requirement.RunAsync(story, cancellationToken).ConfigureAwait(false);
+        // The requirement step is the Discovery agent's: its profile (Settings → Agent profiles, "Discovery"), its name in
+        // Insights and the budget gate — with the Requirement agent's prompt and spec contract.
+        RequirementSpec spec;
+        using (AgentRunScope.Begin(AgentRoles.Discovery, _discovery, _budgetGuard))
+        {
+            spec = await _requirement.RunAsync(story, cancellationToken).ConfigureAwait(false);
+        }
 
         var seed = TicketMapper.Map(spec);
         var tickets = await _decomposer.RunAsync(spec, seed, idea, cancellationToken).ConfigureAwait(false);

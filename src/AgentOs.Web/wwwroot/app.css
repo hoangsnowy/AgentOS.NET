@@ -2309,6 +2309,10 @@ input[type=range] { accent-color: var(--accent); }
 .settings-field-control .prefs-input[type="number"] { width: 8rem; }
 .model-picker { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .agent-profiles-who { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+/* What the agent does, under its name: wraps so a long sentence never widens the column. */
+.agent-profiles-desc { white-space: normal; max-width: 20rem; color: var(--text-tertiary); font-size: var(--fs-xs); }
+/* The group intro above each table (Board agents / Workflow pipeline). */
+.agent-profiles-intro { margin: 0 0 var(--space-3); }
 .agent-profiles-actions { display: flex; gap: var(--space-2); justify-content: flex-end; white-space: nowrap; }
 
 .prefs-list { padding-left: 18px; margin: 4px 0; font-size: 12.5px; color: var(--txt-soft); }

@@ -4,7 +4,11 @@
 // On failure it replies with: {"branch":"","summary":"","error":"...reason..."}.
 // For a cross-service ticket (more than one repo) each repo gets its own run, with a note naming the
 // sibling repos so the agent can cross-link the PRs.
+// Both system prompts are templates (named placeholders, PromptTemplate) so a tenant can override them in Settings →
+// Prompts: "IssueWork" (the run on a member's computer — the Board default) and "IssueWork.Server" (the server-side
+// runner_shell loop). The untrusted-text rule is appended by code, never part of the overridable text.
 
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -15,24 +19,51 @@ namespace AgentOs.Modules.Pipeline.Prompts;
 
 internal static class IssueWorkPrompt
 {
-    internal static string System(IssueWorkRequest req, WorkRepo repo) => string.Format(
-        CultureInfo.InvariantCulture,
+    /// <summary>Prompt key of the server-side (runner_shell) variant; the member's-computer variant uses the role key.</summary>
+    internal const string ServerPromptKey = "IssueWork.Server";
+
+    /// <summary>The placeholders both templates (and an override of them) may use.</summary>
+    internal static readonly IReadOnlyList<string> Placeholders =
+        ["owner", "repo", "defaultBranch", "issue", "branch", "branchStep", "commitType", "crossServiceNote", "crossLinkCommitNote"];
+
+    /// <summary>The per-run values of <see cref="Placeholders"/>.</summary>
+    internal static Dictionary<string, string> Values(IssueWorkRequest req, WorkRepo repo) => new(StringComparer.Ordinal)
+    {
+        ["owner"] = repo.Owner,
+        ["repo"] = repo.Repo,
+        ["defaultBranch"] = repo.DefaultBranch,
+        ["issue"] = req.IssueNumber.ToString(CultureInfo.InvariantCulture),
+        ["crossServiceNote"] = CrossServiceNote(req, repo),
+        ["crossLinkCommitNote"] = CrossLinkCommitNote(req, repo),
+        ["branchStep"] = BranchStep(req, repo),
+        ["branch"] = BranchName(req, repo),
+        ["commitType"] = CommitType(req),
+    };
+
+    internal static string System(IssueWorkRequest req, WorkRepo repo, string? template = null) =>
+        PromptTemplate.Fill(template ?? ServerTemplate, Values(req, repo)) + SecurityFooter;
+
+    internal static string SystemCli(IssueWorkRequest req, WorkRepo repo, string? template = null) =>
+        PromptTemplate.Fill(template ?? CliTemplate, Values(req, repo)) + SecurityFooter;
+
+    /// <summary>The server-side system prompt template (the LLM drives the paired runner through <c>runner_shell</c>).</summary>
+    internal const string ServerTemplate =
         """
         You are an AI software engineer with shell access to a developer machine where the
-        {0}/{1} repository (default branch: {2}) is checked out.
-        {4}
+        {owner}/{repo} repository (default branch: {defaultBranch}) is checked out.
+        {crossServiceNote}
         Use the `runner_shell` tool to execute shell commands on that machine. Workflow:
 
         1. Discover the repository path: run `pwd`, then `ls`. If the repo is not in the
            current directory, find it with:
-           find ~ -maxdepth 5 -type d -name "{1}" 2>/dev/null | head -1
+           find ~ -maxdepth 5 -type d -name "{repo}" 2>/dev/null | head -1
            Then `cd` into it for all subsequent commands.
 
         2. Understand the codebase: read relevant files (structure, key modules, tests).
            Read only what is needed — do not dump entire file trees.
 
-        {6}
-        4. Implement the fix for ticket #{3}. Edit files directly:
+        {branchStep}
+        4. Implement the fix for ticket #{issue}. Edit files directly:
            - For small changes: use `echo` or heredoc redirections.
            - For larger changes: write a Python/PowerShell one-liner or use `tee`.
            - Prefer minimal, focused changes over large rewrites.
@@ -50,43 +81,33 @@ internal static class IssueWorkPrompt
 
         7. Commit:
            git add -A
-           git commit -m "{8}: <short description> (#{3})"{5}
+           git commit -m "{commitType}: <short description> (#{issue})"{crossLinkCommitNote}
 
         8. Push:
-           git push origin {7}
+           git push origin {branch}
 
         When the branch is pushed, reply ONLY with this JSON (no other text):
-        {{"branch":"{7}","summary":"<one sentence describing the change>"}}
+        {"branch":"{branch}","summary":"<one sentence describing the change>"}
 
         If you cannot complete the task, reply with:
-        {{"branch":"","summary":"","error":"<brief reason>"}}
-        """,
-        repo.Owner,
-        repo.Repo,
-        repo.DefaultBranch,
-        req.IssueNumber,
-        CrossServiceNote(req, repo),
-        CrossLinkCommitNote(req, repo),
-        BranchStep(req, repo),
-        BranchName(req, repo),
-        CommitType(req)) + SecurityFooter;
+        {"branch":"","summary":"","error":"<brief reason>"}
+        """;
 
     // CLI-mode system prompt — used when the run is routed to the member's paired dev-machine CLI
     // (claude-code / codex) via the RemoteAgent provider. That CLI has its OWN native shell/file/git
     // tools and no `runner_shell`, so it must clone the repo itself and drive git directly. The reply
     // contract is identical to the server-side prompt, so ParseOutcome handles both unchanged.
-    internal static string SystemCli(IssueWorkRequest req, WorkRepo repo) => string.Format(
-        CultureInfo.InvariantCulture,
+    internal const string CliTemplate =
         """
         You are an autonomous coding agent (for example claude-code) running directly on the
         developer's own machine, with native shell, file-editing, and git tools. Do NOT expect any
         server-provided tools — drive the shell, file edits, and git with your own built-in tools.
-        {4}
+        {crossServiceNote}
         Workflow:
 
-        1. Clone the {0}/{1} repository (default branch: {2}). The runner starts you in a fresh, empty directory made for
+        1. Clone the {owner}/{repo} repository (default branch: {defaultBranch}). The runner starts you in a fresh, empty directory made for
            this run — clone INTO it, so every later command runs there without a `cd`:
-           git clone https://github.com/{0}/{1}.git .
+           git clone https://github.com/{owner}/{repo}.git .
            (Only if the current directory is not empty: clone into a new subdirectory and work there.)
            Use the machine's existing git/gh credentials — do NOT embed any token in the URL.
            Stay inside this directory: files outside it and other repositories are off limits.
@@ -94,8 +115,8 @@ internal static class IssueWorkPrompt
         2. Understand the codebase: read the relevant files (structure, key modules, tests).
            Read only what is needed — do not dump entire file trees.
 
-        {6}
-        4. Implement the fix for ticket #{3}. Make minimal, focused edits.
+        {branchStep}
+        4. Implement the fix for ticket #{issue}. Make minimal, focused edits.
 
         5. Build to verify compilation:
            - .NET: `dotnet build`
@@ -108,26 +129,17 @@ internal static class IssueWorkPrompt
 
         7. Commit:
            git add -A
-           git commit -m "{8}: <short description> (#{3})"{5}
+           git commit -m "{commitType}: <short description> (#{issue})"{crossLinkCommitNote}
 
         8. Push the branch to origin:
-           git push -u origin {7}
+           git push -u origin {branch}
 
         When the branch is pushed, reply ONLY with this JSON (no other text):
-        {{"branch":"{7}","summary":"<one sentence describing the change>"}}
+        {"branch":"{branch}","summary":"<one sentence describing the change>"}
 
         If you cannot complete the task, reply with:
-        {{"branch":"","summary":"","error":"<brief reason>"}}
-        """,
-        repo.Owner,
-        repo.Repo,
-        repo.DefaultBranch,
-        req.IssueNumber,
-        CrossServiceNote(req, repo),
-        CrossLinkCommitNote(req, repo),
-        BranchStep(req, repo),
-        BranchName(req, repo),
-        CommitType(req)) + SecurityFooter;
+        {"branch":"","summary":"","error":"<brief reason>"}
+        """;
 
     // The ticket title/body are written by whoever can open an issue — fence them as data. The branch name,
     // repo, and workflow come only from these system prompts, never from the ticket.
