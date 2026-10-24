@@ -534,9 +534,13 @@ body.panel-resizing, body.panel-resizing * { cursor: row-resize !important; user
     background-image: radial-gradient(var(--syn-canvas-dot) 1px, transparent 1px); background-size: 26px 26px;
     padding: var(--space-6) var(--space-5) var(--space-4); overflow-x: auto;
 }
-.tf-chain { list-style: none; margin: 0; padding: 0; display: flex; align-items: stretch; gap: 0; }
+.tf-chain { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: stretch; row-gap: var(--space-4); }
 .tf-step { display: flex; align-items: center; flex: none; }
-.tf-node { padding: 0; font: inherit; text-align: left; color: inherit; cursor: pointer; display: block; min-height: 132px; }
+/* A card is a button: stack its head + body from the top (a button centres its content by default). */
+.tf-node {
+    width: 152px; padding: 0; font: inherit; text-align: left; color: inherit; cursor: pointer; min-height: 132px;
+    display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
+}
 .tf-node:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .tf-node .sn-type, .tf-node .sn-desc, .tf-node .sn-meta { display: block; }
 .tf-node.tf-has-problem { border-color: var(--syn-danger-border); }

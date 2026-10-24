@@ -108,7 +108,7 @@
                         {
                             var here = LiveAt(node.Id);
                             <li class="tf-step">
-                                <button type="button" class="@CardClass(node, here.Count > 0)" aria-pressed="@(node.Id == _selectedId)"
+                                <button type="button" class="@CardClass(node, here.Count > 0)" aria-pressed="@(node.Id == _selectedId ? "true" : "false")"
                                         aria-label="@CardLabel(node, here)" data-step="@node.Id" @onclick="@(() => Select(node.Id))">
                                     <span class="sn-head">
                                         <span class="sn-ico"><Icon Name="@IconOf(node.Kind)" Size="13" /></span>
