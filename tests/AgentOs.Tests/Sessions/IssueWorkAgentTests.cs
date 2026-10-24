@@ -60,6 +60,21 @@ public class IssueWorkAgentTests
         repo.Ok.ShouldBeTrue();
         repo.BranchName.ShouldBe("issue-42-ai-fix");
         repo.Summary.ShouldBe("Replaced null check with guard clause.");
+        repo.Description.ShouldBeNull();   // an older / overridden prompt that asks for no description still works
+    }
+
+    [Fact]
+    public async Task RunAsync_DescriptionInReply_IsTheOutcomesPullRequestDescription()
+    {
+        var llm = Substitute.For<ILlmClient>();
+        llm.SendAsync(Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+           .Returns(AgentTestHelpers.StubResponse(
+               """{"branch":"issue-94-ai-fix","summary":"Upgraded the NuGet packages.","description":"## Packages\n| Package | Old | New |\n|---|---|---|\n| Npgsql | 10.0.0 | 10.0.2 |"}"""));
+
+        var repo = (await MakeAgent(llm).RunAsync(MakeRequest())).Repos.ShouldHaveSingleItem();
+
+        repo.Ok.ShouldBeTrue();
+        repo.Description.ShouldNotBeNull().ShouldContain("| Npgsql | 10.0.0 | 10.0.2 |");
     }
 
     [Fact]

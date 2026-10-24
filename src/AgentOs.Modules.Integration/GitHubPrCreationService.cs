@@ -265,6 +265,24 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
     }
 
     /// <inheritdoc />
+    public async Task<bool> UpdateBodyAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0 || string.IsNullOrWhiteSpace(body)) { return false; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            await client.PullRequest.Update(workspace.Owner, workspace.Repo, number, new PullRequestUpdate { Body = body }).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Updating the description failed on {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<string?> MergeAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);

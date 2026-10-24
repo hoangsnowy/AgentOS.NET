@@ -25,12 +25,28 @@ public static partial class PullRequestText
         return issueNumber is { } n ? $"{prefix}: {title} (#{n})" : $"{prefix}: {title}";
     }
 
-    /// <summary>The agent's summary, then <c>Closes #N</c> on its own line.</summary>
-    public static string Body(int? issueNumber, string? summary)
+    /// <summary>The longest agent-written description kept (GitHub caps a body at 65,536 characters).</summary>
+    public const int MaxDescriptionLength = 60_000;
+
+    /// <summary>The agent's pull request description (else its one-sentence summary), then <c>Closes #N</c> on its own
+    /// line — added once, even when the description already says it.</summary>
+    public static string Body(int? issueNumber, string? summary, string? description = null)
     {
-        var text = string.IsNullOrWhiteSpace(summary) ? "Change prepared by an AgentOS.NET agent." : summary.Trim();
-        return issueNumber is { } n ? $"{text}\n\nCloses #{n}" : text;
+        var text = !string.IsNullOrWhiteSpace(description)
+            ? (description.Length > MaxDescriptionLength ? description[..MaxDescriptionLength] : description).Trim()
+            : string.IsNullOrWhiteSpace(summary) ? "Change prepared by an AgentOS.NET agent." : summary.Trim();
+        if (issueNumber is not { } n) { return text; }
+        var number = n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (Match m in ClosesRef().Matches(text))
+        {
+            if (m.Groups[1].Value == number) { return text; }
+        }
+        return $"{text}\n\nCloses #{n}";
     }
+
+    // "Closes #12" / "Fixes #12" / "Resolves #12" already in the agent's description.
+    [GeneratedRegex(@"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ClosesRef();
 
     /// <summary>Maps a ticket's <c>type:*</c> label (or its bare value) to a Conventional Commits type.</summary>
     public static string ConventionalType(string? ticketType)
