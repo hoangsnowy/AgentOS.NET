@@ -39,7 +39,7 @@ public sealed class ComputersDefaultModelTests
     private const string Approve = """{"verdict":"approve","findings":[],"summary":"ok"}""";
 
     private static SettingsService Settings(InMemoryAppConfigStore? store = null, IConfiguration? config = null) => new(
-        new SettingsCatalog([new LlmSettings(), new AgentSettings()]), store ?? new InMemoryAppConfigStore(),
+        new SettingsCatalog([new LlmSettings(), new AgentSettings(), new AutopilotSettings()]), store ?? new InMemoryAppConfigStore(),
         config ?? new ConfigurationBuilder().Build(), new NullSettingsAuditSink(), NullLogger<SettingsService>.Instance);
 
     // A factory whose every client is `client`.

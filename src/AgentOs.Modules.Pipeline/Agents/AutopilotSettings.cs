@@ -76,12 +76,24 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// <summary>How often to look at them (seconds).</summary>
     public const string ChecksPollSecondsKey = "Autopilot:ChecksPollSeconds";
 
+    /// <summary>The longest one Coding (tickets) run may take on a computer (minutes) — clone, change, build, test, push.</summary>
+    public const string CodingRunMinutesKey = "Autopilot:CodingRunMinutes";
+
+    /// <summary>The longest one Reviewer run may take (minutes).</summary>
+    public const string ReviewRunMinutesKey = "Autopilot:ReviewRunMinutes";
+
+    /// <summary>The longest one Testing (tickets) run may take (minutes) — bring the app up and check every criterion.</summary>
+    public const string TestingRunMinutesKey = "Autopilot:TestingRunMinutes";
+
     internal const int DefaultMaxParallel = 2;
     internal const int DefaultMaxParallelTests = 1;
     internal const int DefaultMaxFixRounds = 3;
     internal const int DefaultMaxAgentRetries = 2;
     internal const int DefaultChecksTimeoutMinutes = 60;
     internal const int DefaultChecksPollSeconds = 60;
+    internal const int DefaultCodingRunMinutes = 60;
+    internal const int DefaultReviewRunMinutes = 30;
+    internal const int DefaultTestingRunMinutes = 45;
 
     /// <summary>Each bound's key, range and default — the descriptors and the typed read share it.</summary>
     private static readonly (string Key, int Min, int Max, int Default)[] Bounds =
@@ -92,6 +104,9 @@ public sealed class AutopilotSettings : ISettingsContributor
         (MaxAgentRetriesKey, 0, 5, DefaultMaxAgentRetries),
         (ChecksTimeoutMinutesKey, 5, 240, DefaultChecksTimeoutMinutes),
         (ChecksPollSecondsKey, 15, 600, DefaultChecksPollSeconds),
+        (CodingRunMinutesKey, 10, 240, DefaultCodingRunMinutes),
+        (ReviewRunMinutesKey, 5, 120, DefaultReviewRunMinutes),
+        (TestingRunMinutesKey, 10, 180, DefaultTestingRunMinutes),
     ];
 
     /// <summary>True when the stored value means a MAF workflow (anything but "Step by step").</summary>
@@ -124,7 +139,34 @@ public sealed class AutopilotSettings : ISettingsContributor
             "How long a ticket's MAF workflow waits for the pull request's checks before handing it back to Autopilot's step-by-step passes.");
         yield return Bound(ChecksPollSecondsKey, "Look at checks every (seconds)",
             "How often the MAF workflow looks at the pull request's checks while it waits.");
+        yield return Bound(CodingRunMinutesKey, "Coding run time limit (minutes)",
+            "The longest one Coding agent run may take on your computer before it is stopped: clone, change, build, test and push. Big tickets (migrations, upgrades) need more.");
+        yield return Bound(ReviewRunMinutesKey, "Review run time limit (minutes)",
+            "The longest one Reviewer agent run may take.");
+        yield return Bound(TestingRunMinutesKey, "Testing run time limit (minutes)",
+            "The longest one Testing agent run may take: bring the app up and check every acceptance criterion.");
     }
+
+    /// <summary>A run time limit (<see cref="CodingRunMinutesKey"/>, …), read now and clamped to its range.</summary>
+    public static async ValueTask<TimeSpan> ReadRunLimitAsync(ISettings settings, string? tenantId, string key, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var b = Array.Find(Bounds, x => x.Key == key);
+        if (b.Key is null) { throw new ArgumentException($"Not a run time limit: {key}", nameof(key)); }
+        var minutes = await settings.GetIntAsync(key, tenantId, b.Default, ct).ConfigureAwait(false);
+        return TimeSpan.FromMinutes(Math.Clamp(minutes, b.Min, b.Max));
+    }
+
+    /// <summary>The run time limit an agent applies: the tenant's value through <paramref name="profiles"/>, or the built-in
+    /// one when there is no profile source or it gives nothing usable (zero or negative).</summary>
+    public static async ValueTask<TimeSpan> RunLimitForAsync(IAgentProfiles? profiles, string key, CancellationToken ct = default)
+    {
+        var limit = profiles is null ? TimeSpan.Zero : await profiles.RunLimitAsync(key, ct).ConfigureAwait(false);
+        return limit > TimeSpan.Zero ? limit : DefaultRunLimit(key);
+    }
+
+    /// <summary>A run time limit's built-in value.</summary>
+    public static TimeSpan DefaultRunLimit(string key) => TimeSpan.FromMinutes(Array.Find(Bounds, x => x.Key == key).Default);
 
     private static SettingDescriptor Bound(string key, string label, string help)
     {

@@ -163,6 +163,9 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:MaxAgentRetries` | `2` | 0–5 | Extra guided retries the Orchestrator agent may give a stuck task after the fix rounds are used up. |
 | `Autopilot:ChecksTimeoutMinutes` | `60` | 5–240 | How long a ticket's MAF workflow waits for a pull request's checks before handing it back to the step-by-step passes. |
 | `Autopilot:ChecksPollSeconds` | `60` | 15–600 | How often it looks at them. |
+| `Autopilot:CodingRunMinutes` | `60` | 10–240 | The longest one Coding (tickets) run may take on a computer — clone, change, build, test, push (was a fixed 20 minutes). |
+| `Autopilot:ReviewRunMinutes` | `30` | 5–120 | The longest one Reviewer run may take (was a fixed 20). |
+| `Autopilot:TestingRunMinutes` | `45` | 10–180 | The longest one Testing (tickets) run may take (was a fixed 30). |
 
 Fixed rules (not settings): *Build and merge* merges a change only when its checks are green and its ticket flow's
 gates passed — by default the Reviewer agent approved it and the Testing agent passed it, which needs the member's

@@ -21,6 +21,10 @@ public interface IAgentProfiles
 
     /// <summary>The QA-loop iteration cap for the current tenant.</summary>
     ValueTask<int> MaxIterationsAsync(int fallback, CancellationToken cancellationToken = default);
+
+    /// <summary>How long one run of a Board agent may take (an <c>Autopilot:*RunMinutes</c> setting) for the current tenant.</summary>
+    ValueTask<TimeSpan> RunLimitAsync(string key, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(AutopilotSettings.DefaultRunLimit(key));
 }
 
 /// <summary><see cref="IAgentProfiles"/> over <see cref="ISettings"/>.</summary>
@@ -80,6 +84,10 @@ public sealed class SettingsAgentProfiles : IAgentProfiles
         var n = await _settings.GetIntAsync(AgentSettings.MaxIterations, CurrentTenant(), fallback, cancellationToken).ConfigureAwait(false);
         return n >= 1 ? n : fallback;
     }
+
+    /// <inheritdoc />
+    public ValueTask<TimeSpan> RunLimitAsync(string key, CancellationToken cancellationToken = default) =>
+        AutopilotSettings.ReadRunLimitAsync(_settings, CurrentTenant(), key, cancellationToken);
 
     // Ambient identity first (Blazor circuits and background runs push it); else the request's tenant context.
     private string? CurrentTenant()

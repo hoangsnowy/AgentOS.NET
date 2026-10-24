@@ -37,6 +37,9 @@ public sealed class AutopilotConfigurationTests
             (AutopilotSettings.MaxAgentRetriesKey, "2", 0, 5),
             (AutopilotSettings.ChecksTimeoutMinutesKey, "60", 5, 240),
             (AutopilotSettings.ChecksPollSecondsKey, "60", 15, 600),
+            (AutopilotSettings.CodingRunMinutesKey, "60", 10, 240),
+            (AutopilotSettings.ReviewRunMinutesKey, "30", 5, 120),
+            (AutopilotSettings.TestingRunMinutesKey, "45", 10, 180),
         ];
         foreach (var (key, def, min, max) in expected)
         {
@@ -62,6 +65,25 @@ public sealed class AutopilotConfigurationTests
 
         public ValueTask<SettingWriteResult> SetAsync(string key, string? value, SettingScope scope, string? tenantId, string actor,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task ReadRunLimit_UnsetIsTheDefault_AndAValueIsClampedToItsRange()
+    {
+        // VNChess #102 (2026-10-24): a migration ticket was cut off by the fixed 20-minute Coding run cap and lost its work.
+        (await AutopilotSettings.ReadRunLimitAsync(new FakeSettings(_ => null), "t1", AutopilotSettings.CodingRunMinutesKey))
+            .ShouldBe(TimeSpan.FromMinutes(60));
+        var settings = new FakeSettings(key => key switch
+        {
+            AutopilotSettings.CodingRunMinutesKey => "90",
+            AutopilotSettings.ReviewRunMinutesKey => "999",
+            AutopilotSettings.TestingRunMinutesKey => "1",
+            _ => null,
+        });
+        (await AutopilotSettings.ReadRunLimitAsync(settings, "t1", AutopilotSettings.CodingRunMinutesKey)).ShouldBe(TimeSpan.FromMinutes(90));
+        (await AutopilotSettings.ReadRunLimitAsync(settings, "t1", AutopilotSettings.ReviewRunMinutesKey)).ShouldBe(TimeSpan.FromMinutes(120));
+        (await AutopilotSettings.ReadRunLimitAsync(settings, "t1", AutopilotSettings.TestingRunMinutesKey)).ShouldBe(TimeSpan.FromMinutes(10));
+        await Should.ThrowAsync<ArgumentException>(async () => await AutopilotSettings.ReadRunLimitAsync(settings, "t1", AutopilotSettings.MaxParallelKey + "x"));
     }
 
     [Fact]

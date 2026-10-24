@@ -37,6 +37,7 @@ public sealed class AutopilotSettingsTests : IClassFixture<AgentOsPageFixture>
                  {
                      "Decided by", "Each ticket runs as", "Tasks at once", "Acceptance tests at once", "Automatic fix rounds",
                      "Orchestrator retries", "Wait for checks (minutes)", "Look at checks every (seconds)",
+                     "Coding run time limit (minutes)", "Review run time limit (minutes)", "Testing run time limit (minutes)",
                  })
         {
             await Assertions.Expect(win.Locator(".prefs-label strong").GetByText(label, new() { Exact = true })).ToBeVisibleAsync();

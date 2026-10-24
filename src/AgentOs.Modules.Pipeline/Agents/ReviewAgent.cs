@@ -27,7 +27,6 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
     IPromptOverrides? prompts = null, IBudgetGuard? budgetGuard = null) : IReviewAgent
 {
     // Reading a diff in context is quicker than testing it; a build fits too.
-    private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(20);
 
     /// <inheritdoc />
     public async Task<ReviewVerdict> RunAsync(AcceptanceRequest request, CancellationToken ct = default)
@@ -65,7 +64,7 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
             Model: profile.Model,
             Temperature: profile.Temperature,
             MaxTokens: profile.MaxTokens,
-            Timeout: RunTimeout,
+            Timeout: await AutopilotSettings.RunLimitForAsync(profiles, AutopilotSettings.ReviewRunMinutesKey, ct).ConfigureAwait(false),
             Cli: request.CliProfile)
         {
             AgentRole = AgentRoles.Reviewer,
