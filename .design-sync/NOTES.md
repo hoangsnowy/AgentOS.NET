@@ -19,3 +19,8 @@
   `board-knowledge.html`.
 - 2026-10-23: pushed `insights-delivery.html` (#272) and `board-knowledge-practices.html` (#273). The MVP dock (#271:
   Home · Board · Insights · Settings) is app data, not a component — no card shows the dock's items.
+- 2026-10-24: pushed `settings-autopilot.html` (new, #279) and replaced `agent-profiles.html` (#278 — Board agents /
+  Workflow pipeline tables, "Computer's default"), `settings-prompts.html` (#278 — Board agents first) and `board-autopilot.html`
+  (#279 — live limits, the real merge rule, the plan-limit wait card). The older `agent-profiles.html` inlined its own
+  token copy (217 KB); it now uses the shared frame (`../../styles.css`). Keep a full local mirror of the project's
+  `tokens/*.css` (fetch with `get_file`) — a stale mirror hid that dark `--warn-soft` exists and rendered the wait card unreadable.
