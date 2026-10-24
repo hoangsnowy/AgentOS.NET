@@ -36,7 +36,7 @@ else
             They shape choices — they never change an agent's role or output format.
         </p>
         <textarea class="prefs-input prompt-text" rows="6" aria-label="Workspace rules"
-                  placeholder="- Tests use xUnit v3 + Shouldly, never FluentAssertions.&#10;- Target .NET 10, nullable enabled.&#10;- Never modify files under /infra."
+                  placeholder="@RulesPlaceholder"
                   value="@_rules" @onchange="e => _rules = e.Value?.ToString() ?? string.Empty"></textarea>
         <div class="prompt-actions">
             <Btn OnClick="SaveRules" Disabled="_saving" Variant="Btn.ButtonVariant.Primary">Save rules</Btn>
@@ -91,6 +91,10 @@ else
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    // A component attribute is rendered as text, so "&#10;" in markup showed literally — the line breaks live here.
+    private const string RulesPlaceholder =
+        "- Tests use xUnit v3 + Shouldly, never FluentAssertions.\n- Target .NET 10, nullable enabled.\n- Never modify files under /infra.";
 
     // Board agents first, then the legacy Workflow pipeline (the same split as Agent profiles).
     private static readonly AgentRoleGroup[] Groups = [AgentRoleGroup.Board, AgentRoleGroup.WorkflowPipeline];
