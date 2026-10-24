@@ -367,7 +367,7 @@ public sealed partial class ProjectOrchestrator(
             case AutopilotAction.NeedsPerson ask:
             {
                 var sessions = sp.GetRequiredService<ISessionRepository>();
-                foreach (var r in (await sessions.ListReposForTenantAsync(tenant, ask.SessionId, ct).ConfigureAwait(false)).Where(r => r.Status == "Done"))
+                foreach (var r in (await sessions.ListReposForTenantAsync(tenant, ask.SessionId, ct).ConfigureAwait(false)).Where(r => HoldsAProposedChange(r.Status)))
                 {
                     await sessions.UpdateRepoRunResultAsync(tenant, r.Id, "Blocked", r.BranchName, r.PrUrl, ask.Reason, ct).ConfigureAwait(false);
                 }
@@ -377,6 +377,13 @@ public sealed partial class ProjectOrchestrator(
             }
         }
     }
+
+    // A repo whose proposed change is waiting on Autopilot — opened, reviewed or tested (the statuses a session counts as
+    // "Done", minus Merged). NeedsPerson blocks exactly these: it used to block only "Done", so a change the Reviewer had
+    // asked to fix ("ChangesRequested") stayed Done, never reached the Orchestrator agent's stuck list, and the same
+    // "Stopped fixing … It needs you." line was logged on every pass.
+    internal static bool HoldsAProposedChange(string? status) =>
+        status is "Done" or "Accepted" or "Rejected" or "Reviewed" or "ChangesRequested";
 
     // A task still "Running" whose run is not alive in this process lost it — the host restarted mid-way (a lab update,
     // a deploy). It would otherwise read "Working…" forever. A test that was cut short goes back to untested (it runs
