@@ -48,6 +48,26 @@ public sealed class TicketFlowServiceTests
     private static TicketFlowDefinition TestOff() =>
         TicketFlowDefinition.Default.With(TicketFlowDefinition.Default.Find("test")! with { Enabled = false });
 
+    [Fact]
+    public async Task Save_LosingTheVersionRaceRepeatedly_SaysSoInsteadOfThrowing()
+    {
+        // Review of #285: four saves racing the unique (TenantId, Version) index used to surface an unhandled
+        // DbUpdateException in the admin's circuit.
+        var store = NSubstitute.Substitute.For<ITicketFlowStore>();
+        NSubstitute.SubstituteExtensions.Returns(
+            store.AppendAsync(NSubstitute.Arg.Any<string>(), NSubstitute.Arg.Any<Guid>(), NSubstitute.Arg.Any<string?>(), NSubstitute.Arg.Any<string?>(),
+                NSubstitute.Arg.Any<string?>(), NSubstitute.Arg.Any<string?>(), NSubstitute.Arg.Any<System.Threading.CancellationToken>()),
+            _ => Task.FromException<TicketFlowVersion>(new TicketFlowSaveConflictException()));
+        var services = new ServiceCollection();
+        services.AddSingleton(store);
+        var svc = new TicketFlowService(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), NullLogger<TicketFlowService>.Instance);
+
+        var result = await svc.SaveAsync("t1", null, TestOff(), Admin);
+
+        result.Saved.ShouldBeFalse();
+        result.Problems.ShouldHaveSingleItem().Message.ShouldContain("at the same moment");
+    }
+
     [Theory]
     [MemberData(nameof(Stores))]
     public async Task NothingSaved_RunsTheBuiltInFlow(string store)

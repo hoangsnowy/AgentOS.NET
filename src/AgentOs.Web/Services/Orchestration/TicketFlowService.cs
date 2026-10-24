@@ -161,8 +161,15 @@ public sealed class TicketFlowService(IServiceScopeFactory scopes, ILogger<Ticke
         TicketFlowVersion saved;
         using (var scope = scopes.CreateScope())
         {
-            saved = await scope.ServiceProvider.GetRequiredService<ITicketFlowStore>()
-                .AppendAsync(tenantId, boardId ?? Guid.Empty, json, actor.UserId, actor.Name, note, ct).ConfigureAwait(false);
+            try
+            {
+                saved = await scope.ServiceProvider.GetRequiredService<ITicketFlowStore>()
+                    .AppendAsync(tenantId, boardId ?? Guid.Empty, json, actor.UserId, actor.Name, note, ct).ConfigureAwait(false);
+            }
+            catch (TicketFlowSaveConflictException)
+            {
+                return new(null, [new(null, "Someone else saved the ticket flow at the same moment. Reload it and try again.")]);
+            }
             await AuditAsync(scope.ServiceProvider, tenantId, actor, saved, ct).ConfigureAwait(false);
         }
         try

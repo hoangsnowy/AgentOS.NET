@@ -22,6 +22,23 @@ public sealed record TicketFlowVersion(Guid BoardId, int Version, string? Defini
     DateTimeOffset CreatedAtUtc, string? Note);
 
 /// <summary>Append-only, versioned ticket flows per tenant and board.</summary>
+/// <summary>A save lost the version-number race to other saves four times in a row.</summary>
+public sealed class TicketFlowSaveConflictException : InvalidOperationException
+{
+    /// <summary>Create.</summary>
+    public TicketFlowSaveConflictException() : base("Someone else saved the ticket flow at the same moment.") { }
+
+    /// <summary>Create with a message.</summary>
+    public TicketFlowSaveConflictException(string message) : base(message) { }
+
+    /// <summary>Create from the database error.</summary>
+    public TicketFlowSaveConflictException(Exception innerException)
+        : base("Someone else saved the ticket flow at the same moment.", innerException) { }
+
+    /// <summary>Create with a message and the database error.</summary>
+    public TicketFlowSaveConflictException(string message, Exception innerException) : base(message, innerException) { }
+}
+
 public interface ITicketFlowStore
 {
     /// <summary>The newest version saved for exactly this scope (a board, or <see cref="Guid.Empty"/> for the tenant).</summary>

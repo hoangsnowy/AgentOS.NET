@@ -85,6 +85,12 @@ internal sealed class EfTicketFlowStore(WorkspacesDbContext db) : ITicketFlowSto
                 // Another save took this number first (unique TenantId + Version): take the next one.
                 db.Entry(row).State = EntityState.Detached;
             }
+            catch (DbUpdateException ex)
+            {
+                // Still losing the race after four tries: tell the person instead of failing the circuit.
+                db.Entry(row).State = EntityState.Detached;
+                throw new TicketFlowSaveConflictException(ex);
+            }
         }
     }
 }
