@@ -75,15 +75,14 @@ public sealed class AgentRegistryGuardTests
             _ => false,
         };
 
-        foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        foreach (var (call, provider) in root.DescendantNodes().OfType<InvocationExpressionSyntax>()
+                     .Where(c => c.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Create" })
+                     .Select(c => (Call: c, Provider: c.ArgumentList.Arguments.FirstOrDefault()))
+                     .Where(x => x.Provider is { } p
+                         && p.NameColon is null or { Name.Identifier.ValueText: "providerName" }
+                         && HardCoded(p.Expression)))
         {
-            if (call.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Create" }
-                && call.ArgumentList.Arguments is [var provider, ..]
-                && provider.NameColon is null or { Name.Identifier.ValueText: "providerName" }
-                && HardCoded(provider.Expression))
-            {
-                yield return $"line {Line(call)}: ILlmClientFactory.Create({provider.Expression})";
-            }
+            yield return $"line {Line(call)}: ILlmClientFactory.Create({provider!.Expression})";
         }
 
         foreach (var creation in root.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>())

@@ -363,13 +363,9 @@ public static class TicketFlowValidator
         }
 
         // Edges: known steps; pass = one next step each (none after Merge, none into Code); fail = back to Code only.
-        foreach (var e in definition.Edges)
-        {
-            if (!byId.ContainsKey(e.From) || !byId.ContainsKey(e.To))
-            {
-                problems.Add(new(null, $"An edge points at a step that doesn't exist ({e.From} → {e.To})."));
-            }
-        }
+        problems.AddRange(definition.Edges
+            .Where(e => !byId.ContainsKey(e.From) || !byId.ContainsKey(e.To))
+            .Select(e => new TicketFlowProblem(null, $"An edge points at a step that doesn't exist ({e.From} → {e.To}).")));
         var edges = definition.Edges.Where(e => byId.ContainsKey(e.From) && byId.ContainsKey(e.To)).ToList();
         var pass = edges.Where(e => e.When == TicketFlowEdgeWhen.Pass).ToList();
         var fail = edges.Where(e => e.When == TicketFlowEdgeWhen.Fail).ToList();

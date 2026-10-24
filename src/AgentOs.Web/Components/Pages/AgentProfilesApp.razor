@@ -231,11 +231,10 @@ else
             {
                 foreach (var field in RoleFields.Where(f => byKey.GetValueOrDefault(AgentSettings.Key(role, f))?.Source is null or SettingSource.Default))
                 {
-                    if (await Legacy.ReadAsync(role, field, _tenantId) is { } old)
-                    {
-                        row.Loaded[field] = old;
-                        row.Legacy = true;
-                    }
+                    var old = await Legacy.ReadAsync(role, field, _tenantId);
+                    if (old is null) { continue; }
+                    row.Loaded[field] = old;
+                    row.Legacy = true;
                 }
             }
             row.Provider = row.Loaded.GetValueOrDefault(ProviderField, string.Empty);
