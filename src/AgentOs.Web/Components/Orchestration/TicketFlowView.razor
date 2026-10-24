@@ -1,0 +1,549 @@
+@* Workflow › Ticket flow (ADR-0016): the per-ticket graph Autopilot runs, drawn with the studio's node cards. An admin
+   toggles steps, picks the agent per step, limits a step by ticket labels, sees every broken safety rule inline, saves
+   (a new version) and reverts to an earlier one; a member sees it read-only. While a ticket's MAF workflow runs, the
+   step it is on is highlighted — the only thing here that animates. A table shows the same flow for screen readers
+   and keyboard users. *@
+@using System.Globalization
+@using AgentOs.Modules.Pipeline.Agents
+@using AgentOs.Modules.Workspaces.Persistence
+@using AgentOs.Web.Services.Orchestration
+@using AgentOs.Web.Shell.Services
+@inject TicketFlowService Flows
+@inject TicketWorkflowRunner Runner
+@inject IWorkspaceRepository Workspaces
+@inject AgentOs.Domain.Configuration.ISettings SettingsStore
+@inject ToastService Toasts
+@implements IDisposable
+
+<div class="tf-root" data-testid="ticket-flow">
+    <div class="tf-toolbar">
+        <label class="tf-scope">
+            <span>Flow for</span>
+            <select class="syn-select" value="@ScopeValue" @onchange="OnScopeChanged" aria-label="Flow for">
+                <option value="">All projects (default)</option>
+                @foreach (var b in _boards)
+                {
+                    <option value="@b.Id.ToString("D")">@b.Name</option>
+                }
+            </select>
+        </label>
+        <span class="tf-source" data-testid="ticket-flow-source">@SourceLine</span>
+        <div class="syn-spacer"></div>
+        <div class="tf-viewswitch" role="group" aria-label="Show the flow as">
+            <button type="button" class="@GraphBtnClass" aria-pressed="@(_table ? "false" : "true")" @onclick="@(() => _table = false)"><Icon Name="graph" Size="13" /> Graph</button>
+            <button type="button" class="@TableBtnClass" aria-pressed="@(_table ? "true" : "false")" @onclick="@(() => _table = true)" data-testid="ticket-flow-table-view"><Icon Name="squares-four" Size="13" /> Table</button>
+        </div>
+        @if (IsAdmin)
+        {
+            @if (_scope is not null && _effective.Source == TicketFlowSource.Board)
+            {
+                <button type="button" class="syn-btn" @onclick="UseDefaultAsync" disabled="@_busy">Use the default flow</button>
+            }
+            <button type="button" class="syn-btn" @onclick="Discard" disabled="@(!Dirty || _busy)">Discard</button>
+            <button type="button" class="syn-btn primary" @onclick="SaveAsync" disabled="@_busy" data-testid="ticket-flow-save"><Icon Name="floppy-disk" Size="13" /> Save</button>
+        }
+    </div>
+
+    @if (!IsAdmin)
+    {
+        <p class="tf-note" role="note"><Icon Name="lock" Size="12" /> Only an admin can change the ticket flow — you see it as it runs.</p>
+    }
+    else if (_scope is not null && _effective.Source != TicketFlowSource.Board)
+    {
+        <p class="tf-note" role="note"><Icon Name="info" Size="12" /> This project runs the default flow. Saving here gives it its own flow — it then wins over the default.</p>
+    }
+    @if (_effective.Refused is { } refused)
+    {
+        <p class="tf-alert" role="status"><Icon Name="warning" Size="12" /> @refused</p>
+    }
+    @if (_saveError is { } error)
+    {
+        <div class="tf-alert" role="alert" data-testid="ticket-flow-refused"><Icon Name="warning" Size="12" /> <strong>Not saved.</strong> @error</div>
+    }
+    else if (_problems.Count > 0)
+    {
+        <div class="tf-alert" role="status" aria-live="polite" data-testid="ticket-flow-problems">
+            <strong><Icon Name="warning" Size="12" /> This flow can't run as it is:</strong>
+            <ul>@foreach (var p in _problems){<li>@p.Message</li>}</ul>
+        </div>
+    }
+
+    <div class="tf-work">
+        <div class="tf-main">
+            @if (_table)
+            {
+                <div class="tf-tablewrap">
+                    <table class="syn-usage tf-table" data-testid="ticket-flow-table">
+                        <caption>@Caption</caption>
+                        <thead><tr><th scope="col">#</th><th scope="col">Step</th><th scope="col">Runs</th><th scope="col">Agent</th><th scope="col">For tickets</th><th scope="col">When it passes</th><th scope="col">When it fails</th><th scope="col">Now</th></tr></thead>
+                        <tbody>
+                            @foreach (var (node, i) in _ordered.Select((n, i) => (n, i)))
+                            {
+                                <tr>
+                                    <td class="num">@(i + 1)</td>
+                                    <th scope="row">
+                                        @if (IsAdmin)
+                                        {
+                                            <button type="button" class="tf-rowbtn" @onclick="@(() => Select(node.Id))" aria-label="@($"Edit the {node.Info.Label} step")">@node.Info.Label</button>
+                                        }
+                                        else { @node.Info.Label }
+                                    </th>
+                                    <td>@(node.Enabled ? "Yes" : "Off")</td>
+                                    <td>@(node.EffectiveRole is { } role ? AgentRoles.Label(role) : "—")</td>
+                                    <td>@ForTickets(node)</td>
+                                    <td>@OnPass(node)</td>
+                                    <td>@OnFail(node)</td>
+                                    <td>@LiveText(node)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <div class="tf-canvas">
+                    <ol class="tf-chain" aria-label="@Caption">
+                        @foreach (var (node, i) in _ordered.Select((n, i) => (n, i)))
+                        {
+                            var here = LiveAt(node.Id);
+                            <li class="tf-step">
+                                <button type="button" class="@CardClass(node, here.Count > 0)" aria-pressed="@(node.Id == _selectedId)"
+                                        aria-label="@CardLabel(node, here)" data-step="@node.Id" @onclick="@(() => Select(node.Id))">
+                                    <span class="sn-head">
+                                        <span class="sn-ico"><Icon Name="@IconOf(node.Kind)" Size="13" /></span>
+                                        <span class="sn-title">@node.Info.Label</span>
+                                        @if (here.Count > 0)
+                                        {
+                                            <span class="sn-status stat-running" aria-hidden="true"></span>
+                                        }
+                                        else if (!node.Enabled)
+                                        {
+                                            <span class="tf-off">Off</span>
+                                        }
+                                    </span>
+                                    <span class="sn-body">
+                                        @if (node.EffectiveRole is { } role)
+                                        {
+                                            <span class="sn-mascot"><AgentMascot Role="@role" State="@MascotOf(node, here.Count > 0)" Size="34" /></span>
+                                            <span class="sn-type">@AgentRoles.Label(role).ToUpperInvariant()</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="sn-type">@(node.Kind == TicketStepKind.Merge ? "SOURCE CONTROL" : "CI")</span>
+                                        }
+                                        <span class="sn-desc">@ForTickets(node)</span>
+                                        @if (here.Count > 0)
+                                        {
+                                            <span class="sn-meta">@string.Join(", ", here.Select(l => "#" + l.IssueNumber.ToString(CultureInfo.InvariantCulture))) here now</span>
+                                        }
+                                    </span>
+                                </button>
+                                @if (i < _ordered.Count - 1)
+                                {
+                                    <span class="tf-arrow" aria-hidden="true"><span class="tf-edge">pass</span><Icon Name="arrow-right" Size="14" /></span>
+                                }
+                            </li>
+                        }
+                    </ol>
+                    <p class="tf-back"><Icon Name="arrow-uturn-left" Size="13" /> <span><strong>Fail → back to Code:</strong> @SendsBack — up to @Rounds automatic fix @(_limits.MaxFixRounds == 1 ? "round" : "rounds") per task in total (Settings › Autopilot), then a person is asked.</span></p>
+                </div>
+            }
+
+            @if (_live.Count > 0)
+            {
+                <p class="tf-livelist" role="status" aria-live="polite">
+                    <strong>Running now:</strong>
+                    @foreach (var l in _live)
+                    {
+                        <span class="tf-livechip">#@l.IssueNumber · @(l.Step is { } s ? TicketStepKinds.Of(s).Label : "starting") · v@(l.FlowVersion)</span>
+                    }
+                </p>
+            }
+
+            <section class="tf-history" aria-label="Versions of this flow">
+                <h3>Versions</h3>
+                @if (_history.Count == 0)
+                {
+                    <p class="tf-muted">@(_scope is null ? "Nothing saved yet — every project runs the built-in flow." : "Nothing saved for this project yet.")</p>
+                }
+                else
+                {
+                    <ol class="tf-versions">
+                        @foreach (var (v, i) in _history.Select((v, i) => (v, i)))
+                        {
+                            <li data-version="@v.Version">
+                                <span class="tf-vnum">v@(v.Version)</span>
+                                <span class="tf-vwhat">@(v.Note ?? (v.DefinitionJson is null ? "Uses the default flow" : "Saved")) · @Summary(v)</span>
+                                <span class="tf-vwho">@(v.CreatedByName ?? v.CreatedByUserId ?? "someone") · <time datetime="@v.CreatedAtUtc.ToString("O", CultureInfo.InvariantCulture)">@v.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)</time></span>
+                                @if (i == 0)
+                                {
+                                    <span class="tf-vcur">In use</span>
+                                }
+                                else if (IsAdmin)
+                                {
+                                    <button type="button" class="syn-btn" disabled="@_busy" @onclick="@(() => RevertAsync(v.Version))" aria-label="@($"Revert to version {v.Version}")"><Icon Name="arrow-uturn-left" Size="12" /> Revert</button>
+                                }
+                            </li>
+                        }
+                    </ol>
+                }
+            </section>
+        </div>
+
+        <aside class="@DockClass" aria-label="Step inspector">
+            @if (Selected is { } sel)
+            {
+                <div class="dock-head">
+                    <span class="dh-cat cat-@CatOf(sel.Kind)">@sel.Info.Label</span>
+                    <span class="dh-t">step</span>
+                    <button type="button" class="dh-x" @onclick="@(() => _selectedId = null)" aria-label="Close the step inspector"><Icon Name="x" Size="12" /></button>
+                </div>
+                <div class="dock-body">
+                    <p class="tf-desc">@sel.Info.Description</p>
+                    @if (sel.Info.Required)
+                    {
+                        <p class="tf-muted"><Icon Name="lock" Size="12" /> Always runs, for every ticket — a safety rule.</p>
+                    }
+                    else if (IsAdmin)
+                    {
+                        <button type="button" class="toggle tf-switch @(sel.Enabled ? "on" : "")" role="switch" aria-checked="@(sel.Enabled ? "true" : "false")"
+                                @onclick="@(() => Update(sel with { Enabled = !sel.Enabled }))" data-testid="ticket-flow-runs">
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                            <span class="toggle-label">@sel.Info.Label runs</span>
+                        </button>
+                    }
+                    else
+                    {
+                        <p>@(sel.Enabled ? "Runs" : "Off — tickets pass through it")</p>
+                    }
+
+                    @if (sel.Info.Roles.Count > 0)
+                    {
+                        <label class="dock-f">Agent
+                            <select value="@(sel.EffectiveRole)" disabled="@(!IsAdmin)" @onchange="@(e => Update(sel with { Role = RoleOrDefault(sel, e.Value as string) }))">
+                                @foreach (var role in sel.Info.Roles)
+                                {
+                                    <option value="@role">@AgentRoles.Label(role)</option>
+                                }
+                            </select>
+                        </label>
+                        <p class="tf-muted">Uses that agent's profile (Settings › Agent profiles) and prompt (Settings › Prompts).</p>
+                    }
+
+                    @if (!sel.Info.Required)
+                    {
+                        <label class="dock-f">Skip tickets labelled
+                            <input value="@string.Join(", ", sel.Skip)" placeholder="type:chore, type:docs" disabled="@(!IsAdmin)"
+                                   @onchange="@(e => Update(sel with { SkipLabels = ParseLabels(e.Value as string) }))" />
+                        </label>
+                        <label class="dock-f">Only tickets labelled (empty = every ticket)
+                            <input value="@string.Join(", ", sel.Only)" placeholder="type:feature" disabled="@(!IsAdmin)"
+                                   @onchange="@(e => Update(sel with { OnlyLabels = ParseLabels(e.Value as string) }))" />
+                        </label>
+                    }
+
+                    @foreach (var p in _problems.Where(p => p.NodeId == sel.Id))
+                    {
+                        <p class="tf-problem" role="status"><Icon Name="warning" Size="12" /> @p.Message</p>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="dock-empty">
+                    <div class="de-ic"><Icon Name="gear" Size="20" /></div>
+                    <div class="de-t">No step selected</div>
+                    <div class="de-s">Pick a step to see @(IsAdmin ? "and change " : "")who runs it and for which tickets.</div>
+                </div>
+            }
+        </aside>
+    </div>
+</div>
+
+@code {
+    /// <summary>The signed-in tenant (a circuit has no HttpContext — passed explicitly).</summary>
+    [Parameter, EditorRequired] public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>The signed-in user (recorded on every saved version).</summary>
+    [Parameter] public string? UserId { get; set; }
+
+    /// <summary>Their name as shown in the versions.</summary>
+    [Parameter] public string? UserName { get; set; }
+
+    /// <summary>Admins edit; members see it read-only.</summary>
+    [Parameter] public bool IsAdmin { get; set; }
+
+    /// <summary>The project to open on (Board › Autopilot links here); null = the default flow.</summary>
+    [Parameter] public Guid? BoardId { get; set; }
+
+    private sealed record BoardOption(Guid Id, string Name);
+
+    private List<BoardOption> _boards = [];
+    private Guid? _scope;
+    private Guid? _openedFor;
+    private EffectiveTicketFlow _effective = EffectiveTicketFlow.BuiltIn;
+    private TicketFlowDefinition _draft = TicketFlowDefinition.Default;
+    private IReadOnlyList<TicketFlowNode> _ordered = [];
+    private IReadOnlyList<TicketFlowProblem> _problems = [];
+    private IReadOnlyList<TicketFlowVersion> _history = [];
+    private IReadOnlyList<TicketFlowLive> _live = [];
+    private AutopilotLimits _limits = AutopilotLimits.Default;
+    private string? _selectedId;
+    private string? _saveError;
+    private bool _table;
+    private bool _busy;
+
+    private TicketFlowNode? Selected => _selectedId is null ? null : _draft.Find(_selectedId);
+
+    // Computed so each class attribute is one expression the phantom-CSS scanner reads as class names.
+    private string DockClass => Selected is null ? "syn-dock empty" : "syn-dock";
+    private string GraphBtnClass => _table ? "syn-btn" : "syn-btn is-on";
+    private string TableBtnClass => _table ? "syn-btn is-on" : "syn-btn";
+    private string ScopeValue => _scope?.ToString("D") ?? string.Empty;
+    private bool Dirty => !string.Equals(_draft.ToJson(), _effective.Definition.ToJson(), StringComparison.Ordinal);
+    private string Rounds => _limits.MaxFixRounds.ToString(CultureInfo.InvariantCulture);
+
+    private string Caption => $"Ticket flow {(_scope is null ? "for all projects" : "for " + BoardName(_scope.Value))}: {_draft.Summary()}";
+
+    private string SourceLine => _effective.Source switch
+    {
+        TicketFlowSource.Board => $"v{_effective.Version} · this project's own flow",
+        TicketFlowSource.Tenant => $"v{_effective.Version} · the default flow for all projects",
+        _ => "Built-in flow",
+    } + (Dirty ? " · unsaved changes" : "");
+
+    private string SendsBack => string.Join(", ", _ordered.Where(n => n.Info.CanSendBack && n.Enabled).Select(n => n.Info.Label)) is { Length: > 0 } s ? s : "nothing";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Flows.Changed += OnFlowsChanged;
+        Runner.Changed += OnRunnerChanged;
+        try
+        {
+            _boards = (await Workspaces.ListForTenantAsync(TenantId)).Select(b => new BoardOption(b.Id, b.Name)).ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The project list only adds per-project scopes — the default flow still opens.
+            _boards = [];
+        }
+        _limits = await AutopilotSettings.ReadLimitsAsync(SettingsStore, TenantId);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Board › Autopilot opens the view on its project (a request while the window is already open lands here too).
+        if (BoardId != _openedFor || _ordered.Count == 0)
+        {
+            _openedFor = BoardId;
+            _scope = BoardId is { } b && b != Guid.Empty && _boards.Any(x => x.Id == b) ? b : null;
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _effective = await Flows.ResolveAsync(TenantId, _scope);
+        _history = await Flows.HistoryAsync(TenantId, _scope);
+        _draft = _effective.Definition;
+        _saveError = null;
+        Revalidate();
+        _live = LiveForScope();
+    }
+
+    private void Revalidate()
+    {
+        _ordered = _draft.Ordered();
+        _problems = TicketFlowValidator.Validate(_draft);
+    }
+
+    private async Task OnScopeChanged(ChangeEventArgs e)
+    {
+        _scope = Guid.TryParse(e.Value as string, out var id) ? id : null;
+        _selectedId = null;
+        await LoadAsync();
+    }
+
+    private void Select(string id) => _selectedId = _selectedId == id ? null : id;
+
+    private void Update(TicketFlowNode node)
+    {
+        if (!IsAdmin) { return; }
+        _draft = _draft.With(node);
+        _saveError = null;
+        Revalidate();
+    }
+
+    private void Discard()
+    {
+        _draft = _effective.Definition;
+        _saveError = null;
+        Revalidate();
+    }
+
+    private TicketFlowActor Actor => new(UserId, UserName, IsAdmin);
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        try
+        {
+            var result = await Flows.SaveAsync(TenantId, _scope, _draft, Actor);
+            if (!result.Saved)
+            {
+                _saveError = result.Reason;
+                Toasts.Show("Ticket flow", "Not saved: " + result.Reason, ToastKind.Err);
+                return;
+            }
+            Toasts.Show("Ticket flow", $"Saved v{result.Version!.Version} — new tickets run it; tickets under way keep the flow they started with.", ToastKind.Ok);
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RevertAsync(int version)
+    {
+        _busy = true;
+        try
+        {
+            var result = await Flows.RevertAsync(TenantId, _scope, version, Actor);
+            if (!result.Saved)
+            {
+                _saveError = result.Reason;
+                Toasts.Show("Ticket flow", "Not reverted: " + result.Reason, ToastKind.Err);
+                return;
+            }
+            Toasts.Show("Ticket flow", $"Reverted to v{version.ToString(CultureInfo.InvariantCulture)} (saved as v{result.Version!.Version}).", ToastKind.Ok);
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task UseDefaultAsync()
+    {
+        if (_scope is not { } board) { return; }
+        _busy = true;
+        try
+        {
+            var result = await Flows.UseTenantFlowAsync(TenantId, board, Actor);
+            if (result.Saved) { Toasts.Show("Ticket flow", "This project runs the default flow again.", ToastKind.Ok); }
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // Another admin saved, or a ticket moved on: refresh (an unsaved edit here is kept).
+    private void OnFlowsChanged(string tenant)
+    {
+        if (tenant != TenantId) { return; }
+        _ = InvokeAsync(async () =>
+        {
+            var keep = Dirty ? _draft : null;
+            await LoadAsync();
+            if (keep is not null) { _draft = keep; Revalidate(); }
+            StateHasChanged();
+        });
+    }
+
+    private void OnRunnerChanged(string tenant)
+    {
+        if (tenant != TenantId) { return; }
+        _ = InvokeAsync(() =>
+        {
+            _live = LiveForScope();
+            StateHasChanged();
+        });
+    }
+
+    private IReadOnlyList<TicketFlowLive> LiveForScope() =>
+        Runner.Live(TenantId).Where(l => _scope is null || l.BoardId == _scope).ToList();
+
+    private List<TicketFlowLive> LiveAt(string nodeId) => _live.Where(l => l.StepId == nodeId).ToList();
+
+    private string LiveText(TicketFlowNode node) => LiveAt(node.Id) is { Count: > 0 } here
+        ? string.Join(", ", here.Select(l => "#" + l.IssueNumber.ToString(CultureInfo.InvariantCulture))) + " running"
+        : "—";
+
+    private string BoardName(Guid id) => _boards.FirstOrDefault(b => b.Id == id)?.Name ?? "this project";
+
+    private string CardClass(TicketFlowNode node, bool running)
+    {
+        var run = running ? "run-running" : node.Enabled ? "run-idle" : "run-skipped";
+        var sel = node.Id == _selectedId ? " is-selected" : "";
+        var bad = _problems.Any(p => p.NodeId == node.Id) ? " tf-has-problem" : "";
+        return $"step-node tf-node cat-{CatOf(node.Kind)} {run}{sel}{bad}";
+    }
+
+    private string CardLabel(TicketFlowNode node, IReadOnlyList<TicketFlowLive> here)
+    {
+        var who = node.EffectiveRole is { } r ? $", run by {AgentRoles.Label(r)}" : "";
+        var state = node.Enabled ? "on" : "off";
+        var now = here.Count > 0 ? $", running now for {string.Join(", ", here.Select(l => "#" + l.IssueNumber.ToString(CultureInfo.InvariantCulture)))}" : "";
+        return $"{node.Info.Label} step, {state}{who}, {ForTickets(node)}{now}. {(IsAdmin ? "Press to edit." : "Press for details.")}";
+    }
+
+    private static string CatOf(TicketStepKind kind) => kind switch
+    {
+        TicketStepKind.Code or TicketStepKind.Review or TicketStepKind.Test => "agent",
+        TicketStepKind.Merge => "terminal",
+        _ => "logic",
+    };
+
+    private static string IconOf(TicketStepKind kind) => kind switch
+    {
+        TicketStepKind.Code => "terminal",
+        TicketStepKind.Checks => "shield",
+        TicketStepKind.Review => "search",
+        TicketStepKind.Test => "check",
+        TicketStepKind.Merge => "git-pull-request",
+        _ => "diamond",
+    };
+
+    private static AgentMascot.MascotState MascotOf(TicketFlowNode node, bool running) =>
+        running ? AgentMascot.MascotState.Running : node.Enabled ? AgentMascot.MascotState.Idle : AgentMascot.MascotState.Skipped;
+
+    private static string ForTickets(TicketFlowNode node) =>
+        !node.Enabled ? "Off — every ticket passes through"
+        : node.Conditions() is { Length: > 0 } c ? "Tickets " + c.Replace("only ", "with ", StringComparison.Ordinal).Replace("not ", "without ", StringComparison.Ordinal)
+        : "Every ticket";
+
+    private string OnPass(TicketFlowNode node)
+    {
+        if (node.Kind == TicketStepKind.Merge) { return "Done"; }
+        var after = _ordered.SkipWhile(n => n.Id != node.Id).Skip(1).Where(n => n.Enabled).Select(n => n.Info.Label).FirstOrDefault();
+        return after is null ? "—" : "On to " + after;
+    }
+
+    private static string OnFail(TicketFlowNode node) => node.Kind switch
+    {
+        TicketStepKind.Merge => "Handed back to Autopilot",
+        _ when node.Info.CanSendBack => "Back to Code (a fix round)",
+        _ => "Handed back to Autopilot",
+    };
+
+    private static string? RoleOrDefault(TicketFlowNode node, string? picked) =>
+        string.IsNullOrWhiteSpace(picked) || picked == node.Info.DefaultRole ? null : picked;
+
+    private static List<string> ParseLabels(string? text) =>
+        (text ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    private static string Summary(TicketFlowVersion v) =>
+        v.DefinitionJson is null ? "the default flow" : TicketFlowDefinition.FromJson(v.DefinitionJson)?.Summary() ?? "can't be read";
+
+    public void Dispose()
+    {
+        Flows.Changed -= OnFlowsChanged;
+        Runner.Changed -= OnRunnerChanged;
+    }
+}

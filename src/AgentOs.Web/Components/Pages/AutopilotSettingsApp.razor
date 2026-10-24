@@ -40,7 +40,8 @@ else
 
     <Panel Title="Rules that always apply">
         <ul class="autopilot-rules" aria-label="Autopilot's fixed rules">
-            <li><strong>Merging.</strong> With <em>Build and merge</em>, a change is merged only when its checks are green, the Reviewer agent approved it and the Testing agent passed it against the ticket's acceptance criteria — which needs a connected computer. Nothing untested is merged.</li>
+            <li><strong>Merging.</strong> With <em>Build and merge</em>, a change is merged only when its checks are green and its ticket flow's gates passed — by default the Reviewer agent approved it and the Testing agent passed it against the ticket's acceptance criteria, which needs a connected computer.</li>
+            <li><strong>Ticket flow.</strong> The steps each ticket runs are the ticket flow in Workflow › Ticket flow (per project, versioned). It may skip Review or Test for some tickets, but never both, and checks always run before a merge.</li>
             <li><strong>Order.</strong> Approved tickets start p0 first, then oldest — never before the tickets they depend on are done. Tickets marked for a person are never touched.</li>
             <li><strong>Plan limits.</strong> When your computer's Claude or Codex plan hits its limit, Autopilot waits until the plan resets: no new work, and no fix round or retry is spent. Work it cut short picks up again after the reset — nothing is lost.</li>
         </ul>
