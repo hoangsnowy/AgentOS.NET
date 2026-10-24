@@ -552,7 +552,7 @@ public sealed class BoardTaskService(
                     // It used to mark the repo Failed and drop the pull request link: Autopilot lost track of the open PR
                     // and started the ticket over on a new branch (VNChess #95 / PR #97, 2026-10-24).
                     var stood = children.FirstOrDefault(c => c.Id == outcome.SessionRepoId);
-                    if (FailedFollowUpKeepsItsChange(change is not null, stood?.Status, stood?.PrUrl) && stood is not null)
+                    if (stood is not null && FailedFollowUpKeepsItsChange(change is not null, stood.Status, stood.PrUrl))
                     {
                         await sessRepo.UpdateRepoRunResultAsync(tenantId, stood.Id, stood.Status, stood.BranchName, stood.PrUrl,
                             "The last fix attempt failed: " + (outcome.Error ?? "Agent failed.")).ConfigureAwait(false);

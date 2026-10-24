@@ -84,13 +84,7 @@ public sealed class AgentsOptions
         && a.MaxTokens > 0);
 
     /// <summary>Every configured agent, for cross-cutting checks (startup validation).</summary>
-    public IEnumerable<AgentOptions> All()
-    {
-        foreach (var role in AgentRoles.All)
-        {
-            if (For(role.Key) is { } options) { yield return options; }
-        }
-    }
+    public IEnumerable<AgentOptions> All() => AgentRoles.All.Select(role => For(role.Key)).OfType<AgentOptions>();
 }
 
 /// <summary>Configuration for a single agent.</summary>

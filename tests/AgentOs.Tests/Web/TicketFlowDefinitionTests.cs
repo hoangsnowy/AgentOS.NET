@@ -229,9 +229,8 @@ public sealed class TicketFlowDefinitionTests
     [Fact]
     public void EveryStepKind_IsRegistered_WithRolesFromTheAgentRegistry()
     {
-        foreach (var kind in System.Enum.GetValues<TicketStepKind>())
+        foreach (var info in System.Enum.GetValues<TicketStepKind>().Select(TicketStepKinds.Of))
         {
-            var info = TicketStepKinds.Of(kind);
             info.Roles.ShouldAllBe(r => AgentRoles.Find(r) != null);
         }
         TicketStepKinds.Of(TicketStepKind.Code).DefaultRole.ShouldBe(AgentRoles.IssueWork);

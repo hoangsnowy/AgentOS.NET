@@ -63,11 +63,10 @@ public sealed class TicketFlowTests : IClassFixture<AgentOsPageFixture>
         var changed = false;
         foreach (var step in new[] { "review", "test" })
         {
-            if (await Card(win, step).GetAttributeAsync("class") is { } css && css.Contains("run-skipped", StringComparison.Ordinal))
-            {
-                await SetRunsAsync(win, step, on: true);
-                changed = true;
-            }
+            var css = await Card(win, step).GetAttributeAsync("class");
+            if (css is null || !css.Contains("run-skipped", StringComparison.Ordinal)) { continue; }
+            await SetRunsAsync(win, step, on: true);
+            changed = true;
         }
         if (changed)
         {
