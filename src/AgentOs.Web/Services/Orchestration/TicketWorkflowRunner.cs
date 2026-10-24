@@ -22,27 +22,51 @@ using Microsoft.Extensions.Logging;
 
 namespace AgentOs.Web.Services.Orchestration;
 
+/// <summary>A ticket whose MAF workflow runs now, and the step it is on — what Workflow › Ticket flow highlights.</summary>
+/// <param name="BoardId">Its board.</param>
+/// <param name="SessionId">Its task.</param>
+/// <param name="IssueNumber">Its ticket.</param>
+/// <param name="FlowVersion">The ticket flow version it runs (0 = built-in).</param>
+/// <param name="StepId">The step running now (node id), null before the first.</param>
+/// <param name="Step">Its kind.</param>
+/// <param name="Steps">The ids of the steps this ticket runs, in order.</param>
+/// <param name="Since">When the current step started.</param>
+public sealed record TicketFlowLive(Guid BoardId, Guid SessionId, int IssueNumber, int FlowVersion, string? StepId,
+    TicketStepKind? Step, IReadOnlyList<string> Steps, DateTimeOffset Since);
+
 /// <summary>Runs ticket workflows. Singleton.</summary>
 public sealed class TicketWorkflowRunner(IServiceScopeFactory scopes, BoardTaskService tasks, OrchestratorLog log, ILogger<TicketWorkflowRunner> logger,
     RetrospectiveService retrospectives, IPlanLimits planLimits)
 {
     private readonly ConcurrentDictionary<(string Tenant, Guid Session), Task> _running = new();
+    private readonly ConcurrentDictionary<(string Tenant, Guid Session), TicketFlowLive> _live = new();
+
+    /// <summary>Raised (with the tenant) when one of its tickets enters a step or its workflow ends. Called off the
+    /// circuit — a view marshals with InvokeAsync.</summary>
+    public event Action<string>? Changed;
 
     /// <summary>True while the task's workflow runs.</summary>
     public bool IsRunning(string tenantId, Guid sessionId) => _running.ContainsKey((tenantId, sessionId));
 
-    /// <summary>Start the ticket's workflow; false when one already runs for it.</summary>
-    public bool Start(WorkspaceEntity board, string pat, Guid sessionId, int issueNumber, bool mayMerge)
+    /// <summary>The tenant's tickets whose workflow runs now, with their current step.</summary>
+    public IReadOnlyList<TicketFlowLive> Live(string tenantId) =>
+        _live.Where(kv => kv.Key.Tenant == tenantId).Select(kv => kv.Value).OrderBy(l => l.IssueNumber).ToList();
+
+    /// <summary>Start the ticket's workflow on <paramref name="plan"/> (its ticket flow resolved for its labels — the
+    /// default flow when null); false when one already runs for it.</summary>
+    public bool Start(WorkspaceEntity board, string pat, Guid sessionId, int issueNumber, bool mayMerge, TicketFlowPlan? plan = null, int flowVersion = 0)
     {
         ArgumentNullException.ThrowIfNull(board);
         var key = (board.TenantId, sessionId);
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_running.TryAdd(key, gate.Task)) { return false; }
+        var run = plan ?? TicketFlowPlan.Default;
+        _live[key] = new TicketFlowLive(board.Id, sessionId, issueNumber, flowVersion, null, null, run.Steps.Select(s => s.Id).ToList(), DateTimeOffset.UtcNow);
         _ = Task.Run(async () =>
         {
             try
             {
-                var (start, limits) = await SeedAsync(board, sessionId, issueNumber, mayMerge).ConfigureAwait(false);
+                var (start, limits) = await SeedAsync(board, sessionId, issueNumber, mayMerge, run, flowVersion, f => Entered(key, f)).ConfigureAwait(false);
                 var flow = await TicketWorkflow.RunAsync(new BoardTicketSteps(tasks, scopes, board, pat, planLimits),
                         start, limits.ChecksTimeout, limits.ChecksPoll, CancellationToken.None)
                     .ConfigureAwait(false);
@@ -56,29 +80,68 @@ public sealed class TicketWorkflowRunner(IServiceScopeFactory scopes, BoardTaskS
             finally
             {
                 _running.TryRemove(key, out _);
+                _live.TryRemove(key, out _);
                 gate.TrySetResult();
+                Notify(board.TenantId);
             }
         });
+        Notify(board.TenantId);
         return true;
     }
 
+    private void Entered((string Tenant, Guid Session) key, TicketFlow flow)
+    {
+        if (_live.TryGetValue(key, out var live))
+        {
+            _live[key] = live with { StepId = flow.StepId, Step = flow.Step, Since = DateTimeOffset.UtcNow };
+        }
+        Notify(key.Tenant);
+    }
+
+    private void Notify(string tenantId)
+    {
+        try
+        {
+            Changed?.Invoke(tenantId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "A ticket flow view failed to refresh");
+        }
+    }
+
     // The tenant's bounds now, and the flow's round counter from the task's persisted fix rounds.
-    private async Task<(TicketFlow Flow, AutopilotLimits Limits)> SeedAsync(WorkspaceEntity board, Guid sessionId, int issueNumber, bool mayMerge)
+    private async Task<(TicketFlow Flow, AutopilotLimits Limits)> SeedAsync(WorkspaceEntity board, Guid sessionId, int issueNumber, bool mayMerge,
+        TicketFlowPlan plan, int flowVersion, Action<TicketFlow> onStep)
     {
         using var scope = scopes.CreateScope();
         var limits = await AutopilotSettings.ReadLimitsAsync(scope.ServiceProvider.GetRequiredService<ISettings>(), board.TenantId).ConfigureAwait(false);
         var task = (await scope.ServiceProvider.GetRequiredService<ISessionRepository>().ListForTenantAsync(board.TenantId).ConfigureAwait(false))
             .FirstOrDefault(s => s.Id == sessionId);
-        return (Seed(board.TenantId, board.Id, sessionId, issueNumber, mayMerge, task?.FixRounds ?? 0, limits), limits);
+        return (Seed(board.TenantId, board.Id, sessionId, issueNumber, mayMerge, task?.FixRounds ?? 0, limits, plan, flowVersion, onStep), limits);
     }
 
-    /// <summary>A ticket's flow, its rounds counted from <paramref name="persistedFixRounds"/> under <paramref name="limits"/>.</summary>
-    internal static TicketFlow Seed(string tenantId, Guid boardId, Guid sessionId, int issueNumber, bool mayMerge, int persistedFixRounds, AutopilotLimits limits) =>
-        new(tenantId, boardId, sessionId, issueNumber, mayMerge) { Round = Math.Max(0, persistedFixRounds), MaxRounds = limits.MaxFixRounds };
+    /// <summary>A ticket's flow, its rounds counted from <paramref name="persistedFixRounds"/> under <paramref name="limits"/>,
+    /// running <paramref name="plan"/> (the default flow when null) — the ticket flow snapshotted when it started.</summary>
+    internal static TicketFlow Seed(string tenantId, Guid boardId, Guid sessionId, int issueNumber, bool mayMerge, int persistedFixRounds, AutopilotLimits limits,
+        TicketFlowPlan? plan = null, int flowVersion = 0, Action<TicketFlow>? onStep = null) =>
+        new(tenantId, boardId, sessionId, issueNumber, mayMerge)
+        {
+            Round = Math.Max(0, persistedFixRounds),
+            MaxRounds = limits.MaxFixRounds,
+            Plan = plan ?? TicketFlowPlan.Default,
+            FlowVersion = flowVersion,
+            OnStep = onStep,
+        };
 
     private async Task FinishAsync(WorkspaceEntity board, TicketFlow flow)
     {
         var steps = flow.Trail.Count == 0 ? "" : " (" + string.Join(" → ", flow.Trail) + ")";
+        // A ticket that ran a flow other than the built-in one says which, so the log reads true.
+        if (flow.FlowVersion > 0 || flow.Plan.Skipped.Count > 0)
+        {
+            steps += $" · ticket flow v{flow.FlowVersion}: {flow.Plan.Summary}";
+        }
         var line = flow.Stage switch
         {
             TicketStage.Merged => $"#{flow.IssueNumber} · MAF workflow: merged{steps}.",

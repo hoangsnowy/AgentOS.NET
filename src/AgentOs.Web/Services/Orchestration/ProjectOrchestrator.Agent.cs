@@ -317,7 +317,10 @@ public sealed partial class ProjectOrchestrator
         sb.Append("\nTasks in progress:\n");
         foreach (var task in planTasks)
         {
-            sb.Append('#').Append(task.IssueNumber).Append(' ').Append(task.Status).Append(", fix rounds used ").Append(task.FixRounds).Append('\n');
+            sb.Append('#').Append(task.IssueNumber).Append(' ').Append(task.Status).Append(", fix rounds used ").Append(task.FixRounds);
+            // Its ticket flow leaves steps out: the agent must not expect (or ask for) a review or test it won't get.
+            if (task.Flow.Skipped.Count > 0) { sb.Append(", ticket flow ").Append(task.Flow.Summary); }
+            sb.Append('\n');
             foreach (var c in task.OpenChanges)
             {
                 sb.Append("  PR #").Append(c.PrNumber).Append(": checks ").Append(c.Checks).Append(", review ").Append(c.Review)

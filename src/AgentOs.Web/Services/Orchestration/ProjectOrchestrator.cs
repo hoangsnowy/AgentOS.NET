@@ -119,7 +119,8 @@ public sealed partial class ProjectOrchestrator(
     AgentOs.Web.Services.Preview.PreviewService previews,
     TicketWorkflowRunner workflows,
     RetrospectiveService retrospectives,
-    IPlanLimits planLimits) : IDisposable
+    IPlanLimits planLimits,
+    TicketFlowService flows) : IDisposable
 {
     /// <inheritdoc />
     public void Dispose() => _oneAtATime.Dispose();
@@ -177,7 +178,10 @@ public sealed partial class ProjectOrchestrator(
             await CloseSupersededAsync(board, pat, sessions, repos, sp, ct).ConfigureAwait(false);
 
             // Proposed changes: merged ones are recorded; open ones get their check state. Every task carries its
-            // persisted fix rounds — the one counter the caps read, whichever engine sent the change back.
+            // persisted fix rounds — the one counter the caps read, whichever engine sent the change back — and its
+            // ticket flow (the version it started with, for its ticket's labels), so the rules skip what the flow skips.
+            var labels = TicketLabels(tickets);
+            var taskFlows = new Dictionary<int, EffectiveTicketFlow>();
             var planTasks = new List<PlanTask>();
             foreach (var s in sessions.Where(s => s.Status is "Failed" && !workflows.IsRunning(tenant, s.Id) && CutShortByPlanLimit(s, repos)))
             {
@@ -224,7 +228,8 @@ public sealed partial class ProjectOrchestrator(
                     var findings = testing == ChangeTesting.Rejected || review == ChangeReview.ChangesRequested ? r.Error : null;
                     open.Add(new PlanChange(r.Id, number, checks, report, testing, findings, merge, r.DefaultBranch, review));
                 }
-                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds));
+                var flow = await TaskFlowAsync(board, s.TicketFlowVersion, taskFlows, ct).ConfigureAwait(false);
+                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds) { Flow = flow.Definition.Resolve(LabelsOf(s, labels)) });
             }
 
             // Tickets: a ticket with any task that isn't closed is the person's or already handled — never doubled.
@@ -294,18 +299,25 @@ public sealed partial class ProjectOrchestrator(
                 var session = await tasks.CreateAsync(tenant, member, board.Id, ticket.Number, $"#{ticket.Number} {ticket.Title}", ticket.ItemNodeId,
                     ticket.Kind.ToString(), [new BoardTaskService.TaskRepo(ticket.RepoOwner!, ticket.RepoName!, curated?.DefaultBranch ?? "main", curated?.Id)],
                     onComputer, ticketType: ticket.Labels.FirstOrDefault(l => l.StartsWith("type:", StringComparison.OrdinalIgnoreCase)), ct: ct).ConfigureAwait(false);
+                // The ticket runs the board's ticket flow as it is now — snapshotted on the task, so a later change of the
+                // flow never changes a ticket under way (MAF workflow or, after a restart, the step-by-step passes).
+                var flow = await flows.ResolveAsync(tenant, board.Id, ct).ConfigureAwait(false);
+                LogRefused(board, flow);
+                await sp.GetRequiredService<ISessionRepository>().SetTicketFlowVersionForTenantAsync(tenant, session.Id, flow.Version, ct).ConfigureAwait(false);
+                var plan = flow.Definition.Resolve(ticket.Labels);
+                var flowNote = flow.Version == 0 && plan.Skipped.Count == 0 ? "" : $" · ticket flow v{flow.Version}: {plan.Summary}";
                 // A MAF workflow runs the ticket's whole agent flow (TicketWorkflow); step by step, the passes drive it.
                 var engine = await sp.GetRequiredService<AgentOs.Domain.Configuration.ISettings>()
                     .GetAsync(AgentOs.Modules.Pipeline.Agents.AutopilotSettings.TicketEngineKey, tenant, ct).ConfigureAwait(false);
                 if (AgentOs.Modules.Pipeline.Agents.AutopilotSettings.UsesMafWorkflow(engine.Value)
-                    && workflows.Start(board, pat, session.Id, start.Number, ParseMode(board.Autopilot) == AutopilotMode.BuildAndMerge))
+                    && workflows.Start(board, pat, session.Id, start.Number, ParseMode(board.Autopilot) == AutopilotMode.BuildAndMerge, plan, flow.Version))
                 {
-                    log.Add(tenant, board.Id, start.Why + (onComputer ? " (on your computer)" : " (on our servers)") + " — a MAF workflow runs it.");
+                    log.Add(tenant, board.Id, start.Why + (onComputer ? " (on your computer)" : " (on our servers)") + " — a MAF workflow runs it" + flowNote + ".");
                     break;
                 }
                 var started = await tasks.StartAsync(tenant, session.Id, ct: ct).ConfigureAwait(false);
                 log.Add(tenant, board.Id, started == TaskStart.Started
-                    ? start.Why + (onComputer ? " (on your computer)" : " (on our servers)")
+                    ? start.Why + (onComputer ? " (on your computer)" : " (on our servers)") + flowNote
                     : $"Couldn't start #{start.Number}: {started}.");
                 break;
             }
@@ -444,6 +456,41 @@ public sealed partial class ProjectOrchestrator(
         var deps = TicketDependencies.Parse(body);
         _deps[key] = (DateTimeOffset.UtcNow, deps);
         return deps;
+    }
+
+    // Each ticket's labels by (repo, number) — what a task's ticket flow is resolved for.
+    internal static Dictionary<(string Owner, string Repo, int Number), IReadOnlyList<string>> TicketLabels(IReadOnlyList<BoardTicket> tickets)
+    {
+        var map = new Dictionary<(string, string, int), IReadOnlyList<string>>();
+        foreach (var t in tickets.Where(t => t.Number.HasValue && t.RepoOwner is not null && t.RepoName is not null))
+        {
+            map.TryAdd((t.RepoOwner!, t.RepoName!, t.Number.GetValueOrDefault()), t.Labels);
+        }
+        return map;
+    }
+
+    // A task's ticket labels now; without its ticket on the board, the type label it was created with.
+    internal static IReadOnlyList<string> LabelsOf(RemoteSessionEntity task, IReadOnlyDictionary<(string Owner, string Repo, int Number), IReadOnlyList<string>> labels) =>
+        task is { IssueNumber: { } n, RepoOwner: { } o, RepoName: { } r } && labels.TryGetValue((o, r, n), out var l) ? l
+        : task.TicketType is { Length: > 0 } type ? [type] : [];
+
+    // The flow a task runs (the version it started with), once per version per pass.
+    private async Task<EffectiveTicketFlow> TaskFlowAsync(WorkspaceEntity board, int? snapshot, Dictionary<int, EffectiveTicketFlow> memo, CancellationToken ct)
+    {
+        var key = snapshot ?? -1;
+        if (memo.TryGetValue(key, out var known)) { return known; }
+        var flow = await flows.ForTaskAsync(board.TenantId, board.Id, snapshot, ct).ConfigureAwait(false);
+        LogRefused(board, flow);
+        memo[key] = flow;
+        return flow;
+    }
+
+    private readonly ConcurrentDictionary<(Guid Board, string Why), bool> _refusedLogged = new();
+
+    // A stored flow that breaks a safety rule runs as the built-in one: said once per board in the Autopilot log.
+    private void LogRefused(WorkspaceEntity board, EffectiveTicketFlow flow)
+    {
+        if (flow.Refused is { } why && _refusedLogged.TryAdd((board.Id, why), true)) { log.Add(board.TenantId, board.Id, why); }
     }
 
     private static int? PrNumber(string? url)

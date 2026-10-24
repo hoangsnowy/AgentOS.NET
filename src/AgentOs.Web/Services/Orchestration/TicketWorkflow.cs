@@ -1,8 +1,11 @@
 // One ticket's whole agent flow as a Microsoft Agent Framework Workflow: the Autopilot Orchestrator agent decides
-// WHICH ticket starts; this graph then runs it — Coding → checks → Reviewer → Testing → merge — routing each verdict
-// along a conditional edge (red checks, conflicts, requested changes and failed acceptance go back to the Coding agent,
-// bounded by the same fix rounds the rules use — Settings › Autopilot, counted from the task's persisted FixRounds, so
-// the cap is the true total across engines and restarts). Each step is one of the existing agents (ITicketSteps — the Board's
+// WHICH ticket starts; this graph then runs it. The graph is built from the ticket flow (ADR-0016 — the definition the
+// owner edits in Workflow › Ticket flow, Code → Checks → Review → Test → Merge by default), resolved for the ticket's
+// labels: one executor per step the ticket runs, a "pass" edge to the next one, a "fail" edge back to Code for every step
+// that can send a change back (red checks, conflicts, requested changes and failed acceptance), bounded by the same fix
+// rounds the rules use — Settings › Autopilot, counted from the task's persisted FixRounds, so the cap is the true total
+// across engines and restarts. A plan that breaks a safety invariant is never built: the default flow runs instead.
+// Each step is one of the existing agents (ITicketSteps — the Board's
 // BoardTicketSteps in production), so governance, metrics (Insights) and evidence on the PR are unchanged. When the
 // graph ends without a merge — "needs a person", or an agent that couldn't run — the task is handed back to the
 // Orchestrator agent and the step-by-step rules, which also pick up any flow a restart cut short. A member's plan limit
@@ -14,6 +17,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Workspaces;
+using AgentOs.Modules.Pipeline.Agents;
 using AgentOs.Web.Services.BoardTasks;
 using Microsoft.Agents.AI.Workflows;
 
@@ -42,6 +46,8 @@ public enum TicketStage
     Stopped,
     /// <summary>The member's AI plan hit its limit — handed back; Autopilot picks it up after the reset.</summary>
     PlanLimited,
+    /// <summary>A step of a kind added later (e.g. a design gate) passed: on to the next step.</summary>
+    Passed,
 }
 
 /// <summary>The state a ticket's workflow threads along every edge.</summary>
@@ -64,6 +70,28 @@ public sealed class TicketFlow(string tenantId, Guid boardId, Guid sessionId, in
     public string? Reason { get; set; }
     /// <summary>The steps taken, for the Autopilot log.</summary>
     public List<string> Trail { get; } = [];
+
+    /// <summary>The steps this ticket runs — its ticket flow resolved for its labels, snapshotted when it started.</summary>
+    public TicketFlowPlan Plan { get; init; } = TicketFlowPlan.Default;
+
+    /// <summary>The ticket flow version <see cref="Plan"/> came from (0 = the built-in flow).</summary>
+    public int FlowVersion { get; init; }
+
+    /// <summary>The step running now (its node id), null before the first.</summary>
+    public string? StepId { get; private set; }
+
+    /// <summary>The kind of the step running now.</summary>
+    public TicketStepKind? Step { get; private set; }
+
+    /// <summary>Told whenever a step starts (the Workflow › Ticket flow view highlights it).</summary>
+    public Action<TicketFlow>? OnStep { get; init; }
+
+    internal void Enter(TicketFlowNode node)
+    {
+        StepId = node.Id;
+        Step = node.Kind;
+        OnStep?.Invoke(this);
+    }
 
     /// <summary>Send the change back to the Coding agent with <paramref name="change"/> — or stop when the rounds are used up.</summary>
     public TicketFlow SendBack(string what, string change)
@@ -130,49 +158,79 @@ public interface ITicketSteps
 /// <summary>Builds and runs a ticket's MAF workflow.</summary>
 public static class TicketWorkflow
 {
-    /// <summary>The graph.</summary>
-    public static Workflow Build(ITicketSteps steps, TimeSpan checksTimeout, TimeSpan pollInterval)
+    /// <summary>The default flow's graph (Code → Checks → Review → Test → Merge).</summary>
+    public static Workflow Build(ITicketSteps steps, TimeSpan checksTimeout, TimeSpan pollInterval) =>
+        Build(steps, TicketFlowPlan.Default, checksTimeout, pollInterval);
+
+    /// <summary>The graph for <paramref name="plan"/> — the steps one ticket runs. A plan that breaks a safety invariant
+    /// (<see cref="TicketFlowPlan.SafetyProblem"/>) is never built: the default flow's graph is.</summary>
+    public static Workflow Build(ITicketSteps steps, TicketFlowPlan plan, TimeSpan checksTimeout, TimeSpan pollInterval)
     {
         ArgumentNullException.ThrowIfNull(steps);
-        var code = new CodeExecutor(steps);
-        var checks = new ChecksExecutor(steps, checksTimeout, pollInterval);
-        var review = new ReviewExecutor(steps);
-        var test = new TestExecutor(steps);
-        var merge = new MergeExecutor(steps);
+        ArgumentNullException.ThrowIfNull(plan);
+        var nodes = (plan.SafetyProblem() is null ? plan : TicketFlowPlan.Default).Steps;
+        var executors = nodes.Select(n => Create(n, steps, checksTimeout, pollInterval)).ToList();
+        var code = executors[0];
         var done = new DoneExecutor();
-        return new WorkflowBuilder(code)
-            .AddEdge(code, checks, (TicketFlow? f) => f?.Stage == TicketStage.Coded)
-            .AddEdge(code, done, (TicketFlow? f) => f is not null && f.Stage != TicketStage.Coded)
-            .AddEdge(checks, code, (TicketFlow? f) => f?.Stage == TicketStage.Fix)
-            .AddEdge(checks, review, (TicketFlow? f) => f?.Stage == TicketStage.Green)
-            .AddEdge(checks, done, (TicketFlow? f) => f is not null && f.Stage is not (TicketStage.Fix or TicketStage.Green))
-            .AddEdge(review, code, (TicketFlow? f) => f?.Stage == TicketStage.Fix)
-            .AddEdge(review, test, (TicketFlow? f) => f?.Stage == TicketStage.Approved)
-            .AddEdge(review, done, (TicketFlow? f) => f is not null && f.Stage is not (TicketStage.Fix or TicketStage.Approved))
-            .AddEdge(test, code, (TicketFlow? f) => f?.Stage == TicketStage.Fix)
-            .AddEdge(test, merge, (TicketFlow? f) => f?.Stage == TicketStage.Accepted)
-            .AddEdge(test, done, (TicketFlow? f) => f is not null && f.Stage is not (TicketStage.Fix or TicketStage.Accepted))
-            .AddEdge(merge, done)
-            .WithOutputFrom(done)
-            .Build();
+        var builder = new WorkflowBuilder(code);
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            var node = nodes[i];
+            var from = executors[i];
+            if (i == nodes.Count - 1)
+            {
+                builder.AddEdge(from, done);
+                continue;
+            }
+            var passed = PassStage(node.Kind);
+            var backToCode = node.Info.CanSendBack;
+            builder.AddEdge(from, executors[i + 1], (TicketFlow? f) => f?.Stage == passed);
+            if (backToCode) { builder.AddEdge(from, code, (TicketFlow? f) => f?.Stage == TicketStage.Fix); }
+            builder.AddEdge(from, done, (TicketFlow? f) => f is not null && f.Stage != passed && !(backToCode && f.Stage == TicketStage.Fix));
+        }
+        return builder.WithOutputFrom(done).Build();
     }
 
-    /// <summary>Run <paramref name="flow"/> to its end; returns the final state.</summary>
+    /// <summary>Run <paramref name="flow"/> (its <see cref="TicketFlow.Plan"/>) to its end; returns the final state.</summary>
     public static async Task<TicketFlow> RunAsync(ITicketSteps steps, TicketFlow flow, TimeSpan checksTimeout, TimeSpan pollInterval, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(flow);
-        var run = await InProcessExecution.RunAsync(Build(steps, checksTimeout, pollInterval), flow, cancellationToken: ct).ConfigureAwait(false);
+        var run = await InProcessExecution.RunAsync(Build(steps, flow.Plan, checksTimeout, pollInterval), flow, cancellationToken: ct).ConfigureAwait(false);
         return run.NewEvents.OfType<WorkflowOutputEvent>().Select(e => e.Data).OfType<TicketFlow>().LastOrDefault() ?? flow;
     }
+
+    // The stage a step leaves behind when it passed — what its "pass" edge reads.
+    private static TicketStage PassStage(TicketStepKind kind) => kind switch
+    {
+        TicketStepKind.Code => TicketStage.Coded,
+        TicketStepKind.Checks => TicketStage.Green,
+        TicketStepKind.Review => TicketStage.Approved,
+        TicketStepKind.Test => TicketStage.Accepted,
+        TicketStepKind.Merge => TicketStage.Merged,
+        _ => TicketStage.Passed,
+    };
+
+    // One executor per step kind — a new kind (TicketStepKinds) adds its executor here.
+    private static Executor<TicketFlow, TicketFlow> Create(TicketFlowNode node, ITicketSteps steps, TimeSpan checksTimeout, TimeSpan pollInterval) =>
+        node.Kind switch
+        {
+            TicketStepKind.Code => new CodeExecutor(node, steps),
+            TicketStepKind.Checks => new ChecksExecutor(node, steps, checksTimeout, pollInterval),
+            TicketStepKind.Review => new ReviewExecutor(node, steps),
+            TicketStepKind.Test => new TestExecutor(node, steps),
+            TicketStepKind.Merge => new MergeExecutor(node, steps),
+            _ => throw new NotSupportedException($"No executor for the {node.Kind} step."),
+        };
 
     // The member's plan is at its limit: stop before an agent runs (and after one ran into it) — a round spent then
     // would be spent on nothing.
     private static TicketFlow? PlanPause(ITicketSteps steps, TicketFlow f) => steps.PlanLimited(f) is { } why ? f.PausedForPlan(why) : null;
 
-    private sealed class CodeExecutor(ITicketSteps steps) : Executor<TicketFlow, TicketFlow>("code")
+    private sealed class CodeExecutor(TicketFlowNode node, ITicketSteps steps) : Executor<TicketFlow, TicketFlow>(node.Id)
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            f.Enter(node);
             if (PlanPause(steps, f) is { } before) { return before; }
             var run = await steps.CodeAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Coding agent couldn't start: {run.Status}."); }
@@ -190,10 +248,11 @@ public static class TicketWorkflow
         }
     }
 
-    private sealed class ChecksExecutor(ITicketSteps steps, TimeSpan timeout, TimeSpan poll) : Executor<TicketFlow, TicketFlow>("checks")
+    private sealed class ChecksExecutor(TicketFlowNode node, ITicketSteps steps, TimeSpan timeout, TimeSpan poll) : Executor<TicketFlow, TicketFlow>(node.Id)
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            f.Enter(node);
             var deadline = DateTimeOffset.UtcNow + timeout;
             do
             {
@@ -235,10 +294,11 @@ public static class TicketWorkflow
         }
     }
 
-    private sealed class ReviewExecutor(ITicketSteps steps) : Executor<TicketFlow, TicketFlow>("review")
+    private sealed class ReviewExecutor(TicketFlowNode node, ITicketSteps steps) : Executor<TicketFlow, TicketFlow>(node.Id)
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            f.Enter(node);
             if (PlanPause(steps, f) is { } before) { return before; }
             var run = await steps.ReviewAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Reviewer agent couldn't start: {run.Status}."); }
@@ -260,10 +320,11 @@ public static class TicketWorkflow
         }
     }
 
-    private sealed class TestExecutor(ITicketSteps steps) : Executor<TicketFlow, TicketFlow>("test")
+    private sealed class TestExecutor(TicketFlowNode node, ITicketSteps steps) : Executor<TicketFlow, TicketFlow>(node.Id)
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            f.Enter(node);
             if (PlanPause(steps, f) is { } before) { return before; }
             var run = await steps.TestAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Testing agent couldn't start: {run.Status}."); }
@@ -285,10 +346,11 @@ public static class TicketWorkflow
         }
     }
 
-    private sealed class MergeExecutor(ITicketSteps steps) : Executor<TicketFlow, TicketFlow>("merge")
+    private sealed class MergeExecutor(TicketFlowNode node, ITicketSteps steps) : Executor<TicketFlow, TicketFlow>(node.Id)
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
         {
+            f.Enter(node);
             if (!f.MayMerge)
             {
                 f.Stage = TicketStage.ReadyToMerge;

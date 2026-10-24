@@ -44,6 +44,10 @@ public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IR
     /// <summary>Its last run was cut short by the member's plan limit (nothing failed): it resumes once the plan
     /// resets, without spending a fix round or a retry.</summary>
     public bool CutShortByPlanLimit { get; init; }
+
+    /// <summary>The steps this task runs — its ticket flow (the version it started with) resolved for its ticket's
+    /// labels. The rules make no move for a step it passes through (no review when Review is off for it).</summary>
+    public TicketFlowPlan Flow { get; init; } = TicketFlowPlan.Default;
 }
 
 /// <summary>One thing to do, and the sentence that explains it.</summary>
@@ -164,7 +168,8 @@ public static class AutopilotPlanner
                 running++;
                 continue;
             }
-            if (task.OpenChanges.Any(c => c.Review == ChangeReview.NotReviewed))
+            // The task's ticket flow decides which of review and testing it gets (at least one — a safety invariant).
+            if (task.Flow.Runs(TicketStepKind.Review) && task.OpenChanges.Any(c => c.Review == ChangeReview.NotReviewed))
             {
                 // A review only reads the code: no app, no ports — just a free slot and the member's computer.
                 if (!canTest || running >= maxParallel) { continue; }
@@ -191,7 +196,7 @@ public static class AutopilotPlanner
                 running++;
                 continue;
             }
-            if (task.OpenChanges.Any(c => c.Testing == ChangeTesting.Untested))
+            if (task.Flow.Runs(TicketStepKind.Test) && task.OpenChanges.Any(c => c.Testing == ChangeTesting.Untested))
             {
                 if (!canTest || running >= maxParallel || testing >= maxParallelTests) { continue; }
                 actions.Add(new AutopilotAction.RunTests(task.SessionId, task.IssueNumber,
@@ -213,7 +218,7 @@ public static class AutopilotPlanner
                 foreach (var change in task.OpenChanges)
                 {
                     actions.Add(new AutopilotAction.Merge(task.SessionId, task.IssueNumber, change.RepoId, change.PrNumber,
-                        $"Merged #{task.IssueNumber}'s change (PR #{change.PrNumber}) — checks green and acceptance testing passed."));
+                        $"Merged #{task.IssueNumber}'s change (PR #{change.PrNumber}) — {Passed(task.Flow)}."));
                 }
             }
         }
@@ -232,6 +237,16 @@ public static class AutopilotPlanner
             running++;
         }
         return actions;
+    }
+
+    // What a change passed before it merges, as its ticket flow ran it ("checks green, review approved and acceptance
+    // testing passed").
+    private static string Passed(TicketFlowPlan flow)
+    {
+        var passed = new List<string> { "checks green" };
+        if (flow.Runs(TicketStepKind.Review)) { passed.Add("review approved"); }
+        if (flow.Runs(TicketStepKind.Test)) { passed.Add("acceptance testing passed"); }
+        return passed.Count == 1 ? passed[0] : string.Join(", ", passed.Take(passed.Count - 1)) + " and " + passed[^1];
     }
 
     /// <summary>True for a move that occupies a work slot on the member's computer.</summary>
