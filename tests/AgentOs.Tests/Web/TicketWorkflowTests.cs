@@ -251,6 +251,90 @@ public sealed class TicketWorkflowTests
         steps.CodeRequests.ShouldBeEmpty();
     }
 
+    // ── The graph is built from the ticket flow (ADR-0016) ──
+
+    private static Task<TicketFlow> RunPlan(ScriptedSteps steps, TicketFlowPlan plan, List<string>? entered = null) =>
+        TicketWorkflow.RunAsync(steps, new TicketFlow("t", Guid.NewGuid(), Guid.NewGuid(), 15, true)
+        {
+            Plan = plan,
+            FlowVersion = 4,
+            OnStep = f => entered?.Add(f.StepId!),
+        }, TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(1), CancellationToken.None);
+
+    private static TicketFlowDefinition ReviewSkippedForChores() =>
+        TicketFlowDefinition.Default.With(TicketFlowDefinition.Default.Find("review")! with { SkipLabels = ["type:chore"] });
+
+    [Fact]
+    public async Task CustomFlow_ReviewSkippedForAChore_GoesFromChecksStraightToTest()
+    {
+        var steps = new ScriptedSteps();
+        steps.Checks.Enqueue(Green);
+        steps.Tests.Enqueue("Accepted");
+        var entered = new List<string>();
+
+        var flow = await RunPlan(steps, ReviewSkippedForChores().Resolve(["type:chore"]), entered);
+
+        flow.Stage.ShouldBe(TicketStage.Merged);
+        flow.Trail.ShouldBe(["coded", "checks green", "acceptance passed", "merged"]);
+        entered.ShouldBe(["code", "checks", "test", "merge"]);
+        steps.Reviews.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task CustomFlow_ReviewSkippedForChores_StillReviewsAFeature()
+    {
+        var steps = new ScriptedSteps();
+        steps.Checks.Enqueue(Green);
+        steps.Reviews.Enqueue("Reviewed");
+        steps.Tests.Enqueue("Accepted");
+
+        (await RunPlan(steps, ReviewSkippedForChores().Resolve(["type:feature"]))).Trail
+            .ShouldBe(["coded", "checks green", "review approved", "acceptance passed", "merged"]);
+    }
+
+    [Fact]
+    public async Task CustomFlow_TestOffForDocs_MergesAfterReview_AndFailedReviewStillGoesBackToCode()
+    {
+        var def = TicketFlowDefinition.Default.With(TicketFlowDefinition.Default.Find("test")! with { SkipLabels = ["type:docs"] });
+        TicketFlowValidator.Validate(def).ShouldBeEmpty();
+        var steps = new ScriptedSteps();
+        steps.Checks.Enqueue(Green);
+        steps.Checks.Enqueue(Green);
+        steps.Reviews.Enqueue("ChangesRequested");
+        steps.Reviews.Enqueue("Reviewed");
+
+        var flow = await RunPlan(steps, def.Resolve(["type:docs"]));
+
+        flow.Stage.ShouldBe(TicketStage.Merged);
+        flow.Round.ShouldBe(1);
+        flow.Trail.ShouldBe(["coded", "checks green", "code review asked for changes → back to Coding (try 1 of 3)", "coded", "checks green", "review approved", "merged"]);
+        steps.CodeRequests[1]!.ShouldContain("off-by-one");
+    }
+
+    [Fact]
+    public async Task UnsafePlan_IsNeverBuilt_TheDefaultFlowRuns()
+    {
+        var d = TicketFlowDefinition.Default;
+        var unsafePlan = new TicketFlowPlan([d.Nodes[0], d.Nodes[1], d.Nodes[4]], [d.Nodes[2], d.Nodes[3]]); // no Review, no Test
+        var steps = new ScriptedSteps();
+        steps.Checks.Enqueue(Green);
+        steps.Reviews.Enqueue("Reviewed");
+        steps.Tests.Enqueue("Accepted");
+
+        (await RunPlan(steps, unsafePlan)).Trail.ShouldBe(["coded", "checks green", "review approved", "acceptance passed", "merged"]);
+    }
+
+    [Fact]
+    public void Seed_SnapshotsThePlanAndVersion()
+    {
+        var plan = ReviewSkippedForChores().Resolve(["type:chore"]);
+        var flow = TicketWorkflowRunner.Seed("t", Guid.NewGuid(), Guid.NewGuid(), 15, true, 1, AutopilotLimits.Default, plan, 7);
+
+        flow.Plan.ShouldBeSameAs(plan);
+        flow.FlowVersion.ShouldBe(7);
+        flow.Round.ShouldBe(1);
+    }
+
     [Fact]
     public async Task BoardWithoutAutoMerge_EndsReadyForAPerson()
     {

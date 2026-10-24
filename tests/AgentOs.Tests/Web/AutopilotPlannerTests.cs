@@ -86,6 +86,76 @@ public sealed class AutopilotPlannerTests
     private static PlanTask Task(int issue, string status, params PlanChange[] changes) =>
         new(Guid.NewGuid(), issue, status, changes, 0);
 
+    // ── The task's ticket flow (ADR-0016): the rules make no move for a step it leaves out ──
+
+    private static TicketFlowPlan Plan(string skip, string label) =>
+        TicketFlowDefinition.Default.With(TicketFlowDefinition.Default.Find(skip)! with { SkipLabels = [label] }).Resolve([label]);
+
+    [Fact]
+    public void ReviewSkipped_AFreshGreenChange_GoesStraightToTesting()
+    {
+        var fresh = Task(5, "Done", new PlanChange(Guid.NewGuid(), 40, PrChecksState.Passed, null, Review: ChangeReview.NotReviewed))
+            with { Flow = Plan("review", "type:chore") };
+
+        var actions = AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [fresh]);
+
+        actions.OfType<AutopilotAction.RunReview>().ShouldBeEmpty();
+        actions.ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.RunTests>().IssueNumber.ShouldBe(5);
+    }
+
+    [Fact]
+    public void ReviewOn_AFreshGreenChange_IsReviewedFirst()
+    {
+        var fresh = Task(5, "Done", new PlanChange(Guid.NewGuid(), 40, PrChecksState.Passed, null, Review: ChangeReview.NotReviewed));
+
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [fresh]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.RunReview>();
+    }
+
+    [Fact]
+    public void TestSkipped_AReviewedChange_Merges_SayingWhatItPassed()
+    {
+        var reviewed = Task(6, "Done", new PlanChange(Guid.NewGuid(), 41, PrChecksState.Passed, null, ChangeTesting.Untested, Review: ChangeReview.Approved))
+            with { Flow = Plan("test", "type:docs") };
+
+        var merge = AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [reviewed]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.Merge>();
+
+        merge.Why.ShouldContain("checks green and review approved");
+        merge.Why.ShouldNotContain("acceptance");
+    }
+
+    [Fact]
+    public void DefaultFlow_AReviewedButUntestedChange_IsTested_NotMerged()
+    {
+        var reviewed = Task(6, "Done", new PlanChange(Guid.NewGuid(), 41, PrChecksState.Passed, null, ChangeTesting.Untested, Review: ChangeReview.Approved));
+
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [reviewed]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.RunTests>();
+        var accepted = reviewed with { OpenChanges = [reviewed.OpenChanges[0] with { Testing = ChangeTesting.Accepted }] };
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [accepted]).ShouldHaveSingleItem().ShouldBeOfType<AutopilotAction.Merge>()
+            .Why.ShouldContain("checks green, review approved and acceptance testing passed");
+    }
+
+    [Fact]
+    public void WithinCaps_StaysTheOuterGuard_ForFlowMoves()
+    {
+        var a = Task(1, "Done", new PlanChange(Guid.NewGuid(), 40, PrChecksState.Passed, null)) with { Flow = Plan("review", "type:chore") };
+        var b = Task(2, "Done", new PlanChange(Guid.NewGuid(), 41, PrChecksState.Passed, null)) with { Flow = Plan("review", "type:chore") };
+        var moves = AutopilotPlanner.Decide(AutopilotMode.Build, [], [a, b], limits: AutopilotLimits.Default.Uncapped);
+
+        moves.OfType<AutopilotAction.RunTests>().Count().ShouldBe(2);
+        AutopilotPlanner.WithinCaps(moves, 0, 0, AutopilotLimits.Default).OfType<AutopilotAction.RunTests>().ShouldHaveSingleItem(); // 1 acceptance run at once
+    }
+
+    [Fact]
+    public void LabelsOf_ReadsTheTicketsLabels_ElseTheTypeItWasCreatedWith()
+    {
+        var tickets = new[] { new BoardTicket("n1", 9, "t", "OPEN", BoardTicketKind.Issue, "o", "r", "u", ["type:chore", "ai:ready"], null, null) };
+        var labels = ProjectOrchestrator.TicketLabels(tickets);
+
+        ProjectOrchestrator.LabelsOf(new() { IssueNumber = 9, RepoOwner = "o", RepoName = "r" }, labels).ShouldBe(["type:chore", "ai:ready"]);
+        ProjectOrchestrator.LabelsOf(new() { IssueNumber = 10, RepoOwner = "o", RepoName = "r", TicketType = "type:docs" }, labels).ShouldBe(["type:docs"]);
+        ProjectOrchestrator.LabelsOf(new() { IssueNumber = 11 }, labels).ShouldBeEmpty();
+    }
+
     private static PlanChange Pr(PrChecksState checks, int number = 30, string? report = "backend failed") =>
         new(Guid.NewGuid(), number, checks, checks == PrChecksState.Failed ? report : null);
 
