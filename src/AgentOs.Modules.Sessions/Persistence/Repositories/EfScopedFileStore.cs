@@ -24,14 +24,17 @@ internal sealed class EfScopedFileStore(SessionsDbContext db) : IScopedFileStore
         {
             throw new InvalidOperationException("A ticket file needs a tenant.");
         }
+        // One file per path KEY (case-insensitive): "LOGO.PNG" after "Logo.png" replaces it, as the unique index demands.
+        var key = TicketFilePath.Key(info.Path);
         var row = await db.TicketFiles.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(f => f.TenantId == info.TenantId && f.ScopeKey == info.ScopeKey && f.Path == info.Path, ct)
+            .FirstOrDefaultAsync(f => f.TenantId == info.TenantId && f.ScopeKey == info.ScopeKey && f.PathKey == key, ct)
             .ConfigureAwait(false);
         if (row is null)
         {
-            row = new TicketFileEntity { Id = info.Id == Guid.Empty ? Guid.NewGuid() : info.Id, TenantId = info.TenantId, ScopeKey = info.ScopeKey, Path = info.Path };
+            row = new TicketFileEntity { Id = info.Id == Guid.Empty ? Guid.NewGuid() : info.Id, TenantId = info.TenantId, ScopeKey = info.ScopeKey, PathKey = key };
             db.TicketFiles.Add(row);
         }
+        row.Path = info.Path;
         row.Content = content;
         row.Size = content.LongLength;
         row.Sha256 = info.Sha256;
@@ -51,8 +54,9 @@ internal sealed class EfScopedFileStore(SessionsDbContext db) : IScopedFileStore
 
     public async Task<StoredFile?> GetAsync(string tenantId, string scopeKey, string path, CancellationToken ct = default)
     {
+        var key = TicketFilePath.Key(path);
         var row = await db.TicketFiles.IgnoreQueryFilters().AsNoTracking()
-            .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.ScopeKey == scopeKey && f.Path == path, ct).ConfigureAwait(false);
+            .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.ScopeKey == scopeKey && f.PathKey == key, ct).ConfigureAwait(false);
         return row is null ? null : new StoredFile(ToInfo(row), row.Content);
     }
 
@@ -65,9 +69,12 @@ internal sealed class EfScopedFileStore(SessionsDbContext db) : IScopedFileStore
         return rows.Select(r => new StoredFile(ToInfo(r), r.Content)).ToList();
     }
 
-    public async Task<bool> DeleteAsync(string tenantId, string scopeKey, string path, CancellationToken ct = default) =>
-        await RemoveAsync(db.TicketFiles.IgnoreQueryFilters()
-            .Where(f => f.TenantId == tenantId && f.ScopeKey == scopeKey && f.Path == path), ct).ConfigureAwait(false) > 0;
+    public async Task<bool> DeleteAsync(string tenantId, string scopeKey, string path, CancellationToken ct = default)
+    {
+        var key = TicketFilePath.Key(path);
+        return await RemoveAsync(db.TicketFiles.IgnoreQueryFilters()
+            .Where(f => f.TenantId == tenantId && f.ScopeKey == scopeKey && f.PathKey == key), ct).ConfigureAwait(false) > 0;
+    }
 
     public Task<int> DeleteScopeAsync(string tenantId, string scopeKey, CancellationToken ct = default) =>
         RemoveAsync(db.TicketFiles.IgnoreQueryFilters().Where(f => f.TenantId == tenantId && f.ScopeKey == scopeKey), ct);

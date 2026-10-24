@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AgentOs.Modules.Sessions.Persistence.Migrations
 {
     [DbContext(typeof(SessionsDbContext))]
-    [Migration("20261024171752_AddTicketFiles")]
+    [Migration("20261024175355_AddTicketFiles")]
     partial class AddTicketFiles
     {
         /// <inheritdoc />
@@ -252,6 +252,11 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<string>("PathKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<string>("ScopeKey")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -280,7 +285,7 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "ScopeKey", "Path")
+                    b.HasIndex("TenantId", "ScopeKey", "PathKey")
                         .IsUnique();
 
                     b.ToTable("ticket_files", "sessions");

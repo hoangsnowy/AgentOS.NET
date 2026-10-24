@@ -26,15 +26,20 @@ internal static class TicketFilesPrompt
     /// checks the change against them.</summary>
     internal enum Use { Change, Check }
 
+    /// <summary>The helper the runner writes next to the files — the only copy the agent's scoped rules allow.</summary>
+    internal const string CopyHelper = ".agentos/bin/copy-in";
+
     /// <summary>The section for a run on a member's computer: the files are in <c>.agentos/files/</c> of the folder the
-    /// agent starts in. Empty when there are no files.</summary>
+    /// agent starts in, copied into the checkout with the runner's <c>copy-in</c> helper. Empty when there are no files.</summary>
     internal static string ForRunDirectory(IReadOnlyList<RunFile> files, Use use) =>
         files is { Count: > 0 }
             ? Section(files, use,
-                $"They are already on this computer, in `{RunFile.Folder}/` inside the folder you start in. Because of them "
-                + "that folder is not empty: clone the repository into a subfolder instead of into `.` "
-                + "(`git clone <url> repo`, then `cd repo`), and from there the files are in `../" + RunFile.Folder + "/`.",
-                $"cp ../{RunFile.Folder}/<path> <destination>")
+                $"They are already on this computer, in `{RunFile.Folder}/` inside the folder you start in (the run folder). "
+                + "Because of them that folder is not empty: clone the repository into a subfolder instead of into `.` "
+                + "(`git clone <url> repo`, then `cd repo`).",
+                $"from the run folder (`cd ..` back to it if you are inside the clone), one file at a time: "
+                + $"`sh {CopyHelper} {RunFile.Folder}/<path> repo/<destination in the repository>` — it is the only way to copy "
+                + "them; `cp` and other copy commands are not allowed")
             : string.Empty;
 
     /// <summary>The section for a server-driven run: the runner put the files in <paramref name="folder"/> on the
@@ -43,7 +48,8 @@ internal static class TicketFilesPrompt
         files is { Count: > 0 } && !string.IsNullOrWhiteSpace(folder)
             ? Section(files, use,
                 $"They are already on the computer you work on, in `{FilesPath(folder)}`.",
-                $"cp {FilesPath(folder)}/<path> <destination>")
+                // runner_shell commands pass the runner's own command policy and approval, not the CLI's scoped rules.
+                $"with `cp {FilesPath(folder)}/<path> <destination in the repository>`, `cp -r` for a folder")
             : string.Empty;
 
     private static string FilesPath(string folder) => folder.TrimEnd('/', '\\').Replace('\\', '/') + "/" + RunFile.Folder;
@@ -60,7 +66,7 @@ internal static class TicketFilesPrompt
             list.Append(CultureInfo.InvariantCulture, $"- … and {files.Count - MaxListed} more (list the folder to see them all)\n");
         }
         var how = use == Use.Change
-            ? $"Use them as the ticket says — for example copy a logo, pictures or a folder into the repository where the ticket asks (`{copy}`, `cp -r` for a folder) and commit them with your change. Never commit `{RunFile.Folder}` itself, and don't change the files unless the ticket asks."
+            ? $"Use them as the ticket says — for example copy a logo, pictures or a folder into the repository where the ticket asks, {copy} — and commit them with your change. Never commit `{RunFile.Folder}` itself, and don't change the files unless the ticket asks."
             : "Use them to check the change — for example that the change includes the attached logo or folder where the ticket asks. Don't change or commit them.";
         return string.Concat(
             "\n\n", Heading, "\n",

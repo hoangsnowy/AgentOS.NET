@@ -274,6 +274,8 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             {
                 return new RemoteExecResult(request.Id, false, string.Empty, "Couldn't receive the files attached to this ticket: " + refused);
             }
+            // The one way the agent may copy them into its checkout (the scoped rules allow exactly this script).
+            AgentOs.RemoteAgent.RunFiles.WriteCopyHelper(runDir);
         }
 
         var psi = new ProcessStartInfo(ResolveExecutable(cmd))

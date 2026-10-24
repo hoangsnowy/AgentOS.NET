@@ -77,7 +77,12 @@ internal static class RunFiles
             {
                 return $"Refused \"{f.Path}\": it would overwrite another file.";
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            // A link (symlink / junction) anywhere between the run directory and the file would carry the write
+            // elsewhere: checked on what exists before the folders are made, and again on the whole chain after.
+            var parent = Path.GetDirectoryName(target)!;
+            if (LinkOnTheWay(runDir, parent) is { } link) { return $"Refused \"{f.Path}\": \"{link}\" is a link."; }
+            Directory.CreateDirectory(parent);
+            if (LinkOnTheWay(runDir, parent) is { } after) { return $"Refused \"{f.Path}\": \"{after}\" is a link."; }
             if (await WriteOneAsync(target, i, f, read, ct).ConfigureAwait(false) is { } problem)
             {
                 TryDelete(target);
@@ -85,6 +90,103 @@ internal static class RunFiles
             }
         }
         return null;
+    }
+
+    /// <summary>The first existing folder from <paramref name="runDir"/>'s <c>.agentos</c> down to <paramref name="dir"/>
+    /// that is a reparse point (symlink, junction), or null when there is none.</summary>
+    internal static string? LinkOnTheWay(string runDir, string dir)
+    {
+        var top = Path.GetFullPath(Path.Join(runDir, ".agentos"));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var current = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar);
+        while (current.Length >= top.Length && current.StartsWith(top, comparison))
+        {
+            var info = new DirectoryInfo(current);
+            if (info.Exists && (info.Attributes.HasFlag(FileAttributes.ReparsePoint) || info.LinkTarget is not null)) { return current; }
+            if (string.Equals(current, top, comparison)) { break; }
+            current = Path.GetDirectoryName(current) ?? string.Empty;
+        }
+        return null;
+    }
+
+    // ── copy-in: the one way the agent copies a ticket file into its checkout ─────────────────────────────────────
+
+    /// <summary>Where the helper lives, relative to the run directory (the scoped allow rule names exactly this).</summary>
+    internal const string CopyHelper = ".agentos/bin/copy-in";
+
+    /// <summary>
+    /// The helper the agent may run (<c>sh .agentos/bin/copy-in &lt;src&gt; &lt;dst&gt;</c> — the only copy its scoped
+    /// rules allow; a bare <c>cp</c> rule would let it copy anywhere, e.g. onto <c>~/.ssh/authorized_keys</c>). A
+    /// constant of the runner, rewritten on every delivery — never content from the server or the ticket. It copies one
+    /// regular file from <c>.agentos/files/</c> to a destination inside the run directory (not under <c>.agentos/</c>),
+    /// refuses <c>.</c> / <c>..</c> segments, links on the way, and overwriting a file outside the cloned repository,
+    /// and makes missing folders inside the run directory only.
+    /// </summary>
+    internal const string CopyHelperScript = """
+        #!/bin/sh
+        # AgentOS.NET copy-in: copy one file attached to the ticket into this run's checkout.
+        # Written by the AgentOS.NET runner for this run; usage: sh .agentos/bin/copy-in <file> <destination>
+        set -eu
+        die() { echo "copy-in: $*" >&2; exit 1; }
+        [ "$#" -eq 2 ] || die "usage: sh .agentos/bin/copy-in .agentos/files/<file> <destination file inside the run folder>"
+        run=$(cd -P -- "$(dirname -- "$0")/../.." && pwd) || die "can't find the run folder"
+        files="$run/.agentos/files"
+        src=$1
+        dst=$2
+        case "$src" in ./*) src=${src#./} ;; esac
+        case "$dst" in ./*) dst=${dst#./} ;; esac
+        case "/$src/" in */../*|*/./*) die "refused: no . or .. in the file's path" ;; esac
+        case "/$dst/" in */../*|*/./*) die "refused: no . or .. in the destination" ;; esac
+        case "$dst" in ''|*/) die "refused: name the destination file, not a folder" ;; esac
+        # The source: a regular file (not a link) under .agentos/files.
+        [ -L "$src" ] && die "refused: $src is a link"
+        [ -f "$src" ] || die "refused: $src is not a file"
+        srcdir=$(cd -P -- "$(dirname -- "$src")" && pwd) || die "refused: $src"
+        case "$srcdir/" in "$files"/*) ;; *) die "refused: $src is not one of the ticket's files (.agentos/files)" ;; esac
+        # The destination and every existing folder above it: no links.
+        q=$dst
+        while :; do
+          [ -L "$q" ] && die "refused: $q is a link"
+          p=$(dirname -- "$q")
+          [ "$p" = "$q" ] && break
+          q=$p
+        done
+        [ -d "$dst" ] && die "refused: $dst is a folder — name the destination file"
+        # The nearest existing folder must be inside the run folder, and not under .agentos.
+        p=$(dirname -- "$dst")
+        while [ ! -d "$p" ]; do p=$(dirname -- "$p"); done
+        base=$(cd -P -- "$p" && pwd) || die "refused: $dst"
+        case "$base/" in "$run"/*) ;; *) die "refused: $dst is outside the run folder" ;; esac
+        case "$base/" in "$run/.agentos/"*) die "refused: $dst is inside .agentos" ;; esac
+        # An existing file may be replaced only inside the cloned repository (a folder with .git, below the run folder).
+        if [ -e "$dst" ]; then
+          r=$base
+          inrepo=no
+          while [ "$r" != "$run" ]; do
+            if [ -e "$r/.git" ]; then inrepo=yes; break; fi
+            r=$(dirname -- "$r")
+          done
+          [ "$inrepo" = yes ] || die "refused: $dst exists outside the cloned repository"
+        fi
+        mkdir -p -- "$(dirname -- "$dst")"
+        final=$(cd -P -- "$(dirname -- "$dst")" && pwd) || die "refused: $dst"
+        case "$final/" in "$run"/*) ;; *) die "refused: $dst is outside the run folder" ;; esac
+        case "$final/" in "$run/.agentos/"*) die "refused: $dst is inside .agentos" ;; esac
+        cp -- "$src" "$dst"
+        echo "copied $src -> $dst"
+        """;
+
+    /// <summary>(Re)write the copy-in helper of a run (LF line endings, never anything from the server).</summary>
+    internal static string WriteCopyHelper(string runDir)
+    {
+        var path = Path.GetFullPath(Path.Join(runDir, ".agentos", "bin", "copy-in"));
+        var bin = Path.GetDirectoryName(path)!;
+        if (LinkOnTheWay(runDir, bin) is { } link) { throw new IOException($"\"{link}\" is a link."); }
+        Directory.CreateDirectory(bin);
+        if (LinkOnTheWay(runDir, bin) is { } after) { throw new IOException($"\"{after}\" is a link."); }
+        if (File.Exists(path)) { File.Delete(path); }
+        File.WriteAllText(path, CopyHelperScript.ReplaceLineEndings("\n") + "\n", new System.Text.UTF8Encoding(false));
+        return path;
     }
 
     private static async Task<string?> WriteOneAsync(string target, int index, Entry f, Func<int, long, Task<Chunk?>> read, CancellationToken ct)

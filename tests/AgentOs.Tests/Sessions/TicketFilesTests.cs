@@ -164,6 +164,30 @@ public sealed class TicketFilesTests
         clash.Error!.ShouldContain("capitals");
     }
 
+    // The stores key a file by TicketFilePath.Key (invariant lower case), like the database's unique index: a second
+    // put with other capitals replaces the one file (and takes its spelling), never adds a twin.
+    [Fact]
+    public async Task Stores_LogoThenLOGO_AreOneFile_InMemoryAndEf()
+    {
+        var info = new StoredFileInfo(Guid.Empty, TenantA, Ticket, "Logo.png", 1, RunFile.Hash(Bytes("a")), "image/png", "Ann", DateTimeOffset.UtcNow);
+        var memory = new InMemoryScopedFileStore();
+        var options = new DbContextOptionsBuilder<SessionsDbContext>().UseInMemoryDatabase($"ticket-files-case-{Guid.NewGuid()}").Options;
+        await using var db = new SessionsDbContext(options);
+        foreach (var store in new IScopedFileStore[] { memory, new EfScopedFileStore(db) })
+        {
+            await store.PutAsync(info, Bytes("a"));
+            await store.PutAsync(info with { Path = "LOGO.PNG" }, Bytes("bb"));
+
+            var file = (await store.ListAsync(TenantA, Ticket)).ShouldHaveSingleItem();
+            file.Path.ShouldBe("LOGO.PNG");
+            file.Size.ShouldBe(2);
+            (await store.GetAsync(TenantA, Ticket, "logo.png"))!.Content.ShouldBe(Bytes("bb"));
+            (await store.DeleteAsync(TenantA, Ticket, "Logo.PNG")).ShouldBeTrue();
+            (await store.ListAsync(TenantA, Ticket)).ShouldBeEmpty();
+        }
+        TicketFilePath.Key("Art/Logo.PNG").ShouldBe("art/logo.png");
+    }
+
     [Fact]
     public async Task Files_AreStrictlyPerTenant()
     {

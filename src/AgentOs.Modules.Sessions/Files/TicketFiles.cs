@@ -40,7 +40,9 @@ internal sealed class TicketFiles(IServiceScopeFactory scopes, TimeProvider cloc
         var existing = await store.ListAsync(tenantId, scopeKey, ct).ConfigureAwait(false);
         var replaced = existing.FirstOrDefault(f => string.Equals(f.Path, normalized, StringComparison.Ordinal));
         // Windows (and macOS) treat "Logo.png" and "logo.png" as one file: two of them would collide on the runner.
-        if (replaced is null && existing.FirstOrDefault(f => string.Equals(f.Path, normalized, StringComparison.OrdinalIgnoreCase)) is { } twin)
+        // The store's unique key is TicketFilePath.Key; refuse here (in words) rather than silently rename the existing file.
+        var key = TicketFilePath.Key(normalized);
+        if (replaced is null && existing.FirstOrDefault(f => string.Equals(TicketFilePath.Key(f.Path), key, StringComparison.Ordinal)) is { } twin)
         {
             return new TicketFilePut(null, $"\"{twin.Path}\" is already attached — a name that differs only in capitals would be the same file on most computers.");
         }

@@ -20,6 +20,7 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                     TenantId = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
                     ScopeKey = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
                     Path = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    PathKey = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     Content = table.Column<byte[]>(type: "bytea", nullable: false),
                     Size = table.Column<long>(type: "bigint", nullable: false),
                     Sha256 = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
@@ -33,10 +34,10 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_ticket_files_TenantId_ScopeKey_Path",
+                name: "IX_ticket_files_TenantId_ScopeKey_PathKey",
                 schema: "sessions",
                 table: "ticket_files",
-                columns: new[] { "TenantId", "ScopeKey", "Path" },
+                columns: new[] { "TenantId", "ScopeKey", "PathKey" },
                 unique: true);
         }
 

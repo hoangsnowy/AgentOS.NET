@@ -64,6 +64,15 @@ public sealed class TicketFilesRealPostgresTests
             (await files.ForRunAsync("tenant-a", scope)).Select(f => f.Sha256).ShouldBe(a.Select(f => f.Sha256));
             (await files.DeleteAsync("tenant-b", scope, "skills/SKILL.md")).ShouldBeFalse();   // not B's file
 
+            // Case-insensitive uniqueness at the database: the service refuses the twin in words, and the unique index on
+            // (TenantId, ScopeKey, PathKey) refuses a raw twin row.
+            (await files.PutAsync("tenant-a", scope, "ART/LOGO.PNG", [1], "image/png", "Ann")).Ok.ShouldBeFalse();
+            var twin = await Should.ThrowAsync<PostgresException>(() => Exec(cs, $"""
+                INSERT INTO sessions.ticket_files ("Id","TenantId","ScopeKey","Path","PathKey","Content","Size","Sha256","ContentType","UploadedBy","UploadedAtUtc")
+                VALUES (gen_random_uuid(), 'tenant-a', '{scope}', 'ART/LOGO.PNG', 'art/logo.png', '\x00', 1, 'x', 'x', 'x', now())
+                """));
+            twin.SqlState.ShouldBe("23505");
+
             // RLS: bootstrap the policies on this database, then query as the app role without a tenant predicate.
             await using var conn = new NpgsqlConnection(cs);
             await conn.OpenAsync();
@@ -71,8 +80,8 @@ public sealed class TicketFilesRealPostgresTests
             await Exec(conn, $"SET ROLE {RowLevelSecurity.Role}; SELECT set_config('{RowLevelSecurity.TenantSetting}', 'tenant-a', false)");
             (await Count(conn)).ShouldBe(2L);
             var refused = await Should.ThrowAsync<PostgresException>(() => Exec(conn, """
-                INSERT INTO sessions.ticket_files ("Id","TenantId","ScopeKey","Path","Content","Size","Sha256","ContentType","UploadedBy","UploadedAtUtc")
-                VALUES (gen_random_uuid(), 'tenant-b', 'x', 'x', '\x00', 1, 'x', 'x', 'x', now())
+                INSERT INTO sessions.ticket_files ("Id","TenantId","ScopeKey","Path","PathKey","Content","Size","Sha256","ContentType","UploadedBy","UploadedAtUtc")
+                VALUES (gen_random_uuid(), 'tenant-b', 'x', 'x', 'x', '\x00', 1, 'x', 'x', 'x', now())
                 """));
             refused.SqlState.ShouldBe("42501");
             await Exec(conn, "RESET ROLE");

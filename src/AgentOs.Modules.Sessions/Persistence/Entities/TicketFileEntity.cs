@@ -19,6 +19,10 @@ public sealed class TicketFileEntity
     /// <summary>The normalised relative path (<see cref="AgentOs.Domain.Files.TicketFilePath"/>).</summary>
     public string Path { get; set; } = string.Empty;
 
+    /// <summary>The path's uniqueness key (<see cref="AgentOs.Domain.Files.TicketFilePath.Key"/>, invariant lower case):
+    /// the unique index is on (TenantId, ScopeKey, PathKey), so names differing only in capitals are one file.</summary>
+    public string PathKey { get; set; } = string.Empty;
+
     public byte[] Content { get; set; } = [];
     public long Size { get; set; }
 

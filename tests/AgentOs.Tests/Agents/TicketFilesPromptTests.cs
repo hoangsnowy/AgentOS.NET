@@ -119,7 +119,9 @@ public sealed class TicketFilesPromptTests
         var request = calls.ShouldHaveSingleItem().Request;
         request.Files.ShouldBe(Files);
         request.UserPrompt.ShouldContain(TicketFilesPrompt.Heading);
-        request.UserPrompt.ShouldContain("../.agentos/files/");
+        // The one copy the scoped rules allow: the runner's helper, never a bare cp (security review of #290).
+        request.UserPrompt.ShouldContain("sh .agentos/bin/copy-in .agentos/files/<path> repo/<destination in the repository>");
+        request.UserPrompt.ShouldNotContain("`cp ");
     }
 
     [Fact]

@@ -151,13 +151,186 @@ public sealed class RunFilesTests : IDisposable
         Directory.Exists(run).ShouldBeTrue();   // a CLI run's own directory is its run's business
     }
 
+    // Regression (security review of #290): a Bash rule is a prefix match and acceptEdits confines only the edit tools,
+    // so any "cp …" allowance lets the agent copy onto ~/.ssh/authorized_keys. The only copy is the runner's helper.
     [Fact]
-    public void ScopedAutonomy_LetsTheAgentCopyTicketFiles_NotAnythingElse()
+    public void ScopedAutonomy_HasNoCpRule_OnlyTheRunnersCopyHelper()
     {
-        ScopedAutonomy.ClaudeAllowed.ShouldContain("Bash(cp ../.agentos/files/*)");
-        ScopedAutonomy.ClaudeAllowed.ShouldContain("Bash(cp -r ../.agentos/files/*)");
-        ScopedAutonomy.ClaudeAllowed.ShouldNotContain(r => r == "Bash(cp *)" || r == "Bash(cp*)");
+        var rules = ScopedAutonomy.ArgsFor("claude");
+        rules.ShouldNotContain(r => r.StartsWith("Bash(cp", StringComparison.Ordinal) || r.StartsWith("PowerShell(cp", StringComparison.Ordinal)
+                                    || r.StartsWith("Bash(mv", StringComparison.Ordinal) || r.StartsWith("Bash(install", StringComparison.Ordinal));
+        ScopedAutonomy.ClaudeAllowed.ShouldContain("Bash(sh " + RunFiles.CopyHelper + " *)");
+        ScopedAutonomy.ClaudeAllowed.Count(r => r.StartsWith("Bash(sh ", StringComparison.Ordinal)).ShouldBe(1);   // no other script
+        rules.ShouldContain("PowerShell(sh .agentos/bin/copy-in *)");
         ScopedAutonomy.ClaudeDenied.ShouldContain("WebFetch");   // still nothing downloaded
-        ScopedAutonomy.ArgsFor("claude").ShouldContain("PowerShell(cp ../.agentos/files/*)");
+    }
+
+    // ── Links on the way (a symlink / junction would carry a write out of the run directory) ───────────────────
+
+    [Fact]
+    public async Task WriteAll_ALinkedFolderUnderTheFilesRoot_IsRefused_NothingWrittenThroughIt()
+    {
+        var outside = Path.Join(_root, "outside");
+        Directory.CreateDirectory(outside);
+        Directory.CreateDirectory(Path.Join(_runDir, ".agentos", "files"));
+        if (!TryLink(Path.Join(_runDir, ".agentos", "files", "art"), outside)) { Assert.Skip("This machine can't create symbolic links (Windows without Developer Mode)."); }
+        var content = Bytes("png");
+
+        var problem = await RunFiles.WriteAllAsync(_runDir, [Entry("art/logo.png", content)], Server([content]));
+
+        problem.ShouldNotBeNull().ShouldContain("is a link");
+        Directory.EnumerateFiles(outside).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void LinkOnTheWay_PlainFolders_None()
+    {
+        var deep = Path.Join(_runDir, ".agentos", "files", "a", "b");
+        Directory.CreateDirectory(deep);
+        RunFiles.LinkOnTheWay(_runDir, deep).ShouldBeNull();
+    }
+
+    private static bool TryLink(string link, string target)
+    {
+        try { Directory.CreateSymbolicLink(link, target); return true; }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    // ── copy-in, run for real with sh (Git Bash on Windows, sh on Linux CI) ───────────────────────────────────
+
+    [Fact]
+    public void CopyHelper_CopiesATicketFileIntoTheClone_AndMakesItsFolders()
+    {
+        var sh = Sh();
+        var run = CopyRun();
+        var (code, output) = CopyIn(sh, run, ".agentos/files/logo.png", "repo/assets/img/logo.png");
+        code.ShouldBe(0, output);
+        File.ReadAllText(Path.Join(run, "repo", "assets", "img", "logo.png")).ShouldBe("PNG");
+        // Inside the clone an existing file may be replaced (the ticket may ask to swap a logo).
+        CopyIn(sh, run, ".agentos/files/logo.png", "repo/README.md").Code.ShouldBe(0);
+        File.ReadAllText(Path.Join(run, "repo", "README.md")).ShouldBe("PNG");
+    }
+
+    [Theory]
+    [InlineData(".agentos/files/logo.png", "repo/../../escape.png", "no . or ..")]
+    [InlineData(".agentos/files/logo.png", "../escape.png", "no . or ..")]
+    [InlineData(".agentos/files/../../secret.txt", "repo/s.txt", "no . or ..")]
+    [InlineData("repo/README.md", "repo/copy.md", "not one of the ticket's files")]
+    [InlineData(".agentos/files/logo.png", ".agentos/bin/copy-in", "inside .agentos")]
+    [InlineData(".agentos/files/logo.png", "notes.txt", "exists outside the cloned repository")]
+    [InlineData(".agentos/files/logo.png", "repo/assets/", "not a folder")]
+    [InlineData(".agentos/files", "repo/x", "is not a file")]
+    public void CopyHelper_RefusesEscapesAndOverwrites(string src, string dst, string why)
+    {
+        var sh = Sh();
+        var run = CopyRun();
+        var (code, output) = CopyIn(sh, run, src, dst);
+        code.ShouldNotBe(0);
+        output.ShouldContain(why);
+        File.Exists(Path.Join(_root, "escape.png")).ShouldBeFalse();
+        File.ReadAllText(Path.Join(run, "notes.txt")).ShouldBe("mine");
+        File.ReadAllText(Path.Join(run, ".agentos", "bin", "copy-in")).ShouldStartWith("#!/bin/sh");
+    }
+
+    [Fact]
+    public void CopyHelper_AbsoluteDestinationOutside_IsRefused()
+    {
+        var sh = Sh();
+        var run = CopyRun();
+        var outside = Path.Join(_root, "outside.png").Replace('\\', '/');
+        var (code, output) = CopyIn(sh, run, ".agentos/files/logo.png", outside);
+        code.ShouldNotBe(0);
+        output.ShouldContain("outside the run folder");
+        File.Exists(outside).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CopyHelper_ALinkedDestinationFolder_IsRefused()
+    {
+        var sh = Sh();
+        var run = CopyRun();
+        var outside = Path.Join(_root, "outside");
+        Directory.CreateDirectory(outside);
+        if (!TryLink(Path.Join(run, "repo", "linked"), outside)) { Assert.Skip("This machine can't create symbolic links (Windows without Developer Mode)."); }
+
+        var (code, output) = CopyIn(sh, run, ".agentos/files/logo.png", "repo/linked/authorized_keys");
+
+        code.ShouldNotBe(0);
+        output.ShouldContain("is a link");
+        Directory.EnumerateFiles(outside).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CopyHelper_ALinkedSource_IsRefused()
+    {
+        var sh = Sh();
+        var run = CopyRun();
+        var secret = Path.Join(_root, "secret.txt");
+        File.WriteAllText(secret, "secret");
+        try { File.CreateSymbolicLink(Path.Join(run, ".agentos", "files", "pointer.txt"), secret); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Assert.Skip("This machine can't create symbolic links."); }
+
+        var (code, output) = CopyIn(sh, run, ".agentos/files/pointer.txt", "repo/leak.txt");
+
+        code.ShouldNotBe(0);
+        output.ShouldContain("is a link");
+        File.Exists(Path.Join(run, "repo", "leak.txt")).ShouldBeFalse();
+    }
+
+    // A run directory as the runner leaves it: a delivered file, the helper, a clone, and a file of the run's own.
+    private string CopyRun()
+    {
+        var run = Path.Join(_root, "copy-run");
+        Directory.CreateDirectory(Path.Join(run, ".agentos", "files"));
+        File.WriteAllText(Path.Join(run, ".agentos", "files", "logo.png"), "PNG");
+        Directory.CreateDirectory(Path.Join(run, "repo", ".git"));
+        File.WriteAllText(Path.Join(run, "repo", "README.md"), "# repo");
+        File.WriteAllText(Path.Join(run, "notes.txt"), "mine");
+        RunFiles.WriteCopyHelper(run);
+        RunFiles.WriteCopyHelper(run);   // rewritten every delivery
+        return run;
+    }
+
+    private static (int Code, string Output) CopyIn(string sh, string run, string src, string dst)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo(sh)
+        {
+            WorkingDirectory = run,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add(RunFiles.CopyHelper);
+        psi.ArgumentList.Add(src);
+        psi.ArgumentList.Add(dst);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        var stderr = p.StandardError.ReadToEndAsync();
+        var stdout = p.StandardOutput.ReadToEnd();
+        p.WaitForExit(30_000).ShouldBeTrue();
+        return (p.ExitCode, stdout + stderr.GetAwaiter().GetResult());
+    }
+
+    // sh on PATH (Linux, macOS, Git Bash shells), else Git for Windows' sh; skip when there is none.
+    private static string Sh()
+    {
+        string[] candidates = OperatingSystem.IsWindows()
+            ? [Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "bin", "sh.exe"), "sh"]
+            : ["sh"];
+        foreach (var c in candidates)
+        {
+            if (c != "sh" && !File.Exists(c)) { continue; }
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(c) { RedirectStandardOutput = true, UseShellExecute = false };
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add("echo ok");
+                using var p = System.Diagnostics.Process.Start(psi);
+                if (p is not null && p.StandardOutput.ReadToEnd().Trim() == "ok" && p.WaitForExit(10_000) && p.ExitCode == 0) { return c; }
+            }
+            catch (System.ComponentModel.Win32Exception) { /* not this one */ }
+        }
+        Assert.Skip("No POSIX sh on this machine (install Git for Windows).");
+        return "sh";
     }
 }

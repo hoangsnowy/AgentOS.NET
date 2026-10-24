@@ -72,6 +72,18 @@ public static class TicketFilePath
         return true;
     }
 
+    /// <summary>
+    /// The uniqueness key of a normalised path: invariant lower case. "Logo.png" and "LOGO.PNG" are one file on Windows
+    /// and macOS, so a scope holds at most one of them (the unique index is on this key, not on the path).
+    /// </summary>
+    public static string Key(string normalizedPath)
+    {
+        ArgumentNullException.ThrowIfNull(normalizedPath);
+#pragma warning disable CA1308 // a storage key, compared only with itself — lower case by decision (ADR-0015), never shown
+        return normalizedPath.ToLowerInvariant();
+#pragma warning restore CA1308
+    }
+
     /// <summary>The normalised path, or null when it can't be used.</summary>
     public static string? Normalize(string? raw) => TryNormalize(raw, out var path, out _) ? path : null;
 

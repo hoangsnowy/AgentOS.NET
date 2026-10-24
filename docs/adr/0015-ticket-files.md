@@ -18,8 +18,9 @@ logo, art assets, a sample data file or a third-party folder it must copy into t
 1. **A person attaches files to a ticket; AgentOS.NET stores them; every run of the ticket finds them in its working
    folder.** Downloading from a URL stays unsupported — on purpose: the person, not the agent, decides what crosses in.
 2. **Storage — generic, tenant-scoped.** `sessions.ticket_files` (Sessions module, which owns Board tasks): `Id`,
-   `TenantId`, `ScopeKey`, `Path`, `Content` (bytea), `Size`, `Sha256`, `ContentType`, `UploadedBy`, `UploadedAtUtc`;
-   unique `(TenantId, ScopeKey, Path)` — a re-upload replaces. Contract `IScopedFileStore` (Put / List / Get / LoadAll /
+   `TenantId`, `ScopeKey`, `Path`, `PathKey`, `Content` (bytea), `Size`, `Sha256`, `ContentType`, `UploadedBy`,
+   `UploadedAtUtc`; unique `(TenantId, ScopeKey, PathKey)` where `PathKey` = the path in invariant lower case — names
+   that differ only in capitals are one file (they would be on Windows / macOS); a re-upload replaces. Contract `IScopedFileStore` (Put / List / Get / LoadAll /
    Delete / DeleteScope, every call tenant-explicit) so the next consumer (design-gate screenshots) reuses it with its
    own scope. Scopes (`TicketFileScope`): `ticket:{board}:{n}`, `session:{id}` (a task without a number),
    `draft:{id}` (a New idea before its tickets exist — copied onto every ticket created from it). Tenant isolation:
@@ -35,16 +36,26 @@ logo, art assets, a sample data file or a third-party folder it must copy into t
    manifest (path, size, SHA-256); the bytes wait in the broker (`StageFiles`), fetchable only by the connection the
    run was dispatched to, in 256 KB pieces (`ReadRunFile` hub method — no SignalR message-size surprises). The runner
    (`RunFiles.cs`) re-checks every path with the same rules, resolves it under `<run dir>/.agentos/files/` and refuses
-   anything that would land outside, never overwrites, verifies size + SHA-256, caps a run at 512 MB, and fails the run
-   **before the CLI starts** on any refusal. A file's bytes are released as soon as it was fetched.
+   anything that would land outside, refuses when any folder between `.agentos` and the file is a reparse point
+   (symlink / junction — checked before and after the folders are made), writes create-exclusive (never overwrites),
+   verifies size + SHA-256, caps a run at 512 MB, and fails the run **before the CLI starts** on any refusal. A file's bytes are released as soon as it was fetched.
    Server-driven runs (`runner_shell`): `IRunnerFileDelivery` sends one `write_files` tool call ahead of the loop (same
    approval gate as every runner tool call); the runner writes into a fresh `<work root>/<date>-files-<id>/` folder
    (cleaned after 3 days) and answers with its path.
 5. **The prompt says where, and that they are data.** Coding (both IssueWork templates), Reviewer and Testing get one
    section — "Files attached to this ticket" — only when there are files **and** they reach the agent's computer: the
    list (fenced as untrusted text — the names come from a person), where they are, that nothing may be downloaded, to
-   clone into a subfolder (the run folder is no longer empty), and how to copy them (`cp ../.agentos/files/…`, the one
-   copy rule added to scoped autonomy). Tickets can say "the files attached to this ticket".
+   clone into a subfolder (the run folder is no longer empty), and how to copy them: **only** through the runner's
+   helper, `sh .agentos/bin/copy-in .agentos/files/<path> repo/<destination>` — the one rule added to scoped autonomy
+   (`Bash(sh .agentos/bin/copy-in *)` + its PowerShell twin). No `cp` rule: a Bash rule is a prefix match on the command
+   and `acceptEdits` confines only the edit tools, so `cp .agentos/files/x ~/.ssh/authorized_keys` would pass (security
+   review of #290; a test fails the build if a `cp` rule reappears). The helper's text is a constant of the runner
+   (`RunFiles.CopyHelperScript`), rewritten on every delivery, never content from the server or the ticket. It copies
+   one regular, non-link file from `.agentos/files/` to a destination resolved (`cd -P`) inside the run folder and not
+   under `.agentos/`; it refuses `.` / `..` segments, a link as the destination or any folder above it, and replacing an
+   existing file outside the cloned repository; it creates missing folders inside the run folder only. Server-driven
+   runs keep `cp` from the delivery folder: their shell commands pass the runner's own command policy and console
+   approval (`RunnerCommandPolicy`), not the CLI's scoped rules. Tickets can say "the files attached to this ticket".
 6. **Evidence.** Every delivery is an evidence entry (`ticket_files`, run id, session, each file's path / size /
    SHA-256, how many the runner fetched to the end) and one line on the task's feed. Not an LLM call — Insights is
    unaffected.
