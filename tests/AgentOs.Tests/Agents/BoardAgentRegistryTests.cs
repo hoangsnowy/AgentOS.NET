@@ -64,7 +64,7 @@ public sealed class BoardAgentRegistryTests
     }
 
     private static SettingsService Settings() => new(
-        new SettingsCatalog([new LlmSettings(), new AgentSettings()]), new InMemoryAppConfigStore(),
+        new SettingsCatalog([new LlmSettings(), new AgentSettings(), new AutopilotSettings()]), new InMemoryAppConfigStore(),
         new ConfigurationBuilder().Build(), new NullSettingsAuditSink(), NullLogger<SettingsService>.Instance);
 
     private static IBudgetGuard OverBudget()

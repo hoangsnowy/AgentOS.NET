@@ -38,6 +38,11 @@ else
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@CheckKeys" />
     </Panel>
 
+    <Panel Title="Run time limits">
+        <p class="muted platform-hint">How long one agent run may take before it is stopped. A run that is cut short loses its work, so give big tickets (migrations, upgrades) enough time.</p>
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@RunKeys" />
+    </Panel>
+
     <Panel Title="Rules that always apply">
         <ul class="autopilot-rules" aria-label="Autopilot's fixed rules">
             <li><strong>Merging.</strong> With <em>Build and merge</em>, a change is merged only when its checks are green and its ticket flow's gates passed — by default the Reviewer agent approved it and the Testing agent passed it against the ticket's acceptance criteria, which needs a connected computer.</li>
@@ -62,6 +67,9 @@ else
     ];
 
     private static readonly string[] CheckKeys = [AutopilotSettings.ChecksTimeoutMinutesKey, AutopilotSettings.ChecksPollSecondsKey];
+
+    private static readonly string[] RunKeys =
+        [AutopilotSettings.CodingRunMinutesKey, AutopilotSettings.ReviewRunMinutesKey, AutopilotSettings.TestingRunMinutesKey];
 
     private bool _resolved;
     private bool _isAdmin;

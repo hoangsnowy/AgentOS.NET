@@ -26,7 +26,6 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
 {
     // A single agentic CLI run on the member's machine (clone → build → test → push) far outlasts the
     // RemoteAgent default 120s dispatch cap, so CLI-mode runs get a generous deadline.
-    private static readonly TimeSpan CliRunTimeout = TimeSpan.FromMinutes(20);
 
     private readonly ILlmClientFactory _factory;
     private readonly AgentOptions _agentOpts;
@@ -248,7 +247,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 Temperature: opts.Temperature,
                 MaxTokens: opts.MaxTokens,
                 Tools: [],
-                Timeout: CliRunTimeout,
+                Timeout: await AutopilotSettings.RunLimitForAsync(_profiles, AutopilotSettings.CodingRunMinutesKey, ct).ConfigureAwait(false),
                 Cli: request.CliProfile)
             {
                 AgentRole = AgentRoles.IssueWork,

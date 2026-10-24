@@ -305,6 +305,21 @@ public class IssueWorkAgentTests
     }
 
     [Fact]
+    public async Task RunAsync_RunOnMachine_TimeoutIsTheTenantsCodingRunLimit()
+    {
+        LlmRequest? captured = null;
+        var llm = Substitute.For<ILlmClient>();
+        llm.SendAsync(Arg.Do<LlmRequest>(r => captured = r), Arg.Any<CancellationToken>())
+           .Returns(AgentTestHelpers.StubResponse("""{"branch":"issue-42-ai-fix","summary":"Done."}"""));
+        var agent = new IssueWorkAgent(AgentTestHelpers.FactoryReturning(llm), AgentTestHelpers.OptionsWith(new AgentsOptions()),
+            NullLogger<IssueWorkAgent>.Instance, profiles: new RunLimitProfiles(TimeSpan.FromMinutes(75)));
+
+        await agent.RunAsync(MakeRequest(42) with { ProviderOverride = "RemoteAgent" });
+
+        captured.ShouldNotBeNull().Timeout.ShouldBe(TimeSpan.FromMinutes(75));
+    }
+
+    [Fact]
     public async Task RunAsync_RunOnMachine_UsesCliPromptWithNoServerToolsAndLongTimeout()
     {
         LlmRequest? captured = null;
@@ -418,5 +433,16 @@ public class IssueWorkAgentTests
         captured!.SystemPrompt.ShouldContain("99");
         captured.UserPrompt.ShouldContain("99");
         captured.UserPrompt.ShouldContain("acme/my-service");
+    }
+
+    // The tenant's Settings › Autopilot run limit, nothing else.
+    private sealed class RunLimitProfiles(TimeSpan limit) : IAgentProfiles
+    {
+        public ValueTask<AgentOptions> ResolveAsync(string role, AgentOptions fallback, CancellationToken cancellationToken = default) => ValueTask.FromResult(fallback);
+
+        public ValueTask<int> MaxIterationsAsync(int fallback, CancellationToken cancellationToken = default) => ValueTask.FromResult(fallback);
+
+        public ValueTask<TimeSpan> RunLimitAsync(string key, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(key == AutopilotSettings.CodingRunMinutesKey ? limit : TimeSpan.Zero);
     }
 }

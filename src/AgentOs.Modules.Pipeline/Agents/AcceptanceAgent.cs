@@ -28,7 +28,6 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
     IBudgetGuard? budgetGuard = null, IMemoryStore? memory = null) : IAcceptanceAgent
 {
     // Building, starting a stack and running end-to-end specs takes longer than writing the change.
-    private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(30);
 
     /// <inheritdoc />
     public async Task<AcceptanceVerdict> RunAsync(AcceptanceRequest request, CancellationToken ct = default)
@@ -65,7 +64,7 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
             Model: profile.Model,
             Temperature: profile.Temperature,
             MaxTokens: profile.MaxTokens,
-            Timeout: RunTimeout,
+            Timeout: await AutopilotSettings.RunLimitForAsync(profiles, AutopilotSettings.TestingRunMinutesKey, ct).ConfigureAwait(false),
             Cli: request.CliProfile)
         {
             AgentRole = AgentRoles.Acceptance,
