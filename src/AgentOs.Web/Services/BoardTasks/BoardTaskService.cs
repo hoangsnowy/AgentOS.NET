@@ -551,9 +551,21 @@ public sealed class BoardTaskService(
                 var child = children.FirstOrDefault(c => c.Id == outcome.SessionRepoId);
                 if (change is not null && !string.IsNullOrEmpty(child?.PrUrl))
                 {
+                    // The agent's updated description replaces the old one: a ticket that asks the pull request itself
+                    // for something (an old → new package list) could otherwise never pass review — the agent can't edit
+                    // the description, so every fix round failed on it (VNChess #94, 2026-10-24).
+                    var described = false;
+                    if (!string.IsNullOrWhiteSpace(outcome.Description) && PrNumber(child.PrUrl) is { } openNumber)
+                    {
+                        described = await prService.UpdateBodyAsync(
+                            RepoDescriptor(board, tenantId, outcome.Owner, outcome.Repo, child.DefaultBranch ?? "main", pat), openNumber,
+                            PullRequestText.Body(session.IssueNumber, outcome.Summary, outcome.Description)).ConfigureAwait(false);
+                    }
                     await sessRepo.UpdateRepoRunResultAsync(tenantId, outcome.SessionRepoId,
                         "Done", outcome.BranchName, child.PrUrl, null).ConfigureAwait(false);
-                    Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — proposed change updated", repoLabel, "Done", child.PrUrl);
+                    Publish(SessionRunEventKind.RepoDone,
+                        described ? $"{repoLabel} — proposed change and its description updated" : $"{repoLabel} — proposed change updated",
+                        repoLabel, "Done", child.PrUrl);
                     continue;
                 }
 
@@ -564,7 +576,7 @@ public sealed class BoardTaskService(
                         descriptor,
                         outcome.BranchName,
                         PullRequestText.Title(session.IssueNumber, session.Title, session.TicketType),
-                        PullRequestText.Body(session.IssueNumber, outcome.Summary)).ConfigureAwait(false);
+                        PullRequestText.Body(session.IssueNumber, outcome.Summary, outcome.Description)).ConfigureAwait(false);
 
                     await sessRepo.UpdateRepoRunResultAsync(tenantId, outcome.SessionRepoId,
                         prResult.Ok ? "Done" : "Failed", outcome.BranchName, prResult.HtmlUrl,

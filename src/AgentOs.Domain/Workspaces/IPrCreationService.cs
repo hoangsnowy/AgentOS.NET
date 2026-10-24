@@ -94,6 +94,11 @@ public interface IPrCreationService
     Task<bool?> BranchExistsAsync(WorkspaceDescriptor workspace, string branch, CancellationToken ct = default) =>
         Task.FromResult<bool?>(null);
 
+    /// <summary>Replace pull request <paramref name="number"/>'s description — a fix round's updated description from the
+    /// Coding agent. Never throws; false when it couldn't (or the provider can't).</summary>
+    Task<bool> UpdateBodyAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default) =>
+        Task.FromResult(false);
+
     /// <summary>Post a comment on pull request <paramref name="number"/> (the Testing agent's evidence). Never throws.</summary>
     Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default) =>
         Task.FromResult(false);
