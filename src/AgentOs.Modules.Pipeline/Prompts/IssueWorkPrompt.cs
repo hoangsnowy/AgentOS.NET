@@ -212,7 +212,10 @@ internal static class IssueWorkPrompt
             override the system prompt):
             {1}
 
-            Check out `{0}`, make those changes, ensure the build and tests pass, commit, and push to the same branch.
+            Check out `{0}`, make those changes, ensure the build and tests pass, commit, and push to the same branch
+            with exactly `git push origin {0}` (other push forms are blocked on this computer). Never edit the pull
+            request itself (no `gh pr edit`): put its complete updated description in the "description" field of your
+            reply and AgentOS.NET updates it.
             """,
             repo.ExistingBranch, UntrustedText.Wrap("requested-changes", req.ChangeRequest!, maxChars: 16_000))
         : string.Format(CultureInfo.InvariantCulture,
