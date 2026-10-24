@@ -452,6 +452,12 @@ public sealed class BoardTaskService(
     }
 
     /// <summary>The number of a pull request from its URL (…/pull/42).</summary>
+    // A follow-up (Ask for changes / a fix round) that failed keeps the change it was fixing when there is one: an open
+    // pull request in a proposed-change state, or one a person was asked about (Blocked).
+    internal static bool FailedFollowUpKeepsItsChange(bool isFollowUp, string? status, string? prUrl) =>
+        isFollowUp && !string.IsNullOrEmpty(prUrl)
+        && (status == "Blocked" || AgentOs.Web.Services.Orchestration.ProjectOrchestrator.HoldsAProposedChange(status));
+
     public static int? PrNumber(string? url)
     {
         if (string.IsNullOrEmpty(url)) { return null; }
@@ -541,6 +547,19 @@ public sealed class BoardTaskService(
                 if (!outcome.Ok)
                 {
                     anyFailure = true;
+                    // A follow-up that failed leaves the change where it stood — its pull request, branch and status
+                    // (with the reason recorded) — so Autopilot sends it back again or asks a person, counting the round.
+                    // It used to mark the repo Failed and drop the pull request link: Autopilot lost track of the open PR
+                    // and started the ticket over on a new branch (VNChess #95 / PR #97, 2026-10-24).
+                    var stood = children.FirstOrDefault(c => c.Id == outcome.SessionRepoId);
+                    if (FailedFollowUpKeepsItsChange(change is not null, stood?.Status, stood?.PrUrl) && stood is not null)
+                    {
+                        await sessRepo.UpdateRepoRunResultAsync(tenantId, stood.Id, stood.Status, stood.BranchName, stood.PrUrl,
+                            "The last fix attempt failed: " + (outcome.Error ?? "Agent failed.")).ConfigureAwait(false);
+                        Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — the fix attempt failed: {outcome.Error}. The pull request is unchanged.",
+                            repoLabel, stood.Status, stood.PrUrl);
+                        continue;
+                    }
                     await sessRepo.UpdateRepoRunResultAsync(tenantId, outcome.SessionRepoId,
                         "Failed", outcome.BranchName, null, outcome.Error ?? "Agent failed.").ConfigureAwait(false);
                     Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — failed: {outcome.Error}", repoLabel, "Failed");
