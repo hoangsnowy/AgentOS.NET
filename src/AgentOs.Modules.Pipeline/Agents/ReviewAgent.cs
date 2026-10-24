@@ -55,11 +55,14 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
             ? $"Reviewing #{request.IssueNumber} on your computer."
             : $"Reviewing #{request.IssueNumber} ({provider}).", repoLabel);
 
+        // Ticket files (ADR-0015) reach the run only on the member's computer — only then does the prompt mention them.
+        var onComputer = AgentBudgetGate.RunsOnMembersComputer(provider);
         var llmRequest = new LlmRequest(
             SystemPrompt: await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Reviewer, InstructionsTemplate, AcceptanceAgent.Values(request),
                 UntrustedText.SystemRule, ct).ConfigureAwait(false),
             UserPrompt: AcceptanceAgent.User(request).Replace("Test the change against these criteria and reply with the JSON verdict.",
                 "Review the change against this ticket and reply with the JSON verdict.", StringComparison.Ordinal)
+                + (onComputer ? TicketFilesPrompt.ForRunDirectory(request.Files, TicketFilesPrompt.Use.Check) : string.Empty)
                 + await PracticesAsync(request, ct).ConfigureAwait(false),
             Model: profile.Model,
             Temperature: profile.Temperature,
@@ -69,6 +72,7 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
         {
             AgentRole = AgentRoles.Reviewer,
             Autonomy = WorkspaceAutonomy.Scoped,
+            Files = onComputer && request.Files.Count > 0 ? request.Files : null,
             Progress = new InlineProgress<string>(step =>
             {
                 if (TaskSteps.LabelFor(step) is { } label) { Emit(request, SessionRunEventKind.Step, "Reviewing — " + label, repoLabel); }

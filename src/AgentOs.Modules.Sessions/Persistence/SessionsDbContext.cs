@@ -29,6 +29,7 @@ public sealed class SessionsDbContext : DbContext
     public DbSet<RunnerEntity> Runners => Set<RunnerEntity>();
     public DbSet<RemoteSessionEntity> Sessions => Set<RemoteSessionEntity>();
     public DbSet<SessionRepoEntity> SessionRepos => Set<SessionRepoEntity>();
+    public DbSet<TicketFileEntity> TicketFiles => Set<TicketFileEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -91,6 +92,24 @@ public sealed class SessionsDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Ticket files (ADR-0015): one row per (tenant, scope, path); the path is unique within a scope.
+        modelBuilder.Entity<TicketFileEntity>(e =>
+        {
+            e.ToTable("ticket_files");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.ScopeKey).IsRequired().HasMaxLength(AgentOs.Domain.Files.TicketFileScope.MaxLength);
+            e.Property(x => x.Path).IsRequired().HasMaxLength(AgentOs.Domain.Files.TicketFilePath.MaxLength);
+            e.Property(x => x.Content).IsRequired();
+            e.Property(x => x.Size).IsRequired();
+            e.Property(x => x.Sha256).IsRequired().HasMaxLength(64);
+            e.Property(x => x.ContentType).IsRequired().HasMaxLength(128);
+            e.Property(x => x.UploadedBy).IsRequired().HasMaxLength(256);
+            e.Property(x => x.UploadedAtUtc).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.ScopeKey, x.Path }).IsUnique();
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
         });
     }
 }

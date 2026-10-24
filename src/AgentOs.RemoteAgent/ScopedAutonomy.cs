@@ -46,6 +46,11 @@ internal static class ScopedAutonomy
         "Bash(npx playwright *)", "Bash(npm exec playwright *)", "Bash(curl * http://localhost*)", "Bash(curl * https://localhost*)",
         "Bash(curl * http://127.0.0.1*)", "BashOutput", "KillShell",
         "Bash(cd *)", "Bash(ls*)", "Bash(pwd)", "Bash(wc *)", "Bash(mkdir *)",
+        // Ticket files (ADR-0015): copy what a person attached (a logo, a picture, a skill folder) from the run's files
+        // folder into the checkout — from the run directory or from the clone beside it. Binary files can't go through
+        // the Write tool, and nothing may be downloaded, so this is the one copy the agent needs.
+        "Bash(cp .agentos/files/*)", "Bash(cp -r .agentos/files/*)", "Bash(cp -R .agentos/files/*)",
+        "Bash(cp ../.agentos/files/*)", "Bash(cp -r ../.agentos/files/*)", "Bash(cp -R ../.agentos/files/*)",
     ];
 
     /// <summary>Denied even when an allow rule would match — deny rules take precedence in claude.</summary>

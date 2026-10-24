@@ -26,8 +26,23 @@ namespace AgentOs.Modules.RemoteAgent;
 /// <summary>A codegen task sent to a remote runner. <paramref name="Cli"/> selects which subscription
 /// CLI the runner invokes (e.g. "claude", "codex"); null = the runner's configured default.
 /// <paramref name="Autonomy"/> is what the CLI may do on that machine (null = answer only; "scoped" = work in a
-/// fresh per-run directory) — see <c>LlmRequest.Autonomy</c>.</summary>
-public sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null);
+/// fresh per-run directory) — see <c>LlmRequest.Autonomy</c>.
+/// <paramref name="Files"/> lists the ticket files the runner fetches (<c>ReadRunFile</c>) and writes under
+/// <c>&lt;run dir&gt;/.agentos/files/</c> before the CLI starts (ADR-0015); null = none.</summary>
+public sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
+    System.Collections.Generic.IReadOnlyList<RunFileEntry>? Files = null);
+
+/// <summary>One ticket file of a dispatch, as the runner sees it before fetching it: where it goes, how big it is and the
+/// SHA-256 the written bytes must match.</summary>
+public sealed record RunFileEntry(string Path, long Size, string Sha256);
+
+/// <summary>A piece of a ticket file the runner fetched (<c>ReadRunFile</c>): at most <see cref="MaxBytes"/> bytes from
+/// the asked offset; <paramref name="Last"/> when the file ends with it.</summary>
+public sealed record RunFileChunk(byte[] Data, bool Last)
+{
+    /// <summary>The largest chunk (bytes) — well under SignalR's comfortable message size once base64-encoded.</summary>
+    public const int MaxBytes = 256 * 1024;
+}
 
 /// <summary>A remote runner's reply for a <see cref="RemoteExecRequest"/>.</summary>
 public sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
@@ -178,6 +193,19 @@ public interface IRemoteAgentBroker
 
     /// <summary>Called by the hub when the runner sends a <c>CompleteToolCall</c> message.</summary>
     void CompleteToolCall(RunnerToolResult result);
+
+    // ── Ticket files (ADR-0015) ──
+
+    /// <summary>Hold <paramref name="files"/> for request (or tool call) <paramref name="id"/>: only the runner it is then
+    /// dispatched to can fetch them (<see cref="ReadRunFile"/>). Stage before dispatching; <see cref="UnstageFiles"/> after.</summary>
+    void StageFiles(string id, System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile> files) { }
+
+    /// <summary>Called by the hub: a piece of staged file <paramref name="index"/> from <paramref name="offset"/> — only for
+    /// the connection the request was dispatched to; null for anything else.</summary>
+    RunFileChunk? ReadRunFile(string connectionId, string id, int index, long offset) => null;
+
+    /// <summary>Drop what was staged for <paramref name="id"/>; returns how many files its runner fetched to the end.</summary>
+    int UnstageFiles(string id) => 0;
 }
 
 /// <summary>In-process broker. Singleton; thread-safe.</summary>
@@ -188,6 +216,51 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private readonly ConcurrentDictionary<string, TaskCompletionSource<RunnerToolResult>> _pendingToolCalls = new(StringComparer.Ordinal);
     // Preview id → the connection running it (a report from any other connection is ignored).
     private readonly ConcurrentDictionary<string, string> _previews = new(StringComparer.Ordinal);
+    // Request / tool-call id → the ticket files staged for it (ADR-0015).
+    private readonly ConcurrentDictionary<string, StagedFiles> _staged = new(StringComparer.Ordinal);
+
+    // The ticket files of one dispatch. A file's bytes are released as soon as its runner has fetched the last piece.
+    private sealed class StagedFiles(System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile> files)
+    {
+        public readonly byte[]?[] Contents = files.Select(f => (byte[]?)f.Content).ToArray();
+        public volatile string? ConnectionId;
+        public int Delivered;
+    }
+
+    public void StageFiles(string id, System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile> files)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count > 0) { _staged[id] = new StagedFiles(files); }
+    }
+
+    public RunFileChunk? ReadRunFile(string connectionId, string id, int index, long offset)
+    {
+        if (string.IsNullOrEmpty(id) || !_staged.TryGetValue(id, out var staged) || staged.ConnectionId is not { } owner
+            || !string.Equals(owner, connectionId, StringComparison.Ordinal) || index < 0 || index >= staged.Contents.Length)
+        {
+            return null;
+        }
+        var content = Volatile.Read(ref staged.Contents[index]);
+        if (content is null || offset < 0 || offset > content.LongLength) { return null; }
+        var take = (int)Math.Min(RunFileChunk.MaxBytes, content.LongLength - offset);
+        var data = content.AsSpan((int)offset, take).ToArray();
+        var last = offset + take >= content.LongLength;
+        if (last && Interlocked.Exchange(ref staged.Contents[index], null) is not null)
+        {
+            Interlocked.Increment(ref staged.Delivered);
+        }
+        return new RunFileChunk(data, last);
+    }
+
+    public int UnstageFiles(string id) =>
+        !string.IsNullOrEmpty(id) && _staged.TryRemove(id, out var staged) ? Volatile.Read(ref staged.Delivered) : 0;
+
+    // A dispatch's files can be fetched only by the connection it went to.
+    private void BindStaged(string id, string connectionId)
+    {
+        if (_staged.TryGetValue(id, out var staged)) { staged.ConnectionId = connectionId; }
+    }
 
     public event Action<PreviewCommand>? PreviewCommanded;
     public event Action<PreviewStatus>? PreviewReported;
@@ -284,6 +357,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             }
         });
 
+        BindStaged(request.Id, connectionId);
         try
         {
             Dispatched?.Invoke(new RemoteDispatch(request, connectionId));
@@ -349,6 +423,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             }
         });
 
+        BindStaged(toolCall.ToolCallId, connectionId);
         try
         {
             ToolCallDispatched?.Invoke(new RunnerToolDispatch(toolCall, connectionId));

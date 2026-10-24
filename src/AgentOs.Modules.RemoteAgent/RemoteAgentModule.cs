@@ -37,6 +37,8 @@ public sealed class RemoteAgentModule : IModule, IEndpointModule
         // IHttpContextAccessor resolves the current user's identity from this singleton-scoped tool.
         services.AddHttpContextAccessor();
         services.AddTransient<AgentOs.Domain.Tools.ITool, RunnerShellTool>();
+        // Ticket files ahead of a server-driven run (ADR-0015); a CLI run carries them with its dispatch instead.
+        services.TryAddSingleton<AgentOs.Domain.Files.IRunnerFileDelivery, RunnerFileDeliveryService>();
 
         services.AddSignalR();
         services.AddHostedService<RemoteAgentTransport>();

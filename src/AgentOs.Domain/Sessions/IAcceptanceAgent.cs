@@ -18,7 +18,11 @@ public sealed record AcceptanceRequest(
     int IssueNumber,
     string IssueTitle,
     string IssueBody,
-    string? CliProfile = null);
+    string? CliProfile = null)
+{
+    /// <summary>The files a person attached to the ticket (ADR-0015) — copied into the run's working folder.</summary>
+    public IReadOnlyList<AgentOs.Domain.Files.RunFile> Files { get; init; } = [];
+}
 
 /// <summary>One acceptance criterion's result: <c>pass</c>, <c>fail</c> or <c>not-checked</c> (with the reason).</summary>
 public sealed record AcceptanceCriterion(string Criterion, string Result, string Evidence);

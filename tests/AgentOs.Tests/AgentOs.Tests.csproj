@@ -59,6 +59,7 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ProcessJob.cs" Link="Linked\ProcessJob.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\KeepAwake.cs" Link="Linked\KeepAwake.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\CliModel.cs" Link="Linked\CliModel.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\RunFiles.cs" Link="Linked\RunFiles.cs" />
   </ItemGroup>
 
 </Project>

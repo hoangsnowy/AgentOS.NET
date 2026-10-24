@@ -19,7 +19,7 @@ public sealed class RowLevelSecurityRealDbTests
     private static readonly string[] Tables =
     [
         "pipeline.pipeline_runs", "pipeline.run_metrics", "pipeline.orchestrations",
-        "sessions.sessions", "sessions.session_repos", "sessions.runners",
+        "sessions.sessions", "sessions.session_repos", "sessions.runners", "sessions.ticket_files",
         "tools.tool_invocations", "workspaces.workspaces", "workspaces.workspace_repos", "workspaces.ticket_flows",
     ];
 

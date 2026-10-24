@@ -81,7 +81,13 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         }
 
         var id = Guid.NewGuid().ToString("N");
-        var execRequest = new RemoteExecRequest(id, request.SystemPrompt, request.UserPrompt, request.Model, request.Cli, request.Autonomy);
+        // Ticket files (ADR-0015): the manifest travels with the request; the bytes wait in the broker until the runner it
+        // goes to fetches them, before its CLI starts.
+        var files = request.Files is { Count: > 0 } attached ? attached : null;
+        var execRequest = new RemoteExecRequest(id, request.SystemPrompt, request.UserPrompt, request.Model, request.Cli, request.Autonomy,
+            files is null ? null : RunFileEvidence.Manifest(files));
+        if (files is not null) { _broker.StageFiles(id, files); }
+        var dispatchedAt = DateTimeOffset.UtcNow;
 
         // A single full-prompt dispatch (M3) caps at 120s, but an agentic issue-work run on the local
         // CLI (clone → build → test → push) needs minutes — the caller raises it via LlmRequest.Timeout.
@@ -104,6 +110,11 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             finally
             {
                 if (request.Progress is not null) { _broker.Progressed -= OnProgress; }
+                if (files is not null)
+                {
+                    await RunFileEvidence.RecordAsync(_services, target.TenantId, id, files, _broker.UnstageFiles(id),
+                        "the run's working folder on the member's computer", null, dispatchedAt).ConfigureAwait(false);
+                }
             }
         }
         catch (TimeoutException ex)

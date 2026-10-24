@@ -105,6 +105,15 @@ name) retires its old offline entry and token. While the AI works on it (a task,
 `REMOTE_AGENT_KEEP_AWAKE=off` turns that off. Board tasks set to *On my computer* then
 clone, edit, build, test and push in a private per-task folder (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`).
 
+**Files for the AI** (Board → Tasks → *Files*, the *Work on this* dialog, or the New idea steps) — the agent on a
+computer can't download anything, so this is how it gets a logo, art, a sample data file or a skill folder to vendor:
+pick files, drop them, or add a whole folder (it keeps each file's place). They are stored per tenant with their
+SHA-256 and copied into `<run folder>/.agentos/files/` before every run of the ticket — Coding, Review and Testing —
+and the agent's prompt lists them as data, never instructions. Each delivery is evidence (Settings → Activity log). A
+script can do the same over REST: `PUT /workspaces/{boardId}/tickets/{n}/files/{path}` with the file as the body
+(`GET` lists / downloads, `DELETE` removes). Limits per ticket are on Settings → Autopilot (10 MB a file, 50 MB and 500
+files by default). ([ADR-0015](docs/adr/0015-ticket-files.md))
+
 **Try the app** (Board → a project → *Try the app*) runs the latest default branch on that same computer and opens it
 — no terminal. The project says how in `.agentos/preview.json`:
 
@@ -327,7 +336,8 @@ in the desktop and applies on the next call:
 - **Settings → Prompts** — per-tenant system prompts for the Requirement, Coding, Testing and QA agents.
 - **Settings → Autopilot** — how Autopilot runs a project (Board › Autopilot): who decides (Orchestrator agent or the
   fixed rules), how each ticket runs (MAF workflow or step by step), tasks and acceptance tests at once, automatic fix
-  rounds (one count per task across engines and restarts), Orchestrator retries, and the checks wait. When your
+  rounds (one count per task across engines and restarts), Orchestrator retries, the checks wait, and the limits on
+  the files a person may attach to a ticket for the AI. When your
   computer's Claude / Codex plan hits its limit, Autopilot waits for the reset — no tries spent — and carries on.
 - **Workflow › Ticket flow** — the steps Autopilot runs for every ticket (Code → Checks → Review → Test → Merge by
   default), drawn as a graph with a table view: an admin turns Review or Test off, picks the agent per step and skips a

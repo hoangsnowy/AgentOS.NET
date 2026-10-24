@@ -1,0 +1,251 @@
+@* TicketFilesPanel — "Files for the AI" (ADR-0015): attach files to a ticket (or a New idea draft), see them, remove
+   them. Files are stored per tenant under a scope key and copied into the working folder of every agent run of the
+   ticket — the only way files reach an agent (it can't download anything). Pick files (multiple), drop them on the
+   zone, or add a whole folder (webkitdirectory keeps each file's place in it). Both pickers are real file inputs laid
+   over their visible control, so they are reachable with Tab and open with Enter/Space; the zone shows the focus ring.
+   A circuit has no HttpContext: the tenant + uploader come in as parameters; every call is tenant-explicit. *@
+
+@using AgentOs.Domain.Files
+@inject ITicketFiles Files
+@inject IJSRuntime JS
+@inject AgentOs.Web.Shell.Services.ToastService Toasts
+
+<section class="ticket-files" aria-labelledby="@_headingId" data-testid="ticket-files">
+    <p class="ticket-files-title" id="@_headingId">
+        <strong>@Title</strong> <Badge>@(_files?.Count ?? 0)</Badge>
+    </p>
+    <p class="muted ticket-files-hint">
+        Files the AI can use for this ticket — a logo, pictures, documents. They are copied into its working folder;
+        nothing is downloaded from the internet. In the ticket you can refer to them as "the files attached to this ticket".
+        @Note
+    </p>
+
+    <div class="ticket-files-pickers">
+        <div class="ticket-files-drop @(_dragOver ? "is-over" : "")"
+             @ondragenter="@(() => _dragOver = true)" @ondragleave="@(() => _dragOver = false)" @ondrop="@(() => _dragOver = false)">
+            <InputFile @ref="_filesInput" OnChange="@(e => UploadAsync(e, _filesInput))" multiple class="ticket-files-input"
+                       disabled="@_busy" aria-label="Add files for the AI (or drop them here)" data-testid="ticket-files-input" />
+            <span class="ticket-files-drop-text" aria-hidden="true">
+                <Icon Name="file" Size="16" /> Drop files here, or press to choose them
+            </span>
+        </div>
+        <span class="btn btn-sm ticket-files-pick">
+            <InputFile @ref="_folderInput" OnChange="@(e => UploadAsync(e, _folderInput))" multiple webkitdirectory class="ticket-files-input"
+                       disabled="@_busy" aria-label="Add a whole folder for the AI" />
+            <Icon Name="folder" Size="13" /> Add a folder
+        </span>
+    </div>
+
+    @if (_busy)
+    {
+        <p class="muted ticket-files-status" role="status">Adding @_progress…</p>
+    }
+    @if (_errors.Count > 0)
+    {
+        <div class="login-error ticket-files-errors" role="alert">
+            @foreach (var err in _errors.Take(5))
+            {
+                <div>@err</div>
+            }
+            @if (_errors.Count > 5)
+            {
+                <div>… and @(_errors.Count - 5) more.</div>
+            }
+        </div>
+    }
+
+    @if (_files is null)
+    {
+        <Spinner />
+    }
+    else if (_files.Count > 0)
+    {
+        <table class="data-table ticket-files-table" aria-label="@($"{Title} — attached files")">
+            <thead>
+                <tr><th>File</th><th class="num">Size</th><th>Added by</th><th class="actions"><span class="sr-only">Remove</span></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var f in _files)
+                {
+                    <tr @key="f.Path">
+                        <td><code>@f.Path</code></td>
+                        <td class="num">@SizeLabel(f.Size)</td>
+                        <td title="@f.UploadedAtUtc.ToString("u", System.Globalization.CultureInfo.InvariantCulture)">@f.UploadedBy</td>
+                        <td class="actions">
+                            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="@(() => RemoveAsync(f))" Disabled="_busy"
+                                 aria-label="@($"Remove {f.Path}")">
+                                <Icon Name="trash" Size="13" />
+                            </Btn>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="muted ticket-files-hint">@_files.Count file(s), @SizeLabel(_files.Sum(f => f.Size)) of @SizeLabel(_limits.MaxTotalBytes).</p>
+    }
+    else
+    {
+        <p class="muted ticket-files-hint" data-testid="ticket-files-empty">No files yet.</p>
+    }
+    <p class="muted ticket-files-hint">Up to @SizeLabel(_limits.MaxFileBytes) a file, @SizeLabel(_limits.MaxTotalBytes) and @_limits.MaxFiles files a ticket. Files are never run — they are copied as they are.</p>
+</section>
+
+@code {
+    /// <summary>The tenant the files belong to (from the circuit's AuthenticationState).</summary>
+    [Parameter, EditorRequired] public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>Whose files (<see cref="TicketFileScope"/>).</summary>
+    [Parameter, EditorRequired] public string ScopeKey { get; set; } = string.Empty;
+
+    /// <summary>Who is adding files (shown in the list).</summary>
+    [Parameter] public string UploadedBy { get; set; } = string.Empty;
+
+    /// <summary>The section's heading.</summary>
+    [Parameter] public string Title { get; set; } = "Files for the AI";
+
+    /// <summary>An extra sentence under the explanation (e.g. where a draft's files go).</summary>
+    [Parameter] public string? Note { get; set; }
+
+    /// <summary>Raised with the new count after an upload or a removal.</summary>
+    [Parameter] public EventCallback<int> OnChanged { get; set; }
+
+    private readonly string _headingId = "ticket-files-" + Guid.NewGuid().ToString("N")[..8];
+    private InputFile? _filesInput;
+    private InputFile? _folderInput;
+    private IReadOnlyList<StoredFileInfo>? _files;
+    private TicketFileLimits _limits = TicketFileLimits.Default;
+    private readonly List<string> _errors = new();
+    private bool _busy;
+    private bool _dragOver;
+    private string _progress = "";
+    private string? _loadedScope;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedScope == ScopeKey) { return; }
+        _loadedScope = ScopeKey;
+        _errors.Clear();
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (string.IsNullOrEmpty(TenantId) || string.IsNullOrEmpty(ScopeKey)) { _files = []; return; }
+        try
+        {
+            _limits = await Files.LimitsAsync(TenantId);
+            _files = await Files.ListAsync(TenantId, ScopeKey);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or TimeoutException or System.Data.Common.DbException)
+        {
+            _files = [];
+            _errors.Add($"Couldn't read the files: {ex.Message}");
+        }
+    }
+
+    private async Task UploadAsync(InputFileChangeEventArgs e, InputFile? input)
+    {
+        if (_busy) { return; }
+        if (string.IsNullOrWhiteSpace(TenantId) || string.IsNullOrWhiteSpace(ScopeKey))
+        {
+            _errors.Clear();
+            _errors.Add("Sign in to a workspace to attach files.");
+            return;
+        }
+        _busy = true;
+        _dragOver = false;
+        _errors.Clear();
+        var added = 0;
+        try
+        {
+            _limits = await Files.LimitsAsync(TenantId);
+            IReadOnlyList<IBrowserFile> picked;
+            try
+            {
+                picked = e.GetMultipleFiles(_limits.MaxFiles);
+            }
+            catch (InvalidOperationException)
+            {
+                _errors.Add($"That is more than {_limits.MaxFiles} files — a ticket can have at most {_limits.MaxFiles}.");
+                return;
+            }
+            // A folder keeps each file's place in it ("art/logo.png"); a plain pick is just the name.
+            string[] paths = [];
+            if (input?.Element is { } element)
+            {
+                try { paths = await JS.InvokeAsync<string[]>("agentosTicketFiles.relativePaths", element); }
+                catch (JSException) { paths = []; }
+            }
+            for (var i = 0; i < picked.Count; i++)
+            {
+                var file = picked[i];
+                var path = i < paths.Length && !string.IsNullOrWhiteSpace(paths[i]) ? paths[i] : file.Name;
+                _progress = $"{path} ({i + 1} of {picked.Count})";
+                StateHasChanged();
+                if (file.Size > _limits.MaxFileBytes)
+                {
+                    _errors.Add($"\"{path}\" is {SizeLabel(file.Size)} — files can be at most {SizeLabel(_limits.MaxFileBytes)}.");
+                    continue;
+                }
+                byte[] content;
+                await using (var stream = file.OpenReadStream(_limits.MaxFileBytes))
+                using (var buffer = new System.IO.MemoryStream((int)Math.Min(file.Size, int.MaxValue)))
+                {
+                    await stream.CopyToAsync(buffer);
+                    content = buffer.ToArray();
+                }
+                var put = await Files.PutAsync(TenantId, ScopeKey, path, content, file.ContentType, UploadedBy);
+                if (put.Ok) { added++; }
+                else { _errors.Add(put.Error ?? $"\"{path}\" was refused."); }
+            }
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or InvalidOperationException or TimeoutException or JSException
+                                   or System.Data.Common.DbException)
+        {
+            _errors.Add($"Couldn't add the files: {ex.Message}");
+        }
+        finally
+        {
+            _busy = false;
+            _progress = "";
+            await ReloadAsync();
+        }
+        if (added > 0)
+        {
+            Toasts.Show("Board", $"Added {added} file(s) for the AI.", ToastKind.Ok);
+            await OnChanged.InvokeAsync(_files?.Count ?? 0);
+        }
+    }
+
+    private async Task RemoveAsync(StoredFileInfo file)
+    {
+        if (_busy) { return; }
+        _busy = true;
+        _errors.Clear();
+        try
+        {
+            if (!await Files.DeleteAsync(TenantId, ScopeKey, file.Path))
+            {
+                _errors.Add($"\"{file.Path}\" was already gone.");
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or TimeoutException or System.Data.Common.DbException)
+        {
+            _errors.Add($"Couldn't remove \"{file.Path}\": {ex.Message}");
+        }
+        finally
+        {
+            _busy = false;
+            await ReloadAsync();
+        }
+        await OnChanged.InvokeAsync(_files?.Count ?? 0);
+    }
+
+    /// <summary>"3.2 MB".</summary>
+    internal static string SizeLabel(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} bytes",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / (1024.0 * 1024.0):0.#} MB",
+    };
+}

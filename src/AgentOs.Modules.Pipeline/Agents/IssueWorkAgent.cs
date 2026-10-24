@@ -36,6 +36,8 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
     private readonly IRunAdmission? _admission;
     private readonly Prompts.IPromptOverrides? _prompts;
     private readonly AgentOs.Domain.Memory.IMemoryStore? _memory;
+    // Ticket files ahead of a server-driven run (ADR-0015); a run on the member's computer carries them with its dispatch.
+    private readonly AgentOs.Domain.Files.IRunnerFileDelivery? _fileDelivery;
 
     public IssueWorkAgent(
         ILlmClientFactory factory,
@@ -46,9 +48,11 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         IAgentProfiles? profiles = null,
         IRunAdmission? admission = null,
         Prompts.IPromptOverrides? prompts = null,
-        AgentOs.Domain.Memory.IMemoryStore? memory = null)
+        AgentOs.Domain.Memory.IMemoryStore? memory = null,
+        AgentOs.Domain.Files.IRunnerFileDelivery? fileDelivery = null)
     {
         _memory = memory;
+        _fileDelivery = fileDelivery;
         _admission = admission;
         _prompts = prompts;
         ArgumentNullException.ThrowIfNull(factory);
@@ -164,6 +168,24 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             ? $"Running on your machine's CLI — {request.Repos.Count} repo(s), 0 server tokens."
             : $"Dispatched to runner — {request.Repos.Count} repo(s).");
 
+        // Ticket files (ADR-0015). On the member's computer they travel with each run's dispatch; a server-driven run
+        // drives the computer through shell commands, so they are written there first and the prompt names the folder.
+        string? filesFolder = null;
+        if (!cliMode && request.Files.Count > 0)
+        {
+            var delivery = _fileDelivery is null
+                ? new AgentOs.Domain.Files.RunnerFileDelivery(false, null, "this server can't send files to a computer")
+                : await _fileDelivery.DeliverAsync(request.TenantId, request.MemberId, request.Files, ct).ConfigureAwait(false);
+            if (!delivery.Ok || delivery.Folder is null)
+            {
+                var why = $"Couldn't copy the files attached to this ticket to your computer: {delivery.Error}";
+                Emit(request, SessionRunEventKind.Step, why);
+                return new IssueWorkResult(false,
+                    request.Repos.Select(r => new RepoWorkOutcome(r.SessionRepoId, false, r.Owner, r.Repo, "", "", why)).ToList(), why);
+            }
+            filesFolder = delivery.Folder;
+        }
+
         // Run repos with bounded concurrency. Each repo is an independent LLM run with its own
         // working_dir on the runner, so they don't collide; the broker dispatches per-call (GUID
         // ToolCallId) so concurrent runner_shell calls are safe. A semaphore caps fan-out to keep the
@@ -181,7 +203,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             try
             {
                 Emit(request, SessionRunEventKind.RepoStarted, $"{repoLabel} — implementing…", repoLabel);
-                var outcome = await RunOneAsync(llm, opts, request, repo, cliMode, ct).ConfigureAwait(false);
+                var outcome = await RunOneAsync(llm, opts, request, repo, cliMode, filesFolder, ct).ConfigureAwait(false);
                 Emit(request, SessionRunEventKind.Step,
                     outcome.Ok
                         ? $"{repoLabel} — pushed branch {outcome.BranchName}"
@@ -224,7 +246,8 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         }
     }
 
-    private async Task<RepoWorkOutcome> RunOneAsync(ILlmClient llm, AgentOptions opts, IssueWorkRequest request, WorkRepo repo, bool cliMode, CancellationToken ct)
+    private async Task<RepoWorkOutcome> RunOneAsync(ILlmClient llm, AgentOptions opts, IssueWorkRequest request, WorkRepo repo, bool cliMode,
+        string? filesFolder, CancellationToken ct)
     {
         // Server-side (default): the LLM drives the paired runner via the runner_shell tool loop.
         // CLI mode (RemoteAgent): the dev-machine CLI has its own tools — send the CLI-mode prompt,
@@ -239,10 +262,14 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 : await _prompts.ResolveAsync(IssueWorkPrompt.ServerPromptKey, IssueWorkPrompt.ServerTemplate, ct).ConfigureAwait(false);
         // Knowledge graph: the lessons earlier work on this repo left behind (reviews, failing checks, acceptance tests).
         var lessons = await RecallLessonsAsync(request, repo, ct).ConfigureAwait(false);
+        // Ticket files (ADR-0015): one short section, only when there are files and they reach the agent's computer.
+        var files = cliMode
+            ? TicketFilesPrompt.ForRunDirectory(request.Files, TicketFilesPrompt.Use.Change)
+            : filesFolder is null ? string.Empty : TicketFilesPrompt.ForFolder(request.Files, filesFolder, TicketFilesPrompt.Use.Change);
         var req = cliMode
             ? new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.SystemCli(request, repo, template) + rules,
-                UserPrompt: IssueWorkPrompt.User(request, repo) + lessons,
+                UserPrompt: IssueWorkPrompt.User(request, repo) + files + lessons,
                 Model: opts.Model,
                 Temperature: opts.Temperature,
                 MaxTokens: opts.MaxTokens,
@@ -254,6 +281,8 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
                 // The only request that asks the runner for hands: clone → edit → build → test → push in its own
                 // per-run directory. Every other remote call stays answer-only.
                 Autonomy = WorkspaceAutonomy.Scoped,
+                // The runner writes them into that directory before the CLI starts.
+                Files = request.Files.Count > 0 ? request.Files : null,
                 // What the CLI is doing right now, in plain words, on the task's live feed.
                 Progress = new InlineProgress<string>(step =>
                 {
@@ -265,7 +294,7 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             }
             : new LlmRequest(
                 SystemPrompt: IssueWorkPrompt.System(request, repo, template) + rules,
-                UserPrompt: IssueWorkPrompt.User(request, repo) + lessons,
+                UserPrompt: IssueWorkPrompt.User(request, repo) + files + lessons,
                 Model: opts.Model,
                 Temperature: opts.Temperature,
                 MaxTokens: opts.MaxTokens,

@@ -48,6 +48,10 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
         // (stateless fan-out, no DB) so streaming works in both the full stack and the no-DB dev path.
         services.TryAddSingleton<ISessionRunFeed, InMemorySessionRunFeed>();
 
+        // Ticket files (ADR-0015): the rules (paths, limits, SHA-256) over a tenant-scoped store; the limits are UI settings.
+        services.TryAddSingleton<AgentOs.Domain.Files.ITicketFiles, AgentOs.Modules.Sessions.Files.TicketFiles>();
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor, AgentOs.Modules.Sessions.Files.TicketFileSettings>();
+
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
@@ -59,6 +63,7 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
             services.AddScoped<IRunnerRepository, RunnerRepository>();
             services.AddScoped<ISessionRepository, SessionRepository>();
             services.AddScoped<IRunnerDirectory, EfRunnerDirectory>();
+            services.AddScoped<AgentOs.Domain.Files.IScopedFileStore, EfScopedFileStore>();
         }
         else
         {
@@ -73,6 +78,9 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
             services.AddSingleton<IRunnerRepository, NullRunnerRepository>();
             services.AddSingleton<ISessionRepository, NullSessionRepository>();
             services.AddSingleton<IRunnerDirectory, NullRunnerDirectory>();
+            // Unlike the other no-op repositories, ticket files work without a database (process memory), so the
+            // standalone desktop can attach, list and remove them for real.
+            services.AddSingleton<AgentOs.Domain.Files.IScopedFileStore, InMemoryScopedFileStore>();
         }
     }
 
@@ -80,6 +88,7 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapSessionEndpoints();
+        endpoints.MapTicketFileEndpoints();
         // NOTE: the VS Code browser-pairing endpoints (PairingEndpoints) are mapped on the Web host, not
         // here — they rely on the browser's OIDC cookie session, which only the Web has.
     }

@@ -132,7 +132,7 @@ connection.On<RemoteExecRequest>("Execute", request =>
             // Stopped while it waited for a slot: never start it.
             var result = CancelledBeforeStart.TryRemove(request.Id, out _)
                 ? new RemoteExecResult(request.Id, false, string.Empty, "Stopped before it started.")
-                : await RunLlmAsync(request, ReportProgressAsync).ConfigureAwait(false);
+                : await RunLlmAsync(request, ReportProgressAsync, ReadRunFileAsync).ConfigureAwait(false);
             await connection.SendAsync("CompleteRequest", result).ConfigureAwait(false);
             // Print WHY on failure. Logging only ok=False made every distinct failure — CLI not on PATH, CLI not
             // logged in, non-zero exit — look identical from the runner console, which is the one place an
@@ -200,7 +200,10 @@ connection.On<RunnerToolCall>("ExecuteToolCall", call =>
     {
         try
         {
-            var result = await ExecuteToolAsync(call, policy, commandTimeout, ApproveAsync).ConfigureAwait(false);
+            // Ticket files ahead of a server-driven run (ADR-0015): written, never run — no shell, no approval prompt.
+            var result = string.Equals(call.ToolName, "write_files", StringComparison.Ordinal)
+                ? await WriteFilesToolAsync(call, ReadRunFileAsync).ConfigureAwait(false)
+                : await ExecuteToolAsync(call, policy, commandTimeout, ApproveAsync).ConfigureAwait(false);
             await connection.SendAsync("CompleteToolCall", result).ConfigureAwait(false);
             Console.WriteLine($"[agent] -> {call.ToolCallId} ok={result.Ok}");
         }
@@ -212,13 +215,18 @@ connection.On<RunnerToolCall>("ExecuteToolCall", call =>
     return Task.CompletedTask;
 });
 
+// Folders of earlier server-driven ticket-file deliveries (a CLI run's go with its run directory).
+AgentOs.RemoteAgent.RunFiles.CleanupDeliveries(
+    Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(), TimeSpan.FromDays(3));
+
 await connection.StartAsync().ConfigureAwait(false);
 Console.WriteLine($"[agent] connected to {hubUrl}; runner id={runnerId}. Ctrl+C to exit.");
 await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
 
 // ── M3: run the LLM CLI with the prompt piped to stdin ──────────────────────────────────────────
 
-static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<string, string, Task> report)
+static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<string, string, Task> report,
+    Func<string, int, long, Task<AgentOs.RemoteAgent.RunFiles.Chunk?>> readFile)
 {
     // Pick the CLI-agent profile: per-request hint (server-chosen), else REMOTE_AGENT_CLI, else claude.
     var cli = (request.Cli ?? Environment.GetEnvironmentVariable("REMOTE_AGENT_CLI") ?? "claude").Trim();
@@ -258,6 +266,16 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
     try
     {
+        // Ticket files (ADR-0015) land in <run dir>/.agentos/files BEFORE the CLI starts; a refused one fails the run.
+        if (request.Files is { Count: > 0 } files)
+        {
+            Console.WriteLine($"[agent] {request.Id}: {AgentOs.RemoteAgent.RunFiles.Describe(files)}");
+            if (await AgentOs.RemoteAgent.RunFiles.WriteAllAsync(runDir, files, (i, offset) => readFile(request.Id, i, offset)).ConfigureAwait(false) is { } refused)
+            {
+                return new RemoteExecResult(request.Id, false, string.Empty, "Couldn't receive the files attached to this ticket: " + refused);
+            }
+        }
+
         var psi = new ProcessStartInfo(ResolveExecutable(cmd))
         {
             RedirectStandardInput = profile.PromptViaStdin,
@@ -362,6 +380,8 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     catch (System.IO.IOException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
     catch (InvalidOperationException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
     catch (TimeoutException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
+    catch (Microsoft.AspNetCore.SignalR.HubException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
+    catch (UnauthorizedAccessException ex) { return new RemoteExecResult(request.Id, false, string.Empty, ex.Message); }
     finally
     {
         RunningCli.TryRemove(request.Id, out _);
@@ -542,6 +562,38 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
     catch (JsonException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
 }
 
+// Ticket files (ADR-0015): one piece of a file of the request this computer is running. The server answers only the
+// connection the request was sent to.
+async Task<AgentOs.RemoteAgent.RunFiles.Chunk?> ReadRunFileAsync(string requestId, int index, long offset) =>
+    await connection.InvokeAsync<AgentOs.RemoteAgent.RunFiles.Chunk?>("ReadRunFile", requestId, index, offset).ConfigureAwait(false);
+
+// "write_files" — the server-driven path: put the ticket's files in a fresh folder under the work root and say where.
+static async Task<RunnerToolResult> WriteFilesToolAsync(RunnerToolCall call, Func<string, int, long, Task<AgentOs.RemoteAgent.RunFiles.Chunk?>> readFile)
+{
+    string? dir = null;
+    try
+    {
+        var input = JsonSerializer.Deserialize<WriteFilesInput>(call.JsonInput, ToolJson);
+        var files = input?.Files ?? [];
+        dir = AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
+            Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(),
+            "files-" + call.ToolCallId);
+        Console.WriteLine($"[agent] {call.ToolCallId}: {AgentOs.RemoteAgent.RunFiles.Describe(files)} in {dir}");
+        if (await AgentOs.RemoteAgent.RunFiles.WriteAllAsync(dir, files, (i, offset) => readFile(call.RequestId, i, offset)).ConfigureAwait(false) is { } refused)
+        {
+            AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(dir);
+            return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, refused);
+        }
+        return new RunnerToolResult(call.RequestId, call.ToolCallId, true, dir, null);
+    }
+    catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or InvalidOperationException
+                               or Microsoft.AspNetCore.SignalR.HubException)
+    {
+        if (dir is not null) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(dir); }
+        return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message);
+    }
+}
+
 // Best effort: a lost progress line only means the Board shows the previous step a little longer.
 async Task ReportProgressAsync(string requestId, string step)
 {
@@ -566,11 +618,16 @@ internal static partial class Program
 
     // Requests stopped while they waited for a CLI slot — skipped instead of started.
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> CancelledBeforeStart = new(StringComparer.Ordinal);
+
+    // A tool call's JSON input is serialized by the server with default (PascalCase) names.
+    internal static readonly JsonSerializerOptions ToolJson = new() { PropertyNameCaseInsensitive = true };
 }
 
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
-internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null);
+internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
+    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null);
+internal sealed record WriteFilesInput(IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files);
 internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
 {
     // Real usage reported by the CLI (cache reads/writes are a subset of the input); null = not reported.
