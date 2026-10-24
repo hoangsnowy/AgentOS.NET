@@ -62,4 +62,9 @@ public sealed class RemoteSessionEntity
     // conflicts, review, acceptance or a person's "Ask for changes" — and when its last change merged.
     public int FixRounds { get; set; }
     public DateTimeOffset? MergedAtUtc { get; set; }
+
+    // The ticket flow (workspaces.ticket_flows) version Autopilot started this task with (ADR-0016): the task keeps
+    // running that flow — through the MAF workflow and, after a restart, the step-by-step rules — even when the flow is
+    // changed meanwhile. 0 = the built-in flow; null = a task started before ticket flows (it follows the current one).
+    public int? TicketFlowVersion { get; set; }
 }

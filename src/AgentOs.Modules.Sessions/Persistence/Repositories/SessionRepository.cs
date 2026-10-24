@@ -214,6 +214,15 @@ internal sealed class SessionRepository : ISessionRepository
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
+    public async Task SetTicketFlowVersionForTenantAsync(string tenantId, Guid sessionId, int version, CancellationToken ct = default)
+    {
+        var session = await _db.Sessions.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.TenantId == tenantId, ct).ConfigureAwait(false);
+        if (session is null) { return; }
+        session.TicketFlowVersion = version;
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task DecrementFixRoundsForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default)
     {
         var session = await _db.Sessions.IgnoreQueryFilters()

@@ -52,6 +52,52 @@ namespace AgentOs.Modules.Workspaces.Persistence.Migrations
                     b.ToTable("autopilot_events", "workspaces");
                 });
 
+            modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.TicketFlowVersionEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BoardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CreatedByUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("DefinitionJson")
+                        .HasMaxLength(64000)
+                        .HasColumnType("character varying(64000)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Version")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "BoardId", "Version");
+
+                    b.ToTable("ticket_flows", "workspaces");
+                });
+
             modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.WorkspaceEntity", b =>
                 {
                     b.Property<Guid>("Id")
