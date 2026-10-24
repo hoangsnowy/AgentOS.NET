@@ -244,7 +244,7 @@ builder.Services.AddSingleton<AgentOs.Web.Services.Preview.PreviewService>();
 // The project orchestrator (Autopilot): a pass over every autopilot board each minute, decisions logged per board.
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.OrchestratorLog>();
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.ProjectOrchestrator>();
-// Per-ticket Microsoft Agent Framework workflows, started by Autopilot: each runs the board's ticket flow (ADR-0016 —
+// Per-ticket Microsoft Agent Framework workflows, started by Autopilot: each runs the board's ticket flow (ADR-0014 —
 // Code → Checks → Review → Test → Merge by default, edited in Workflow › Ticket flow; versioned per tenant / board).
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.TicketWorkflowRunner>();
 builder.Services.AddSingleton<AgentOs.Web.Services.Orchestration.TicketFlowService>();

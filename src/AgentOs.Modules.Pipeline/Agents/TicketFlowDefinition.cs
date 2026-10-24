@@ -1,4 +1,4 @@
-// The ticket flow as data (ADR-0016): the per-ticket graph Autopilot runs — Code → Checks → Review → Test → Merge by
+// The ticket flow as data (ADR-0014): the per-ticket graph Autopilot runs — Code → Checks → Review → Test → Merge by
 // default — is a definition the owner sees and edits in the Workflow app (Workflow › Ticket flow). Both engines run it:
 // the MAF workflow (TicketWorkflow builds its graph from it) and the step-by-step rules (AutopilotPlanner skips the
 // steps it leaves out for a ticket). A definition is ordered step nodes joined by conditional edges: "pass" leads on

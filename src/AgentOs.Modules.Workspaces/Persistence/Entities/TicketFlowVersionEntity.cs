@@ -1,4 +1,4 @@
-// One saved version of a ticket flow (the per-ticket graph Autopilot runs — ADR-0016). Append-only: a save, a revert
+// One saved version of a ticket flow (the per-ticket graph Autopilot runs — ADR-0014). Append-only: a save, a revert
 // or "use the default flow" adds a version, so every change keeps who made it and when, and any older version can be
 // brought back. Scope: BoardId = Guid.Empty is the tenant's default flow; a board id is that board's override (board
 // wins). Version numbers run per tenant across every scope, so "v7" names one row of the tenant and a running ticket

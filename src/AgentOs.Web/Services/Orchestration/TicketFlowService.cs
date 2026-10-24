@@ -1,4 +1,4 @@
-// The ticket flow a board runs (ADR-0016): the board's own flow when it has one, else the tenant's, else the built-in
+// The ticket flow a board runs (ADR-0014): the board's own flow when it has one, else the tenant's, else the built-in
 // one (Code → Checks → Review → Test → Merge). Every load is validated: a stored version that breaks a safety
 // invariant is refused — the run uses the built-in flow and the reason is returned so Autopilot's log can say so.
 // Saving validates first (a definition that breaks an invariant is refused with the reasons, nothing is stored), only

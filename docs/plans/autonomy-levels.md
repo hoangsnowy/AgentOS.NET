@@ -47,6 +47,12 @@ others learned. The board shows each ticket's phase (Discovery → Coding → Te
    rounds, seeded from the task's persisted count). A flow that ends without a merge, or one a restart cut short, is
    picked up step by step. Settings › Autopilot › *Each ticket runs as* (MAF workflow / Step by step); its checks wait
    and poll are settings too.
+3d. ✅ **Ticket flow is data** ([ADR-0014](../adr/0014-ticket-flow-is-data.md)). The per-ticket graph is a
+   definition the owner sees and edits in Workflow › Ticket flow (per tenant, per project, versioned, revert): steps
+   on/off, the agent per step, label filters (no Review for `type:chore`, no Test for `type:docs`). `TicketWorkflow`
+   builds its MAF graph from it and the step-by-step rules skip what it skips; a ticket keeps the version it started
+   with. Safety invariants (checks always, never neither Review nor Test, fail → Code only) are enforced on save and
+   at run time. Next: a Design / screenshot gate as a new step kind.
 3b. ✅ (#264) **Reviewer agent.** Between green CI and acceptance testing: a read-only agent reviews the diff in
    context and posts its review on the PR; must-fix findings go back to the Coding agent (same bounded rounds).
 4. ✅ (#242, #264, #244) **Merge policy.** Per project: *Build and merge* merges only on green checks + review approved +

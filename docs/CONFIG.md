@@ -164,14 +164,36 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:ChecksTimeoutMinutes` | `60` | 5–240 | How long a ticket's MAF workflow waits for a pull request's checks before handing it back to the step-by-step passes. |
 | `Autopilot:ChecksPollSeconds` | `60` | 15–600 | How often it looks at them. |
 
-Fixed rules (not settings): *Build and merge* merges a change only when its checks are green, the Reviewer agent
-approved it and the Testing agent passed it — which needs the member's computer connected. When that computer's
+Fixed rules (not settings): *Build and merge* merges a change only when its checks are green and its ticket flow's
+gates passed — by default the Reviewer agent approved it and the Testing agent passed it, which needs the member's
+computer connected. When that computer's
 Claude / Codex **plan hits its limit** (e.g. `You've hit your session limit · resets 11:50pm (Asia/Ho_Chi_Minh)`), the
 RemoteAgent provider raises a typed `PlanLimitException` and records the member's wait (`IPlanLimits`); Autopilot
 then starts nothing, retries nothing and spends no fix round until the reset (+1 minute; 30 minutes when the CLI gives
 no time), logs one line in the Autopilot activity, shows it on Board › Autopilot and Board › Computers, and picks the
 cut-short work up again afterwards. The wait is in memory: after a restart the next run meets the limit again (an
 immediate answer) and the wait is back.
+
+### Workflow › Ticket flow
+
+The steps each ticket runs ([ADR-0014](adr/0014-ticket-flow-is-data.md)) are **data, not a setting key**: versioned
+rows in `workspaces.ticket_flows` (per tenant; `BoardId` = a project's own flow, which wins over the tenant's), edited
+by admins in Workflow › Ticket flow (members read-only) and read when a ticket starts. Nothing in `appsettings.json`.
+
+| Step | Agent role | Can be off / filtered | On fail |
+|---|---|---|---|
+| Code | `IssueWork` — Coding (tickets) | no | handed back to Autopilot |
+| Checks | — (CI + merge state) | no | back to Code (fix round) |
+| Review | `Reviewer` | yes — *skip tickets labelled* / *only tickets labelled* | back to Code (fix round) |
+| Test | `Acceptance` — Testing (tickets) | yes — same filters | back to Code (fix round) |
+| Merge | — (source control) | no | handed back to Autopilot |
+
+Refused on save **and** at run time (the run then uses the built-in flow and the Autopilot activity says why): a flow
+that doesn't start at Code / end at Merge, turns Checks off or limits it, lets any ticket reach Merge with neither
+Review nor Test (every combination of the filter labels is checked), loops other than *fail → Code*, leaves a step
+unreachable, puts steps out of order, or names an agent that can't run the step. Fix rounds stay
+`Autopilot:MaxFixRounds` on the task's persisted count. Every change is audited (`ticketflow.changed`) and can be
+reverted; a task records the version it started with (`sessions.sessions.TicketFlowVersion`) and keeps it.
 
 ### Settings → Platform (platform admins)
 

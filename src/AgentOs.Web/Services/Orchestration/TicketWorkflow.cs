@@ -1,5 +1,5 @@
 // One ticket's whole agent flow as a Microsoft Agent Framework Workflow: the Autopilot Orchestrator agent decides
-// WHICH ticket starts; this graph then runs it. The graph is built from the ticket flow (ADR-0016 — the definition the
+// WHICH ticket starts; this graph then runs it. The graph is built from the ticket flow (ADR-0014 — the definition the
 // owner edits in Workflow › Ticket flow, Code → Checks → Review → Test → Merge by default), resolved for the ticket's
 // labels: one executor per step the ticket runs, a "pass" edge to the next one, a "fail" edge back to Code for every step
 // that can send a change back (red checks, conflicts, requested changes and failed acceptance), bounded by the same fix

@@ -86,7 +86,7 @@ public sealed class AutopilotPlannerTests
     private static PlanTask Task(int issue, string status, params PlanChange[] changes) =>
         new(Guid.NewGuid(), issue, status, changes, 0);
 
-    // ── The task's ticket flow (ADR-0016): the rules make no move for a step it leaves out ──
+    // ── The task's ticket flow (ADR-0014): the rules make no move for a step it leaves out ──
 
     private static TicketFlowPlan Plan(string skip, string label) =>
         TicketFlowDefinition.Default.With(TicketFlowDefinition.Default.Find(skip)! with { SkipLabels = [label] }).Resolve([label]);

@@ -1,4 +1,4 @@
-// The ticket flow as data (ADR-0016): the default definition is today's flow, every safety invariant refuses a
+// The ticket flow as data (ADR-0014): the default definition is today's flow, every safety invariant refuses a
 // definition that breaks it with a plain-language reason, label filters resolve per ticket, and the JSON round-trips.
 
 using System.Linq;

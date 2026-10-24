@@ -37,7 +37,7 @@ public sealed class WorkspacesDbContext : DbContext
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.HasDefaultSchema("workspaces");
 
-        // Ticket flows (ADR-0016): append-only versions; BoardId = Guid.Empty is the tenant's default flow.
+        // Ticket flows (ADR-0014): append-only versions; BoardId = Guid.Empty is the tenant's default flow.
         modelBuilder.Entity<TicketFlowVersionEntity>(e =>
         {
             e.ToTable("ticket_flows");

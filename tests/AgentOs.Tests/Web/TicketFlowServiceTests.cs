@@ -1,4 +1,4 @@
-// Ticket flow storage + the service on top (ADR-0016): versions per tenant (who / when), revert as a new version, the
+// Ticket flow storage + the service on top (ADR-0014): versions per tenant (who / when), revert as a new version, the
 // board's own flow wins over the tenant's, a stored flow that breaks a safety rule is refused at save AND at run time
 // (the built-in flow runs), only admins change it, and two tenants never see each other's flows — on the in-memory
 // store (standalone Web) and the EF store (EF Core InMemory; the real-Postgres RLS check is RowLevelSecurityRealDbTests).

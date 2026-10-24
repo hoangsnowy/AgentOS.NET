@@ -1,4 +1,4 @@
-// Versioned storage of ticket flows (ADR-0016). The store keeps JSON and who/when; what a flow means (its steps and
+// Versioned storage of ticket flows (ADR-0014). The store keeps JSON and who/when; what a flow means (its steps and
 // safety invariants) belongs to the Pipeline module's TicketFlowDefinition, validated by the Web's TicketFlowService
 // before anything is appended. Every method is tenant-explicit (a Blazor circuit and the Autopilot worker have no
 // HttpContext). EF (Postgres) when a database is configured, process-local otherwise (the standalone Web).

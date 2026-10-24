@@ -512,7 +512,7 @@ body.panel-resizing, body.panel-resizing * { cursor: row-resize !important; user
 .syn-usage-bar .cr, .syn-usage-key.cr { background: var(--syn-eval); }
 .syn-usage-bar .cw, .syn-usage-key.cw { background: var(--warn, #c98a0a); }
 
-/* ===== Ticket flow (Workflow › Ticket flow, ADR-0016) =====
+/* ===== Ticket flow (Workflow › Ticket flow, ADR-0014) =====
    The per-ticket graph Autopilot runs, drawn with the studio's .step-node cards. Tokens only. Nothing animates at rest:
    the only motion is the .sn-status spinner on a step a ticket is running now, and it stops under
    prefers-reduced-motion or System → Appearance → Animations off. */

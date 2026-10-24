@@ -251,7 +251,7 @@ public sealed class TicketWorkflowTests
         steps.CodeRequests.ShouldBeEmpty();
     }
 
-    // ── The graph is built from the ticket flow (ADR-0016) ──
+    // ── The graph is built from the ticket flow (ADR-0014) ──
 
     private static Task<TicketFlow> RunPlan(ScriptedSteps steps, TicketFlowPlan plan, List<string>? entered = null) =>
         TicketWorkflow.RunAsync(steps, new TicketFlow("t", Guid.NewGuid(), Guid.NewGuid(), 15, true)
