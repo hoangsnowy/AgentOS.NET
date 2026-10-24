@@ -333,9 +333,16 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             // A follow-up pushes to the pull request's existing branch — whatever name the reply claims, that is the one.
             if (!string.IsNullOrWhiteSpace(repo.ExistingBranch) && !string.IsNullOrWhiteSpace(request.ChangeRequest)) { branch = repo.ExistingBranch; }
 
+            // The pull request description (optional; an older or overridden prompt may not ask for it).
+            var description = root.TryGetProperty("description", out var dProp) && dProp.ValueKind == JsonValueKind.String
+                ? dProp.GetString() : null;
+
             _logger.LogInformation("IssueWorkAgent: session {SessionId} repo {Owner}/{Repo} pushed branch '{Branch}'",
                 request.SessionId, repo.Owner, repo.Repo, branch);
-            return new RepoWorkOutcome(repo.SessionRepoId, true, repo.Owner, repo.Repo, branch, summary, null);
+            return new RepoWorkOutcome(repo.SessionRepoId, true, repo.Owner, repo.Repo, branch, summary, null)
+            {
+                Description = string.IsNullOrWhiteSpace(description) ? null : description,
+            };
         }
         catch (JsonException ex)
         {

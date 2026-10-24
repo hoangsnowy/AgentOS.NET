@@ -70,7 +70,13 @@ public sealed record IssueWorkRequest(
 /// <param name="Summary">One-sentence description of the change.</param>
 /// <param name="Error">Failure reason; null when <see cref="Ok"/>.</param>
 public sealed record RepoWorkOutcome(
-    Guid SessionRepoId, bool Ok, string Owner, string Repo, string BranchName, string Summary, string? Error);
+    Guid SessionRepoId, bool Ok, string Owner, string Repo, string BranchName, string Summary, string? Error)
+{
+    /// <summary>The pull request description the agent wrote (Markdown: what changed and why, how it was verified, and
+    /// anything the ticket asks the pull request itself to contain). On a follow-up it is the complete updated
+    /// description and replaces the old one. Null when the agent gave none — the one-sentence summary is used.</summary>
+    public string? Description { get; init; }
+}
 
 /// <summary>Result from the issue-work agent across all target repos.</summary>
 /// <param name="Ok">True when every target repo pushed a branch.</param>

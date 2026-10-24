@@ -1,6 +1,6 @@
 // M5 / multi-repo — system + user prompts for IssueWorkAgent, rendered PER REPO. The agent uses
 // runner_shell to explore the repo, implement the fix, build, test, commit, and push.
-// On success it replies with a JSON block: {"branch":"...","summary":"..."}.
+// On success it replies with a JSON block: {"branch":"...","summary":"...","description":"<PR description, Markdown>"}.
 // On failure it replies with: {"branch":"","summary":"","error":"...reason..."}.
 // For a cross-service ticket (more than one repo) each repo gets its own run, with a note naming the
 // sibling repos so the agent can cross-link the PRs.
@@ -87,7 +87,12 @@ internal static class IssueWorkPrompt
            git push origin {branch}
 
         When the branch is pushed, reply ONLY with this JSON (no other text):
-        {"branch":"{branch}","summary":"<one sentence describing the change>"}
+        {"branch":"{branch}","summary":"<one sentence describing the change>","description":"<the pull request description>"}
+
+        "description" is the pull request's description, in Markdown: what changed and why, how you verified it
+        (the commands you ran and their results), and anything the ticket asks the pull request itself to contain
+        (for example every upgraded package with its old and new version). When you are fixing an existing pull
+        request, write the complete updated description: it replaces the old one.
 
         If you cannot complete the task, reply with:
         {"branch":"","summary":"","error":"<brief reason>"}
@@ -135,7 +140,12 @@ internal static class IssueWorkPrompt
            git push -u origin {branch}
 
         When the branch is pushed, reply ONLY with this JSON (no other text):
-        {"branch":"{branch}","summary":"<one sentence describing the change>"}
+        {"branch":"{branch}","summary":"<one sentence describing the change>","description":"<the pull request description>"}
+
+        "description" is the pull request's description, in Markdown: what changed and why, how you verified it
+        (the commands you ran and their results), and anything the ticket asks the pull request itself to contain
+        (for example every upgraded package with its old and new version). When you are fixing an existing pull
+        request, write the complete updated description: it replaces the old one.
 
         If you cannot complete the task, reply with:
         {"branch":"","summary":"","error":"<brief reason>"}
