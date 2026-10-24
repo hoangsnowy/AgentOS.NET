@@ -127,8 +127,7 @@ public sealed partial class ProjectOrchestrator
                 var epic = tickets.FirstOrDefault(t => t.Number == close.IssueNumber);
                 if (epic is { RepoOwner: { } eo, RepoName: { } en } && await sp.GetRequiredService<IPrCreationService>().CloseAsync(
                         BoardTaskService.RepoDescriptor(board, tenant, eo, en, "main", pat), close.IssueNumber,
-                        $"Closing — {close.Reason}\n\n<sub>Closed by the AgentOS.NET Orchestrator agent: every piece of this epic is delivered. Reopen it if anything is missing.</sub>\n",
-                        ct).ConfigureAwait(false))
+                        ClosedByAgent(close.Reason), ct).ConfigureAwait(false))
                 {
                     retried.Add(close.IssueNumber);
                     log.Add(tenant, board.Id, $"Closed epic #{close.IssueNumber}: {close.Reason}");
@@ -137,7 +136,12 @@ public sealed partial class ProjectOrchestrator
             }
             var task = stuck.First(s => s.IssueNumber == close.IssueNumber);
             var session = sessions.First(s => s.Id == task.SessionId);
-            if (!await CloseTicketAsync(board, pat, session, PersonAnswers.Acknowledgement($"closing #{close.IssueNumber}: {close.Reason}"), sp, ct).ConfigureAwait(false))
+            // Thank the person only when they answered; a ticket the agent closes on its own (an epic with a stuck task,
+            // its scope delivered) says so, like an epic without one.
+            var closing = task.PersonAnswer is null
+                ? ClosedByAgent(close.Reason)
+                : PersonAnswers.Acknowledgement($"closing #{close.IssueNumber}: {close.Reason}");
+            if (!await CloseTicketAsync(board, pat, session, closing, sp, ct).ConfigureAwait(false))
             {
                 continue;
             }
@@ -160,6 +164,10 @@ public sealed partial class ProjectOrchestrator
         picked.AddRange(candidates.OfType<AutopilotAction.NeedsPerson>().Where(n => !handled.Contains(n.IssueNumber)));
         return picked;
     }
+
+    /// <summary>The comment on a ticket the Orchestrator agent closes on its own (nobody was asked): its reason, and how to undo it.</summary>
+    internal static string ClosedByAgent(string reason) =>
+        $"Closing — {reason}\n\n<sub>Closed by the AgentOS.NET Orchestrator agent: everything this ticket covers is delivered. Reopen it if anything is missing.</sub>\n";
 
     private readonly ConcurrentDictionary<(Guid Board, int Issue), (DateTimeOffset At, string Body)> _epicBodies = new();
 

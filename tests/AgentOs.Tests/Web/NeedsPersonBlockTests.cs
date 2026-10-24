@@ -36,3 +36,18 @@ public sealed class NeedsPersonBlockTests
         ProjectOrchestrator.HoldsAProposedChange(status).ShouldBeFalse();
     }
 }
+
+public sealed class ClosedByAgentTests
+{
+    // VNChess #1 (2026-10-24): an epic with a stuck task was closed with "Posted … after your answer" although nobody
+    // had answered.
+    [Fact]
+    public void ClosedByAgent_SaysTheAgentClosedIt_NeverThanksForAnAnswer()
+    {
+        var text = AgentOs.Web.Services.Orchestration.ProjectOrchestrator.ClosedByAgent("every M1 item is merged.");
+
+        text.ShouldStartWith("Closing — every M1 item is merged.");
+        text.ShouldContain("Reopen it if anything is missing");
+        text.ShouldNotContain("your answer");
+    }
+}
