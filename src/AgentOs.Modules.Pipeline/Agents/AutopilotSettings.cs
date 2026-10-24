@@ -110,7 +110,7 @@ public sealed class AutopilotSettings : ISettingsContributor
         {
             DefaultValue = MafWorkflow,
             Choices = [MafWorkflow, StepByStep],
-            Help = "MAF workflow: a Microsoft Agent Framework graph runs Coding → checks → Reviewer → Testing → merge for the ticket, routing every verdict. Step by step: Autopilot drives each step itself every minute. Both use the same agents, rules and evidence.",
+            Help = "MAF workflow: a Microsoft Agent Framework graph runs the ticket flow (Workflow › Ticket flow — Code → Checks → Review → Test → Merge by default) for the ticket, routing every verdict. Step by step: Autopilot drives each step itself every minute. Both run the same ticket flow, agents, rules and evidence.",
         };
         yield return Bound(MaxParallelKey, "Tasks at once",
             "How many tickets the AI works on at the same time on a project (coding, fixing, reviewing or testing). Each one uses your computer.");

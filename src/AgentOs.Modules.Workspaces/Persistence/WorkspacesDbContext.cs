@@ -30,10 +30,30 @@ public sealed class WorkspacesDbContext : DbContext
 
     public DbSet<AutopilotEventEntity> AutopilotEvents => Set<AutopilotEventEntity>();
 
+    public DbSet<TicketFlowVersionEntity> TicketFlows => Set<TicketFlowVersionEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.HasDefaultSchema("workspaces");
+
+        // Ticket flows (ADR-0014): append-only versions; BoardId = Guid.Empty is the tenant's default flow.
+        modelBuilder.Entity<TicketFlowVersionEntity>(e =>
+        {
+            e.ToTable("ticket_flows");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.BoardId).IsRequired();
+            e.Property(x => x.Version).IsRequired();
+            e.Property(x => x.DefinitionJson).HasMaxLength(64_000);
+            e.Property(x => x.CreatedByUserId).HasMaxLength(64);
+            e.Property(x => x.CreatedByName).HasMaxLength(200);
+            e.Property(x => x.CreatedAtUtc).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(200);
+            e.HasIndex(x => new { x.TenantId, x.Version }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.BoardId, x.Version });
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
+        });
 
         modelBuilder.Entity<AutopilotEventEntity>(e =>
         {

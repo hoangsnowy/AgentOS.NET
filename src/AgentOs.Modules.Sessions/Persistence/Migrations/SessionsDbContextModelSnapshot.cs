@@ -96,6 +96,9 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<int?>("TicketFlowVersion")
+                        .HasColumnType("integer");
+
                     b.Property<string>("TicketKind")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");

@@ -13,6 +13,7 @@ Format: Status · Context · Decision · Consequences. Keep them terse.
 | [0011](0011-ui-first-configuration.md) | UI-first configuration: settings registry, scopes, precedence | Accepted |
 | [0012](0012-postgres-row-level-security.md) | Postgres row-level security for tenant tables (stage 1) | Accepted |
 | [0013](0013-teams-and-projects.md) | Teams and projects inside a tenant (org → team → project → repo) | Proposed |
+| [0014](0014-ticket-flow-is-data.md) | Ticket flow is data: Autopilot runs what the Workflow app shows | Accepted |
 
 > ADRs 0001–0004 (modular monolith, LLM gateway, multi-tenant isolation,
 > one-engine-three-surfaces) are scheduled as a back-fill in [ROADMAP.md](../../ROADMAP.md) Q2;

@@ -329,6 +329,12 @@ in the desktop and applies on the next call:
   fixed rules), how each ticket runs (MAF workflow or step by step), tasks and acceptance tests at once, automatic fix
   rounds (one count per task across engines and restarts), Orchestrator retries, and the checks wait. When your
   computer's Claude / Codex plan hits its limit, Autopilot waits for the reset — no tries spent — and carries on.
+- **Workflow › Ticket flow** — the steps Autopilot runs for every ticket (Code → Checks → Review → Test → Merge by
+  default), drawn as a graph with a table view: an admin turns Review or Test off, picks the agent per step and skips a
+  step for tickets with a label (e.g. no Review for `type:chore`); per tenant with an optional per-project flow,
+  versioned with revert. Safety rules are enforced on save and on every run (checks always run, never both Review and
+  Test off for a ticket); a ticket keeps the flow it started with. Board › Autopilot shows the flow in one line.
+  ([ADR-0014](docs/adr/0014-ticket-flow-is-data.md))
 - **Settings → Audit log** — who changed what (settings, keys — never their values —, members, sign-in), CSV export.
 
 **Your repo's own rules.** When a Board ticket runs against a repo, every agent follows the repo's agent

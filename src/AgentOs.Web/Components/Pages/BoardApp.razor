@@ -35,6 +35,7 @@
 @inject AgentOs.Web.Services.BoardTasks.BoardTaskService TaskService
 @inject AgentOs.Web.Services.Orchestration.ProjectOrchestrator Orchestrator
 @inject AgentOs.Web.Services.Orchestration.OrchestratorLog OrchestratorLog
+@inject AgentOs.Web.Services.Orchestration.TicketFlowService TicketFlows
 @inject AgentOs.Modules.Sessions.Pairing.IComputerPairingCodes PairingCodes
 @inject AgentOs.Modules.RemoteAgent.IRemoteAgentBroker Broker
 @inject AgentOs.Modules.RemoteAgent.IPlanLimits PlanLimits
@@ -695,6 +696,8 @@ else if (_tab == Tab.Autopilot)
                         ? "The Orchestrator agent reads the whole project whenever it changes and decides the next moves — within fixed rules: nothing untested is merged, no ticket starts before what it depends on. It retries stuck work with guidance, asks you precise questions on the ticket, and never touches tickets marked for a person."
                         : "The fixed rules decide the next moves: approved tickets in dependency order, p0 first; nothing untested is merged; tickets marked for a person are never touched.")
                         @(_isAdmin ? "" : " An admin sets how Autopilot runs in Settings › Autopilot.")</p>
+                    <p class="muted board-form-hint" data-testid="autopilot-ticket-flow"><strong>Each ticket runs:</strong> @(_ticketFlowSummary.GetValueOrDefault(b.Id) ?? AgentOs.Modules.Pipeline.Agents.TicketFlowDefinition.Default.Summary())
+                        — Workflow › Ticket flow shows @(_isAdmin ? "and changes " : "")it.</p>
                     @if (PlanLimits.Current(_tenantId, b.AutopilotUserId ?? b.CreatedByUserId ?? "") is { } hold && mode != AgentOs.Web.Services.Orchestration.AutopilotMode.Off)
                     {
                         <div class="board-failure" data-kind="plan-limit" role="status">
@@ -705,6 +708,9 @@ else if (_tab == Tab.Autopilot)
                     <div class="form-actions">
                         <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => AutopilotNow(b))" Disabled="@(_busy || mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off)">
                             <Icon Name="arrow-clockwise" Size="13" /> Check now
+                        </Btn>
+                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => OpenTicketFlow(b.Id))">
+                            <Icon Name="graph" Size="13" /> Ticket flow
                         </Btn>
                         @if (_isAdmin)
                         {
@@ -2446,7 +2452,23 @@ else if (_tab == Tab.Sessions)
         _autopilotLimits = await AgentOs.Modules.Pipeline.Agents.AutopilotSettings.ReadLimitsAsync(SettingsStore, _tenantId);
         _autopilotAgentDecides = AgentOs.Modules.Pipeline.Agents.AutopilotSettings.AgentDecides(
             (await SettingsStore.GetAsync(AgentOs.Modules.Pipeline.Agents.AutopilotSettings.DecidedByKey, _tenantId)).Value);
+        foreach (var b in _boards ?? [])
+        {
+            _ticketFlowSummary[b.Id] = (await TicketFlows.ResolveAsync(_tenantId, b.Id)).Definition.Summary();
+        }
         await LoadAutopilotLogAsync();
+    }
+
+    // The ticket flow each board runs, in one line ("Code → Checks → Review → Test → Merge"), read when the tab opens.
+    private readonly Dictionary<Guid, string> _ticketFlowSummary = new();
+
+    // Board › Autopilot → Workflow › Ticket flow, opened on this project's flow.
+    private void OpenTicketFlow(Guid boardId)
+    {
+        var app = AgentOs.Web.Services.AppCatalog.Find("workflow");
+        if (app is null) { return; }
+        WM.RequestLaunchTab("workflow", $"{OrchestrationStudio.TicketFlowTab}:{boardId:D}");
+        WM.OpenApp(app.Key, app.Title, app.Icon, app.W, app.H);
     }
 
     private static string AtATime(int n) => n switch

@@ -46,6 +46,7 @@ public static class AuditActions
     public const string TenantExported = "tenant.exported";
     public const string ApiTokenCreated = "apitoken.created";
     public const string ApiTokenRevoked = "apitoken.revoked";
+    public const string TicketFlowChanged = "ticketflow.changed";
 }
 
 /// <summary>Audit "tenant" ids that are not tenants.</summary>

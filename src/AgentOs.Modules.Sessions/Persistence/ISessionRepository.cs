@@ -61,6 +61,9 @@ public interface ISessionRepository
     /// <summary>Take back a round that never happened (the member's AI plan was at its limit) — never below zero.</summary>
     Task DecrementFixRoundsForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
 
+    /// <summary>Record the ticket flow version the task runs (snapshot when Autopilot starts it; 0 = the built-in flow).</summary>
+    Task SetTicketFlowVersionForTenantAsync(string tenantId, Guid sessionId, int version, CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>Delivery of the tenant's tasks merged since <paramref name="since"/> (null = all time).</summary>
     Task<DeliverySummary> GetDeliveryForTenantAsync(string tenantId, DateTimeOffset? since = null, CancellationToken ct = default) =>
         Task.FromResult(DeliverySummary.Empty);

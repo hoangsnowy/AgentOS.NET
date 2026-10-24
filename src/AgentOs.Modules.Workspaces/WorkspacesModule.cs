@@ -48,6 +48,7 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
                    .AddInterceptors(AgentOs.SharedKernel.Persistence.RowLevelSecurityInterceptor.Instance));
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
+            services.AddScoped<ITicketFlowStore, EfTicketFlowStore>();
         }
         else
         {
@@ -60,6 +61,8 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
                     + "or set Persistence:RequireDatabase=false to opt into the legacy no-op repositories.");
             }
             services.AddSingleton<IWorkspaceRepository, NullWorkspaceRepository>();
+            // The standalone Web keeps ticket flows in memory, so the Workflow › Ticket flow editor saves and reverts.
+            services.AddSingleton<ITicketFlowStore, InMemoryTicketFlowStore>();
         }
     }
 

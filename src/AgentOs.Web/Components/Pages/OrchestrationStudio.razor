@@ -27,6 +27,15 @@
 
 <div class="syn-root">
     <div class="syn-main">
+        @* Two views: the workflows you build and run here, and the ticket flow Autopilot runs for every ticket. *@
+        <TabStrip Tabs="StudioViews" Active="@_studioView" ActiveChanged="ShowView" AriaLabel="Workflow views"
+                  ContainerClass="syn-tabs syn-viewtabs" TabClass="syn-tab" />
+        @if (_studioView == TicketFlowTab)
+        {
+            <TicketFlowView TenantId="@_tenantId" UserId="@_userId" UserName="@_userName" IsAdmin="@_isAdmin" BoardId="@_ticketFlowBoard" />
+        }
+        else
+        {
 
         @* ---- slim toolbar: workflow switch, name, live provider, Save, Run, overflow ---- *@
         <div class="syn-toolbar">
@@ -347,6 +356,7 @@
                 }
             </aside>
         </div>
+        }
     </div>
 
     @* Command palette — centred quick-add over the whole app (⌘K or the toolbar "+ Add"). *@
@@ -393,6 +403,36 @@
     private const int DefaultQaCap = 3;
 
     private bool _isAdmin;
+    private string? _userName;
+
+    // The studio's two views. "ticket-flow" (optionally "ticket-flow:<boardId>") is also the launch tab Board ›
+    // Autopilot requests to open the Ticket flow view on its project.
+    internal const string WorkflowsTab = "workflows";
+    internal const string TicketFlowTab = "ticket-flow";
+    private static readonly TabStrip.TabDef[] StudioViews = [new(WorkflowsTab, "Workflows"), new(TicketFlowTab, "Ticket flow")];
+    private string _studioView = WorkflowsTab;
+    private Guid? _ticketFlowBoard;
+
+    private void ShowView(string view) => _studioView = view == TicketFlowTab ? TicketFlowTab : WorkflowsTab;
+
+    // A launch-tab request for the Ticket flow view (null when the request is something else).
+    private bool ApplyTicketFlowRequest(string? tab)
+    {
+        if (tab is null || !tab.StartsWith(TicketFlowTab, StringComparison.Ordinal)) { return false; }
+        _studioView = TicketFlowTab;
+        _ticketFlowBoard = Guid.TryParse(tab.AsSpan(TicketFlowTab.Length).TrimStart(':'), out var board) ? board : null;
+        return true;
+    }
+
+    // Board › Autopilot → "Ticket flow" while the Workflow window is already open.
+    private void OnWindowsChanged()
+    {
+        if (WM.ConsumeLaunchTab("workflow") is { } tab)
+        {
+            if (!ApplyTicketFlowRequest(tab)) { WM.RequestLaunchTab("workflow", tab); return; }
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
 
     private List<OrchestrationGraph> _all = [];
     private OrchestrationGraph _graph = null!;
@@ -567,7 +607,10 @@
             _runInput = prefill;
         }
         // Home's "Run now" also asks to start: one click from a story to a running pipeline.
-        _autoRun = WM.ConsumeLaunchTab("workflow") == HomeApp.WorkflowAutoRun && !string.IsNullOrWhiteSpace(_runInput);
+        var launchTab = WM.ConsumeLaunchTab("workflow");
+        _autoRun = launchTab == HomeApp.WorkflowAutoRun && !string.IsNullOrWhiteSpace(_runInput);
+        ApplyTicketFlowRequest(launchTab);
+        WM.Changed += OnWindowsChanged;
         BuildDiagram();
     }
 
@@ -577,6 +620,7 @@
         if (AuthState is null) { return string.Empty; }
         var user = (await AuthState).User;
         _userId = user.GetUserId();
+        _userName = user.Identity?.Name;
         _isAdmin = user.IsAdmin();
         return user.GetTenantId() ?? string.Empty;
     }
@@ -1220,6 +1264,7 @@
 
     public void Dispose()
     {
+        WM.Changed -= OnWindowsChanged;
         _humanTcs?.TrySetResult(new GraphHumanReply(false, "Editor closed."));
         // Best-effort: drop the global key listener and the .NET ref so a closed window stops receiving ⌘K.
         if (_selfRef is not null)
