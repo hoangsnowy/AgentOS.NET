@@ -41,12 +41,14 @@ public sealed class PreviewReattachTests : IDisposable
         foreach (var p in _started)
         {
             try { if (!p.HasExited) { p.Kill(entireProcessTree: true); } }
-            catch (InvalidOperationException) { }
+            catch (InvalidOperationException ex) { _ = ex; } // exited meanwhile
             p.Dispose();
         }
         try { Directory.Delete(_root, recursive: true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _ = ex; // a file still held by a dying process: the temp folder is cleaned by the OS
+        }
     }
 
     private static PreviewRecord Record(string id = "p1", int pid = 1, long ticks = 0, bool ready = true, bool ownGroup = false) =>
@@ -315,7 +317,7 @@ public sealed class PreviewReattachTests : IDisposable
     public void Announce_AfterARestartAndReparing_ReattachesToTheNewConnection()
     {
         var broker = new InProcessRemoteAgentBroker();
-        var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
+        using var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         var reports = new List<PreviewStatus>();
         var reattached = new List<PreviewReattach>();
         var pushed = new List<PreviewCommand>();
@@ -341,7 +343,7 @@ public sealed class PreviewReattachTests : IDisposable
     public void Announce_FromAnotherTenantOrMember_IsIgnored()
     {
         var broker = new InProcessRemoteAgentBroker();
-        var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
+        using var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         using var other = broker.RegisterRunner("conn-x", new RunnerConnection(Guid.NewGuid(), "t2", "u1"));
         using var colleague = broker.RegisterRunner("conn-y", new RunnerConnection(Guid.NewGuid(), "t1", "u2"));
         var reattached = new List<PreviewReattach>();
@@ -362,7 +364,7 @@ public sealed class PreviewReattachTests : IDisposable
     {
         var broker = new InProcessRemoteAgentBroker();
         var runnerId = Guid.NewGuid();
-        var a = broker.RegisterRunner("conn-a", new RunnerConnection(runnerId, "t1", "u1"));
+        using var a = broker.RegisterRunner("conn-a", new RunnerConnection(runnerId, "t1", "u1"));
         var reports = new List<PreviewStatus>();
         broker.PreviewReported += reports.Add;
         broker.StartPreview(Start("p1"), new RunnerTarget("t1", "u1"));
@@ -382,7 +384,7 @@ public sealed class PreviewReattachTests : IDisposable
     public void Stop_WhileTheComputerIsAway_ReportsStoppedAndStopsItOnReturn()
     {
         var broker = new InProcessRemoteAgentBroker();
-        var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
+        using var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         var reports = new List<PreviewStatus>();
         var pushed = new List<PreviewCommand>();
         var reattached = new List<PreviewReattach>();
@@ -418,7 +420,7 @@ public sealed class PreviewReattachTests : IDisposable
     {
         var (service, broker) = Service();
         using var _s = service;
-        var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
+        using var a = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         ServerPreviewStart? sent = null;
         broker.PreviewCommanded += c => sent ??= c.Start;
         var board = Guid.NewGuid();
