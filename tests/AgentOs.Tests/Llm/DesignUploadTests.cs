@@ -208,9 +208,11 @@ public sealed class DesignUploadTests : IDisposable
     [Fact]
     public async Task Runner_ChecksAndReadsOneHandle_TheFileCantBeSwappedOrGrowMeanwhile()
     {
-        // The file is held open from the check to the last piece: while it is sent, nobody can replace or delete it, and
-        // it never sends more than the length the checks saw.
-        var full = Write(".agentos/screenshots/a-390-light.png", Png(100));
+        // The file is checked and sent from one open handle: whatever happens to the path meanwhile, the bytes sent are the
+        // ones the checks saw, never more than their length. Windows also refuses the delete and the append while the
+        // handle is open; Unix allows both (unlink keeps the open inode, the append goes past the checked length).
+        var original = Png(100);
+        var full = Write(".agentos/screenshots/a-390-light.png", original);
         var swapped = false;
         var grown = false;
 
@@ -218,13 +220,16 @@ public sealed class DesignUploadTests : IDisposable
         {
             try { File.Delete(full); swapped = true; } catch (IOException) { } catch (UnauthorizedAccessException) { }
             try { File.AppendAllText(full, "more"); grown = true; } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            c.Data.Length.ShouldBe(100);
+            c.Data.ToArray().ShouldBe(original);
             return Task.FromResult<string?>(null);
         });
 
         outcome.Sent.ShouldHaveSingleItem();
-        swapped.ShouldBeFalse();
-        grown.ShouldBeFalse();
+        if (OperatingSystem.IsWindows())
+        {
+            swapped.ShouldBeFalse();
+            grown.ShouldBeFalse();
+        }
     }
 
     [Fact]
