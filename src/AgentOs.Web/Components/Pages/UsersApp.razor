@@ -14,8 +14,9 @@
 @inject AgentOs.Modules.Tenants.Email.IEmailSender Email
 @inject NavigationManager Nav
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
-@inject AgentOs.Domain.Sessions.IRunnerDirectory RunnerDirectory
 @inject AgentOs.Domain.Sessions.IRunnerDisconnector RunnerDisconnector
+@inject Microsoft.Extensions.DependencyInjection.IServiceScopeFactory Scopes
+@inject Microsoft.Extensions.Logging.ILoggerFactory Loggers
 
 @if (!_resolved)
 {
@@ -252,20 +253,45 @@ else
         if (m is null) { return; }
         _removing = true;
         _busyId = m.Id;
-        // Keycloak transport/Polly faults must surface as a toast, never tear down the circuit.
+        // GAP-04: their paired computers are revoked FIRST, then the account is deleted, then the member.removed audit row
+        // is written (MemberRemoval). Each step's failure says what did and didn't happen; nothing tears down the circuit.
         await CircuitSafe.RunAsync(
             async () =>
             {
-                await Kc.DeleteUserAsync(m.Id);
-                // GAP-04: a removed member's paired computers are revoked and their live connections cut off.
-                var runners = await AgentOs.Domain.Sessions.RunnerRevocation.RevokeMemberAsync(RunnerDirectory, RunnerDisconnector, _tenantId, m.Id);
-                Toasts.Show("Users", runners.Count == 0 ? $"Removed {m.Username}." : $"Removed {m.Username} and disconnected {runners.Count} computer(s).", ToastKind.Ok);
+                // A fresh scope (its own DbContexts) for this one operation, not the circuit's long-lived one.
+                await using var scope = Scopes.CreateAsyncScope();
+                var services = scope.ServiceProvider;
+                var result = await MemberRemoval.RemoveAsync(_tenantId, m.Id, new MemberRemovalActor(_myUserId),
+                    Kc, services.GetRequiredService<IAuditLog>(), services.GetService<AgentOs.Domain.Sessions.IRunnerDirectory>(),
+                    RunnerDisconnector, Loggers.CreateLogger(typeof(MemberRemoval).FullName!));
+                ShowRemoval(m, result);
                 await LoadMembersAsync();
             },
             ex => Toasts.Show("Users", $"Remove failed: {ex.Message}", ToastKind.Err));
         _removing = false;
         _busyId = null;
         _confirmRemove = null;
+    }
+
+    // One toast per outcome: never "Remove failed" for a member who is gone.
+    private void ShowRemoval(KeycloakUser m, MemberRemovalResult result)
+    {
+        var computers = result.ComputersRevoked == 1 ? "1 computer" : $"{result.ComputersRevoked} computers";
+        switch (result.Outcome)
+        {
+            case MemberRemovalOutcome.Removed when result.Warning is not null:
+                Toasts.Show("Users", $"Removed {m.Username}. {result.Warning}", ToastKind.Warn);
+                break;
+            case MemberRemovalOutcome.Removed:
+                Toasts.Show("Users", result.ComputersRevoked == 0 ? $"Removed {m.Username}." : $"Removed {m.Username} and disconnected {computers}.", ToastKind.Ok);
+                break;
+            case MemberRemovalOutcome.AccountNotDeleted:
+                Toasts.Show("Users", $"{m.Username} was not removed ({result.Error}). Their computers were disconnected — try again.", ToastKind.Err);
+                break;
+            default:
+                Toasts.Show("Users", $"{m.Username} was not removed. {result.Error}", ToastKind.Err);
+                break;
+        }
     }
 
     private async Task MintInvite()

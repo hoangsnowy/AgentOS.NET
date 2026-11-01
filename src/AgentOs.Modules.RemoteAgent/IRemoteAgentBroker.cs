@@ -324,6 +324,11 @@ public interface IRemoteAgentBroker
     /// (<see cref="AgentOs.Domain.Sessions.IRunnerDisconnector.Disconnect"/>, GAP-04).</summary>
     IDisposable RegisterRunner(string connectionId, RunnerConnection runner, Action? abort) => RegisterRunner(connectionId, runner);
 
+    /// <summary>True when <paramref name="runnerId"/> was revoked on this instance recently
+    /// (<see cref="AgentOs.Domain.Sessions.IRunnerDisconnector.Disconnect"/>): a handshake that read its row just before
+    /// the revoke must not register it again (GAP-04).</summary>
+    bool IsRevoked(Guid runnerId) => false;
+
     /// <summary>TRUSTED server-side completion — no owner check, so it must never carry anything a runner sent. Only the
     /// server's own outcomes use it: the transport's approval denial or delivery failure (and test doubles). A runner's
     /// answer goes through <see cref="Complete(string, RemoteExecResult)"/>.</summary>
@@ -428,6 +433,15 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private readonly ConcurrentDictionary<string, RunnerConnection> _connections = new(StringComparer.Ordinal);
     // Connection id → how the transport aborts it (GAP-04: a revoked runner is cut off at once).
     private readonly ConcurrentDictionary<string, Action> _aborts = new(StringComparer.Ordinal);
+    // Runner id → when it was revoked here (GAP-04). A handshake that read the row just before the revoke is refused at
+    // registration; kept for RevokedMemory, after which the revoked row refuses every handshake on its own.
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _revoked = new();
+
+    /// <summary>How long a revoke is remembered in memory (well past any handshake in flight and the revalidation tick).</summary>
+    internal static readonly TimeSpan RevokedMemory = TimeSpan.FromMinutes(10);
+
+    /// <summary>What the caller of work in flight on a revoked runner is told (plain language, shown on the Board).</summary>
+    public const string RevokedMessage = "The computer was disconnected because its pairing was revoked.";
     // Pending id → the waiting task + who it was dispatched to (GAP-06: only that runner may answer it).
     private readonly ConcurrentDictionary<string, Pending<RemoteExecResult>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Pending<RunnerToolResult>> _pendingToolCalls = new(StringComparer.Ordinal);
@@ -543,13 +557,16 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     // ticket-file reads, files sent back): the connection the work was dispatched to — or, after that runner's SignalR
     // auto-reconnect gave it a new connection id, a live connection registered for the SAME runner in the SAME tenant (it
     // authenticated with that runner's token). Any other runner, even one in the same tenant, is refused (GAP-06).
+    // Either way the connection must STILL be registered: Disconnect takes a revoked runner's connections out of
+    // routing before the transport aborts them, so nothing it sends in between is heard (GAP-04). The dispatched
+    // connection itself was registered for owner.Runner, so the same check covers it.
     private bool IsRunnersConnection(DispatchOwner? owner, string? connectionId)
     {
         if (owner is null || string.IsNullOrEmpty(connectionId)) { return false; }
-        if (string.Equals(owner.ConnectionId, connectionId, StringComparison.Ordinal)) { return true; }
         return _connections.TryGetValue(connectionId, out var conn)
             && conn.RunnerId == owner.Runner.RunnerId
-            && string.Equals(conn.TenantId, owner.Runner.TenantId, StringComparison.Ordinal);
+            && string.Equals(conn.TenantId, owner.Runner.TenantId, StringComparison.Ordinal)
+            && !IsRevoked(conn.RunnerId);
     }
 
     // Counted (agentos.evidence.remote_refused{reason}) and logged — the request id is runner-supplied, so it is scrubbed.
@@ -1031,36 +1048,93 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         ArgumentNullException.ThrowIfNull(runner);
         if (abort is not null) { _aborts[connectionId] = abort; }
         _connections[connectionId] = runner;
+        // A handshake that read the row just before a revoke on this instance: Disconnect marks the runner revoked
+        // BEFORE it scans the connections, and this checks the mark AFTER adding the connection — so either Disconnect
+        // sees this connection, or this sees the mark. Never both missed (GAP-04).
+        if (IsRevoked(runner.RunnerId))
+        {
+            Unregister(connectionId);
+            Abort(abort);
+            return NoRegistration.Instance;
+        }
         return new Registration(this, connectionId);
     }
 
+    public bool IsRevoked(Guid runnerId) =>
+        _revoked.TryGetValue(runnerId, out var at) && _time.GetUtcNow() - at < RevokedMemory;
+
     public IReadOnlyCollection<Guid> ConnectedRunners => _connections.Values.Select(c => c.RunnerId).Distinct().ToList();
+
+    public int DisconnectTenant(string tenantId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        return _connections.Values
+            .Where(c => string.Equals(c.TenantId, tenantId, StringComparison.Ordinal))
+            .Select(c => c.RunnerId)
+            .Distinct()
+            .ToList()
+            .Sum(Disconnect);
+    }
 
     public int Disconnect(Guid runnerId)
     {
+        // Remembered first (see RegisterRunner), so a handshake in flight can't slip back in behind the scan below.
+        var now = _time.GetUtcNow();
+        _revoked[runnerId] = now;
+        PruneRevoked(now);
         var aborted = 0;
         foreach (var connectionId in _connections.Where(kv => kv.Value.RunnerId == runnerId).Select(kv => kv.Key).ToList())
         {
             // Take the abort before unregistering (which forgets it), then out of routing — nothing new is dispatched to
-            // it, even before the transport has closed it.
+            // it and nothing it sends is heard (IsRunnersConnection), even before the transport has closed it.
             _aborts.TryRemove(connectionId, out var abort);
             Unregister(connectionId);
-            if (abort is not null)
-            {
-                try { abort(); }
-                catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
-                {
-                    // Already closing: nothing left to abort.
-                }
-            }
+            Abort(abort);
             aborted++;
         }
-        if (aborted > 0 && _logger is not null)
+        var failed = FailWorkOf(runnerId);
+        if ((aborted > 0 || failed > 0) && _logger is not null)
         {
             Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(_logger,
-                "Runner {RunnerId} revoked: {Count} live connection(s) aborted.", runnerId, aborted);
+                "Runner {RunnerId} revoked: {Count} live connection(s) aborted, {Failed} request(s) in flight failed.", runnerId, aborted, failed);
         }
         return aborted;
+    }
+
+    // Work in flight on a revoked runner can never be answered (its connections are gone and it can't come back): its
+    // callers fail NOW, in plain words, instead of waiting out the timeout and reading "did not respond within Ns". A
+    // request is also cancelled on the runner (best effort — the connection is being aborted).
+    private int FailWorkOf(Guid runnerId)
+    {
+        var failed = 0;
+        foreach (var entry in _pending.Where(kv => kv.Value.Owner.Runner.RunnerId == runnerId).ToList())
+        {
+            if (!_pending.TryRemove(entry)) { continue; }   // answered or timed out meanwhile
+            Cancelled?.Invoke(new RemoteCancel(entry.Key, entry.Value.Owner.ConnectionId));
+            failed += entry.Value.Task.TrySetException(new RunnerRevokedException(RevokedMessage)) ? 1 : 0;
+        }
+        foreach (var entry in _pendingToolCalls.Where(kv => kv.Value.Owner.Runner.RunnerId == runnerId).ToList())
+        {
+            if (!_pendingToolCalls.TryRemove(entry)) { continue; }
+            failed += entry.Value.Task.TrySetException(new RunnerRevokedException(RevokedMessage)) ? 1 : 0;
+        }
+        return failed;
+    }
+
+    private void PruneRevoked(DateTimeOffset now)
+    {
+        foreach (var entry in _revoked.Where(kv => now - kv.Value >= RevokedMemory).ToList())
+        {
+            _revoked.TryRemove(entry);
+        }
+    }
+
+    // The transport's abort may race the connection closing on its own: nothing left to abort then.
+    private static void Abort(Action? abort)
+    {
+        if (abort is null) { return; }
+        try { abort(); }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { _ = ex; }   // already closing
     }
 
     public void CompleteFromServer(RemoteExecResult result)
@@ -1213,6 +1287,17 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             detachedAny |= _previews.TryUpdate(previewId, route with { ConnectionId = null, DetachedAt = _time.GetUtcNow() }, route);
         }
         if (detachedAny) { EnsureSweep(); }
+    }
+
+    // What a refused registration (a revoked runner) hands back: there is nothing to undo.
+    private sealed class NoRegistration : IDisposable
+    {
+        public static readonly NoRegistration Instance = new();
+
+        public void Dispose()
+        {
+            // Never registered: nothing to undo.
+        }
     }
 
     private sealed class Registration : IDisposable

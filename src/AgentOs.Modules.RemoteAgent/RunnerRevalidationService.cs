@@ -4,6 +4,7 @@
 // or no longer exists. The in-process revoke paths cut a runner off at once; this bounds the cross-host window.
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Sessions;
@@ -49,14 +50,13 @@ public sealed partial class RunnerRevalidationService(
         var cut = 0;
         await using var scope = scopes.CreateAsyncScope();
         var directory = scope.ServiceProvider.GetRequiredService<IRunnerDirectory>();
-        foreach (var runnerId in connected)
+        // One batched lookup per sweep (WHERE Id IN …), not one query per connected runner.
+        var statuses = await directory.FindStatusesAsync(connected, ct).ConfigureAwait(false);
+        foreach (var runnerId in connected.Where(id => !statuses.TryGetValue(id, out var status)
+            || string.Equals(status, "Revoked", StringComparison.Ordinal)))
         {
-            var row = await directory.FindForPairingAsync(runnerId, ct).ConfigureAwait(false);
-            if (row is null || string.Equals(row.Status, "Revoked", StringComparison.Ordinal))
-            {
-                cut += disconnector.Disconnect(runnerId) > 0 ? 1 : 0;
-                LogRevoked(logger, runnerId);
-            }
+            cut += disconnector.Disconnect(runnerId) > 0 ? 1 : 0;
+            LogRevoked(logger, runnerId);
         }
         return cut;
     }

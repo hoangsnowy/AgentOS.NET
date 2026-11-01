@@ -1,8 +1,11 @@
 // GAP-04 (docs/security/threat-model.md §15) — revoking a runner must end its access NOW, not at its next reconnect.
 // A revoked row only stops the NEXT handshake; a runner already connected kept receiving work and could keep answering.
-// IRunnerDisconnector is the seam the transport implements (the in-process broker drops the connection from routing
-// and aborts the SignalR connection); every revoke path calls it after the row is marked Revoked. RunnerRevocation
-// bundles the two steps for "a member was removed": revoke all of the member's runners, then drop the live ones.
+// IRunnerDisconnector is the seam the transport implements (the in-process broker drops the connection from routing,
+// fails the work in flight on it and aborts the SignalR connection). Called right after the row is marked Revoked by:
+// the Api's POST /runners/{id}/revoke, the Board's revoke and "remove offline computers", member removal (Api
+// DELETE /tenants/{t}/members/{u} and the Users app, through RunnerRevocation) and tenant purge (DisconnectTenant).
+// RetireReplacedAsync (a re-paired computer's older, offline entries) and a revoke made on the OTHER host rely on the
+// 30 s RunnerRevalidationService backstop instead.
 
 using System;
 using System.Collections.Generic;
@@ -20,6 +23,10 @@ public interface IRunnerDisconnector
     /// <summary>Stop routing work to <paramref name="runnerId"/> and abort every live connection it has here. Returns how
     /// many connections were aborted (0 when it is not connected to this instance).</summary>
     int Disconnect(Guid runnerId);
+
+    /// <summary>A tenant was purged: <see cref="Disconnect"/> every runner of <paramref name="tenantId"/> connected here.
+    /// Returns how many connections were aborted.</summary>
+    int DisconnectTenant(string tenantId);
 }
 
 /// <summary>Revoke-and-disconnect helpers shared by the Api and the desktop.</summary>

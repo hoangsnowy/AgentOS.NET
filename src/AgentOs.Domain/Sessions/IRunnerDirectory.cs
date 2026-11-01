@@ -37,4 +37,19 @@ public interface IRunnerDirectory
     /// connections (<see cref="IRunnerDisconnector"/>).</summary>
     Task<IReadOnlyList<Guid>> RevokeForMemberAsync(string tenantId, string ownerUserId, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Guid>>([]);
+
+    /// <summary>The status of each of <paramref name="runnerIds"/> that still has a row, in ONE lookup (tenant-unfiltered,
+    /// like <see cref="FindForPairingAsync"/>). An id with no row is absent from the result. Used by the revalidation
+    /// backstop on every tick.</summary>
+    async Task<IReadOnlyDictionary<Guid, string>> FindStatusesAsync(IReadOnlyCollection<Guid> runnerIds, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(runnerIds);
+        var statuses = new Dictionary<Guid, string>(runnerIds.Count);
+        foreach (var id in runnerIds)
+        {
+            var row = await FindForPairingAsync(id, cancellationToken).ConfigureAwait(false);
+            if (row is not null) { statuses[id] = row.Status; }
+        }
+        return statuses;
+    }
 }

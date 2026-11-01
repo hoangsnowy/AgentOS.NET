@@ -282,49 +282,7 @@ internal static class TenantEndpoints
 
         // Remove a member from the tenant (deletes the Keycloak user). Cannot remove yourself. Their paired computers are
         // revoked and disconnected too (GAP-04) — a departed member's runner must not keep taking (or answering) work.
-        app.MapDelete("/tenants/{tenantId}/members/{userId}", async (
-            string tenantId,
-            string userId,
-            IKeycloakAdminClient kc,
-            IAuditLog audit,
-            ITenantContext ctx,
-            HttpContext http,
-            IServiceProvider services,
-            CancellationToken ct) =>
-        {
-            if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal))
-            {
-                return Results.Forbid();
-            }
-            if (string.Equals(ctx.UserId, userId, StringComparison.Ordinal))
-            {
-                return Results.BadRequest(new { error = "You cannot remove yourself." });
-            }
-            try
-            {
-                if (!await UserInTenantAsync(kc, userId, tenantId, ct).ConfigureAwait(false))
-                {
-                    return Results.NotFound();
-                }
-                await kc.DeleteUserAsync(userId, ct).ConfigureAwait(false);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(title: "Keycloak delete failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
-            }
-            var runners = services.GetService(typeof(AgentOs.Domain.Sessions.IRunnerDirectory)) is AgentOs.Domain.Sessions.IRunnerDirectory directory
-                ? await AgentOs.Domain.Sessions.RunnerRevocation.RevokeMemberAsync(directory,
-                    services.GetService(typeof(AgentOs.Domain.Sessions.IRunnerDisconnector)) as AgentOs.Domain.Sessions.IRunnerDisconnector,
-                    tenantId, userId, ct).ConfigureAwait(false)
-                : [];
-            await audit.WriteAsync(new AuditEntry(
-                Guid.NewGuid(), tenantId, ctx.UserId, AuditActions.MemberRemoved,
-                Target: runners.Count == 0 ? $"user={userId}" : $"user={userId},runnersRevoked={runners.Count}",
-                IpAddress: http.Connection.RemoteIpAddress?.ToString(),
-                UserAgent: http.Request.Headers.UserAgent.ToString(),
-                TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
-            return Results.NoContent();
-        })
+        app.MapDelete("/tenants/{tenantId}/members/{userId}", RemoveMemberAsync)
         .WithName("TenantsRemoveMember")
         .WithSummary("Remove a member from the tenant (tenant Admin only)")
         .WithTags("Tenants")
@@ -448,6 +406,57 @@ internal static class TenantEndpoints
     }
 
     private static readonly string[] AdminRole = new[] { "admin" };
+
+    /// <summary>DELETE /tenants/{tenantId}/members/{userId}: their paired computers are revoked FIRST, then the account
+    /// is deleted, then the audit row is written (<see cref="MemberRemoval"/>, GAP-04). The runner seams are optional —
+    /// a host without the Sessions / RemoteAgent modules has no computers to revoke.</summary>
+    internal static async Task<IResult> RemoveMemberAsync(
+        string tenantId,
+        string userId,
+        IKeycloakAdminClient kc,
+        IAuditLog audit,
+        ITenantContext ctx,
+        HttpContext http,
+        CancellationToken ct,
+        [Microsoft.AspNetCore.Mvc.FromServices] AgentOs.Domain.Sessions.IRunnerDirectory? runners = null,
+        [Microsoft.AspNetCore.Mvc.FromServices] AgentOs.Domain.Sessions.IRunnerDisconnector? disconnector = null,
+        [Microsoft.AspNetCore.Mvc.FromServices] Microsoft.Extensions.Logging.ILoggerFactory? loggers = null)
+    {
+        ArgumentNullException.ThrowIfNull(kc);
+        ArgumentNullException.ThrowIfNull(ctx);
+        ArgumentNullException.ThrowIfNull(http);
+        if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal))
+        {
+            return Results.Forbid();
+        }
+        if (string.Equals(ctx.UserId, userId, StringComparison.Ordinal))
+        {
+            return Results.BadRequest(new { error = "You cannot remove yourself." });
+        }
+        try
+        {
+            if (!await UserInTenantAsync(kc, userId, tenantId, ct).ConfigureAwait(false))
+            {
+                return Results.NotFound();
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Problem(title: "Keycloak lookup failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+        }
+
+        var result = await MemberRemoval.RemoveAsync(tenantId, userId,
+            new MemberRemovalActor(ctx.UserId, http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString()),
+            kc, audit, runners, disconnector, loggers?.CreateLogger(typeof(MemberRemoval).FullName!), ct).ConfigureAwait(false);
+        return result.Outcome switch
+        {
+            MemberRemovalOutcome.ComputersNotRevoked => Results.Problem(
+                title: "Couldn't disconnect the member's computers", detail: result.Error, statusCode: StatusCodes.Status503ServiceUnavailable),
+            MemberRemovalOutcome.AccountNotDeleted => Results.Problem(
+                title: "Keycloak delete failed", detail: result.Error, statusCode: StatusCodes.Status502BadGateway),
+            _ => Results.NoContent(),
+        };
+    }
 
     /// <summary>True when the target user's <c>tenant</c> attribute equals <paramref name="tenantId"/>.
     /// The realm <c>admin</c> role is realm-wide, so a tenant-route match alone does NOT authorize acting

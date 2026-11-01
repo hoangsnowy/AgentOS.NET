@@ -84,7 +84,8 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
             sp.GetRequiredService<Keycloak.IKeycloakAdminClient>(),
             sp.GetRequiredService<IAuditLog>(),
             sp.GetService<TimeProvider>() ?? TimeProvider.System,
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Data.TenantDataService>>()));
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Data.TenantDataService>>(),
+            sp.GetService<AgentOs.Domain.Sessions.IRunnerDisconnector>()));
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
