@@ -4,6 +4,7 @@
 // returned TokenHash before trusting TenantId / OwnerUserId. The id alone grants nothing.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -74,5 +75,20 @@ internal sealed class EfRunnerDirectory : IRunnerDirectory
         foreach (var r in retired) { r.Status = "Revoked"; }
         if (retired.Count > 0) { await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
         return retired.Count;
+    }
+
+    public async Task<IReadOnlyList<Guid>> RevokeForMemberAsync(string tenantId, string ownerUserId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        // Tenant-explicit (a member is removed from one tenant; the caller may be a circuit without an ambient tenant).
+        var rows = await _db.Runners
+            .IgnoreQueryFilters()
+            .Where(r => r.TenantId == tenantId && r.OwnerUserId == ownerUserId && r.Status != "Revoked")
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var r in rows) { r.Status = "Revoked"; }
+        if (rows.Count > 0) { await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
+        return rows.Select(r => r.Id).ToList();
     }
 }

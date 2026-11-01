@@ -79,9 +79,12 @@ public sealed class RemoteAgentHub : Hub
             return;
         }
 
+        // The abort callback lets a revoke cut this connection off at once (GAP-04) instead of at its next handshake.
+        var context = Context;
         Registrations[Context.ConnectionId] = _broker.RegisterRunner(
             Context.ConnectionId,
-            new RunnerConnection(identity.RunnerId, identity.TenantId, identity.OwnerUserId));
+            new RunnerConnection(identity.RunnerId, identity.TenantId, identity.OwnerUserId),
+            abort: context.Abort);
 
         // Promote Pending → Paired now that the token has been verified, so the Runners table reflects
         // reality: before this, a machine that connected successfully still read "Pending" forever and

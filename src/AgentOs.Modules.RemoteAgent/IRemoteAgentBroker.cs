@@ -23,6 +23,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -299,6 +300,10 @@ public interface IRemoteAgentBroker
 
     IDisposable RegisterRunner(string connectionId, RunnerConnection runner);
 
+    /// <summary>Register a runner connection with the transport's way to abort it — used when the runner is revoked
+    /// (<see cref="AgentOs.Domain.Sessions.IRunnerDisconnector.Disconnect"/>, GAP-04).</summary>
+    IDisposable RegisterRunner(string connectionId, RunnerConnection runner, Action? abort) => RegisterRunner(connectionId, runner);
+
     void Complete(RemoteExecResult result);
 
     // ── M4: bidirectional tool-call protocol ──
@@ -363,7 +368,7 @@ public interface IRemoteAgentBroker
 }
 
 /// <summary>In-process broker. Singleton; thread-safe.</summary>
-public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPreviewBroker
+public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPreviewBroker, AgentOs.Domain.Sessions.IRunnerDisconnector
 {
     /// <summary>How long a preview whose computer disconnected stays "running" on the Board, waiting for the runner to
     /// come back (a lab update, a re-pairing, a crash + restart) and re-announce it.</summary>
@@ -384,6 +389,8 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private const int MaxAnnounced = 32;
 
     private readonly ConcurrentDictionary<string, RunnerConnection> _connections = new(StringComparer.Ordinal);
+    // Connection id → how the transport aborts it (GAP-04: a revoked runner is cut off at once).
+    private readonly ConcurrentDictionary<string, Action> _aborts = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<RemoteExecResult>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<RunnerToolResult>> _pendingToolCalls = new(StringComparer.Ordinal);
     // Preview id → who runs it: the connection (null while its computer is away — DetachedAt says since when), and the
@@ -957,12 +964,44 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         }
     }
 
-    public IDisposable RegisterRunner(string connectionId, RunnerConnection runner)
+    public IDisposable RegisterRunner(string connectionId, RunnerConnection runner) => RegisterRunner(connectionId, runner, abort: null);
+
+    public IDisposable RegisterRunner(string connectionId, RunnerConnection runner, Action? abort)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
         ArgumentNullException.ThrowIfNull(runner);
+        if (abort is not null) { _aborts[connectionId] = abort; }
         _connections[connectionId] = runner;
         return new Registration(this, connectionId);
+    }
+
+    public IReadOnlyCollection<Guid> ConnectedRunners => _connections.Values.Select(c => c.RunnerId).Distinct().ToList();
+
+    public int Disconnect(Guid runnerId)
+    {
+        var aborted = 0;
+        foreach (var connectionId in _connections.Where(kv => kv.Value.RunnerId == runnerId).Select(kv => kv.Key).ToList())
+        {
+            // Take the abort before unregistering (which forgets it), then out of routing — nothing new is dispatched to
+            // it, even before the transport has closed it.
+            _aborts.TryRemove(connectionId, out var abort);
+            Unregister(connectionId);
+            if (abort is not null)
+            {
+                try { abort(); }
+                catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+                {
+                    // Already closing: nothing left to abort.
+                }
+            }
+            aborted++;
+        }
+        if (aborted > 0 && _logger is not null)
+        {
+            Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(_logger,
+                "Runner {RunnerId} revoked: {Count} live connection(s) aborted.", runnerId, aborted);
+        }
+        return aborted;
     }
 
     public void Complete(RemoteExecResult result)
@@ -1056,6 +1095,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private void Unregister(string connectionId)
     {
         _connections.TryRemove(connectionId, out _);
+        _aborts.TryRemove(connectionId, out _);
         // The runner went away, but its previews run on outside it (a restart, an update, a re-pairing): the Board keeps
         // showing them while the computer has PreviewReconnectGrace to come back and re-announce them.
         var detachedAny = false;

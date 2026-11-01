@@ -14,6 +14,8 @@
 @inject AgentOs.Modules.Tenants.Email.IEmailSender Email
 @inject NavigationManager Nav
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
+@inject AgentOs.Domain.Sessions.IRunnerDirectory RunnerDirectory
+@inject AgentOs.Domain.Sessions.IRunnerDisconnector RunnerDisconnector
 
 @if (!_resolved)
 {
@@ -141,7 +143,7 @@ else
         @if (_confirmRemove is not null)
         {
             <p>Permanently remove <strong>@_confirmRemove.Username</strong> from <code>@_tenantId</code>?</p>
-            <p class="muted">Deletes the Keycloak account. This cannot be undone.</p>
+            <p class="muted">Deletes the Keycloak account and disconnects their paired computers. This cannot be undone.</p>
         }
     </ChildContent>
     <Footer>
@@ -255,7 +257,9 @@ else
             async () =>
             {
                 await Kc.DeleteUserAsync(m.Id);
-                Toasts.Show("Users", $"Removed {m.Username}.", ToastKind.Ok);
+                // GAP-04: a removed member's paired computers are revoked and their live connections cut off.
+                var runners = await AgentOs.Domain.Sessions.RunnerRevocation.RevokeMemberAsync(RunnerDirectory, RunnerDisconnector, _tenantId, m.Id);
+                Toasts.Show("Users", runners.Count == 0 ? $"Removed {m.Username}." : $"Removed {m.Username} and disconnected {runners.Count} computer(s).", ToastKind.Ok);
                 await LoadMembersAsync();
             },
             ex => Toasts.Show("Users", $"Remove failed: {ex.Message}", ToastKind.Err));

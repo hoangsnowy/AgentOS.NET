@@ -103,9 +103,10 @@ Tick every box before exposing a deployment to people outside the team that oper
       `pip`) without approval (`src/AgentOs.RemoteAgent/RunnerCommandPolicy.cs:20-26`). Never set `*`.
 - [ ] Run the runner as the member's normal (non-admin) account; keep the console attached so server-driven
       commands outside the allowlist can be approved (denied when nobody is there).
-- [ ] **Revocation:** when someone leaves, revoke their runners in Board → Runners **and** restart the Web / Api
-      revision — revoke does not drop a live connection and member removal does not revoke runners
-      (`src/AgentOs.Modules.RemoteAgent/RemoteAgentHub.cs:67-74`). **(manual — GAP-04)**
+- [ ] **Revocation:** revoking a computer in Board → Computers aborts its live connection, and removing a member in
+      Users revokes and disconnects all of their computers (GAP-04, fixed). A revoke made on the other host (Web vs
+      Api) takes effect within 30 s (`RunnerRevalidationService`). Runner tokens still never expire: re-pair
+      computers periodically and revoke any you don't recognise.
 - [ ] Protect `runner.json` (`%APPDATA%\AgentOS.NET\runner.json` on Windows has no extra ACL).
 
 ## 7. Tool policy, build sandbox, MCP, plugins

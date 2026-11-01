@@ -280,7 +280,8 @@ internal static class TenantEndpoints
         .WithTags("Tenants")
         .RequireAuthorization("Admin");
 
-        // Remove a member from the tenant (deletes the Keycloak user). Cannot remove yourself.
+        // Remove a member from the tenant (deletes the Keycloak user). Cannot remove yourself. Their paired computers are
+        // revoked and disconnected too (GAP-04) — a departed member's runner must not keep taking (or answering) work.
         app.MapDelete("/tenants/{tenantId}/members/{userId}", async (
             string tenantId,
             string userId,
@@ -288,6 +289,7 @@ internal static class TenantEndpoints
             IAuditLog audit,
             ITenantContext ctx,
             HttpContext http,
+            IServiceProvider services,
             CancellationToken ct) =>
         {
             if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal))
@@ -310,9 +312,14 @@ internal static class TenantEndpoints
             {
                 return Results.Problem(title: "Keycloak delete failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
             }
+            var runners = services.GetService(typeof(AgentOs.Domain.Sessions.IRunnerDirectory)) is AgentOs.Domain.Sessions.IRunnerDirectory directory
+                ? await AgentOs.Domain.Sessions.RunnerRevocation.RevokeMemberAsync(directory,
+                    services.GetService(typeof(AgentOs.Domain.Sessions.IRunnerDisconnector)) as AgentOs.Domain.Sessions.IRunnerDisconnector,
+                    tenantId, userId, ct).ConfigureAwait(false)
+                : [];
             await audit.WriteAsync(new AuditEntry(
                 Guid.NewGuid(), tenantId, ctx.UserId, AuditActions.MemberRemoved,
-                Target: $"user={userId}",
+                Target: runners.Count == 0 ? $"user={userId}" : $"user={userId},runnersRevoked={runners.Count}",
                 IpAddress: http.Connection.RemoteIpAddress?.ToString(),
                 UserAgent: http.Request.Headers.UserAgent.ToString(),
                 TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);

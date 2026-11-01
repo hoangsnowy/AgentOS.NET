@@ -4,6 +4,7 @@
 // token against the returned hash before trusting TenantId / OwnerUserId for routing.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -30,4 +31,10 @@ public interface IRunnerDirectory
     /// </summary>
     Task<int> RetireReplacedAsync(Guid runnerId, Func<Guid, bool> isConnected, CancellationToken cancellationToken = default) =>
         Task.FromResult(0);
+
+    /// <summary>A member left the tenant (GAP-04): revoke every runner <paramref name="ownerUserId"/> owns in
+    /// <paramref name="tenantId"/> that is not revoked yet. Returns the ids revoked now, so the caller can drop their live
+    /// connections (<see cref="IRunnerDisconnector"/>).</summary>
+    Task<IReadOnlyList<Guid>> RevokeForMemberAsync(string tenantId, string ownerUserId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Guid>>([]);
 }

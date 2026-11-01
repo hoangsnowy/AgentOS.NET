@@ -151,7 +151,7 @@ internal static class SessionEndpoints
 
     private static async Task<IResult> RevokeRunnerAsync(
         Guid id, IRunnerRepository repo, ITenantContext tenant, System.Security.Claims.ClaimsPrincipal user,
-        CancellationToken ct)
+        IServiceProvider services, CancellationToken ct)
     {
         // Ownership: a member revokes only their own runners; a tenant admin may revoke any.
         var runner = await repo.GetAsync(id, ct).ConfigureAwait(false);
@@ -165,7 +165,10 @@ internal static class SessionEndpoints
         }
 
         var ok = await repo.SetStatusAsync(id, "Revoked", ct).ConfigureAwait(false);
-        return ok ? Results.NoContent() : Results.NotFound();
+        if (!ok) { return Results.NotFound(); }
+        // GAP-04: the revoked token already fails the next handshake — also cut off the connection it holds right now.
+        (services.GetService(typeof(AgentOs.Domain.Sessions.IRunnerDisconnector)) as AgentOs.Domain.Sessions.IRunnerDisconnector)?.Disconnect(id);
+        return Results.NoContent();
     }
 
     /// <summary>True when the resource's recorded owner matches the calling user. An ownerless row

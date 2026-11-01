@@ -39,6 +39,7 @@
 @inject AgentOs.Web.Services.Orchestration.TicketFlowService TicketFlows
 @inject AgentOs.Modules.Sessions.Pairing.IComputerPairingCodes PairingCodes
 @inject AgentOs.Modules.RemoteAgent.IRemoteAgentBroker Broker
+@inject AgentOs.Domain.Sessions.IRunnerDisconnector Disconnector
 @inject AgentOs.Modules.RemoteAgent.IPlanLimits PlanLimits
 @inject AgentOs.Domain.Configuration.ISettings SettingsStore
 @inject AgentOs.Web.Services.Preview.PreviewService Previews
@@ -1114,6 +1115,7 @@ else if (_tab == Tab.Sessions)
             foreach (var r in offline.Where(r => !Broker.IsConnected(r.Id)))
             {
                 await Runners.SetStatusForTenantAsync(_tenantId, r.Id, "Revoked");
+                Disconnector.Disconnect(r.Id);   // GAP-04: a race with a reconnect must not leave it live
             }
             var all = await Runners.ListForTenantAsync(_tenantId);
             _runners = _isAdmin ? all : all.Where(x => x.OwnerUserId == _userId).ToList();
@@ -2276,6 +2278,8 @@ else if (_tab == Tab.Sessions)
         try
         {
             await Runners.SetStatusForTenantAsync(_tenantId, r.Id, "Revoked");
+            // GAP-04: the revoked token fails the next handshake — and the connection it holds now is cut off at once.
+            Disconnector.Disconnect(r.Id);
             Toasts.Show("Board", $"Revoked '{r.Label}'.", ToastKind.Ok);
             var r0 = await Runners.ListForTenantAsync(_tenantId);
             _runners = _isAdmin ? r0 : r0.Where(r => r.OwnerUserId == _userId).ToList();

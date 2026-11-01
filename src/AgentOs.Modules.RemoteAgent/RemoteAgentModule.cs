@@ -20,6 +20,9 @@ public sealed class RemoteAgentModule : IModule, IEndpointModule
 
         services.TryAddSingleton<IRemoteAgentBroker, InProcessRemoteAgentBroker>();
         // "Try the app" rides the same connections: the in-process broker is also the preview seam.
+        // GAP-04: revoking a runner aborts its live connection (the broker is the disconnector).
+        services.TryAddSingleton<AgentOs.Domain.Sessions.IRunnerDisconnector>(sp =>
+            sp.GetRequiredService<IRemoteAgentBroker>() as AgentOs.Domain.Sessions.IRunnerDisconnector ?? new InProcessRemoteAgentBroker());
         services.TryAddSingleton<IRunnerPreviewBroker>(sp =>
             sp.GetRequiredService<IRemoteAgentBroker>() as IRunnerPreviewBroker ?? new InProcessRemoteAgentBroker());
         // Fail-closed: deny remote/runner exec outside Development unless RemoteAgent:AutoApprove=true.
@@ -44,6 +47,9 @@ public sealed class RemoteAgentModule : IModule, IEndpointModule
         // SignalR's 32 KB default for what a server receives. Raised for this hub only (Blazor's circuits keep theirs).
         services.AddSignalR().AddHubOptions<RemoteAgentHub>(o => o.MaximumReceiveMessageSize = RemoteAgentHub.MaxReceiveBytes);
         services.AddHostedService<RemoteAgentTransport>();
+        // Backstop for revokes this instance didn't see (the other host's Board, a member removed elsewhere, a direct DB
+        // change): live runners are re-checked against their row and cut off once it is revoked or gone.
+        services.AddHostedService<RunnerRevalidationService>();
     }
 
     public void MapEndpoints(IEndpointRouteBuilder endpoints)
