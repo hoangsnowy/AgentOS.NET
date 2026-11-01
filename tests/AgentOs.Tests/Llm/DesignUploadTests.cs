@@ -38,10 +38,7 @@ public sealed class DesignUploadTests : IDisposable
         Directory.CreateDirectory(_runDir);
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-    }
+    public void Dispose() => _ = TestFiles.TryDeleteDirectory(_root); // still held: the OS temp cleanup removes it
 
     private static byte[] Png(int size)
     {
@@ -218,8 +215,8 @@ public sealed class DesignUploadTests : IDisposable
 
         var outcome = await RunUploads.SendAsync(_runDir, [".agentos/screenshots/a-390-light.png"], Caps, c =>
         {
-            try { File.Delete(full); swapped = true; } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            try { File.AppendAllText(full, "more"); grown = true; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            swapped = TestFiles.TryIo(() => File.Delete(full));
+            grown = TestFiles.TryIo(() => File.AppendAllText(full, "more"));
             c.Data.ToArray().ShouldBe(original);
             return Task.FromResult<string?>(null);
         });
