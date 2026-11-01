@@ -81,7 +81,7 @@ public sealed class ComputersDefaultModelTests
         broker.Dispatched += d =>
         {
             sent = d.Request;
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, Approve, null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, Approve, null));
         };
         var remote = new RemoteAgentLlmClient(broker, new ServiceCollection().BuildServiceProvider(), NullLogger<RemoteAgentLlmClient>.Instance);
 
@@ -164,7 +164,7 @@ public sealed class ComputersDefaultModelTests
         broker.Dispatched += d =>
         {
             sent = d.Request;
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, Approve, null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, Approve, null));
         };
         var remote = new RemoteAgentLlmClient(broker, new ServiceCollection().BuildServiceProvider(), NullLogger<RemoteAgentLlmClient>.Instance);
         var settings = Settings();
@@ -184,7 +184,7 @@ public sealed class ComputersDefaultModelTests
     {
         var broker = new InProcessRemoteAgentBroker();
         using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), Tenant, "u1"));
-        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
+        broker.Dispatched += d => broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "ok", null));
         var remote = new RemoteAgentLlmClient(broker, new ServiceCollection().BuildServiceProvider(), NullLogger<RemoteAgentLlmClient>.Instance);
 
         LlmResponse response;

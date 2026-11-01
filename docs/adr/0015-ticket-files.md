@@ -34,7 +34,7 @@ logo, art assets, a sample data file or a third-party folder it must copy into t
    allowed; nothing ever executes one (REST downloads are always `application/octet-stream` attachments).
 4. **Delivery — pulled by the runner, before the CLI starts.** The dispatch (`RemoteExecRequest.Files`) carries only a
    manifest (path, size, SHA-256); the bytes wait in the broker (`StageFiles`), fetchable only by the connection the
-   run was dispatched to, in 256 KB pieces (`ReadRunFile` hub method — no SignalR message-size surprises). The runner
+   run was dispatched to (or that runner's own reconnect — same runner id, same tenant), in 256 KB pieces (`ReadRunFile` hub method — no SignalR message-size surprises). The runner
    (`RunFiles.cs`) re-checks every path with the same rules, resolves it under `<run dir>/.agentos/files/` and refuses
    anything that would land outside, refuses when any folder between `.agentos` and the file is a reparse point
    (symlink / junction — checked before and after the folders are made), writes create-exclusive (never overwrites),

@@ -33,7 +33,8 @@ the evidence is one Playwright call away — but it never left that computer, an
    `TicketFilePath`): a relative path that passes `TicketFilePath`, an image extension (png / jpg / jpeg / webp — no SVG)
    whose first bytes really are that image, never one of the ticket's own files (`.agentos/files`). The runner also
    resolves each path inside the run folder, refuses links on the way and linked files, and applies the caps the
-   dispatch named. The broker hears pieces only from the connection the request was dispatched to, in order, and
+   dispatch named. The broker hears pieces only from the connection the request was dispatched to (or that runner's own
+   reconnect — same runner id, same tenant — since the screenshots come at the end of a long run), in order, and
    enforces **16 files, 5 MB each, 40 MB a run** (hard caps — a caller can only lower them). The hub's receive limit
    is raised to 1 MB for this hub only (one piece as base64 JSON); Blazor's circuits keep theirs.
 5. **Stored in the tenant's file store** (`IScopedFileStore`, ADR-0015) under the scope

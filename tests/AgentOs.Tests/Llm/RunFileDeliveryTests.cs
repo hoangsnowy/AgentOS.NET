@@ -62,7 +62,7 @@ public sealed class RunFileDeliveryTests
         first.Data.Concat(second.Data).ShouldBe(big);
         broker.ReadRunFile("conn-mine", "req-1", 0, 0).ShouldBeNull();    // fetched to the end: released
 
-        broker.Complete(new RemoteExecResult("req-1", true, "done", null));
+        broker.CompleteFromServer(new RemoteExecResult("req-1", true, "done", null));
         await run;
         broker.UnstageFiles("req-1").ShouldBe(1);                          // one of two fetched to the end
         broker.ReadRunFile("conn-mine", "req-1", 1, 0).ShouldBeNull();
@@ -89,7 +89,7 @@ public sealed class RunFileDeliveryTests
                     if (chunk.Last) { break; }
                 }
             }
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "ok", null));
         };
         var log = new RecordingLog();
         var feed = new InMemorySessionRunFeed();
@@ -123,7 +123,7 @@ public sealed class RunFileDeliveryTests
         var broker = new InProcessRemoteAgentBroker();
         using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         RemoteExecRequest? sent = null;
-        broker.Dispatched += d => { sent = d.Request; broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null)); };
+        broker.Dispatched += d => { sent = d.Request; broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "ok", null)); };
         var log = new RecordingLog();
         await using var services = new ServiceCollection().AddSingleton<IToolInvocationLog>(log).BuildServiceProvider();
         var client = new RemoteAgentLlmClient(broker, services, NullLogger<RemoteAgentLlmClient>.Instance);
@@ -143,7 +143,7 @@ public sealed class RunFileDeliveryTests
         var broker = new InProcessRemoteAgentBroker();
         using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         // An older runner ignores the manifest.
-        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
+        broker.Dispatched += d => broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "ok", null));
         var log = new RecordingLog();
         await using var services = new ServiceCollection().AddSingleton<IToolInvocationLog>(log).BuildServiceProvider();
         var client = new RemoteAgentLlmClient(broker, services, NullLogger<RemoteAgentLlmClient>.Instance);
@@ -170,7 +170,7 @@ public sealed class RunFileDeliveryTests
         {
             call = d.Call;
             while (broker.ReadRunFile(d.ConnectionId, d.Call.RequestId, 0, 0) is { Last: false }) { }
-            broker.CompleteToolCall(new RunnerToolResult(d.Call.RequestId, d.Call.ToolCallId, true, "C:/runs/20261025-files-x", null));
+            broker.CompleteToolCallFromServer(new RunnerToolResult(d.Call.RequestId, d.Call.ToolCallId, true, "C:/runs/20261025-files-x", null));
         };
         var log = new RecordingLog();
         await using var services = new ServiceCollection().AddSingleton<IToolInvocationLog>(log).BuildServiceProvider();
