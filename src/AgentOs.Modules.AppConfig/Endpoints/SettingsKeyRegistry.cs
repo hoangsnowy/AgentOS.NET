@@ -32,6 +32,23 @@ internal static class SettingsKeyRegistry
 
     public static bool IsReadablePrefix(string prefix) => ReadablePrefixes.Contains(prefix);
 
+    // Key-name suffixes that always mark a secret, whatever the catalog says — a key no module declares (a legacy
+    // row, a pool key) is still never returned in clear (GAP-08).
+    private static readonly string[] SecretSuffixes = ["ApiKey", "ApiKeys", ":Pat", "Token", "Secret", "Password"];
+
+    /// <summary>True when <paramref name="key"/> holds a secret: declared <see cref="SettingKind.Secret"/> in the settings
+    /// catalog, or named like one (<c>…ApiKey</c>, <c>…:Pat</c>, <c>…Token</c>, <c>…Secret</c>, <c>…Password</c>).</summary>
+    public static bool IsSecret(string key, ISettingsCatalog? catalog)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        if (catalog is not null && catalog.TryGet(key, out var d) && d.IsSecret) { return true; }
+        foreach (var suffix in SecretSuffixes)
+        {
+            if (key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) { return true; }
+        }
+        return false;
+    }
+
     public static bool IsKnownKey(string key) => Keys.ContainsKey(key);
 
     /// <summary>Validates a value for a known key. Returns the error message, or null when valid.</summary>

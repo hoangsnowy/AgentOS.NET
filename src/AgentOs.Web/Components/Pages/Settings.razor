@@ -122,7 +122,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 </div>
                 <div class="prefs-row">
                     <div class="prefs-label"><strong>Personal access token</strong></div>
-                    <input type="password" @bind="_githubPat" placeholder="ghp_..." class="prefs-input" />
+                    <input type="password" @bind="_githubPat" placeholder="@PatPlaceholder" aria-label="Personal access token" autocomplete="new-password" class="prefs-input" />
                 </div>
                 <div class="prefs-row">
                     <div class="prefs-label"><strong>Repo owner</strong></div>
@@ -191,7 +191,11 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
 
     private bool _dbConnected;
 
+    // Write-only (GAP-08): the field holds only what the admin types now. The saved token is never sent to the browser —
+    // only its mask (_githubPatSaved, e.g. "••••abcd") as the placeholder; a blank field keeps the saved token on save.
     private string _githubPat = "";
+    private string? _githubPatSaved;
+    private string PatPlaceholder => _githubPatSaved is { Length: > 0 } saved ? $"Saved {saved} · type to replace" : "ghp_...";
     private string _repoOwner = "";
     private string _repoName = "";
     private string _baseBranch = "";
@@ -249,7 +253,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
         if (!Split)
         {
             using var _ = TenantScope();
-            _githubPat = Overrides.GitHubPat ?? "";
+            _githubPatSaved = Overrides.GitHubPat is { Length: > 0 } pat ? AgentOs.Modules.AppConfig.Settings.SettingValidation.Mask(pat) : null;
             _repoOwner = Overrides.GitHubRepoOwner ?? "";
             _repoName = Overrides.GitHubRepoName ?? "";
             _baseBranch = Overrides.GitHubBaseBranch ?? "";
@@ -271,7 +275,8 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 var gh = await client.GetFromJsonAsync<Dictionary<string, string?>>("settings/Github");
                 if (gh is not null)
                 {
-                    _githubPat = gh.GetValueOrDefault(AppConfigKeys.GithubPat) ?? "";
+                    // The API returns the PAT masked (GAP-08) — show it as a hint, never as the field's value.
+                    _githubPatSaved = gh.GetValueOrDefault(AppConfigKeys.GithubPat) is { Length: > 0 } saved ? saved : null;
                     _repoOwner = gh.GetValueOrDefault(AppConfigKeys.GithubRepoOwner) ?? "";
                     _repoName = gh.GetValueOrDefault(AppConfigKeys.GithubRepoName) ?? "";
                     _baseBranch = gh.GetValueOrDefault(AppConfigKeys.GithubBaseBranch) ?? "";
@@ -379,7 +384,11 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 {
                     using var client = ApiClient();
                     // _saveErrorGithub is null here (guard above returned otherwise) — first write assigns.
-                    _saveErrorGithub = await SetRemoteAsync(client, AppConfigKeys.GithubPat, _githubPat);
+                    // A blank token field keeps the saved token (write-only); only a newly typed one is sent.
+                    if (!string.IsNullOrWhiteSpace(_githubPat))
+                    {
+                        _saveErrorGithub = await SetRemoteAsync(client, AppConfigKeys.GithubPat, _githubPat);
+                    }
                     _saveErrorGithub ??= await SetRemoteAsync(client, AppConfigKeys.GithubRepoOwner, _repoOwner);
                     _saveErrorGithub ??= await SetRemoteAsync(client, AppConfigKeys.GithubRepoName, _repoName);
                     _saveErrorGithub ??= await SetRemoteAsync(client, AppConfigKeys.GithubBaseBranch, _baseBranch);
@@ -387,12 +396,17 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 else
                 {
                     using var _ = TenantScope();
-                    Overrides.GitHubPat = string.IsNullOrWhiteSpace(_githubPat) ? null : _githubPat;
+                    if (!string.IsNullOrWhiteSpace(_githubPat)) { Overrides.GitHubPat = _githubPat; }
                     Overrides.GitHubRepoOwner = string.IsNullOrWhiteSpace(_repoOwner) ? null : _repoOwner;
                     Overrides.GitHubRepoName = string.IsNullOrWhiteSpace(_repoName) ? null : _repoName;
                     Overrides.GitHubBaseBranch = string.IsNullOrWhiteSpace(_baseBranch) ? null : _baseBranch;
                 }
                 _savedGithub = _saveErrorGithub is null;
+                if (_savedGithub && !string.IsNullOrWhiteSpace(_githubPat))
+                {
+                    _githubPatSaved = AgentOs.Modules.AppConfig.Settings.SettingValidation.Mask(_githubPat);
+                    _githubPat = "";
+                }
             },
             ex => _saveErrorGithub = ex.Message);
         _savingGithub = false;
@@ -404,7 +418,15 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
     private async Task TestGithub()
     {
         _ghTestResult = null;
-        if (string.IsNullOrWhiteSpace(_githubPat))
+        // In-process the saved token can be used server-side without ever reaching the browser; split mode needs it typed.
+        string? storedPat = null;
+        if (!Split && string.IsNullOrWhiteSpace(_githubPat))
+        {
+            using var _ = TenantScope();
+            storedPat = Overrides.GitHubPat;
+        }
+        var token = string.IsNullOrWhiteSpace(_githubPat) ? storedPat : _githubPat;
+        if (string.IsNullOrWhiteSpace(token))
         {
             _ghTestOk = false;
             _ghTestResult = "Enter a token first.";
@@ -439,7 +461,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                         SourceProviderKind.GitHub,
                         _repoOwner, _repoName, null,
                         string.IsNullOrWhiteSpace(_baseBranch) ? "main" : _baseBranch,
-                        _githubPat);
+                        token);
                     var result = await SourceProviders.Resolve(SourceProviderKind.GitHub).ValidateAsync(descriptor);
                     _ghTestOk = result.Ok;
                     _ghTestResult = result.Ok

@@ -2,7 +2,9 @@
 // offboarding) and PURGE everything it owns (right to erasure, contract end). Catalog-driven, so a table a future
 // module adds is covered with no code change: every table with a "TenantId" column, in every schema.
 //   • Export streams one JSON document {tenant, exportedAtUtc, tables: {"schema.table": [rows…]}} — rows via
-//     to_jsonb with secret columns dropped (config values are encrypted secrets, runner token hashes).
+//     to_jsonb with secret columns dropped (GAP-08): the encrypted config values, runner and API-token hashes, and
+//     any column NAMED like a secret (…Hash, …Secret, …Password, EncryptedValue). The known map is checked against
+//     the catalog: a mapped table whose column is missing (renamed) fails the export instead of leaking it.
 //   • Purge runs in ONE transaction: tables in foreign-key order (children before parents, Kahn's algorithm over
 //     pg_constraint), then the registry row; Keycloak users of the tenant after commit; audited under _platform.
 // Runs on a raw connection (no RLS role switch); every statement is filtered by the tenant explicitly.
@@ -43,12 +45,43 @@ public interface ITenantDataService
 internal sealed partial class TenantDataService(
     string? connectionString, IKeycloakAdminClient keycloak, IAuditLog audit, TimeProvider clock, ILogger<TenantDataService> logger) : ITenantDataService
 {
-    // Columns never exported: encrypted secrets and credential material.
-    private static readonly Dictionary<string, string[]> Redacted = new(StringComparer.Ordinal)
+    // Columns never exported: encrypted secrets and credential material (GAP-08). Checked against the catalog on
+    // every export — a renamed column fails closed instead of silently exporting (the old map named "Value" for the
+    // EncryptedValue column and exported every ciphertext).
+    internal static readonly Dictionary<string, string[]> Redacted = new(StringComparer.Ordinal)
     {
-        ["config.app_config"] = ["Value"],
+        ["config.app_config"] = ["EncryptedValue"],
         ["sessions.runners"] = ["TokenHash"],
+        ["tenants.api_tokens"] = ["TokenHash"],
     };
+
+    // Defence in depth for tables a future module adds: a column named like credential material is never exported.
+    private static readonly string[] SecretColumnSuffixes = ["Hash", "Secret", "Password", "EncryptedValue"];
+
+    /// <summary>The columns of <paramref name="table"/> to drop from its export. Throws when a column the known map
+    /// lists for this table is not among <paramref name="columns"/> (fail closed on a rename).</summary>
+    internal static string[] RedactedColumns(string table, IReadOnlyCollection<string> columns)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+        var drop = new SortedSet<string>(StringComparer.Ordinal);
+        if (Redacted.TryGetValue(table, out var known))
+        {
+            foreach (var column in known)
+            {
+                if (!columns.Contains(column))
+                {
+                    throw new InvalidOperationException(
+                        $"Tenant export refused: {table} has no column \"{column}\" to redact — update TenantDataService.Redacted.");
+                }
+                drop.Add(column);
+            }
+        }
+        foreach (var column in columns.Where(c => SecretColumnSuffixes.Any(s => c.EndsWith(s, StringComparison.OrdinalIgnoreCase))))
+        {
+            drop.Add(column);
+        }
+        return [.. drop];
+    }
 
     public bool IsAvailable => !string.IsNullOrWhiteSpace(connectionString);
 
@@ -60,6 +93,9 @@ internal sealed partial class TenantDataService(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct).ConfigureAwait(false);
         var tables = await TenantTablesAsync(conn, ct).ConfigureAwait(false);
+        var columns = await ColumnsAsync(conn, tables, ct).ConfigureAwait(false);
+        // Resolve every table's redaction before the first byte is written: a refusal leaves no partial export.
+        var drops = tables.ToDictionary(t => t.Oid, t => RedactedColumns(t.Name, columns.GetValueOrDefault(t.Oid, [])));
 
         await using var json = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = true });
         json.WriteStartObject();
@@ -69,9 +105,10 @@ internal sealed partial class TenantDataService(
         foreach (var table in tables.OrderBy(t => t.Name, StringComparer.Ordinal))
         {
             json.WriteStartArray(table.Name);
-            var drop = Redacted.TryGetValue(table.Name, out var cols) ? string.Concat(cols.Select(c => $" - '{c}'")) : string.Empty;
-            await using var cmd = new NpgsqlCommand($"SELECT (to_jsonb(t){drop})::text FROM {table.Quoted} t WHERE \"TenantId\" = @t", conn);
+            // jsonb - text[] drops the keys; the names go in as a parameter, never spliced into the SQL.
+            await using var cmd = new NpgsqlCommand($"SELECT (to_jsonb(t) - @drop)::text FROM {table.Quoted} t WHERE \"TenantId\" = @t", conn);
             cmd.Parameters.AddWithValue("t", tenantId);
+            cmd.Parameters.Add(new NpgsqlParameter("drop", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = drops[table.Oid] });
             await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
@@ -154,6 +191,20 @@ internal sealed partial class TenantDataService(
             list.Add(new TenantTable(reader.GetFieldValue<uint>(0), reader.GetString(1), reader.GetString(2)));
         }
         return list;
+    }
+
+    private static async Task<Dictionary<uint, HashSet<string>>> ColumnsAsync(NpgsqlConnection conn, List<TenantTable> tables, CancellationToken ct)
+    {
+        var byTable = tables.ToDictionary(t => t.Oid, _ => new HashSet<string>(StringComparer.Ordinal));
+        await using var cmd = new NpgsqlCommand(
+            "SELECT attrelid, attname FROM pg_attribute WHERE attnum > 0 AND NOT attisdropped AND attrelid = ANY(@oids)", conn);
+        cmd.Parameters.Add(new NpgsqlParameter("oids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Oid) { Value = byTable.Keys.ToArray() });
+        await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            if (byTable.TryGetValue(reader.GetFieldValue<uint>(0), out var set)) { set.Add(reader.GetString(1)); }
+        }
+        return byTable;
     }
 
     private static async Task<List<(uint Child, uint Parent)>> ForeignKeysAsync(NpgsqlConnection conn, CancellationToken ct)
