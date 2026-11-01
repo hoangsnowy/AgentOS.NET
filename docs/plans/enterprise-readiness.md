@@ -34,7 +34,7 @@ exist (#194), two-tenant isolation proven end-to-end on the full stack (#192), l
 
 ### Progress (2026-10-18)
 
-**E0 Pilot-safe is complete**, and two E1 items have shipped. Each one was verified on the full stack or against
+**E0 Pilot-safe is complete**, and three E1 items have shipped. Each one was verified on the full stack or against
 real services:
 
 | Item | Shipped | Proof |
@@ -49,6 +49,7 @@ real services:
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
+| E1.12 security docs | #PRNUM | [docs/security/](../security/README.md): STRIDE threat model with code references + ranked gaps, data flow, sub-processors, hardening checklist, DPA template; linked from SECURITY.md, README, DEPLOYMENT.md |
 | (pre-E0) QA gate before PR, platform-only tenant endpoints, settings audit, isolation E2E, About | #191–#194 | Real-auth suite |
 
 Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machine's `claude -p` (#204). The full
@@ -57,7 +58,8 @@ Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machin
 **Next:**
 - E1.1 SSO brokering, E1.2 RBAC v2, E1.3 API tokens + `/v1`, E1.5 approval policies;
 - E1.7 skills, E1.8 ADO boards + Jira, E1.9 Helm + compose;
-- E1.10–E1.13 ops, supply chain, docs.
+- E1.10, E1.11, E1.13 ops, supply chain, release docs;
+- the open gaps ranked in [threat-model.md § 15](../security/threat-model.md#15-top-gaps-prioritised).
 
 ## 2. Scorecard
 
@@ -87,7 +89,7 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 | 20 | Availability | ≥2 replicas (backplane / sticky), HA Postgres, backups geo-redundant, executed DR drill | ❌ `minReplicas: 1`, geo backup off | `postgres.module.bicep:22-27` | **E2.3** |
 | 21 | Observability | dashboards, alerts, SLOs, live status | 🟡 OTel (export opt-in), About page (#191) | `ServiceDefaults` | **E1.10** |
 | 22 | Supply chain | SBOM, signed images + provenance, pinned deps, SAST | 🟡 CodeQL 0, Dependabot, pinned actions | `.github/workflows` | **E1.11** |
-| 23 | Compliance docs | threat model, data-flow + sub-processors (LLM vendors), DPA template, SOC 2 mapping, pen test | 🟡 SECURITY.md | — | **E1.12**, **E2.6** |
+| 23 | Compliance docs | threat model, data-flow + sub-processors (LLM vendors), DPA template, SOC 2 mapping, pen test | 🟡 threat model, data flow, sub-processors, hardening, DPA template ✅ (E1.12); SOC 2 mapping + pen test open | `docs/security/` | **E2.6** |
 | 24 | Admin console | tenants list/suspend/delete, quotas, usage per tenant, seats | 🟡 Platform settings + About | `PlatformSettingsApp` | **E2.7** |
 | 25 | Accessibility / i18n | WCAG 2.2 AA audit; localisable UI | 🟡 aria in 21 files; no i18n | — | **E2.8** |
 | 26 | Release policy | semver, changelog, migration notes, supported versions / LTS | 🟡 pre-1.0, `main` only | `SECURITY.md` | **E1.13** |
