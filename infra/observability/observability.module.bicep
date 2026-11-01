@@ -107,6 +107,15 @@ var logAlerts = [
     query: 'customMetrics | where name == "agentos.evidence.remote_refused" | summarize Refused = sum(valueSum) by bin(timestamp, 5m), Reason = tostring(customDimensions["reason"]), cloud_RoleInstance | where Refused > 0 | summarize Bins = count(), Refused = sum(Refused) by Reason, cloud_RoleInstance | where Bins >= 3'
   }
   {
+    name: 'AgentOsRemoteResultRefused'
+    severity: 2
+    window: 'PT10M'
+    frequency: 'PT5M'
+    description: 'A paired runner sent a result or progress for work dispatched to a different runner (refused).'
+    // Like the Prometheus rule: any refusal from the wrong connection fires (no sustain); kind "unknown" (late answers) never does.
+    query: 'customMetrics | where name == "agentos.remote.result_refused" | extend Kind = tostring(customDimensions["kind"]) | where Kind != "unknown" | summarize Refused = sum(valueSum) by Kind, cloud_RoleInstance | where Refused > 0'
+  }
+  {
     name: 'AgentOsHealthCheckUnhealthy'
     severity: 1
     window: 'PT10M'

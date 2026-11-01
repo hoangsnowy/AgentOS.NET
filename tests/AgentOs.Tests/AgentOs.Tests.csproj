@@ -46,6 +46,7 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <!-- MTP reporting/coverage extensions (xunit.v3 4.0.0 runs on Microsoft.Testing.Platform).
          Every test project in a solution-wide run must understand the coverage / trx-report args,
          so both extensions are referenced here and in AgentOs.E2E.Tests. -->

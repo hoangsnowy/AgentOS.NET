@@ -275,7 +275,7 @@ public sealed class DesignUploadTests : IDisposable
         broker.UploadRunFile("conn-mine", "req-unknown", new RunUploadChunk("a.png", 0, Png(10), true)).ShouldNotBeNull();
         broker.UploadRunFile("conn-mine", "req-1", new RunUploadChunk("a.png", 0, Png(10), true)).ShouldBeNull();
 
-        broker.Complete(new RemoteExecResult("req-1", true, "ok", null));
+        broker.CompleteFromServer(new RemoteExecResult("req-1", true, "ok", null));
         await run;
         broker.TakeUploads("req-1").ShouldHaveSingleItem().Path.ShouldBe("a.png");
         broker.TakeUploads("req-1").ShouldBeEmpty();                                                            // forgotten
@@ -294,7 +294,7 @@ public sealed class DesignUploadTests : IDisposable
     {
         var (broker, run, regs) = Dispatched(RunCollect.Screenshots);
         broker.UploadRunFile("conn-mine", "req-1", new RunUploadChunk(path, 0, Png(10), true))!.ShouldStartWith("Refused");
-        broker.Complete(new RemoteExecResult("req-1", true, "ok", null));
+        broker.CompleteFromServer(new RemoteExecResult("req-1", true, "ok", null));
         await run;
         broker.TakeUploads("req-1").ShouldBeEmpty();
         foreach (var r in regs) { r.Dispose(); }
@@ -321,7 +321,7 @@ public sealed class DesignUploadTests : IDisposable
         // A piece above the wire cap.
         broker.UploadRunFile("conn-mine", "req-1", new RunUploadChunk("g.png", 0, new byte[RunUploadRules.ChunkBytes + 1], false))!.ShouldContain("a piece is at most");
 
-        broker.Complete(new RemoteExecResult("req-1", true, "ok", null));
+        broker.CompleteFromServer(new RemoteExecResult("req-1", true, "ok", null));
         await run;
         broker.TakeUploads("req-1").Select(u => u.Path).ShouldBe(["c.png", "e.png"]);
         foreach (var r in regs) { r.Dispose(); }
@@ -339,7 +339,7 @@ public sealed class DesignUploadTests : IDisposable
             broker.UploadRunFile("conn-mine", "req-1", new RunUploadChunk($"s{i}.png", 0, Png(10), true)).ShouldBeNull();
         }
         broker.UploadRunFile("conn-mine", "req-1", new RunUploadChunk("one-too-many.png", 0, Png(10), true))!.ShouldContain($"at most {RunUploadRules.MaxFiles} files");
-        broker.Complete(new RemoteExecResult("req-1", true, "ok", null));
+        broker.CompleteFromServer(new RemoteExecResult("req-1", true, "ok", null));
     }
 
     // ── Client: what arrived is stored under the run's design scope, for the run's tenant ──
@@ -373,7 +373,7 @@ public sealed class DesignUploadTests : IDisposable
         using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         for (var i = 0; broker.ExpectUploads($"busy-{i}", RunCollect.Screenshots); i++) { }
         RemoteExecRequest? sent = null;
-        broker.Dispatched += d => { sent = d.Request; broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null)); };
+        broker.Dispatched += d => { sent = d.Request; broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "ok", null)); };
         await using var services = new ServiceCollection().AddSingleton<IScopedFileStore>(new InMemoryScopedFileStore()).BuildServiceProvider();
 
         LlmResponse response;
@@ -396,7 +396,7 @@ public sealed class DesignUploadTests : IDisposable
         broker.Dispatched += d =>
         {
             broker.UploadRunFile(d.ConnectionId, d.Request.Id, new RunUploadChunk(".agentos/screenshots/home-390-light.png", 0, Png(20), true)).ShouldBeNull();
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "ok", null));
         };
         var store = new InMemoryScopedFileStore();
         await using var services = new ServiceCollection().AddSingleton<IScopedFileStore>(store).BuildServiceProvider();
@@ -428,7 +428,7 @@ public sealed class DesignUploadTests : IDisposable
         {
             sent = d.Request;
             broker.UploadRunFile(d.ConnectionId, d.Request.Id, new RunUploadChunk(".agentos/screenshots/checkout-390-dark.png", 0, shot, true)).ShouldBeNull();
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, """{"verdict":"pass"}""", null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, """{"verdict":"pass"}""", null));
         };
         var store = new InMemoryScopedFileStore();
         await using var services = new ServiceCollection().AddSingleton<IScopedFileStore>(store).BuildServiceProvider();
@@ -463,7 +463,7 @@ public sealed class DesignUploadTests : IDisposable
         {
             sent = d.Request;
             refusal = broker.UploadRunFile(d.ConnectionId, d.Request.Id, new RunUploadChunk("a.png", 0, Png(10), true));
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "ok", null));
         };
         var store = new InMemoryScopedFileStore();
         await using var services = new ServiceCollection().AddSingleton<IScopedFileStore>(store).BuildServiceProvider();

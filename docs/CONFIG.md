@@ -320,6 +320,11 @@ starve the others. Separate from the monthly budget cap, which still applies.
 `Llm:AzureOpenAi:ApiKey`, `Llm:AzureOpenAi:Endpoint`, `Github:Pat`, `Github:RepoOwner`,
 `Github:RepoName`, `Github:BaseBranch` (`SettingsKeyRegistry`); anything else → 400. It writes the same
 tenant rows the registry reads. New settings are added as descriptors, not to this allowlist.
+`DELETE /settings/{key}` clears one of those keys (Settings › GitHub › *Remove saved token* uses it for the PAT).
+`GET /settings/{Llm|Github}` returns a value in clear only when its key is known to be non-secret (a non-secret
+descriptor, or the GitHub/LLM coordinates above); everything else comes back masked (`••••` + last four).
+`POST /settings/Github/test` (admin) probes GitHub with the typed token or, when blank, the **saved** one —
+server-side, so the browser never sees it — and returns `{ ok, message }`.
 
 ## Notes
 

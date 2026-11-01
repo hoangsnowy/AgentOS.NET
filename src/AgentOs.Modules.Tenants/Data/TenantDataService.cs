@@ -3,8 +3,10 @@
 // module adds is covered with no code change: every table with a "TenantId" column, in every schema.
 //   • Export streams one JSON document {tenant, exportedAtUtc, tables: {"schema.table": [rows…]}} — rows via
 //     to_jsonb with secret columns dropped (GAP-08): the encrypted config values, runner and API-token hashes, and
-//     any column NAMED like a secret (…Hash, …Secret, …Password, EncryptedValue). The known map is checked against
-//     the catalog: a mapped table whose column is missing (renamed) fails the export instead of leaking it.
+//     any column named like credential material (…TokenHash, …PasswordHash, …EncryptedValue) — a narrow rule, so data
+//     such as a commit or content hash is still exported; every dropped column is logged. The known map is checked
+//     against the catalog: a mapped table whose column is missing (renamed) fails the export
+//     (TenantExportRefusedException → 409) instead of leaking it.
 //   • Purge runs in ONE transaction: tables in foreign-key order (children before parents, Kahn's algorithm over
 //     pg_constraint), then the registry row; Keycloak users of the tenant after commit; audited under _platform.
 // Runs on a raw connection (no RLS role switch); every statement is filtered by the tenant explicitly.
@@ -27,6 +29,19 @@ public sealed record TenantPurgeReport(string TenantId, IReadOnlyList<(string Ta
 {
     /// <summary>Total rows deleted.</summary>
     public long TotalRows => Tables.Sum(t => t.Rows);
+}
+
+/// <summary>The export was refused before any byte was written: a known secret column could not be found to redact.</summary>
+public sealed class TenantExportRefusedException : InvalidOperationException
+{
+    /// <summary>Create the exception.</summary>
+    public TenantExportRefusedException() { }
+
+    /// <summary>Create the exception with a message.</summary>
+    public TenantExportRefusedException(string message) : base(message) { }
+
+    /// <summary>Create the exception with a message and inner exception.</summary>
+    public TenantExportRefusedException(string message, Exception innerException) : base(message, innerException) { }
 }
 
 /// <summary>Export and purge a tenant's data.</summary>
@@ -56,7 +71,9 @@ internal sealed partial class TenantDataService(
     };
 
     // Defence in depth for tables a future module adds: a column named like credential material is never exported.
-    private static readonly string[] SecretColumnSuffixes = ["Hash", "Secret", "Password", "EncryptedValue"];
+    // Deliberately narrow — a bare "…Hash"/"…Secret" rule also dropped real data (content and commit hashes, a
+    // "HasSecret" flag); anything else that holds a credential belongs in the explicit map above.
+    private static readonly string[] SecretColumnSuffixes = ["TokenHash", "PasswordHash", "EncryptedValue"];
 
     /// <summary>The columns of <paramref name="table"/> to drop from its export. Throws when a column the known map
     /// lists for this table is not among <paramref name="columns"/> (fail closed on a rename).</summary>
@@ -70,7 +87,7 @@ internal sealed partial class TenantDataService(
             {
                 if (!columns.Contains(column))
                 {
-                    throw new InvalidOperationException(
+                    throw new TenantExportRefusedException(
                         $"Tenant export refused: {table} has no column \"{column}\" to redact — update TenantDataService.Redacted.");
                 }
                 drop.Add(column);
@@ -96,6 +113,10 @@ internal sealed partial class TenantDataService(
         var columns = await ColumnsAsync(conn, tables, ct).ConfigureAwait(false);
         // Resolve every table's redaction before the first byte is written: a refusal leaves no partial export.
         var drops = tables.ToDictionary(t => t.Oid, t => RedactedColumns(t.Name, columns.GetValueOrDefault(t.Oid, [])));
+        foreach (var table in tables.Where(t => drops[t.Oid].Length > 0))
+        {
+            LogColumnsDropped(logger, table.Name, string.Join(", ", drops[table.Oid]));
+        }
 
         await using var json = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = true });
         json.WriteStartObject();
@@ -250,6 +271,9 @@ internal sealed partial class TenantDataService(
         order.AddRange(tables.Where(t => !order.Contains(t)).OrderBy(t => t.Name, StringComparer.Ordinal));
         return order;
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Tenant export: dropped secret columns {Columns} from {Table}.")]
+    private static partial void LogColumnsDropped(ILogger logger, string table, string columns);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Tenant {TenantId} PURGED: {Rows} rows, {Users} Keycloak users.")]
     private static partial void LogPurged(ILogger logger, string tenantId, long rows, int users);

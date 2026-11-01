@@ -151,6 +151,36 @@ tests:
               description: The server is not recording tool calls a paired runner reports; the evidence for those calls exists only in the runner's logs.
               runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidenceremoterefused"
 
+  # Runner results from the wrong connection (GAP-06): kind=request fires at once (no `for`); a stream of late
+  # kind=unknown answers and a quiet tool_call series do not.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_remote_result_refused_total{job="web", instance="web-1", kind="request"}'
+        values: '0+1x20'
+      - series: 'agentos_remote_result_refused_total{job="web", instance="web-1", kind="unknown"}'
+        values: '0+5x20'
+      - series: 'agentos_remote_result_refused_total{job="web", instance="web-1", kind="tool_call"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AgentOsRemoteResultRefused
+        exp_alerts:
+          - exp_labels: { severity: warning, job: web, instance: web-1, kind: request }
+            exp_annotations:
+              summary: "10 runner request report(s) from the wrong connection refused on web-1 in 10 min"
+              description: A paired runner sent a result or progress for work dispatched to a different runner. Nothing was applied; find the runner in the warning log and revoke it if it is not trusted.
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosremoteresultrefused"
+
+  # Only late answers (kind=unknown): routine, never alerted.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_remote_result_refused_total{job="web", instance="web-1", kind="unknown"}'
+        values: '0+50x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AgentOsRemoteResultRefused
+        exp_alerts: []
+
   # Health: blackbox probe failing + the in-process gauge reporting postgres Unhealthy.
   - interval: 1m
     input_series:

@@ -83,11 +83,14 @@ Tick every box before exposing a deployment to people outside the team that oper
 - [ ] No secret in `appsettings*.json` or the repo. Bootstrap secrets come from env / Key Vault / user-secrets
       ([SETUP.md](../SETUP.md)); product secrets (LLM keys, PATs) are set by tenant admins in **Settings** and stored
       encrypted.
-- [ ] **Restrict who is a tenant admin.** A tenant admin can replace the tenant's LLM keys and GitHub PAT. Reading
-      them back is no longer possible: `GET /settings/{prefix}` masks secret values (GAP-08, fixed).
+- [ ] **Restrict who is a tenant admin.** A tenant admin can replace or remove the tenant's LLM keys and GitHub PAT.
+      Reading them back is no longer possible: `GET /settings/{prefix}` masks every value whose key is not known to be
+      non-secret (fail closed — GAP-08, fixed). The platform Azure OpenAI key is only ever sent to the platform's own
+      endpoint: a tenant that sets its own endpoint must also set its own key (GAP-01, fixed — G-1 / L-3 in the
+      [threat model](threat-model.md)).
 - [ ] **Treat tenant exports as sensitive.** They hold the tenant's full business data. Secrets are excluded:
-      `app_config` ciphertext and runner / API-token hashes are dropped, and the export fails closed if a
-      redacted column is renamed (GAP-08, fixed).
+      `app_config` ciphertext and runner / API-token hashes are dropped, and the export is refused (HTTP 409, nothing
+      written, not audited as an export) if a redacted column is renamed (GAP-08, fixed).
 - [ ] PATs: GitHub classic `repo` (+ `project` for boards), or fine-grained scoped to the workspace repos; ADO
       Code R/W, Work Items R/W, Project & Team R ([LAB.md](../LAB.md)). Prefer a bot account per tenant.
 - [ ] Rotate keys by setting a new value in Settings; every set / clear is audited (value never recorded).

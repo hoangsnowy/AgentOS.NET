@@ -4,6 +4,7 @@
 // Settings UI actually owns and validates each value at save time.
 
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using AgentOs.Domain.Configuration;
 
@@ -32,21 +33,36 @@ internal static class SettingsKeyRegistry
 
     public static bool IsReadablePrefix(string prefix) => ReadablePrefixes.Contains(prefix);
 
-    // Key-name suffixes that always mark a secret, whatever the catalog says — a key no module declares (a legacy
-    // row, a pool key) is still never returned in clear (GAP-08).
-    private static readonly string[] SecretSuffixes = ["ApiKey", "ApiKeys", ":Pat", "Token", "Secret", "Password"];
+    // FAIL CLOSED (GAP-08 follow-up): GET /settings/{prefix} returns a value in clear ONLY when the key is known to be
+    // non-secret — declared in the settings catalog with a non-Secret kind, or in this explicit list of keys the
+    // registry owns but no module describes. Every other key (a legacy row, a pool key, a future Github:App:PrivateKey,
+    // Llm:X:Key or …:ClientCert nobody has declared yet) is masked. A deny-list of secret-looking names used to be the
+    // rule, and any credential it didn't anticipate came back in clear.
+    private static readonly FrozenSet<string> PlainKeys = new[]
+    {
+        AppConfigKeys.LlmForceProvider,
+        AppConfigKeys.LlmAzureEndpoint,
+        AppConfigKeys.GithubRepoOwner,
+        AppConfigKeys.GithubRepoName,
+        AppConfigKeys.GithubBaseBranch,
+        AppConfigKeys.GithubBaseUrl,
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>True when <paramref name="key"/> holds a secret: declared <see cref="SettingKind.Secret"/> in the settings
-    /// catalog, or named like one (<c>…ApiKey</c>, <c>…:Pat</c>, <c>…Token</c>, <c>…Secret</c>, <c>…Password</c>).</summary>
+    // Defence in depth: a name that reads like a credential is masked even when a descriptor (mis)declares it non-secret.
+    private static readonly string[] SecretSuffixes = ["ApiKey", "ApiKeys", ":Pat", "Token", "Secret", "Password", "PrivateKey"];
+
+    /// <summary>True when <paramref name="key"/>'s value must be masked: everything except a key known to be
+    /// non-secret (a non-<see cref="SettingKind.Secret"/> descriptor in the catalog, or an explicitly listed
+    /// coordinate such as <c>Github:RepoOwner</c>). A key named like a credential is always masked.</summary>
     public static bool IsSecret(string key, ISettingsCatalog? catalog)
     {
         ArgumentNullException.ThrowIfNull(key);
-        if (catalog is not null && catalog.TryGet(key, out var d) && d.IsSecret) { return true; }
         foreach (var suffix in SecretSuffixes)
         {
             if (key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) { return true; }
         }
-        return false;
+        if (catalog is not null && catalog.TryGet(key, out var d)) { return d.IsSecret; }
+        return !PlainKeys.Contains(key);
     }
 
     public static bool IsKnownKey(string key) => Keys.ContainsKey(key);
