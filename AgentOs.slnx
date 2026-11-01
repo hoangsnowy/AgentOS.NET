@@ -32,6 +32,7 @@
     <Project Path="samples/AgentOs.Plugins.Sample/AgentOs.Plugins.Sample.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AgentOs.Benchmarks/AgentOs.Benchmarks.csproj" />
     <Project Path="tests/AgentOs.E2E.Tests/AgentOs.E2E.Tests.csproj" />
     <Project Path="tests/AgentOs.Lab.Tests/AgentOs.Lab.Tests.csproj" />
     <Project Path="tests/AgentOs.Tests/AgentOs.Tests.csproj" />

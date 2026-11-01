@@ -20,7 +20,8 @@ Deployment is driven by **.NET Aspire + Azure Developer CLI (`azd`)**. The AppHo
 hand-editing when the app model changes. Exception: `infra/observability/` is hand-written, and its hook in
 `main.bicep` (the three observability parameters, the `observability` module, the
 `APPLICATIONINSIGHTS_CONNECTION_STRING` output) plus the matching env var in `AgentOs.AppHost/infra/{api,web}.tmpl.yaml`
-must be re-applied after an `azd infra synth`. `azd` builds images with the .NET SDK (no Dockerfile needed).
+must be re-applied after an `azd infra synth`. `azd` builds images with the .NET SDK (no Dockerfile needed); the root `Dockerfile` / `Dockerfile.web`
+and `infra/keycloak/Dockerfile` build the images for the on-prem install ([docs/ONPREM.md](../docs/ONPREM.md)).
 
 ## First deploy (local)
 

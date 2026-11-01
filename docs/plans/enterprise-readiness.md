@@ -50,6 +50,7 @@ real services:
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
 | E1.10 dashboards, alerts, SLOs | #302, [OPERATIONS.md](../OPERATIONS.md) | Real code → OTLP → Prometheus 3.7: every dashboard series present, 3 Grafana dashboards render (light + dark), `AgentOsBudgetBlockingRuns` fired + `AgentOsBudgetOverCap` pending on an over-cap tenant; `promtool test rules` green. Lab over-cap run + Azure deploy still to do |
+| E1.9 on-prem install (compose + Helm + offline bundle) | #298, [ONPREM.md](../ONPREM.md) | Compose cold install → themed login → desktop; pg_dump restore drill; air-gapped bundle (`docker save`→`load`, no repo) boots; key ring certificate-wrapped, RLS on; chart lint/template + strict schema check; kind cold install + upgrade in CI (`deploy-lint`) |
 | E1.11 signed images + SBOM + provenance 🟡 | #297 | Shipped, not yet verified: `release.yml` passes actionlint and the CycloneDX solution SBOM was generated locally; the image build, signing and attestations only run on a tag. Acceptance: `cosign verify` + `gh attestation verify` on the first tag ([RELEASE.md](../RELEASE.md#verify-an-image)) |
 | E1.13 release policy + CHANGELOG 🟡 | #297 | Shipped, not yet verified: [RELEASE.md](../RELEASE.md) (SemVer, supported versions, migration notes) + [CHANGELOG.md](../../CHANGELOG.md); the release workflow refuses a tag without a CHANGELOG section. Acceptance: the first tagged release follows it |
 | E1.12 security docs | #303 | [docs/security/](../security/README.md): STRIDE threat model with code references + ranked gaps, data flow, sub-processors, hardening checklist, DPA template; linked from SECURITY.md, README, DEPLOYMENT.md |
@@ -60,7 +61,7 @@ Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machin
 
 **Next:**
 - E1.1 SSO brokering, E1.2 RBAC v2, E1.3 API tokens + `/v1`, E1.5 approval policies;
-- E1.7 skills, E1.8 ADO boards + Jira, E1.9 Helm + compose;
+- E1.7 skills, E1.8 ADO boards + Jira;
 - E1.10 ops; tag the first release (E1.11/E1.13 acceptance: `cosign verify` on it);
 - the open gaps ranked in [threat-model.md § 15](../security/threat-model.md#15-top-gaps-prioritised).
 
@@ -88,7 +89,7 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 | 16 | Knowledge | per-tenant knowledge base / memory, citations | ❌ (ADR-0008 Proposed) | plan P3 | plan P3 |
 | 17 | LLM choice | Claude, Azure OpenAI **and** an OpenAI-compatible endpoint (vLLM, Ollama, Foundry) for air-gapped; zero-retention + region options | 🟡 Claude/Azure/MAF/RemoteAgent | `LlmClientFactory` | **E0.8** |
 | 18 | Trackers / SCM | GitHub ✅; Azure DevOps boards; GitLab; Jira; Teams/Slack notifications; webhooks | 🟡 GitHub + ADO repos | plan 0.10, 4.3, 7 | **E1.8**, **E2.4** |
-| 19 | Deployment | Azure (azd) ✅; on-prem Helm chart + docker compose; air-gapped bundle; upgrade path | 🟡 azd/ACA only | `DEPLOYMENT.md` | **E1.9** |
+| 19 | Deployment | Azure (azd) ✅; on-prem Helm chart + docker compose; air-gapped bundle; upgrade path | ✅ azd/ACA + compose + Helm + offline bundle | `DEPLOYMENT.md`, `ONPREM.md`, `deploy/` | **E1.9** ✅ |
 | 20 | Availability | ≥2 replicas (backplane / sticky), HA Postgres, backups geo-redundant, executed DR drill | ❌ `minReplicas: 1`, geo backup off | `postgres.module.bicep:22-27` | **E2.3** |
 | 21 | Observability | dashboards, alerts, SLOs, live status | ✅ Grafana + App Insights dashboards, 20 alerts with runbooks, SLOs (E1.10); runner-connected gauge open | `deploy/observability`, [OPERATIONS.md](../OPERATIONS.md) | **E1.10** ✅ |
 | 22 | Supply chain | SBOM, signed images + provenance, pinned deps, SAST | 🟡 CodeQL 0, Dependabot, pinned actions; release workflow for cosign-signed images + CycloneDX SBOMs + SLSA provenance shipped, pending the first tag + `cosign verify` | `.github/workflows/release.yml`, `docs/RELEASE.md` | **E1.11** |

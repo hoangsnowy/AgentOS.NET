@@ -4,6 +4,7 @@
 // in-memory store used for standalone runs. Reads ride the store's own per-process cache.
 
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,6 +32,9 @@ public sealed class SettingsService : ISettings
     private readonly ISettingsAuditSink _audit;
     private readonly ILogger<SettingsService> _logger;
     private readonly TimeProvider _clock;
+    // Per-descriptor lookup paths (lock config path, platform row key), built once: every read used to concatenate
+    // both strings — two allocations on every settings read, i.e. on every LLM call and policy check.
+    private readonly FrozenDictionary<string, RowKeys> _rowKeys;
     private long _version;
 
     /// <summary>Create the service.</summary>
@@ -44,6 +48,13 @@ public sealed class SettingsService : ISettings
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _clock = clock ?? TimeProvider.System;
+
+        var keys = new Dictionary<string, RowKeys>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in _catalog.All)
+        {
+            keys.TryAdd(d.Key, RowKeys.For(d.Key));
+        }
+        _rowKeys = keys.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />
@@ -148,7 +159,7 @@ public sealed class SettingsService : ISettings
             }
         }
 
-        var p = await _store.GetForTenantAsync(PlatformTenant, PlatformPrefix + d.Key, ct).ConfigureAwait(false);
+        var p = await _store.GetForTenantAsync(PlatformTenant, KeysOf(d).PlatformRow, ct).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(p))
         {
             return new SettingValue(p, SettingSource.Platform);
@@ -165,13 +176,20 @@ public sealed class SettingsService : ISettings
 
     private string? LockedValue(SettingDescriptor d)
     {
-        var v = _config[$"{LocksSection}:{d.Key}"];
+        var v = _config[KeysOf(d).LockPath];
         return string.IsNullOrWhiteSpace(v) ? null : v;
     }
+
+    private RowKeys KeysOf(SettingDescriptor d) => _rowKeys.TryGetValue(d.Key, out var k) ? k : RowKeys.For(d.Key);
 
     private static (string Tenant, string Key) Row(string key, SettingScope scope, string? tenantId) =>
         scope == SettingScope.Platform ? (PlatformTenant, PlatformPrefix + key) : (tenantId!, key);
 
     private static string? Redact(SettingDescriptor d, string? value) =>
         value is null ? null : d.IsSecret ? "(secret)" : value;
+
+    private sealed record RowKeys(string LockPath, string PlatformRow)
+    {
+        public static RowKeys For(string key) => new($"{LocksSection}:{key}", PlatformPrefix + key);
+    }
 }

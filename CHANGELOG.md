@@ -54,6 +54,10 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 - **Operations**: Grafana + Azure Monitor dashboards, Prometheus alert rules with promtool tests and runbooks,
   SLOs, and run / budget / health metrics (`deploy/observability`,
   [docs/OPERATIONS.md](docs/OPERATIONS.md)).
+- **On-prem install** ([docs/ONPREM.md](docs/ONPREM.md)): docker compose for one host, a Helm chart for
+  Kubernetes and an offline image bundle for air-gapped sites — Postgres, Keycloak with the AgentOS.NET realm
+  and theme, Api, Web and optional Ollama, with the key ring certificate-wrapped and row-level security on by
+  default. CI lints and templates the chart and runs a cold install plus an upgrade on kind.
 
 ### Changed
 
@@ -84,6 +88,9 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   instead of the URL.
 - Tenant-listing / provisioning endpoints are platform-admin only; a QA gate runs before every pull request;
   third-party ticket text is fenced as untrusted data; `Path.Combine` is banned at build time.
+- Keycloak member admin can use a least-privilege service-account client (`client_credentials`, only the
+  user-management roles) instead of a master-realm admin password; outside Development the host refuses to
+  start while any setting still holds the on-prem `CHANGE_ME` placeholder.
 - VS Code runner extension: `@vscode/vsce` 4.1.0 brings `@azure/msal-node` to 7.1.2, past the advisory on
   authorization-code-flow parameter disclosure (< 7.1.0; dev-only dependency).
 

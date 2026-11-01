@@ -1,0 +1,90 @@
+{
+   "Title":"AgentOs.Benchmarks.Feeds.ToolEvidenceBenchmarks-20261101-094545",
+   "HostEnvironmentInfo":{
+      "BenchmarkDotNetCaption":"BenchmarkDotNet",
+      "BenchmarkDotNetVersion":"0.15.8",
+      "OsVersion":"Linux Ubuntu 24.04.5 LTS (Noble Numbat)",
+      "ProcessorName":"Intel Xeon Processor 2.10GHz",
+      "PhysicalProcessorCount":1,
+      "PhysicalCoreCount":4,
+      "LogicalCoreCount":4,
+      "RuntimeVersion":".NET 10.0.14 (10.0.14, 10.0.1426.52326)",
+      "Architecture":"X64",
+      "HasAttachedDebugger":false,
+      "HasRyuJit":true,
+      "Configuration":"RELEASE",
+      "DotNetCliVersion":"10.0.403",
+      "ChronometerFrequency":{
+         "Hertz":1000000000
+      },
+      "HardwareTimerKind":"Unknown"
+   },
+   "Benchmarks":[
+      {
+         "DisplayInfo":"ToolEvidenceBenchmarks.EnqueueAndDrain: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)",
+         "Namespace":"AgentOs.Benchmarks.Feeds",
+         "Type":"ToolEvidenceBenchmarks",
+         "Method":"EnqueueAndDrain",
+         "MethodTitle":"EnqueueAndDrain",
+         "Parameters":"",
+         "FullName":"AgentOs.Benchmarks.Feeds.ToolEvidenceBenchmarks.EnqueueAndDrain",
+         "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
+         "Statistics":{
+            "OriginalValues":[
+               58.415903210639954,51.88712513446808,57.56667321920395
+            ],
+            "N":3,
+            "Min":51.88712513446808,
+            "LowerFence":49.83031561970711,
+            "Q1":54.726899176836014,
+            "Median":57.56667321920395,
+            "Mean":55.956567188103996,
+            "Q3":57.99128821492195,
+            "UpperFence":62.88787177205086,
+            "Max":58.415903210639954,
+            "InterquartileRange":3.2643890380859375,
+            "LowerOutliers":[
+               
+            ],
+            "UpperOutliers":[
+               
+            ],
+            "AllOutliers":[
+               
+            ],
+            "StandardError":2.0494362530147954,
+            "Variance":12.60056686551397,
+            "StandardDeviation":3.5497277170952097,
+            "Skewness":-0.3602650161888908,
+            "Kurtosis":0.6666666666666675,
+            "ConfidenceInterval":{
+               "N":3,
+               "Mean":55.956567188103996,
+               "StandardError":2.0494362530147954,
+               "Level":12,
+               "Margin":64.76024774789131,
+               "Lower":-8.803680559787317,
+               "Upper":120.7168149359953
+            },
+            "Percentiles":{
+               "P0":51.88712513446808,
+               "P25":54.726899176836014,
+               "P50":57.56667321920395,
+               "P67":57.855411416292185,
+               "P80":58.07621121406555,
+               "P85":58.16113421320915,
+               "P90":58.24605721235275,
+               "P95":58.33098021149635,
+               "P100":58.415903210639954
+            }
+         },
+         "Memory":{
+            "Gen0Collections":0,
+            "Gen1Collections":0,
+            "Gen2Collections":0,
+            "TotalOperations":16777216,
+            "BytesAllocatedPerOperation":0
+         }
+      }
+   ]
+}

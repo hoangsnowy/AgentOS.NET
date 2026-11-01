@@ -1,0 +1,13 @@
+{{- /* Fail at render time on configurations that would only break at runtime. Renders nothing. */ -}}
+{{- $dp := .Values.dataProtection -}}
+{{- if and $dp.requireKeyWrapping (not $dp.certificate.existingSecret) (not $dp.keyVaultKeyId) -}}
+{{- fail "dataProtection.requireKeyWrapping=true needs dataProtection.certificate.existingSecret (a PFX) or dataProtection.keyVaultKeyId — see docs/ONPREM.md. Set requireKeyWrapping=false only for a throw-away install." -}}
+{{- end -}}
+{{- if and (not .Values.keycloak.enabled) (not .Values.keycloak.publicUrl) -}}
+{{- fail "keycloak.enabled=false (external Keycloak) needs keycloak.publicUrl." -}}
+{{- end -}}
+{{- if and (gt (int .Values.web.replicaCount) 1) (not .Values.ingress.annotations) -}}
+{{- fail "web.replicaCount > 1 needs sticky sessions (Blazor Server circuits): add your ingress controller's cookie-affinity annotations under ingress.annotations." -}}
+{{- end -}}
+{{- $_ := include "agentos.webUrl" . -}}
+{{- $_ = include "agentos.keycloakUrl" . -}}

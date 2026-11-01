@@ -1,0 +1,185 @@
+name: Deploy lint
+
+# On-prem install (docs/ONPREM.md): lint the Helm chart + the compose file on every change to them, and prove a
+# cold install on a clean kind cluster from the same commands the docs give.
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'deploy/**'
+      - 'infra/keycloak/**'
+      - 'Dockerfile'
+      - 'Dockerfile.web'
+      - '.github/workflows/deploy-lint.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'deploy/**'
+      - 'infra/keycloak/**'
+      - 'Dockerfile'
+      - 'Dockerfile.web'
+      - '.github/workflows/deploy-lint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CHART: deploy/helm/agentos-net
+  HELM_VERSION: v4.3.1
+
+jobs:
+  lint:
+    name: Helm + compose lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: helm lint (defaults + every ci/ value set)
+        run: |
+          helm lint --strict "$CHART"
+          for f in "$CHART"/ci/*.yaml; do helm lint --strict "$CHART" -f "$f"; done
+
+      - name: helm template
+        run: |
+          helm template agentos "$CHART" > /dev/null
+          for f in "$CHART"/ci/*.yaml; do
+            echo "::group::$f"
+            helm template agentos "$CHART" -f "$f" > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: Chart guards fail closed
+        # Configurations that cannot work must fail at render time, not at runtime.
+        run: |
+          expect_fail() { if helm template agentos "$CHART" "$@" > /dev/null 2>&1; then echo "::error::expected failure: $*"; exit 1; fi; }
+          expect_fail --set dataProtection.certificate.existingSecret=
+          expect_fail --set keycloak.enabled=false
+          expect_fail --set web.replicaCount=2
+          expect_fail --set ingress.enabled=false
+          # GitOps/offline renders must never mint fresh credentials (lookup returns nothing there).
+          expect_fail --set secrets.generate=false
+          expect_fail --is-upgrade
+          # Key Vault wrapping must not mount (and wait on) the default certificate Secret.
+          if helm template agentos "$CHART" --set dataProtection.keyVaultKeyId=https://kv.example/keys/dp | grep -q 'secretName: agentos-dataprotection'; then
+            echo "::error::keyVaultKeyId still mounts the certificate Secret"; exit 1
+          fi
+
+      - name: docker compose config
+        working-directory: deploy/compose
+        run: |
+          docker compose version
+          docker compose --env-file .env.example config -q
+          docker compose --env-file .env.example --profile ollama config -q
+          # No secrets → a clear failure, never a stack with empty passwords.
+          if docker compose --env-file /dev/null config -q 2>/dev/null; then
+            echo "::error::compose config must fail without secrets"; exit 1
+          fi
+
+      - name: Image tags match (compose ↔ Helm values)
+        run: |
+          for img in postgres ollama/ollama; do
+            compose=$(sed -n "s|^ *image: $img:\(.*\)$|\1|p" deploy/compose/docker-compose.yml)
+            helm_tag=$(helm show values "$CHART" | awk -v r="repository: $img" '$0 ~ r {getline; gsub(/[ "]/, ""); sub(/tag:/, ""); print}')
+            echo "$img compose=$compose helm=$helm_tag"
+            [ -n "$compose" ] && [ "$compose" = "$helm_tag" ] || { echo "::error::$img tag differs between compose and values.yaml"; exit 1; }
+          done
+
+      - name: shellcheck
+        run: shellcheck deploy/bundle.sh deploy/compose/init-secrets.sh deploy/helm/agentos-net/files/*.sh
+
+  kind-install:
+    name: Cold install on kind
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Build images (deploy/bundle.sh build)
+        run: deploy/bundle.sh build --version ci
+
+      - name: Create kind cluster
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          cluster_name: agentos
+
+      - name: Load images
+        run: for i in api web keycloak; do kind load docker-image "agentos-net/$i:ci" --name agentos; done
+
+      - name: DataProtection certificate secret
+        run: |
+          DP_PASSWORD=$(openssl rand -hex 24)
+          echo "::add-mask::$DP_PASSWORD"
+          echo "DP_PASSWORD=$DP_PASSWORD" >> "$GITHUB_ENV"
+          openssl req -x509 -newkey rsa:3072 -nodes -days 30 -subj "/CN=AgentOS.NET DataProtection" \
+            -keyout "$RUNNER_TEMP/dp.key" -out "$RUNNER_TEMP/dp.crt"
+          openssl pkcs12 -export -inkey "$RUNNER_TEMP/dp.key" -in "$RUNNER_TEMP/dp.crt" \
+            -out "$RUNNER_TEMP/dataprotection.pfx" -passout "pass:$DP_PASSWORD"
+          kubectl create namespace agentos
+          kubectl -n agentos create secret generic agentos-dataprotection --from-file=dataprotection.pfx="$RUNNER_TEMP/dataprotection.pfx"
+
+      - name: helm install
+        run: |
+          helm install agentos "$CHART" -n agentos \
+            -f "$CHART/ci/kind-values.yaml" \
+            --set api.image.tag=ci --set web.image.tag=ci --set keycloak.image.tag=ci \
+            --set secrets.dataProtectionCertificatePassword="$DP_PASSWORD" \
+            --wait --timeout 20m
+
+      - name: Smoke — health, OIDC redirect, wrapped key ring
+        run: |
+          kubectl -n agentos port-forward svc/agentos-agentos-net-web 8080:80 >/dev/null 2>&1 &
+          kubectl -n agentos port-forward svc/agentos-agentos-net-keycloak 8081:8080 >/dev/null 2>&1 &
+          for _ in $(seq 1 30); do curl -sf http://localhost:8080/health >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:8080/health | tee /dev/stderr | grep -q '"status":"Healthy"'
+          location=$(curl -s -o /dev/null -w '%{redirect_url}' http://localhost:8080/)
+          echo "redirect: ${location%%\?*}"
+          case "$location" in http://localhost:8081/realms/agentic/protocol/openid-connect/auth*) ;; *) echo "::error::unexpected sign-in redirect"; exit 1 ;; esac
+          curl -sf "$location" | grep -q 'AgentOS.NET' || { echo "::error::login page is not the AgentOS.NET theme"; exit 1; }
+          wrapped=$(kubectl -n agentos exec agentos-agentos-net-postgres-0 -- sh -c \
+            'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select bool_and(\"Xml\" like '"'"'%encryptedSecret%'"'"') from config.data_protection_keys"')
+          [ "$wrapped" = "t" ] || { echo "::error::DataProtection key ring is not wrapped ($wrapped)"; exit 1; }
+          kubectl -n agentos logs deploy/agentos-agentos-net-web | grep -q 'Row-level security enabled' \
+            || { echo "::error::row-level security was not enabled"; exit 1; }
+          # The hosts' agentos-admin service account: member management works, nothing beyond it does.
+          sa_secret=$(kubectl -n agentos get secret agentos-agentos-net-secrets -o jsonpath='{.data.keycloak-admin-client-secret}' | base64 -d)
+          echo "::add-mask::$sa_secret"
+          token=$(curl -sf -d grant_type=client_credentials -d client_id=agentos-admin --data-urlencode "client_secret=$sa_secret" \
+            http://localhost:8081/realms/agentic/protocol/openid-connect/token | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          echo "::add-mask::$token"
+          status() { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://localhost:8081/admin/realms/$1"; }
+          for check in "agentic/users?max=1 200" "agentic/roles/admin 200" "agentic/clients 403" "master/users 403"; do
+            set -- $check; got=$(status "$1"); echo "service account GET $1 → $got"
+            [ "$got" = "$2" ] || { echo "::error::service account GET $1 returned $got, expected $2"; exit 1; }
+          done
+
+      - name: helm upgrade (idempotent re-run of migrations + realm config)
+        run: |
+          helm upgrade agentos "$CHART" -n agentos --reuse-values --wait --timeout 10m
+          kubectl -n agentos rollout status deploy/agentos-agentos-net-web --timeout 5m
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl -n agentos get all,jobs,pvc -o wide || true
+          kubectl -n agentos describe pods || true
+          for d in web api keycloak; do echo "::group::$d"; kubectl -n agentos logs "deploy/agentos-agentos-net-$d" --tail=200 || true; echo "::endgroup::"; done
+          kubectl -n agentos logs job/agentos-agentos-net-realm --tail=100 || true

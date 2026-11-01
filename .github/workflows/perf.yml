@@ -1,0 +1,91 @@
+name: Perf
+
+# Plan 1.9 (owner directive 2 — "measure, then fix"): run the BenchmarkDotNet suite (tests/AgentOs.Benchmarks) and
+# compare it with the committed baseline (tests/AgentOs.Benchmarks/baseline/*.json). The job fails when a benchmark
+# crashes, when a full ('*') run is missing a baseline benchmark, or when allocations grow (0 B → anything, or more
+# than the threshold + 64 B). Not part of CI: benchmarks are slow and need a quiet machine.
+#
+# Timing: the baseline was recorded on a different machine than a GitHub-hosted runner, and a ShortRun (N=3) on a
+# shared VM is noisy, so on the nightly a Mean regression is a warning annotation, not a failure — allocations are
+# machine-independent and are the gate. A manual run gates on Mean too unless 'timing' is set to advisory.
+# When the hardware changes, re-record the baseline from this workflow's own artifact (docs/architecture.md §8).
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "BenchmarkDotNet --filter glob (e.g. '*CostCalculator*')"
+        required: false
+        default: "*"
+      threshold:
+        description: "Allowed Mean / allocation growth: a fraction in (0, 1] (0.20) or a percentage (20%)"
+        required: false
+        default: "0.20"
+      timing:
+        description: "Mean regressions: 'gate' fails the job, 'advisory' only warns"
+        required: false
+        type: choice
+        options: [gate, advisory]
+        default: gate
+  schedule:
+    - cron: "17 3 * * *"   # nightly, 03:17 UTC
+
+permissions:
+  contents: read
+
+# Separate groups per trigger so a manual run never cancels the nightly (and vice versa); only a newer manual run
+# cancels an older manual one — a scheduled run is never cancelled mid-way.
+concurrency:
+  group: perf-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  benchmarks:
+    name: Benchmarks vs baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build benchmarks (Release)
+        run: dotnet build tests/AgentOs.Benchmarks --configuration Release
+
+      # ShortRun job (3 warm-ups, 3 iterations, 1 launch) keeps the nightly under ~20 minutes; the memory diagnoser
+      # is always on (BenchmarkConfig). Inputs reach the script through env, never interpolated into it.
+      - name: Run benchmarks
+        env:
+          FILTER: ${{ inputs.filter || '*' }}
+        run: |
+          dotnet run --configuration Release --no-build --project tests/AgentOs.Benchmarks -- \
+            --filter "$FILTER" --job short --artifacts "$GITHUB_WORKSPACE/BenchmarkDotNet.Artifacts"
+
+      - name: Upload BenchmarkDotNet artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmark-results
+          path: BenchmarkDotNet.Artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Runs even when a benchmark crashed (the run step exits 1) so the summary still shows every row.
+      # Scheduled runs: timing is advisory. A full ('*') run must cover the whole baseline (--require-all).
+      - name: Compare with baseline
+        if: ${{ !cancelled() }}
+        env:
+          FILTER: ${{ inputs.filter || '*' }}
+          THRESHOLD: ${{ inputs.threshold || '0.20' }}
+          TIMING: ${{ github.event_name == 'schedule' && 'advisory' || inputs.timing || 'gate' }}
+        run: |
+          extra=()
+          if [ "$FILTER" = "*" ]; then extra+=(--require-all); fi
+          dotnet run --configuration Release --no-build --project tests/AgentOs.Benchmarks -- \
+            compare tests/AgentOs.Benchmarks/baseline "$GITHUB_WORKSPACE/BenchmarkDotNet.Artifacts/results" \
+            --threshold "$THRESHOLD" --timing "$TIMING" "${extra[@]}" --summary "$GITHUB_STEP_SUMMARY"

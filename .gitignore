@@ -12,6 +12,8 @@ src/AgentOs.Web/runner-dist/
 # Runtime plugin drop folders (built by scripts/build-plugins.ps1; plugin SOURCE lives in samples/)
 src/AgentOs.Api/plugins/
 src/AgentOs.Web/plugins/
+# BenchmarkDotNet output (tests/AgentOs.Benchmarks); the committed baseline lives in tests/AgentOs.Benchmarks/baseline/
+**/BenchmarkDotNet.Artifacts/
 **/*.binlog
 **/*.tlog
 
@@ -57,6 +59,7 @@ docs/design/claude-design-shots/
 **/appsettings.Local.json
 **/.env
 **/.env.*
+!**/.env.example
 **/secrets.json
 **/*.pfx
 **/*.key
@@ -83,3 +86,6 @@ infra/AgentOs.AppHost/aspire-manifest.json
 # local screenshot + design-push scratch (not committed)
 .shot/
 .design-push/
+
+# On-prem compose: the generated DataProtection certificate directory (deploy/compose/init-secrets.sh)
+deploy/compose/dataprotection/
