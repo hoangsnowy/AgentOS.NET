@@ -1,4 +1,5 @@
-// Typed HttpClient over the Keycloak Admin REST API. Caches the master-realm admin token for the
+// Typed HttpClient over the Keycloak Admin REST API. Caches the admin token (master-realm password grant, or a
+// service-account client_credentials token from the app realm) for the
 // majority of its lifetime so back-to-back provisioning calls don't re-login on every hop.
 
 using System;
@@ -359,14 +360,24 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
             {
                 return _cachedToken;
             }
-            using var form = new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["grant_type"] = "password",
-                ["client_id"] = _options.ClientId,
-                ["username"] = _options.Username,
-                ["password"] = _options.Password,
-            });
-            using var resp = await _http.PostAsync("realms/master/protocol/openid-connect/token", form, ct).ConfigureAwait(false);
+            // Service account (on-prem/prod): client_credentials against the app realm, so the master-realm
+            // bootstrap admin can be retired after setup. Otherwise (Aspire dev): the master-realm password grant.
+            var (tokenPath, fields) = _options.UsesClientCredentials
+                ? ($"realms/{Uri.EscapeDataString(_options.Realm)}/protocol/openid-connect/token", new Dictionary<string, string>
+                {
+                    ["grant_type"] = "client_credentials",
+                    ["client_id"] = _options.ClientId,
+                    ["client_secret"] = _options.ClientSecret,
+                })
+                : ("realms/master/protocol/openid-connect/token", new Dictionary<string, string>
+                {
+                    ["grant_type"] = "password",
+                    ["client_id"] = _options.ClientId,
+                    ["username"] = _options.Username,
+                    ["password"] = _options.Password,
+                });
+            using var form = new FormUrlEncodedContent(fields);
+            using var resp = await _http.PostAsync(tokenPath, form, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);

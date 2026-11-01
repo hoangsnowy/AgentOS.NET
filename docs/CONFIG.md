@@ -41,7 +41,8 @@ to the next request.
 | `Auth:Keycloak:ClientId` / `ClientSecret` | `agentic-web` / empty | Web OIDC client. Secret required outside Development; the dev default secret is rejected by `DevSecretGuard`. |
 | `Auth:Keycloak:RequireHttpsMetadata` | `true` | Unset: true, except an `http://localhost` authority in Development. |
 | `Auth:Keycloak:Admin:BaseUrl` | empty | Keycloak admin API for member lifecycle. Empty → no-op client. |
-| `Auth:Keycloak:Admin:{Realm,Username,Password,ClientId}` | `agentic`/`admin`/`admin`/`admin-cli` | Use a service account + secrets in production. |
+| `Auth:Keycloak:Admin:{Realm,Username,Password,ClientId}` | `agentic`/`admin`/`admin`/`admin-cli` | Master-realm password grant (the Aspire dev stack). |
+| `Auth:Keycloak:Admin:ClientSecret` | empty | Set → `client_credentials` with the confidential service-account client `ClientId` in `Realm` instead of a master-realm user (on-prem/prod: `agentos-admin`, created by `configure-realm.sh` with only `manage-users`, `view-users`, `query-users`, `view-realm` — [ONPREM.md](ONPREM.md#keycloak-admin-access)). |
 | `Auth:DevAutoLogin` | `true` in Development only | Fixed-user auth for the standalone Web. Hard-throws outside Development; AppHost forces it off. |
 | `DataProtection:KeyVaultKeyId` | empty | Wrap the DataProtection key ring (which encrypts every tenant secret) with an Azure Key Vault key — `https://<vault>.vault.azure.net/keys/<key>`, via managed identity. |
 | `DataProtection:CertificatePath` / `CertificatePassword` / `CertificateThumbprint` | empty | Wrap it with a certificate instead (on-prem / k8s secret mount, or the Windows cert store). The on-prem compose file and Helm chart wire it by default — [ONPREM.md](ONPREM.md). |
