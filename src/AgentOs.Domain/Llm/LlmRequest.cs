@@ -95,6 +95,20 @@ public sealed record LlmRequest(
     public RunUploadTarget? Uploads { get; init; }
 
     /// <summary>
+    /// Why this call is made, for metrics: null = the agent's own work; <see cref="LlmCallPurposes.ReplyRecovery"/> = asking a
+    /// run that ended without its reply for it. Recorded with the call (<see cref="LlmCallRecord.Purpose"/>) so Insights
+    /// can count it; providers ignore it.
+    /// </summary>
+    public string? Purpose { get; init; }
+
+    /// <summary>
+    /// Continue an earlier run instead of starting a fresh one: the <see cref="LlmResponse.Continuation"/> of that run's
+    /// reply. Only <c>RemoteAgentLlmClient</c> honours it — the paired runner then works in that run's folder (and, for
+    /// Claude Code, resumes its CLI session) when it still has them, else it starts fresh. Null = a fresh run.
+    /// </summary>
+    public string? ResumeOf { get; init; }
+
+    /// <summary>
     /// Validates required values. Throws <see cref="System.ArgumentException"/> if invalid.
     /// </summary>
     public void Validate()

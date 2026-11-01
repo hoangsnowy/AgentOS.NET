@@ -21,6 +21,8 @@
     <Compile Include="..\AgentOs.Domain\Files\TicketFilePath.cs" Link="Linked\TicketFilePath.cs" />
     <!-- Design gate: the screenshots a run sends back pass exactly the server's rules (ADR-0016). -->
     <Compile Include="..\AgentOs.Domain\Files\RunUploadRules.cs" Link="Linked\RunUploadRules.cs" />
+    <!-- Tool-call evidence: the runner redacts + bounds each summary with exactly the server's rules. -->
+    <Compile Include="..\AgentOs.Domain\Tools\SecretRedactor.cs" Link="Linked\SecretRedactor.cs" />
   </ItemGroup>
 
 </Project>

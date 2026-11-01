@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Workspaces;
+using AgentOs.SharedKernel.Logging;
 using Microsoft.Extensions.Logging;
 using Octokit;
 
@@ -180,7 +181,31 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         }
         catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
         {
-            _logger.LogWarning(ex, "Couldn't check branch {Branch} on {Owner}/{Repo}", branch, workspace.Owner, workspace.Repo);
+            // The branch name may come from an agent's reply: never raw into the log.
+            _logger.LogWarning(ex, "Couldn't check branch {Branch} on {Owner}/{Repo}", LogSafe.Scrub(branch), workspace.Owner, workspace.Repo);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetBranchHeadAsync(WorkspaceDescriptor workspace, string branch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || string.IsNullOrWhiteSpace(branch)) { return null; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            ct.ThrowIfCancellationRequested();
+            var found = await client.Repository.Branch.Get(workspace.Owner, workspace.Repo, branch).ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(found.Commit?.Sha) ? null : found.Commit.Sha;
+        }
+        catch (NotFoundException)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Couldn't read the head of branch {Branch} on {Owner}/{Repo}", LogSafe.Scrub(branch), workspace.Owner, workspace.Repo);
             return null;
         }
     }

@@ -95,6 +95,9 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// <summary>The idle stop's built-in value (minutes).</summary>
     public const int DefaultPreviewIdleMinutes = 120;
 
+    /// <summary>Whether a Coding, Reviewer or Testing run that ended without its JSON reply is asked once for it.</summary>
+    public const string RecoverMissingReplyKey = "Autopilot:RecoverMissingReply";
+
     internal const int DefaultMaxParallel = 2;
     internal const int DefaultMaxParallelTests = 1;
     internal const int DefaultMaxFixRounds = 3;
@@ -163,6 +166,11 @@ public sealed class AutopilotSettings : ISettingsContributor
         };
         yield return Bound(PreviewIdleMinutesKey, "Stop an unused app after (minutes)",
             "Try the app keeps the app running on your computer — also when the computer's AgentOS.NET connection restarts — until you press Stop, or until nobody has had it open for this long.");
+        yield return new(RecoverMissingReplyKey, SettingKind.Boolean, Category, "Ask again for a missing reply")
+        {
+            DefaultValue = "true",
+            Help = "When a Coding, Reviewer or Testing run ends without its summary (it ran out of turns or context after doing the work), ask it once, briefly, for the summary instead of discarding the run. A Coding run's branch is checked on the remote before it counts.",
+        };
     }
 
     /// <summary>True when Autopilot holds acceptance testing on <paramref name="projectName"/> while one of its apps is being
@@ -187,6 +195,13 @@ public sealed class AutopilotSettings : ISettingsContributor
         ArgumentNullException.ThrowIfNull(settings);
         var b = Array.Find(Bounds, x => x.Key == PreviewIdleMinutesKey);
         return Math.Clamp(await settings.GetIntAsync(PreviewIdleMinutesKey, tenantId, b.Default, ct).ConfigureAwait(false), b.Min, b.Max);
+    }
+
+    /// <summary>Whether a run that ended without its reply is asked once for it (<see cref="RecoverMissingReplyKey"/>), read now.</summary>
+    public static ValueTask<bool> ReadRecoverMissingReplyAsync(ISettings settings, string? tenantId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return settings.GetBoolAsync(RecoverMissingReplyKey, tenantId, true, ct);
     }
 
     /// <summary>A run time limit (<see cref="CodingRunMinutesKey"/>, …), read now and clamped to its range.</summary>

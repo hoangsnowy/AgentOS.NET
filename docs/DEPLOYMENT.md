@@ -263,6 +263,11 @@ else is configured in the desktop — see [CONFIG.md](CONFIG.md).
 Back up and restore the DataProtection key ring (it decrypts every stored setting and key) with
 [dataprotection-dr-runbook.md](dataprotection-dr-runbook.md).
 
+Before go-live, walk the **[production hardening checklist](security/hardening.md)** (Keycloak, TLS, key wrapping,
+RLS, runners, tool policy, rate limits, budgets, backups, logging). The [threat model](security/threat-model.md),
+[data flow](security/data-flow.md) and [sub-processor list](security/subprocessors.md) are what a customer's
+security review will ask for; [dpa-template.md](security/dpa-template.md) is a starting point for a DPA.
+
 ---
 
 ## Operating the deployment

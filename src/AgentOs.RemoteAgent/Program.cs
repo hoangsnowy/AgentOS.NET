@@ -24,7 +24,9 @@
 //                       its own empty working directory, edits are auto-approved only inside it, and the shell is
 //                       limited to build / test / VCS commands (no force-push, no git config/remote, no gh auth).
 //                       Every other request stays answer-only. "off" refuses scoped runs on this machine. See
-//                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live.
+//                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live. A scoped
+//                       run whose reply holds no JSON keeps its folder 15 minutes for one follow-up (RunContinuation.cs);
+//                       REMOTE_AGENT_KEEP_RUNS (keep every run folder) turns that off — a follow-up then starts fresh.
 //   REMOTE_AGENT_ARGS   override the profile's args entirely (advanced; wins over the profile + YOLO + scoped)
 //   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
 //                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
@@ -43,6 +45,11 @@
 //                       (on macOS, without setsid, a Ctrl+C or closing the runner's terminal stops it too).
 //                       `AgentOs.RemoteAgent stop-previews` stops them all; `AgentOs.RemoteAgent unpair` does that and
 //                       forgets the saved pairing (run it before removing the runner from a computer).
+//
+// Governance: every tool call a streaming CLI run makes (Bash, Edit, Write, Read…) is reported to the server
+// (ReportToolCalls, in batches during the run and once more before CompleteRequest) and recorded there as evidence —
+// Settings › Activity log › On a member's computer. Only a bounded, redacted summary of each call leaves this machine
+// (the command, the file's path — never file contents or output; see CliToolCalls.cs and SecretRedactor.cs).
 //
 // A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
 // 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
@@ -138,14 +145,18 @@ var cliSlots = new SemaphoreSlim(maxParallel, maxParallel);
 // 15-minute coding runs they outlived the server's deadline — the ticket split fell back to the raw draft list.
 var maxAnswers = int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_MAX_ANSWERS"), out var ma) && ma > 0 ? ma : 2;
 var answerSlots = new SemaphoreSlim(maxAnswers, maxAnswers);
+// A follow-up asking a run for its missing reply (RunContinuation.cs) has a 2-minute deadline on the server: queued
+// behind two long coding runs it would spend that deadline waiting. It gets its own lane — one at a time.
+var followUpSlots = new SemaphoreSlim(1, 1);
 using var keepAwake = new AgentOs.RemoteAgent.KeepAwake(AgentOs.RemoteAgent.KeepAwake.Allowed(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_AWAKE")));
 
 // M3 — full-prompt LLM dispatch
 connection.On<RemoteExecRequest>("Execute", request =>
 {
     Console.WriteLine($"[agent] Execute {request.Id} (model={request.Model})");
-    var lane = AgentOs.RemoteAgent.ScopedAutonomy.Grants(request.Autonomy, Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"))
-        ? cliSlots : answerSlots;
+    var hands = AgentOs.RemoteAgent.ScopedAutonomy.Grants(request.Autonomy, Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"));
+    var lane = hands && !string.IsNullOrWhiteSpace(request.ResumeOf) ? followUpSlots
+        : hands ? cliSlots : answerSlots;
     _ = Task.Run(async () =>
     {
         await lane.WaitAsync().ConfigureAwait(false);
@@ -155,7 +166,7 @@ connection.On<RemoteExecRequest>("Execute", request =>
             // Stopped while it waited for a slot: never start it.
             var result = CancelledBeforeStart.TryRemove(request.Id, out _)
                 ? new RemoteExecResult(request.Id, false, string.Empty, "Stopped before it started.")
-                : await RunLlmAsync(request, ReportProgressAsync, ReadRunFileAsync, UploadRunFileAsync).ConfigureAwait(false);
+                : await RunLlmAsync(request, ReportProgressAsync, ReadRunFileAsync, UploadRunFileAsync, ReportToolCallsAsync).ConfigureAwait(false);
             await connection.SendAsync("CompleteRequest", result).ConfigureAwait(false);
             // Print WHY on failure. Logging only ok=False made every distinct failure — CLI not on PATH, CLI not
             // logged in, non-zero exit — look identical from the runner console, which is the one place an
@@ -246,6 +257,22 @@ connection.On<RunnerToolCall>("ExecuteToolCall", call =>
 AgentOs.RemoteAgent.RunFiles.CleanupDeliveries(
     Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(), TimeSpan.FromDays(3));
 
+// Run folders kept for a follow-up (RunContinuation.cs): a crashed runner's leftovers go now, the ones whose follow-up
+// never came go within a minute of their keep window, and every kept one goes when this runner stops.
+var kept = AgentOs.RemoteAgent.RunContinuation.Shared;
+AgentOs.RemoteAgent.RunContinuation.SweepLeftovers(
+    Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(), DateTimeOffset.UtcNow);
+using var keptSweep = new Timer(_ =>
+{
+    foreach (var stale in kept.Expired(DateTimeOffset.UtcNow)) { AgentOs.RemoteAgent.RunContinuation.Discard(stale); }
+}, null, AgentOs.RemoteAgent.RunContinuation.SweepEvery, AgentOs.RemoteAgent.RunContinuation.SweepEvery);
+void DiscardKept()
+{
+    foreach (var folder in kept.TakeAll()) { AgentOs.RemoteAgent.RunContinuation.Discard(folder); }
+}
+AppDomain.CurrentDomain.ProcessExit += (_, _) => DiscardKept();
+Console.CancelKeyPress += (_, _) => DiscardKept();
+
 await connection.StartAsync().ConfigureAwait(false);
 Console.WriteLine($"[agent] connected to {hubUrl}; runner id={runnerId}. Ctrl+C to exit.");
 await AnnouncePreviewsAsync().ConfigureAwait(false);
@@ -255,7 +282,8 @@ await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
 
 static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<string, string, Task> report,
     Func<string, int, long, Task<AgentOs.RemoteAgent.RunFiles.Chunk?>> readFile,
-    Func<string, AgentOs.Domain.Files.RunUploadChunk, Task<string?>> upload)
+    Func<string, AgentOs.Domain.Files.RunUploadChunk, Task<string?>> upload,
+    Func<string, string, IReadOnlyList<AgentOs.RemoteAgent.RunnerToolEvent>, Task> reportTools)
 {
     // Pick the CLI-agent profile: per-request hint (server-chosen), else REMOTE_AGENT_CLI, else claude.
     var cli = (request.Cli ?? Environment.GetEnvironmentVariable("REMOTE_AGENT_CLI") ?? "claude").Trim();
@@ -279,13 +307,30 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     // A custom REMOTE_AGENT_ARGS keeps exactly what the operator asked for.
     var streaming = argsEnv is null && string.Equals(profile.Command, "claude", StringComparison.OrdinalIgnoreCase);
     if (streaming) { args = [.. args, "--output-format", "stream-json", "--verbose"]; }
+    // What decided which tools the CLI could use — recorded with every tool call as the evidence's policy source.
+    var permissions = argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt";
+
+    // Only a run the server asked to have hands may be kept for a follow-up or reported as "stopped short" — the
+    // per-request value: on a machine with REMOTE_AGENT_AUTONOMY=scoped every request gets hands, answer-only ones too.
+    var continuations = AgentOs.RemoteAgent.RunContinuation.Shared;
+    var keepable = scoped && AgentOs.RemoteAgent.RunContinuation.AskedForHands(request.Autonomy);
+    // A follow-up asking an earlier run for the reply it never gave: that run's folder (and Claude Code session), when kept.
+    var resumed = keepable ? continuations.Take(request.ResumeOf, DateTimeOffset.UtcNow) : null;
+    // Resumed = the CLI really continues that run's conversation (the server trusts a recovered approval only then).
+    string[] resumeArgs = argsEnv is null ? AgentOs.RemoteAgent.RunContinuation.ResumeArgs(cmd, resumed) : [];
+    args = [.. args, .. resumeArgs];
 
     // Every CLI run starts in its OWN empty directory — never the runner's current directory, which is usually
     // a checkout of something else (the agent once saw "file access limited to D:\Github\AgentOs").
-    var runDir = AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
+    var runDir = resumed?.Folder ?? AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
         Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(),
         request.Id);
     var keepRun = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_RUNS"));
+    // Set when this run's reply looked unfinished: its folder is kept for one follow-up instead of deleted. A follow-up
+    // itself is never kept — one attempt.
+    var park = false;
+    string? parkSession = null;
+    var parkContextFull = false;
 
     // Test data this computer offers (REMOTE_AGENT_DATA): env vars of the run, named — never pathed — in the prompt.
     var data = scoped ? AgentOs.RemoteAgent.TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA")) : [];
@@ -334,7 +379,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             psi.ArgumentList.Add(prompt);
         }
 
-        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")} autonomy={(argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt")} model={(modelFlags.Length > 0 ? modelFlags[^1] : "cli default")} dir={runDir}");
+        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")} autonomy={permissions} model={(modelFlags.Length > 0 ? modelFlags[^1] : "cli default")} dir={runDir}");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{cmd}'. Is the {cli} CLI installed and on PATH?");
@@ -354,19 +399,38 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         string stdout;
         if (streaming)
         {
-            // One JSON event per line: report each new plain step as it happens, keep the closing result.
+            // One JSON event per line: report each new plain step as it happens, ship the tool calls in batches (evidence),
+            // keep the closing result.
             AgentOs.RemoteAgent.CliProgress.Result? final = null;
             string? lastStep = null;
             var raw = new System.Text.StringBuilder();
-            while (await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
+            var toolCalls = new AgentOs.RemoteAgent.CliToolCalls(DateTimeOffset.UtcNow);
+            try
             {
-                var (step, result) = AgentOs.RemoteAgent.CliProgress.Parse(line);
-                if (result is not null) { final = result; }
-                else if (raw.Length < 64 * 1024) { raw.AppendLine(line); }
-                if (step is not null && step != lastStep)
+                while (await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
                 {
-                    lastStep = step;
-                    await report(request.Id, step).ConfigureAwait(false);
+                    var ev = AgentOs.RemoteAgent.CliProgress.Read(line);
+                    var now = DateTimeOffset.UtcNow;
+                    toolCalls.Observe(ev, now);
+                    if (ev.Final is { } result) { final = result; }
+                    else if (raw.Length < 64 * 1024) { raw.AppendLine(line); }
+                    if (ev.Step is { } step && step != lastStep)
+                    {
+                        lastStep = step;
+                        await report(request.Id, step).ConfigureAwait(false);
+                    }
+                    if (toolCalls.ShouldFlush(now))
+                    {
+                        await reportTools(request.Id, permissions, toolCalls.Take(now)).ConfigureAwait(false);
+                    }
+                }
+            }
+            finally
+            {
+                // Before CompleteRequest — and after a Stop, which ends the stream: whatever the CLI did is reported.
+                if (toolCalls.Complete(DateTimeOffset.UtcNow) is { Count: > 0 } last)
+                {
+                    await reportTools(request.Id, permissions, last).ConfigureAwait(false);
                 }
             }
             var streamErr = await stderrTask.ConfigureAwait(false);
@@ -375,7 +439,20 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             {
                 // Metrics first: the CLI's own usage travels back, so the server shows real tokens, not an estimate.
                 var used = final.Tokens();
-                return await WithUploadsAsync((final.IsError
+                // A run with hands that stopped short (turn or context limit) may have done real work: it is reported as
+                // a reply without its answer, so the server asks for the answer instead of discarding the work.
+                var stoppedShort = keepable && AgentOs.RemoteAgent.RunContinuation.StoppedShort(final);
+                if (keepable && resumed is null && (stoppedShort || (!final.IsError && AgentOs.RemoteAgent.RunContinuation.LooksUnfinished(final.Text))))
+                {
+                    park = true;
+                    parkSession = final.SessionId;
+                    parkContextFull = AgentOs.RemoteAgent.RunContinuation.ContextFull(final);
+                }
+                return await WithUploadsAsync((stoppedShort
+                    ? new RemoteExecResult(request.Id, true,
+                        (final.IsError ? AgentOs.RemoteAgent.RunContinuation.StoppedNote(final)
+                            : (final.Text.Trim() + "\n\n" + AgentOs.RemoteAgent.RunContinuation.StoppedNote(final)).Trim()), null)
+                    : final.IsError
                     ? new RemoteExecResult(request.Id, false, string.Empty, final.Text.Length > 0 ? final.Text : streamErr.Trim())
                     : new RemoteExecResult(request.Id, true, final.Text.Trim(), null)) with
                 {
@@ -397,6 +474,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
         if (process.ExitCode == 0)
         {
+            park = keepable && resumed is null && AgentOs.RemoteAgent.RunContinuation.LooksUnfinished(stdout);
             return await WithUploadsAsync(new RemoteExecResult(request.Id, true, stdout.Trim(), null)).ConfigureAwait(false);
         }
 
@@ -416,13 +494,21 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     finally
     {
         RunningCli.TryRemove(request.Id, out _);
-        if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
+        if (park && !keepRun)
+        {
+            AgentOs.RemoteAgent.RunContinuation.Mark(runDir);
+            continuations.Park(request.Id, runDir, parkSession, parkContextFull, DateTimeOffset.UtcNow);
+        }
+        else if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
     }
 
     // Design gate (ADR-0016): a run asked for screenshots sends the images its agent listed back to the server — checked
-    // here (RunUploads) and again piece by piece there — before the run folder goes. Never fails the run itself.
+    // here (RunUploads) and again piece by piece there — before the run folder goes. Never fails the run itself. Every
+    // successful reply passes through here — a "stopped short" one and a follow-up's too — so it also carries whether
+    // this run continued an earlier one's session.
     async Task<RemoteExecResult> WithUploadsAsync(RemoteExecResult result)
     {
+        result = result with { Resumed = resumeArgs.Length > 0 };
         if (!result.Ok || request.Collect is not { } collect) { return result; }
         try
         {
@@ -656,6 +742,23 @@ async Task ReportProgressAsync(string requestId, string step)
     catch (Exception ex) when (ex is InvalidOperationException or IOException) { _ = ex; }
 }
 
+// Evidence of the tool calls a CLI run made (the server records them). Best effort for the run — a lost batch never fails
+// the work, and NO send failure may end the caller's stdout read loop (the CLI would block on a full pipe) — but never
+// silent: the console says how many calls could not be reported. Sent in messages of at most 200 calls, the most the
+// server accepts in one batch, so a closing line with hundreds of permission_denials is not cut.
+async Task ReportToolCallsAsync(string requestId, string permissions, IReadOnlyList<AgentOs.RemoteAgent.RunnerToolEvent> calls)
+{
+    if (calls.Count == 0) { return; }
+    foreach (var message in AgentOs.RemoteAgent.CliToolCalls.Messages(calls))
+    {
+        try { await connection.SendAsync("ReportToolCalls", requestId, permissions, message).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.WriteLine($"[agent] {requestId}: {message.Count} tool call(s) could not be reported to the server: {ex.Message}");
+        }
+    }
+}
+
 // Best effort as well: a lost preview report leaves the Board on the previous state until the next one.
 async Task ReportPreviewAsync(string previewId, string state, string? message)
 {
@@ -690,7 +793,7 @@ internal static partial class Program
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
 internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
-    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null, AgentOs.RemoteAgent.RunUploads.Limits? Collect = null);
+    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null, AgentOs.RemoteAgent.RunUploads.Limits? Collect = null, string? ResumeOf = null);
 internal sealed record WriteFilesInput(IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files);
 internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
 {
@@ -699,6 +802,8 @@ internal sealed record RemoteExecResult(string Id, bool Ok, string Content, stri
     public int? OutputTokens { get; init; }
     public int? CacheReadTokens { get; init; }
     public int? CacheWriteTokens { get; init; }
+    // This run continued an earlier one's CLI session (`--resume <id>` in its kept folder) — not a fresh conversation.
+    public bool Resumed { get; init; }
 }
 internal sealed record RunnerToolCall(string RequestId, string ToolCallId, string ToolName, string JsonInput);
 internal sealed record RunnerToolResult(string RequestId, string ToolCallId, bool Ok, string JsonOutput, string? Error);

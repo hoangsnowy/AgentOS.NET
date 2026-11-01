@@ -31,6 +31,10 @@ public enum SessionRunEventKind
 
     /// <summary>The whole session failed.</summary>
     Failed,
+
+    /// <summary>A run ended without its JSON reply and the agent asked it once for it — the message says whether that
+    /// recovered the reply.</summary>
+    ReplyRecovered,
 }
 
 /// <summary>One live event in a session run.</summary>

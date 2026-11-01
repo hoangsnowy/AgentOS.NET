@@ -8,6 +8,9 @@
 // (tenant-unfiltered — the connection has no tenant yet), verifies the token against its stored hash in
 // constant time, rejects revoked/unknown runners, and registers the connection with the runner's
 // tenant + owning member so dispatch can target it.
+//
+// Governance: ReportToolCalls carries the tool calls a CLI run made on the member's computer; the broker accepts a batch
+// only from the runner that run was dispatched to, and each call becomes an evidence row (RunnerToolEvidence.cs).
 
 using System;
 using System.Collections.Concurrent;
@@ -33,12 +36,15 @@ public sealed class RemoteAgentHub : Hub
     private readonly IRemoteAgentBroker _broker;
     private readonly IRunnerDirectory _runners;
     private readonly IRunnerPairingService _pairing;
+    private readonly AgentOs.Domain.Tools.IToolInvocationLog? _evidence;
 
-    public RemoteAgentHub(IRemoteAgentBroker broker, IRunnerDirectory runners, IRunnerPairingService pairing)
+    public RemoteAgentHub(IRemoteAgentBroker broker, IRunnerDirectory runners, IRunnerPairingService pairing,
+        AgentOs.Domain.Tools.IToolInvocationLog? evidence = null)
     {
         _broker = broker;
         _runners = runners;
         _pairing = pairing;
+        _evidence = evidence;
     }
 
     private static string? HeaderOrQuery(Microsoft.AspNetCore.Http.HttpRequest? request, string header, string query)
@@ -125,6 +131,21 @@ public sealed class RemoteAgentHub : Hub
     /// order-checked. Null when accepted, else why it was refused.</summary>
     public string? UploadRunFile(string requestId, AgentOs.Domain.Files.RunUploadChunk chunk) =>
         _broker.UploadRunFile(Context.ConnectionId, requestId, chunk);
+
+    /// <summary>Runner → server: tool calls the CLI made during a run on this computer (Bash, Edit, Write, Read…), in
+    /// batches. Recorded as evidence (origin "member-computer") when the broker accepts them: only from the runner the
+    /// run was dispatched to (also after it reconnected), while it runs or within the grace window after it ended. The
+    /// run's tenant is pushed as the ambient identity first, so a write that happens inline (the evidence queue full)
+    /// runs with that tenant set for row-level security.</summary>
+    public async Task ReportToolCalls(string requestId, string? permissions, System.Collections.Generic.IReadOnlyList<RunnerToolEvent>? calls)
+    {
+        if (_broker.AcceptToolCalls(Context.ConnectionId, requestId, permissions, calls) is not { } batch) { return; }
+        Guid? session = Guid.TryParse(batch.Context.SessionId, CultureInfo.InvariantCulture, out var s) ? s : null;
+        using (AgentOs.SharedKernel.Identity.AmbientIdentity.Push(batch.Context.TenantId, null, session))
+        {
+            await RunnerToolEvidence.RecordAsync(_evidence, batch, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>Invoked by the runner when it has finished executing a tool call (M4).</summary>
     public void CompleteToolCall(RunnerToolResult result) => _broker.CompleteToolCall(result);
