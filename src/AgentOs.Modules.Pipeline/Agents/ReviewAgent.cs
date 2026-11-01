@@ -81,13 +81,54 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
         try
         {
             var response = await llm.SendAsync(llmRequest, ct).ConfigureAwait(false);
-            return Parse(response.Content ?? string.Empty);
+            var verdict = Parse(response.Content ?? string.Empty);
+            // No verdict — usually a run that ran out of turns or context after reading the change: cheaper to ask once
+            // for the verdict than to review again.
+            if (verdict.Ran || !await ReplyRecovery.EnabledAsync(profiles, ct).ConfigureAwait(false)) { return verdict; }
+            Emit(request, SessionRunEventKind.Step, "Reviewing — the run ended without its verdict; asking the agent once for it.", repoLabel);
+            var answer = await ReplyRecovery.AskAsync(llm, ReplyRecovery.FollowUp(llmRequest, response, RecoverySystem, RecoveryAsk(request)),
+                logger, nameof(ReviewAgent), ct).ConfigureAwait(false);
+            var recovered = Recovered(answer.Reply);
+            Emit(request, SessionRunEventKind.ReplyRecovered, recovered is null
+                ? "Reviewing — asked again, but the Reviewer agent still gave no verdict."
+                : $"Reviewing — verdict recovered: {(recovered.Approved ? "approved" : "changes requested")}.", repoLabel);
+            return recovered ?? NotRun(verdict.Error + " (asked once more; still none)" + answer.Why);
         }
         catch (Exception ex) when (ex is LlmException or TimeoutException or InvalidOperationException or System.Net.Http.HttpRequestException)
         {
             logger.LogWarning(ex, "Review run failed for session {SessionId}", request.SessionId);
             return NotRun(ex.Message);
         }
+    }
+
+    /// <summary>A follow-up's reply as a verdict — only when it holds one (an <c>{"error":…}</c> reply means the review
+    /// could not finish and stays not-run, never a silent "changes requested").</summary>
+    internal static ReviewVerdict? Recovered(string? reply)
+    {
+        if (reply is null || !reply.Contains("\"verdict\"", StringComparison.Ordinal)) { return null; }
+        var verdict = Parse(reply);
+        return verdict.Ran ? verdict : null;
+    }
+
+    /// <summary>The system prompt of the one follow-up asking for a missing verdict (its first line is the routing key).</summary>
+    internal const string RecoverySystem =
+        "You are the Reviewer Agent of AgentOS.NET, finishing a review on the developer's machine that ended before it sent its verdict. You never change the code.";
+
+    /// <summary>The follow-up's ask: the verdict of what the run already reviewed, JSON only. Names the repository and
+    /// branch (from the server) and nothing else — no ticket text, files or practices again.</summary>
+    internal static string RecoveryAsk(AcceptanceRequest r)
+    {
+        ArgumentNullException.ThrowIfNull(r);
+        return string.Format(CultureInfo.InvariantCulture,
+            """
+            Your previous review of branch `{2}` on {0}/{1} (ticket #{3}) ended before you sent the JSON verdict. Do not
+            start the review over and do not change anything. From what you already found, reply ONLY with this JSON (no
+            other text):
+            {{"verdict":"approve","findings":[{{"severity":"must-fix","file":"<path>","line":42,"comment":"<what is wrong and what to do>"}}],"summary":"<one or two sentences>"}}
+            "verdict" is "approve" when there is no must-fix finding, otherwise "changes".
+            If you had not reviewed enough of the change to judge it, reply ONLY: {{"error":"<why the review could not finish>"}}
+            """,
+            r.Repo.Owner, r.Repo.Repo, r.Repo.ExistingBranch, r.IssueNumber);
     }
 
     // The project's practices: a change that breaks one is a must-fix finding. Best-effort — none on a memory failure.

@@ -24,7 +24,8 @@
 //                       its own empty working directory, edits are auto-approved only inside it, and the shell is
 //                       limited to build / test / VCS commands (no force-push, no git config/remote, no gh auth).
 //                       Every other request stays answer-only. "off" refuses scoped runs on this machine. See
-//                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live.
+//                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live. A scoped
+//                       run whose reply holds no JSON keeps its folder 15 minutes for one follow-up (RunContinuation.cs).
 //   REMOTE_AGENT_ARGS   override the profile's args entirely (advanced; wins over the profile + YOLO + scoped)
 //   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
 //                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
@@ -252,12 +253,24 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     var streaming = argsEnv is null && string.Equals(profile.Command, "claude", StringComparison.OrdinalIgnoreCase);
     if (streaming) { args = [.. args, "--output-format", "stream-json", "--verbose"]; }
 
+    // Kept folders whose follow-up never came go now (RunContinuation.cs).
+    var continuations = AgentOs.RemoteAgent.RunContinuation.Shared;
+    foreach (var stale in continuations.Expired(DateTimeOffset.UtcNow)) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(stale); }
+    // A follow-up asking an earlier run for the reply it never gave: that run's folder (and Claude Code session), when kept.
+    var resumed = scoped ? continuations.Take(request.ResumeOf, DateTimeOffset.UtcNow) : null;
+    if (argsEnv is null) { args = [.. args, .. AgentOs.RemoteAgent.RunContinuation.ResumeArgs(cmd, resumed)]; }
+
     // Every CLI run starts in its OWN empty directory — never the runner's current directory, which is usually
     // a checkout of something else (the agent once saw "file access limited to D:\Github\AgentOs").
-    var runDir = AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
+    var runDir = resumed?.Folder ?? AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
         Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(),
         request.Id);
     var keepRun = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_RUNS"));
+    // Set when this run's reply looked unfinished: its folder is kept for one follow-up instead of deleted. A follow-up
+    // itself is never kept — one attempt.
+    var park = false;
+    string? parkSession = null;
+    var parkContextFull = false;
 
     // Test data this computer offers (REMOTE_AGENT_DATA): env vars of the run, named — never pathed — in the prompt.
     var data = scoped ? AgentOs.RemoteAgent.TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA")) : [];
@@ -347,7 +360,20 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             {
                 // Metrics first: the CLI's own usage travels back, so the server shows real tokens, not an estimate.
                 var used = final.Tokens();
-                return await WithUploadsAsync((final.IsError
+                // A run with hands that stopped short (turn or context limit) may have done real work: it is reported as
+                // a reply without its answer, so the server asks for the answer instead of discarding the work.
+                var stoppedShort = scoped && AgentOs.RemoteAgent.RunContinuation.StoppedShort(final);
+                if (scoped && resumed is null && (stoppedShort || (!final.IsError && AgentOs.RemoteAgent.RunContinuation.LooksUnfinished(final.Text))))
+                {
+                    park = true;
+                    parkSession = final.SessionId;
+                    parkContextFull = AgentOs.RemoteAgent.RunContinuation.ContextFull(final);
+                }
+                return await WithUploadsAsync((stoppedShort
+                    ? new RemoteExecResult(request.Id, true,
+                        (final.IsError ? AgentOs.RemoteAgent.RunContinuation.StoppedNote(final)
+                            : (final.Text.Trim() + "\n\n" + AgentOs.RemoteAgent.RunContinuation.StoppedNote(final)).Trim()), null)
+                    : final.IsError
                     ? new RemoteExecResult(request.Id, false, string.Empty, final.Text.Length > 0 ? final.Text : streamErr.Trim())
                     : new RemoteExecResult(request.Id, true, final.Text.Trim(), null)) with
                 {
@@ -369,6 +395,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
         if (process.ExitCode == 0)
         {
+            park = scoped && resumed is null && AgentOs.RemoteAgent.RunContinuation.LooksUnfinished(stdout);
             return await WithUploadsAsync(new RemoteExecResult(request.Id, true, stdout.Trim(), null)).ConfigureAwait(false);
         }
 
@@ -388,7 +415,8 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     finally
     {
         RunningCli.TryRemove(request.Id, out _);
-        if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
+        if (park && !keepRun) { continuations.Park(request.Id, runDir, parkSession, parkContextFull, DateTimeOffset.UtcNow); }
+        else if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
     }
 
     // Design gate (ADR-0016): a run asked for screenshots sends the images its agent listed back to the server — checked
@@ -653,7 +681,7 @@ internal static partial class Program
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
 internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
-    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null, AgentOs.RemoteAgent.RunUploads.Limits? Collect = null);
+    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null, AgentOs.RemoteAgent.RunUploads.Limits? Collect = null, string? ResumeOf = null);
 internal sealed record WriteFilesInput(IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files);
 internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
 {

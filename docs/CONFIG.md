@@ -167,6 +167,7 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:CodingRunMinutes` | `60` | 10–240 | The longest one Coding (tickets) run may take on a computer — clone, change, build, test, push (was a fixed 20 minutes). |
 | `Autopilot:ReviewRunMinutes` | `30` | 5–120 | The longest one Reviewer run may take (was a fixed 20). The Designer (Design gate) runs under the same limit. |
 | `Autopilot:TestingRunMinutes` | `45` | 10–180 | The longest one Testing (tickets) run may take (was a fixed 30). |
+| `Autopilot:RecoverMissingReply` | `true` | on / off | *Ask again for a missing reply* — a Coding, Reviewer or Testing run that ends without its JSON reply is asked once for it instead of discarded (below). |
 | `TicketFiles:MaxFileMegabytes` | `10` | 1–100 | *Files for the AI* — the largest single file a person can attach to a ticket ([ADR-0015](adr/0015-ticket-files.md)). |
 | `TicketFiles:MaxTotalMegabytes` | `50` | 1–500 | All files of one ticket together. They are copied to the computer for every run of the ticket. |
 | `TicketFiles:MaxFiles` | `500` | 1–2000 | Files per ticket (an uploaded folder counts each file in it). |
@@ -184,6 +185,21 @@ then starts nothing, retries nothing and spends no fix round until the reset (+1
 no time), logs one line in the Autopilot activity, shows it on Board › Autopilot and Board › Computers, and picks the
 cut-short work up again afterwards. The wait is in memory: after a restart the next run meets the limit again (an
 immediate answer) and the wait is back.
+
+**A run that ends without its reply** (`Autopilot:RecoverMissingReply`, on by default). A Board agent run on a member's
+computer sometimes ends without the JSON its prompt asks for — the CLI ran out of turns or context after doing real
+work (VNChess #102 lost a 20-minute migration that way). Instead of failing the run, the agent asks **once**, with its
+own 2-minute deadline, for the reply: the Coding agent for its summary (`branch`, `pushed`, `summary`, `description`),
+the Reviewer and Testing agents for their verdict. The runner keeps the folder of a scoped run whose reply holds no
+JSON (or that stopped at its turn / context limit) for 15 minutes, and the follow-up works in it — for Claude Code it
+resumes the same session (`claude -p --resume <session id>`) unless the context was full; otherwise the follow-up is
+a fresh short prompt with the scrubbed tail (1,500 characters, credentials masked) of what the run said, asking it
+to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). The follow-up never carries the
+ticket, its files or the original instructions again. A recovered Coding summary counts only when its branch is on
+the remote (`IPrCreationService.BranchExistsAsync`); otherwise the run fails with *"The work was done but not
+pushed — …"*, so the Orchestrator agent's retry tells the next run to push. The follow-up is metered like any call
+(the agent's run, tagged `reply-recovery`), each attempt shows in the task's live feed, and Insights › Delivery counts
+them (*Replies asked again*).
 
 ### Workflow › Ticket flow
 

@@ -35,6 +35,11 @@ public sealed record LlmResponse(
 
     /// <summary>The files the paired runner sent back and the server stored (<see cref="LlmRequest.Uploads"/>), by path.</summary>
     public System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.StoredFileInfo> Uploaded { get; init; } = [];
+
+    /// <summary>A handle to continue this run with a follow-up call (<see cref="LlmRequest.ResumeOf"/>) — the paired
+    /// runner keeps a run's folder and CLI session for a short while when its reply looked unfinished. Null when the
+    /// provider can't continue a run (every server-side provider).</summary>
+    public string? Continuation { get; init; }
 }
 
 /// <summary>

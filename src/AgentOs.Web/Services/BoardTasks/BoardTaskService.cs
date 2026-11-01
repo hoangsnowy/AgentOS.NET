@@ -740,6 +740,10 @@ public sealed class BoardTaskService(
                 ChangeRequest: change)
             {
                 Files = ticketFiles,
+                // A run whose summary had to be asked for again counts only when its branch reached the remote; the
+                // board's credentials stay here.
+                BranchExists = (r, branch, ct) => prService.BranchExistsAsync(
+                    RepoDescriptor(board, tenantId, r.Owner, r.Repo, r.DefaultBranch, pat), branch, ct),
             };
 
             var workResult = await agent.RunAsync(issueRequest, stopLease.Token).ConfigureAwait(false);

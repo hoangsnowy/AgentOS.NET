@@ -306,7 +306,14 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         try
         {
             var response = await llm.SendAsync(req, ct).ConfigureAwait(false);
-            return ParseOutcome(response.Content ?? "", request, repo);
+            var content = response.Content ?? "";
+            // No JSON summary — often a run that ran out of turns or context AFTER doing the work: ask once for it.
+            if (!ReplyRecovery.HasJson(content, nameof(IssueWorkAgent))
+                && await RecoverAsync(llm, req, response, request, repo, ct).ConfigureAwait(false) is { } recovered)
+            {
+                return recovered;
+            }
+            return ParseOutcome(content, request, repo);
         }
         catch (LlmException ex) { return LlmCallFailed(ex); }
         catch (System.Net.Http.HttpRequestException ex) { return LlmCallFailed(ex); }
@@ -320,6 +327,86 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             _logger.LogError(ex, "IssueWorkAgent: LLM call failed for session {SessionId} repo {Owner}/{Repo}",
                 request.SessionId, repo.Owner, repo.Repo);
             return new RepoWorkOutcome(repo.SessionRepoId, false, repo.Owner, repo.Repo, "", "", $"LLM call failed: {ex.Message}");
+        }
+    }
+
+    // The run ended without its JSON summary (VNChess #102 lost a 20-minute migration that way): ask it once for the
+    // summary of what it already did, then make sure a reported branch really reached the remote. Null = asking is
+    // switched off (Settings › Autopilot) — the original "no JSON" failure stands.
+    private async Task<RepoWorkOutcome?> RecoverAsync(ILlmClient llm, LlmRequest original, LlmResponse response,
+        IssueWorkRequest request, WorkRepo repo, CancellationToken ct)
+    {
+        if (!await ReplyRecovery.EnabledAsync(_profiles, ct).ConfigureAwait(false)) { return null; }
+        var repoLabel = $"{repo.Owner}/{repo.Repo}";
+        Emit(request, SessionRunEventKind.Step, $"{repoLabel} — the run ended without its summary; asking the agent once for it.", repoLabel);
+        var followUp = ReplyRecovery.FollowUp(original, response, IssueWorkPrompt.RecoverySystem, IssueWorkPrompt.RecoveryAsk(request, repo));
+        var answer = await ReplyRecovery.AskAsync(llm, followUp, _logger, nameof(IssueWorkAgent), ct).ConfigureAwait(false);
+        if (answer.Reply is not { } reply || !ReplyRecovery.HasJson(reply, nameof(IssueWorkAgent)))
+        {
+            Emit(request, SessionRunEventKind.ReplyRecovered, $"{repoLabel} — asked again, but the agent still gave no summary.", repoLabel);
+            var content = response.Content ?? "";
+            return new RepoWorkOutcome(repo.SessionRepoId, false, repo.Owner, repo.Repo, "",
+                content.Length > 200 ? content[..200] : content, NoSummaryAfterAskingAgain + answer.Why);
+        }
+
+        var outcome = await VerifyRecoveredAsync(ParseOutcome(reply, request, repo), Pushed(reply), request, repo, _logger, ct).ConfigureAwait(false);
+        Emit(request, SessionRunEventKind.ReplyRecovered, outcome.Ok
+            ? $"{repoLabel} — summary recovered: the run had pushed branch {outcome.BranchName}."
+            : $"{repoLabel} — summary recovered: {outcome.Error}", repoLabel);
+        _logger.LogInformation("IssueWorkAgent: recovered the missing summary for session {SessionId} repo {Owner}/{Repo} (ok={Ok})",
+            request.SessionId, repo.Owner, repo.Repo, outcome.Ok);
+        return outcome;
+    }
+
+    /// <summary>The failure when the run gave no JSON summary and asking once more gave none either.</summary>
+    internal const string NoSummaryAfterAskingAgain = "Agent did not return a JSON summary (asked once more; still none).";
+
+    /// <summary>The failure when a recovered summary names a branch that never reached the remote — worded so the
+    /// Orchestrator agent's retry guidance tells the next run to push.</summary>
+    internal static string NotPushed(string branch) => string.IsNullOrWhiteSpace(branch)
+        ? "The work was done but not pushed — the run's commits never reached the remote. The next run must commit and push its branch."
+        : $"The work was done but not pushed — branch {branch} is not on the remote (its commits stayed on the computer). "
+          + $"The next run must commit and push it: git push -u origin {branch}";
+
+    /// <summary>A recovered summary counts only when its branch is on the remote: the agent's own "pushed": false, or a
+    /// branch the remote doesn't have, is "done but not pushed". When the remote can't be checked, the agent's word stands
+    /// (as for a run that answered first time).</summary>
+    internal static async Task<RepoWorkOutcome> VerifyRecoveredAsync(RepoWorkOutcome outcome, bool? pushed, IssueWorkRequest request,
+        WorkRepo repo, ILogger logger, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        ArgumentNullException.ThrowIfNull(request);
+        if (!outcome.Ok) { return outcome; }
+        bool? exists = null;
+        if (request.BranchExists is { } check)
+        {
+            try
+            {
+                exists = await check(repo, outcome.BranchName, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "IssueWorkAgent: could not check branch {Branch} on the remote", outcome.BranchName);
+            }
+        }
+        return pushed == false || exists == false
+            ? outcome with { Ok = false, Error = NotPushed(outcome.BranchName) }
+            : outcome;
+    }
+
+    // The recovered summary's "pushed" flag (the follow-up's schema adds it); null when absent.
+    private static bool? Pushed(string reply)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonExtractor.ExtractJson(reply, nameof(IssueWorkAgent)));
+            return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("pushed", out var p)
+                ? p.ValueKind switch { JsonValueKind.True => true, JsonValueKind.False => false, _ => null }
+                : null;
+        }
+        catch (Exception ex) when (ex is LlmException or JsonException)
+        {
+            return null;
         }
     }
 

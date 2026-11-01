@@ -87,14 +87,57 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
         {
             var response = await llm.SendAsync(llmRequest, ct).ConfigureAwait(false);
             var verdict = Parse(response.Content ?? string.Empty);
-            return capture is null ? verdict
-                : verdict with { Screenshots = Arrived(verdict.Screenshots.Select(s => s with { Path = capture.PathPrefix + s.Path }).ToList(), response.Uploaded) };
+            // The screenshots the run sent back (ADR-0016), whichever reply carries the verdict.
+            AcceptanceVerdict WithShots(AcceptanceVerdict v) => capture is null ? v
+                : v with { Screenshots = Arrived(v.Screenshots.Select(s => s with { Path = capture.PathPrefix + s.Path }).ToList(), response.Uploaded) };
+            // No verdict — usually a run that ran out of turns or context after testing: cheaper to ask once for the
+            // verdict than to bring the app up and test again.
+            if (verdict.Ran || !await ReplyRecovery.EnabledAsync(profiles, ct).ConfigureAwait(false)) { return WithShots(verdict); }
+            Emit(request, SessionRunEventKind.Step, "Testing — the run ended without its verdict; asking the agent once for it.", repoLabel);
+            var answer = await ReplyRecovery.AskAsync(llm, ReplyRecovery.FollowUp(llmRequest, response, RecoverySystem, RecoveryAsk(request)),
+                logger, nameof(AcceptanceAgent), ct).ConfigureAwait(false);
+            var recovered = Recovered(answer.Reply);
+            Emit(request, SessionRunEventKind.ReplyRecovered, recovered is null
+                ? "Testing — asked again, but the Testing agent still gave no verdict."
+                : $"Testing — verdict recovered: {(recovered.Passed ? "passed" : "failed")}.", repoLabel);
+            return recovered is not null ? WithShots(recovered) : NotRun(verdict.Error + " (asked once more; still none)" + answer.Why);
         }
         catch (Exception ex) when (ex is LlmException or TimeoutException or InvalidOperationException or System.Net.Http.HttpRequestException)
         {
             logger.LogWarning(ex, "Acceptance run failed for session {SessionId}", request.SessionId);
             return NotRun(ex.Message);
         }
+    }
+
+    /// <summary>A follow-up's reply as a verdict — only when it holds one (an <c>{"error":…}</c> reply means testing could
+    /// not finish and stays not-run).</summary>
+    internal static AcceptanceVerdict? Recovered(string? reply)
+    {
+        if (reply is null || !reply.Contains("\"verdict\"", StringComparison.Ordinal)) { return null; }
+        var verdict = Parse(reply);
+        return verdict.Ran ? verdict : null;
+    }
+
+    /// <summary>The system prompt of the one follow-up asking for a missing verdict (its first line is the routing key).</summary>
+    internal const string RecoverySystem =
+        "You are the Testing Agent of AgentOS.NET, finishing a test run on the developer's machine that ended before it sent its verdict. You never change the code.";
+
+    /// <summary>The follow-up's ask: the verdict of what the run already checked, JSON only. Names the repository and
+    /// branch (from the server) and nothing else — no ticket text, files or practices again.</summary>
+    internal static string RecoveryAsk(AcceptanceRequest r)
+    {
+        ArgumentNullException.ThrowIfNull(r);
+        return string.Format(CultureInfo.InvariantCulture,
+            """
+            Your previous test run of branch `{2}` on {0}/{1} (ticket #{3}) ended before you sent the JSON verdict. Do not
+            start over and do not change anything. From what you already ran, reply ONLY with this JSON (no other text):
+            {{"verdict":"pass","criteria":[{{"criterion":"<ID or the criterion's words>","result":"pass","evidence":"<command and the key output line, or why it was not checked>"}}],"baseFailures":[],"summary":"<one or two sentences>"}}
+            A criterion you did not get to check is "not-checked" — never "pass" for something you did not run. "verdict" is
+            "pass" only when you saw the build pass, every failing test is a pre-existing failure, and no criterion failed;
+            otherwise "fail".
+            If you had not tested enough to give a verdict, reply ONLY: {{"error":"<why testing could not finish>"}}
+            """,
+            r.Repo.Owner, r.Repo.Repo, r.Repo.ExistingBranch, r.IssueNumber);
     }
 
     private static AcceptanceVerdict NotRun(string why) => new(false, false, [], why, why);

@@ -63,6 +63,11 @@ public sealed record IssueWorkRequest(
 {
     /// <summary>The files a person attached to the ticket (ADR-0015) — copied into each run's working folder.</summary>
     public IReadOnlyList<AgentOs.Domain.Files.RunFile> Files { get; init; } = [];
+
+    /// <summary>Whether a branch exists on a target repo's remote (the caller wires it to
+    /// <c>IPrCreationService.BranchExistsAsync</c> with the board's credentials, which never reach the agent); null result =
+    /// couldn't tell. The agent checks a branch a run reported only when it asked for a missing reply. Null = no check.</summary>
+    public Func<WorkRepo, string, CancellationToken, Task<bool?>>? BranchExists { get; init; }
 }
 
 /// <summary>The agent's outcome for one repo.</summary>

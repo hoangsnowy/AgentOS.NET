@@ -94,7 +94,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             uploads = null;
         }
         var execRequest = new RemoteExecRequest(id, request.SystemPrompt, request.UserPrompt, request.Model, request.Cli, request.Autonomy,
-            files is null ? null : RunFileEvidence.Manifest(files), uploads?.Limits);
+            files is null ? null : RunFileEvidence.Manifest(files), uploads?.Limits, request.ResumeOf);
         if (files is not null) { _broker.StageFiles(id, files); }
         IReadOnlyList<RunUpload> sentBack = [];
         var dispatchedAt = DateTimeOffset.UtcNow;
@@ -185,6 +185,9 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             CacheReadTokens = real ? result.CacheReadTokens ?? 0 : 0,
             CacheWriteTokens = real ? result.CacheWriteTokens ?? 0 : 0,
             Uploaded = stored,
+            // A run with hands may be continued (its reply asked for again): the runner keeps the folder of a run whose
+            // reply looked unfinished for a short while, keyed by this request id. Answer-only runs keep nothing.
+            Continuation = string.Equals(request.Autonomy, WorkspaceAutonomy.Scoped, StringComparison.Ordinal) ? id : null,
         };
     }
 

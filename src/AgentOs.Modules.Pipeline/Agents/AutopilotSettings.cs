@@ -85,6 +85,9 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// <summary>The longest one Testing (tickets) run may take (minutes) — bring the app up and check every criterion.</summary>
     public const string TestingRunMinutesKey = "Autopilot:TestingRunMinutes";
 
+    /// <summary>Whether a Coding, Reviewer or Testing run that ended without its JSON reply is asked once for it.</summary>
+    public const string RecoverMissingReplyKey = "Autopilot:RecoverMissingReply";
+
     internal const int DefaultMaxParallel = 2;
     internal const int DefaultMaxParallelTests = 1;
     internal const int DefaultMaxFixRounds = 3;
@@ -145,6 +148,18 @@ public sealed class AutopilotSettings : ISettingsContributor
             "The longest one Reviewer agent run may take.");
         yield return Bound(TestingRunMinutesKey, "Testing run time limit (minutes)",
             "The longest one Testing agent run may take: bring the app up and check every acceptance criterion.");
+        yield return new(RecoverMissingReplyKey, SettingKind.Boolean, Category, "Ask again for a missing reply")
+        {
+            DefaultValue = "true",
+            Help = "When a Coding, Reviewer or Testing run ends without its summary (it ran out of turns or context after doing the work), ask it once, briefly, for the summary instead of discarding the run. A Coding run's branch is checked on the remote before it counts.",
+        };
+    }
+
+    /// <summary>Whether a run that ended without its reply is asked once for it (<see cref="RecoverMissingReplyKey"/>), read now.</summary>
+    public static ValueTask<bool> ReadRecoverMissingReplyAsync(ISettings settings, string? tenantId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return settings.GetBoolAsync(RecoverMissingReplyKey, tenantId, true, ct);
     }
 
     /// <summary>A run time limit (<see cref="CodingRunMinutesKey"/>, …), read now and clamped to its range.</summary>

@@ -25,6 +25,10 @@ public interface IAgentProfiles
     /// <summary>How long one run of a Board agent may take (an <c>Autopilot:*RunMinutes</c> setting) for the current tenant.</summary>
     ValueTask<TimeSpan> RunLimitAsync(string key, CancellationToken cancellationToken = default) =>
         ValueTask.FromResult(AutopilotSettings.DefaultRunLimit(key));
+
+    /// <summary>Whether a Board agent run that ended without its JSON reply is asked once for it, for the current tenant
+    /// (<see cref="AutopilotSettings.RecoverMissingReplyKey"/>; on by default).</summary>
+    ValueTask<bool> RecoverMissingReplyAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(true);
 }
 
 /// <summary><see cref="IAgentProfiles"/> over <see cref="ISettings"/>.</summary>
@@ -88,6 +92,10 @@ public sealed class SettingsAgentProfiles : IAgentProfiles
     /// <inheritdoc />
     public ValueTask<TimeSpan> RunLimitAsync(string key, CancellationToken cancellationToken = default) =>
         AutopilotSettings.ReadRunLimitAsync(_settings, CurrentTenant(), key, cancellationToken);
+
+    /// <inheritdoc />
+    public ValueTask<bool> RecoverMissingReplyAsync(CancellationToken cancellationToken = default) =>
+        AutopilotSettings.ReadRecoverMissingReplyAsync(_settings, CurrentTenant(), cancellationToken);
 
     // Ambient identity first (Blazor circuits and background runs push it); else the request's tenant context.
     private string? CurrentTenant()
