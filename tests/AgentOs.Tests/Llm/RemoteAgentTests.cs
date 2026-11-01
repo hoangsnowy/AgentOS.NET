@@ -115,8 +115,8 @@ public class RemoteAgentTests
         using var reg = broker.RegisterRunner("conn-1", Conn());
         broker.Dispatched += d =>
         {
-            broker.ReportProgress(d.Request.Id, "testing");
-            broker.ReportProgress("someone-else", "sending");
+            broker.ReportProgress(d.ConnectionId, d.Request.Id, "testing");
+            broker.ReportProgress(d.ConnectionId, "someone-else", "sending");
             broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
         };
         var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
