@@ -1,0 +1,344 @@
+name: Release
+
+# Signed release images with SBOM + SLSA provenance (docs/RELEASE.md).
+#
+#   tag vX.Y.Z[-pre]   → build + test → Api/Web images pushed to GHCR, cosign-signed (keyless),
+#                        SBOM + provenance attested, GitHub Release with the CycloneDX SBOMs attached.
+#   workflow_dispatch  → dry run: the same build, tests, images (as local archives) and SBOMs,
+#                        uploaded as workflow artifacts. Nothing is pushed, signed, attested or released.
+#
+# Images are built the way azd builds them for Azure Container Apps: SDK containers
+# (`dotnet publish -t:PublishContainer`, EnableSdkContainerSupport in the Api/Web csproj), so what we
+# release is what we deploy. Every third-party action is pinned by full commit SHA (Dependabot bumps them).
+
+on:
+  push:
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch:
+
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  CYCLONEDX_VERSION: '6.3.1'
+  IMAGE_RID: linux-x64
+
+jobs:
+  # ---- 1. Version, build, test, solution SBOM ---------------------------------------------------
+  build:
+    name: Build, test, solution SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The tag is the version. A tag release also requires the repo to agree with it: the
+      # Directory.Build.props <Version> (what /version reports) and a CHANGELOG section.
+      - name: Resolve version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          props_version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -n1)
+          if [ "$EVENT" = "push" ]; then
+            if ! [[ "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Tag '$REF_NAME' is not semver (vMAJOR.MINOR.PATCH[-prerelease])."; exit 1
+            fi
+            version="${REF_NAME#v}"
+            core="${version%%-*}"
+            if [ "$core" != "$props_version" ]; then
+              echo "::error::Tag $REF_NAME but Directory.Build.props <Version> is $props_version — bump it in the release PR."; exit 1
+            fi
+            if ! awk -v h="## [$version]" 'index($0, h) == 1 { found = 1 } END { exit !found }' CHANGELOG.md; then
+              echo "::error::CHANGELOG.md has no '## [$version]' section — move Unreleased under it in the release PR."; exit 1
+            fi
+            publish=true
+          else
+            version="${props_version}-dryrun.${SHA::7}"
+            publish=false
+          fi
+          if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          {
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version $version (prerelease=$prerelease, publish=$publish)"
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore AgentOs.slnx
+
+      - name: Build (Release)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: dotnet build AgentOs.slnx --configuration Release --no-restore -p:Version="$VERSION"
+
+      # The E2E / lab suites are gated by env vars and skip here; CI runs the UI E2E on every PR.
+      - name: Test
+        run: dotnet test --solution AgentOs.slnx --configuration Release --no-build
+
+      - name: Solution SBOM (CycloneDX)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          dotnet tool install CycloneDX --version "$CYCLONEDX_VERSION" --tool-path "$RUNNER_TEMP/cyclonedx"
+          "$RUNNER_TEMP/cyclonedx/dotnet-CycloneDX" AgentOs.slnx \
+            --exclude-test-projects --disable-package-restore \
+            --set-name AgentOS.NET --set-version "$VERSION" \
+            --output-format Json --output sbom --filename "agentos-net-$VERSION.solution.cdx.json"
+
+      - name: Upload solution SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-solution
+          path: sbom/*.cdx.json
+          if-no-files-found: error
+
+  # ---- 2. Images: build → (push → sign → attest) + per-image SBOM ---------------------------------
+  image:
+    name: Image (${{ matrix.name }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: api
+            project: src/AgentOs.Api/AgentOs.Api.csproj
+          - name: web
+            project: src/AgentOs.Web/AgentOs.Web.csproj
+    permissions:
+      contents: read
+      packages: write       # push to GHCR (tag releases only)
+      id-token: write       # keyless cosign + attestation signing (Sigstore / Fulcio)
+      attestations: write   # actions/attest-* (GitHub attestation store)
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      PUBLISH: ${{ needs.build.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Image name + tags
+        id: meta
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repository="${owner}/agentos-${NAME}"
+          # X.Y.Z always; X.Y and latest only for a stable release (a prerelease never moves them).
+          tags="$VERSION"
+          if [ "$PRERELEASE" = "false" ]; then
+            tags="$tags;${VERSION%.*};latest"
+          fi
+          {
+            echo "repository=$repository"
+            echo "image=ghcr.io/$repository"
+            echo "tags=$tags"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # SDK container build (same path azd uses). Release: push to GHCR. Dry run: a local tarball.
+      - name: Build image (dotnet publish -t:PublishContainer)
+        env:
+          PROJECT: ${{ matrix.project }}
+          REPOSITORY: ${{ steps.meta.outputs.repository }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          args=(
+            "$PROJECT" -c Release -r "$IMAGE_RID" /t:PublishContainer
+            -p:Version="$VERSION"
+            -p:ContainerRepository="$REPOSITORY"
+            -p:ContainerImageTags="\"$TAGS\""
+            # OCI source + revision labels (also links the GHCR package to this repo).
+            -p:PublishRepositoryUrl=true
+            -p:SourceRevisionId="$GITHUB_SHA"
+          )
+          if [ "$PUBLISH" = "true" ]; then
+            args+=(-p:ContainerRegistry=ghcr.io)
+          else
+            args+=(-p:ContainerArchiveOutputPath="$RUNNER_TEMP/image.tar")
+          fi
+          dotnet publish "${args[@]}"
+
+      - name: Resolve pushed digest
+        id: digest
+        if: env.PUBLISH == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "::error::No digest for $IMAGE:$VERSION"; exit 1; fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed $IMAGE@$digest"
+
+      - name: Image SBOM (CycloneDX, release)
+        if: env.PUBLISH == 'true'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ steps.meta.outputs.image }}@${{ steps.digest.outputs.digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: cyclonedx-json
+          output-file: sbom/agentos-${{ matrix.name }}-${{ env.VERSION }}.image.cdx.json
+          upload-artifact: false
+
+      - name: Image SBOM (CycloneDX, dry run)
+        if: env.PUBLISH != 'true'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: docker-archive:${{ runner.temp }}/image.tar
+          format: cyclonedx-json
+          output-file: sbom/agentos-${{ matrix.name }}-${{ env.VERSION }}.image.cdx.json
+          upload-artifact: false
+
+      - name: Install cosign
+        if: env.PUBLISH == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Keyless: the certificate binds the signature to this workflow at this tag (Fulcio + Rekor).
+      - name: Sign image (cosign, keyless)
+        if: env.PUBLISH == 'true'
+        env:
+          REF: ${{ steps.meta.outputs.image }}@${{ steps.digest.outputs.digest }}
+        run: cosign sign --yes "$REF"
+
+      - name: Attest build provenance (SLSA)
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.meta.outputs.image }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+          # Storage records need an org-owned repo + `artifact-metadata: write`; this repo is user-owned.
+          create-storage-record: false
+
+      - name: Attest SBOM
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ steps.meta.outputs.image }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          sbom-path: sbom/agentos-${{ matrix.name }}-${{ env.VERSION }}.image.cdx.json
+          push-to-registry: true
+
+      - name: Summary
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          if [ "$PUBLISH" = "true" ]; then
+            echo "- \`$IMAGE@$DIGEST\` (tags: ${TAGS//;/, }) — signed, SBOM + provenance attested" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- dry run: \`$IMAGE:$VERSION\` built as an archive, not pushed" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload image SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-${{ matrix.name }}
+          path: sbom/*.cdx.json
+          if-no-files-found: error
+
+  # ---- 3. GitHub Release (tag pushes only) ----------------------------------------------------------
+  release:
+    name: GitHub Release
+    needs: [ build, image ]
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # create the release + upload assets
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download SBOMs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sbom-*
+          path: sbom
+          merge-multiple: true
+
+      # Release notes = this version's CHANGELOG section + how to pull and verify the images.
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          cat >> notes.md <<EOF
+
+          ## Images
+
+          | Image | Pull |
+          |---|---|
+          | Api | \`docker pull ghcr.io/$owner/agentos-api:$VERSION\` |
+          | Web | \`docker pull ghcr.io/$owner/agentos-web:$VERSION\` |
+
+          Both are signed keylessly with cosign and carry SLSA build provenance and a CycloneDX SBOM
+          attestation. Verify before you deploy — see [docs/RELEASE.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/RELEASE.md#verify-an-image).
+          The CycloneDX SBOMs (solution + each image) are attached below.
+          EOF
+
+      - name: Create release
+        run: |
+          set -euo pipefail
+          flags=(--verify-tag --title "AgentOS.NET $VERSION" --notes-file notes.md)
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          gh release create "$TAG" "${flags[@]}" sbom/*.cdx.json
