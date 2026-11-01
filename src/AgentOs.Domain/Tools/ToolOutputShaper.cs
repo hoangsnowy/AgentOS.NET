@@ -592,8 +592,8 @@ public static class ToolOutputShaper
 
     private static bool LooksLikeJson(string text)
     {
-        var t = text.AsSpan().Trim();
-        return t.Length > 1 && ((t[0] == '{' && t[^1] == '}') || (t[0] == '[' && t[^1] == ']'));
+        // List patterns instead of chained && / || (CodeQL cs/complex-condition).
+        return text.AsSpan().Trim() is ['{', .., '}'] or ['[', .., ']'];
     }
 
     // Structural evidence that a line comes from a build/test tool.

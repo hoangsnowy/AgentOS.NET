@@ -81,9 +81,10 @@ public sealed class AIToolFunctionTests
             .Returns(ci => Task.FromResult(ToolInvocationResult.Success(ci.Arg<ToolInvocationRequest>()!.CallId, big)));
 
         var fn = new AIToolFunction(tool, "tenant-1", runId: null);
-        var result = (await fn.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>()), CancellationToken.None))?.ToString();
+        // ShouldNotBeNull() returns the value, so CodeQL's null analysis sees a non-null local (cs/dereferenced-value-may-be-null).
+        var raw = await fn.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>()), CancellationToken.None);
+        var result = raw.ShouldNotBeNull().ToString().ShouldNotBeNull();
 
-        result.ShouldNotBeNull();
         result.Length.ShouldBeLessThanOrEqualTo(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
         result.ShouldStartWith("row 00000");
         result.ShouldEndWith("row 19999");
