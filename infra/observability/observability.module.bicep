@@ -78,7 +78,8 @@ var logAlerts = [
     window: 'PT15M'
     frequency: 'PT5M'
     description: 'A tenant is at or over its monthly LLM budget.'
-    query: 'customMetrics | where name == "agentos.budget.utilization" | summarize Used = max(valueMax) by Tenant = tostring(customDimensions["agentos.tenant.id"]) | where Used >= 1'
+    // The LATEST sample per tenant, not the window max: removing a cap or a new month reports 0 and must resolve it.
+    query: 'customMetrics | where name == "agentos.budget.utilization" | summarize arg_max(timestamp, valueMax) by Tenant = tostring(customDimensions["agentos.tenant.id"]) | where valueMax >= 1'
   }
   {
     name: 'AgentOsFailedRunSpike'
@@ -122,7 +123,7 @@ var logAlerts = [
   }
 ]
 
-resource logAlertRules 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = [for a in logAlerts: if (enableAlerts) {
+resource logAlertRules 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = [for a in logAlerts: if (enableAlerts) {
   name: '${a.name}-${resourceToken}'
   location: location
   tags: tags

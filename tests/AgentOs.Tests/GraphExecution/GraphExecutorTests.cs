@@ -520,6 +520,103 @@ public sealed class GraphExecutorTests
             Arg.Any<PipelineRunRecord>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task RunAsync_NodeCallbackThrows_RecordsFailedRunAndRethrows()
+    {
+        // E1.10: an exception mid-run must still count the run (as failed) — the finally records it.
+        const double seconds = 7_301.25; // unique: Meters are process-global and tests run in parallel
+        using var durations = new RunDurations(seconds);
+        var (exec, _) = Build(clock: new JumpClock(seconds));
+
+        await Should.ThrowAsync<System.InvalidOperationException>(() => exec.RunAsync(
+            Sdlc(), "story", 3, "t", null, _ => throw new System.InvalidOperationException("ui gone")));
+
+        durations.Outcomes.ShouldBe([PipelineTelemetry.Outcomes.Failed]);
+    }
+
+    [Fact]
+    public async Task RunAsync_CallerCancels_RecordsCancelledRun()
+    {
+        const double seconds = 7_302.25;
+        using var durations = new RunDurations(seconds);
+        var (exec, _) = Build(clock: new JumpClock(seconds));
+        using var cts = new CancellationTokenSource();
+
+        await Should.ThrowAsync<System.OperationCanceledException>(() => exec.RunAsync(
+            Sdlc(), "story", 3, "t", null, _ =>
+            {
+                cts.Cancel();
+                cts.Token.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            }, ct: cts.Token));
+
+        durations.Outcomes.ShouldBe([PipelineTelemetry.Outcomes.Cancelled]);
+    }
+
+    [Fact]
+    public async Task RunAsync_Completes_RecordsDoneRunOnce()
+    {
+        const double seconds = 7_303.25;
+        using var durations = new RunDurations(seconds);
+        var (exec, _) = Build(clock: new JumpClock(seconds));
+
+        (await exec.RunAsync(Sdlc(), "story", 3, "t", null, _ => Task.CompletedTask)).Completed.ShouldBeTrue();
+
+        durations.Outcomes.ShouldBe([PipelineTelemetry.Outcomes.Done]);
+    }
+
+    /// <summary>First read = a fixed instant; every later read = that instant + <c>seconds</c>, so a run's measured
+    /// duration is exactly <c>seconds</c> — a value unique to one test.</summary>
+    private sealed class JumpClock(double seconds) : System.TimeProvider
+    {
+        // global:: — inside a TimeProvider subclass, "System" binds to the inherited TimeProvider.System property.
+        private static readonly global::System.DateTimeOffset Start = new(2026, 10, 1, 12, 0, 0, global::System.TimeSpan.Zero);
+        private int _reads;
+
+        public override global::System.DateTimeOffset GetUtcNow() =>
+            Interlocked.Increment(ref _reads) == 1 ? Start : Start.AddSeconds(seconds);
+    }
+
+    /// <summary>Captures the outcome tag of every workflow run-duration measurement equal to <c>seconds</c>.</summary>
+    private sealed class RunDurations : System.IDisposable
+    {
+        private readonly System.Diagnostics.Metrics.MeterListener _listener = new();
+        private readonly List<string> _outcomes = [];
+
+        public RunDurations(double seconds)
+        {
+            _listener.InstrumentPublished = (i, l) =>
+            {
+                if (i.Meter.Name == PipelineTelemetry.MeterName && i.Name == PipelineTelemetry.Instruments.RunDuration)
+                {
+                    l.EnableMeasurementEvents(i);
+                }
+            };
+            _listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
+            {
+                if (System.Math.Abs(value - seconds) > 1e-6) { return; }
+                string? kind = null, outcome = null;
+                foreach (var t in tags)
+                {
+                    if (t.Key == "agentos.run.kind") { kind = t.Value as string; }
+                    else if (t.Key == "agentos.run.outcome") { outcome = t.Value as string; }
+                }
+                if (kind == PipelineTelemetry.Kinds.Workflow && outcome is not null)
+                {
+                    lock (_outcomes) { _outcomes.Add(outcome); }
+                }
+            });
+            _listener.Start();
+        }
+
+        public IReadOnlyList<string> Outcomes
+        {
+            get { lock (_outcomes) { return _outcomes.ToList(); } }
+        }
+
+        public void Dispose() => _listener.Dispose();
+    }
+
     // req(Requirement,start) -> cod(Coding) -> tst(Testing) -> qa(Evaluator) -> end; qa loops to cod on fail.
     private static PlanGraph Sdlc(int qaMaxIter = 3)
         => new("g1", "SDLC",

@@ -1,7 +1,7 @@
 // E1.10 — publishes every health check's status as a metric, so the "health probe down" alert works from inside
 // the process too (an outside-in blackbox probe of /health remains the primary signal — see docs/OPERATIONS.md).
-// IHealthCheckPublisher runs on the HealthCheckPublisherOptions schedule (default: every 30 s after a 5 s delay),
-// independently of anyone calling /health.
+// IHealthCheckPublisher runs on the HealthCheckPublisherOptions schedule — set in AddDefaultHealthChecks to every
+// PublishPeriod (60 s) after FirstPublishDelay — independently of anyone calling /health.
 
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -17,6 +17,13 @@ internal sealed class HealthMetricsPublisher : IHealthCheckPublisher
 
     /// <summary>Gauge name (Prometheus: <c>agentos_health_status</c>).</summary>
     internal const string InstrumentName = "agentos.health.status";
+
+    /// <summary>How often the checks run for this metric. Each run executes EVERY check (Postgres, the Keycloak
+    /// discovery document) on every replica, so it stays well above the framework's 30 s default.</summary>
+    internal static readonly TimeSpan PublishPeriod = TimeSpan.FromSeconds(60);
+
+    /// <summary>Delay before the first publish after start-up.</summary>
+    internal static readonly TimeSpan FirstPublishDelay = TimeSpan.FromSeconds(15);
 
     private static readonly Meter Meter = new(MeterName);
     private static readonly Gauge<double> Status = Meter.CreateGauge<double>(

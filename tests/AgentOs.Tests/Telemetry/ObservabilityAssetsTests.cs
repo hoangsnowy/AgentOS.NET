@@ -33,6 +33,7 @@ public sealed partial class ObservabilityAssetsTests
         (PipelineTelemetry.Instruments.RunDuration, Histogram("agentos_pipeline_run_duration_seconds")),
         (PipelineTelemetry.Instruments.BudgetBlocked, ["agentos_budget_blocked_total"]),
         (PipelineTelemetry.Instruments.BudgetUtilization, ["agentos_budget_utilization_ratio"]),
+        (PipelineTelemetry.Instruments.BudgetEnforced, ["agentos_budget_enforced"]), // "{flag}" unit: no suffix
         (HealthMetricsPublisher.InstrumentName, ["agentos_health_status"]),
         ("agentos.evidence.inline_writes", ["agentos_evidence_inline_writes_total"]),
         ("agentos.evidence.lost", ["agentos_evidence_lost_total"]),
@@ -47,7 +48,7 @@ public sealed partial class ObservabilityAssetsTests
     private static readonly HashSet<string> KnownLabels = new(StringComparer.Ordinal)
     {
         "gen_ai_system", "gen_ai_request_model", "gen_ai_agent_name", "gen_ai_token_type", "agentos_token_class",
-        "agentos_run_kind", "agentos_run_outcome", "agentos_budget_scope", "agentos_budget_enforced", "agentos_tenant_id",
+        "agentos_run_kind", "agentos_run_outcome", "agentos_budget_scope", "agentos_tenant_id",
         "agentos_health_check",
     };
 

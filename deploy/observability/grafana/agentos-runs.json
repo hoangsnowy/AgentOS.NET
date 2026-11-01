@@ -347,7 +347,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "count(max by (agentos_tenant_id) (agentos_budget_utilization_ratio) >= 1) or vector(0)",
+          "expr": "count(max by (agentos_tenant_id) (agentos_budget_utilization_ratio{job=~\"$job\"}) >= 1) or vector(0)",
           "legendFormat": ""
         }
       ],
@@ -703,7 +703,7 @@
       "id": 14,
       "type": "bargauge",
       "title": "Budget used by tenant",
-      "description": "Month-to-date spend ÷ monthly cap (last evaluation). 80% warns, 100% is over cap.",
+      "description": "Month-to-date spend ÷ monthly cap, from each tenant's last budget evaluation (shown for 15 min after it; 0 when no cap is set or a new month began). 80% warns, 100% is over cap.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -721,7 +721,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sort_desc(max by (agentos_tenant_id) (agentos_budget_utilization_ratio))",
+          "expr": "sort_desc(max by (agentos_tenant_id) (agentos_budget_utilization_ratio{job=~\"$job\"}))",
           "legendFormat": "{{agentos_tenant_id}}",
           "instant": true
         }

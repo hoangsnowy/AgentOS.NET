@@ -253,7 +253,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "customMetrics\n| where name == \"agentos.budget.utilization\"\n| summarize arg_max(timestamp, valueMax) by Tenant = tostring(customDimensions[\"agentos.tenant.id\"]), Enforced = tostring(customDimensions[\"agentos.budget.enforced\"])\n| project Tenant, Enforced, UsedPercent = round(100.0 * valueMax, 1), LastEvaluated = timestamp\n| order by UsedPercent desc",
+        "query": "customMetrics\n| where name in (\"agentos.budget.utilization\", \"agentos.budget.enforced\")\n| summarize arg_max(timestamp, valueMax) by Tenant = tostring(customDimensions[\"agentos.tenant.id\"]), name\n| summarize UsedPercent = round(100.0 * maxif(valueMax, name == \"agentos.budget.utilization\"), 1), Enforced = maxif(valueMax, name == \"agentos.budget.enforced\") == 1, LastEvaluated = max(timestamp) by Tenant\n| order by UsedPercent desc",
         "size": 0,
         "title": "Budget used by tenant (last evaluation)",
         "timeContextFromParameter": "TimeRange",

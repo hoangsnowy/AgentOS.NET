@@ -4,6 +4,8 @@
 // One Meter "AgentOs.Pipeline", registered in ServiceDefaults. Static + process-lifetime like LlmTelemetry.
 
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using AgentOs.Domain.Cost;
@@ -26,8 +28,12 @@ public static class PipelineTelemetry
         public const string RunDuration = "agentos.pipeline.run.duration";
         /// <summary>Counter: runs / agent calls refused because the tenant is over its enforced cap.</summary>
         public const string BudgetBlocked = "agentos.budget.blocked";
-        /// <summary>Gauge (ratio): month-to-date spend ÷ cap per tenant, refreshed on every budget evaluation.</summary>
+        /// <summary>Observable gauge (ratio): month-to-date spend ÷ cap per tenant, from the last budget evaluation in
+        /// this process; 0 when no cap is set; dropped <see cref="BudgetSampleTtl"/> after that evaluation.</summary>
         public const string BudgetUtilization = "agentos.budget.utilization";
+        /// <summary>Observable gauge (0/1): whether the tenant's cap is enforced (over-cap runs refused). Same
+        /// lifetime as <see cref="BudgetUtilization"/>; a separate series so toggling it never strands an old one.</summary>
+        public const string BudgetEnforced = "agentos.budget.enforced";
     }
 
     /// <summary><c>agentos.run.kind</c> values.</summary>
@@ -74,8 +80,21 @@ public static class PipelineTelemetry
             tags: null, advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [1, 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200] });
     private static readonly Counter<long> BudgetBlocked =
         Meter.CreateCounter<long>(Instruments.BudgetBlocked, unit: "{refusal}", description: "Runs / agent calls refused because the tenant is over its enforced monthly LLM budget.");
-    private static readonly Gauge<double> BudgetUtilization =
-        Meter.CreateGauge<double>(Instruments.BudgetUtilization, unit: "1", description: "Month-to-date LLM spend divided by the tenant's monthly cap (1 = at cap).");
+    /// <summary>How long a tenant's budget sample is reported after its last evaluation in this process. Budgets are
+    /// evaluated at run start, so an idle tenant's series ends instead of repeating a stale value forever — and a
+    /// replica that stopped seeing a tenant stops voting in <c>max by (tenant)</c> after this long.</summary>
+    public static readonly TimeSpan BudgetSampleTtl = TimeSpan.FromMinutes(15);
+
+    /// <summary>The per-tenant budget samples behind the observable budget gauges.</summary>
+    internal static BudgetSampleStore Budgets { get; } = new();
+
+    private static readonly ObservableGauge<double> BudgetUtilization =
+        Meter.CreateObservableGauge(Instruments.BudgetUtilization, () => Budgets.Observe(TimeProvider.System.GetUtcNow(), enforced: false),
+            unit: "1", description: "Month-to-date LLM spend divided by the tenant's monthly cap (1 = at cap; 0 = no cap).");
+    // "{flag}": a curly-brace unit is an annotation, dropped by the OTel → Prometheus translation (agentos_budget_enforced).
+    private static readonly ObservableGauge<double> BudgetEnforced =
+        Meter.CreateObservableGauge(Instruments.BudgetEnforced, () => Budgets.Observe(TimeProvider.System.GetUtcNow(), enforced: true),
+            unit: "{flag}", description: "1 when the tenant's monthly LLM cap is enforced (over-cap runs refused), else 0.");
 
     /// <summary>The outcome value for a finished pipeline result.</summary>
     public static string OutcomeOf(PipelineStatus status) => status switch
@@ -115,20 +134,55 @@ public static class PipelineTelemetry
         BudgetBlocked.Add(1, tags);
     }
 
-    /// <summary>Publishes a tenant's spend ÷ cap. Skipped when no cap is set (nothing to alert on).</summary>
-    public static void RecordBudget(string tenantId, BudgetStatus status)
+    /// <summary>Stores a tenant's budget evaluation for the observable gauges: spend ÷ cap, or 0 when no cap is set
+    /// (so removing a cap clears the over-cap alert at the next export instead of leaving the last ratio behind).</summary>
+    public static void RecordBudget(string tenantId, BudgetStatus status, DateTimeOffset evaluatedAt) =>
+        Budgets.Record(tenantId, status, evaluatedAt);
+}
+
+/// <summary>The last budget evaluation per tenant in this process, read by the observable budget gauges at each
+/// export — so the exported value is always the CURRENT state: an unset cap reads 0, a new month reads 0, and a
+/// stale sample disappears after <see cref="PipelineTelemetry.BudgetSampleTtl"/>. Bounded by the number of tenants
+/// that ran something within the TTL (expired entries are evicted on observation).</summary>
+internal sealed class BudgetSampleStore
+{
+    private readonly record struct Sample(double Utilization, bool Enforced, DateTimeOffset EvaluatedAt);
+
+    private readonly ConcurrentDictionary<string, Sample> _samples = new(StringComparer.Ordinal);
+
+    /// <summary>Stores <paramref name="status"/> for <paramref name="tenantId"/> (spend ÷ cap; 0 with no cap).</summary>
+    public void Record(string tenantId, BudgetStatus status, DateTimeOffset evaluatedAt)
     {
         ArgumentNullException.ThrowIfNull(status);
-        if (status.CapUsd <= 0m || string.IsNullOrWhiteSpace(tenantId))
+        if (string.IsNullOrWhiteSpace(tenantId))
         {
             return;
         }
-        BudgetUtilization.Record(
-            (double)(status.SpentUsd / status.CapUsd),
-            new TagList
+        var hasCap = status.CapUsd > 0m;
+        _samples[tenantId] = new Sample(hasCap ? (double)(status.SpentUsd / status.CapUsd) : 0d, hasCap && status.EnforceOn, evaluatedAt);
+    }
+
+    /// <summary>The measurements one budget gauge exports at <paramref name="now"/>: one per tenant evaluated within
+    /// the TTL. A sample from an earlier UTC calendar month reads 0 utilisation (month-to-date spend restarts at the
+    /// rollover); an expired one is evicted. <paramref name="enforced"/> picks the enforced-flag gauge.</summary>
+    public List<Measurement<double>> Observe(DateTimeOffset now, bool enforced)
+    {
+        var measurements = new List<Measurement<double>>(_samples.Count);
+        foreach (var (tenant, sample) in _samples)
+        {
+            if (now - sample.EvaluatedAt > PipelineTelemetry.BudgetSampleTtl)
             {
-                { "agentos.tenant.id", tenantId },
-                { "agentos.budget.enforced", status.EnforceOn },
-            });
+                // Remove only THIS sample: a concurrent re-evaluation that replaced it must survive.
+                _samples.TryRemove(new KeyValuePair<string, Sample>(tenant, sample));
+                continue;
+            }
+            var at = sample.EvaluatedAt.UtcDateTime;
+            var today = now.UtcDateTime;
+            var value = enforced
+                ? (sample.Enforced ? 1d : 0d)
+                : (at.Year == today.Year && at.Month == today.Month ? sample.Utilization : 0d);
+            measurements.Add(new Measurement<double>(value, new KeyValuePair<string, object?>("agentos.tenant.id", tenant)));
+        }
+        return measurements;
     }
 }

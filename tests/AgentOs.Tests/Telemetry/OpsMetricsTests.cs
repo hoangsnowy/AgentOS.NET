@@ -26,10 +26,12 @@ using AgentOs.Modules.Pipeline.Cost;
 using AgentOs.Modules.Pipeline.Metrics;
 using AgentOs.Modules.Pipeline.Orchestration;
 using AgentOs.Modules.Pipeline.Persistence;
+using AgentOs.Modules.RemoteAgent;
 using AgentOs.ServiceDefaults;
 using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Telemetry;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -75,6 +77,9 @@ public sealed class OpsMetricsTests
         {
             lock (_items) { return _items.Where(m => m.Instrument == instrument).ToList(); }
         }
+
+        /// <summary>Collects the observable instruments now (what an exporter does on each export).</summary>
+        public void Observe() => _listener.RecordObservableInstruments();
 
         public void Dispose() => _listener.Dispose();
     }
@@ -145,6 +150,60 @@ public sealed class OpsMetricsTests
         var error = capture.Of(LlmTelemetry.Instruments.Errors).ShouldHaveSingleItem();
         error.Tag("error.type").ShouldBe(LlmTelemetry.ErrorTypes.RateLimited);
         capture.Of(LlmTelemetry.Instruments.Calls).Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task LlmCall_BadRequest_CountsBadRequestErrorTaggedWithAgentAndRethrows()
+    {
+        // A 400 is non-retryable (no failover) — it must still be counted, under its own error.type.
+        const string model = "ops-400-model";
+        using var capture = new Capture(LlmTelemetry.SourceName, ModelIs(model));
+        var bad = Substitute.For<IChatClient>();
+        bad.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("bad", null, System.Net.HttpStatusCode.BadRequest));
+        var client = new PooledChatLlmClient(
+            "Claude", (_, _) => bad, _ => ValueTask.FromResult<IReadOnlyList<string>>(["k1", "k2"]),
+            new ApiKeyRouter(TimeProvider.System), SdkChatClients.IsRateLimited, _ => null, NullLogger.Instance,
+            TimeSpan.FromMilliseconds(1), classifyError: SdkChatClients.Classify);
+
+        await Should.ThrowAsync<System.Net.Http.HttpRequestException>(
+            () => client.SendAsync(new LlmRequest("s", "u", model) { AgentRole = "Testing" }));
+
+        var error = capture.Of(LlmTelemetry.Instruments.Errors).ShouldHaveSingleItem();
+        error.Tag("error.type").ShouldBe(LlmTelemetry.ErrorTypes.BadRequest);
+        error.Tag("gen_ai.agent.name").ShouldBe("Testing");
+        capture.Of(LlmTelemetry.Instruments.Calls).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RemoteAgent_SuccessAndFailure_TagMetricsWithAgentRole()
+    {
+        const string okModel = "ops-remote-ok-model";
+        const string failModel = "ops-remote-fail-model";
+        using var capture = new Capture(LlmTelemetry.SourceName, tags =>
+            tags.TryGetValue("gen_ai.request.model", out var m) && (m as string) is okModel or failModel);
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("ops-conn", new RunnerConnection(Guid.NewGuid(), "default", "ops-member"));
+        broker.Dispatched += d => broker.Complete(d.Request.Model == okModel
+            ? new RemoteExecResult(d.Request.Id, true, "// done", null)
+            : new RemoteExecResult(d.Request.Id, false, string.Empty, "cli crashed"));
+        var tenant = Substitute.For<ITenantContext>();
+        tenant.TenantId.Returns("default");
+        tenant.UserId.Returns("ops-member");
+        var services = new ServiceCollection();
+        services.AddScoped(_ => tenant);
+        var client = new RemoteAgentLlmClient(
+            broker, services.BuildServiceProvider(),
+            NullLogger<RemoteAgentLlmClient>.Instance);
+
+        await client.SendAsync(new LlmRequest("s", "u", okModel) { AgentRole = "Coding" });
+        await Should.ThrowAsync<LlmException>(() => client.SendAsync(new LlmRequest("s", "u", failModel) { AgentRole = "Qa" }));
+
+        capture.Of(LlmTelemetry.Instruments.Calls).ShouldHaveSingleItem().Tag("gen_ai.agent.name").ShouldBe("Coding");
+        var error = capture.Of(LlmTelemetry.Instruments.Errors).ShouldHaveSingleItem();
+        error.Tag("gen_ai.agent.name").ShouldBe("Qa");
+        error.Tag("error.type").ShouldBe(LlmTelemetry.ErrorTypes.Other);
+        error.Tag("gen_ai.system").ShouldBe("agentos.remote_agent");
     }
 
     [Theory]
@@ -218,7 +277,7 @@ public sealed class OpsMetricsTests
     }
 
     [Fact]
-    public async Task BudgetGuard_CapSet_PublishesUtilizationForTenant()
+    public async Task BudgetGuard_CapSet_ExportsUtilizationAndEnforcedFlagForTenant()
     {
         const string tenant = "ops-budget-tenant";
         using var capture = new Capture(PipelineTelemetry.MeterName,
@@ -230,25 +289,66 @@ public sealed class OpsMetricsTests
         runs.GetSpendForTenantAsync(tenant, Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()).Returns(60m);
 
         await new BudgetGuard(config, runs, TimeProvider.System).EvaluateAsync(tenant);
+        capture.Observe(); // observable gauges report at export time, not at evaluation
 
         var gauge = capture.Of(PipelineTelemetry.Instruments.BudgetUtilization).ShouldHaveSingleItem();
         gauge.Value.ShouldBe(1.2d, tolerance: 1e-9);
         gauge.Unit.ShouldBe("1"); // Prometheus: agentos_budget_utilization_ratio
-        gauge.Tag("agentos.budget.enforced").ShouldBe("True");
+        gauge.Tags.Keys.ShouldBe(["agentos.tenant.id"]); // enforced is its own gauge, never a label that strands a series
+        var enforced = capture.Of(PipelineTelemetry.Instruments.BudgetEnforced).ShouldHaveSingleItem();
+        enforced.Value.ShouldBe(1d);
+        enforced.Unit.ShouldBe("{flag}"); // Prometheus: agentos_budget_enforced
     }
 
     [Fact]
-    public async Task BudgetGuard_NoCap_PublishesNothing()
+    public async Task BudgetGuard_CapRemoved_ExportsZeroInsteadOfTheLastRatio()
     {
-        const string tenant = "ops-budget-unset-tenant";
-        using var capture = new Capture(PipelineTelemetry.MeterName,
-            tags => (tags.GetValueOrDefault("agentos.tenant.id") as string) == tenant);
+        const string tenant = "ops-budget-removed-tenant";
+        var config = new InMemoryAppConfigStore();
+        await config.SetForTenantAsync(tenant, BudgetGuard.CapKey, "10");
+        await config.SetForTenantAsync(tenant, BudgetGuard.EnforceKey, "true");
+        var runs = Substitute.For<IPipelineRunRepository>();
+        runs.GetSpendForTenantAsync(tenant, Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()).Returns(10.5m);
+        var guard = new BudgetGuard(config, runs, TimeProvider.System);
+        await guard.EvaluateAsync(tenant);
+        Utilization(PipelineTelemetry.Budgets, DateTimeOffset.UtcNow, tenant).ShouldBe(1.05d, tolerance: 1e-9);
 
-        await new BudgetGuard(new InMemoryAppConfigStore(), Substitute.For<IPipelineRunRepository>(), TimeProvider.System)
-            .EvaluateAsync(tenant);
+        await config.DeleteForTenantAsync(tenant, BudgetGuard.CapKey);
+        await guard.EvaluateAsync(tenant);
 
-        capture.Of(PipelineTelemetry.Instruments.BudgetUtilization).ShouldBeEmpty();
+        Utilization(PipelineTelemetry.Budgets, DateTimeOffset.UtcNow, tenant).ShouldBe(0d);
+        Value(PipelineTelemetry.Budgets.Observe(DateTimeOffset.UtcNow, enforced: true), tenant).ShouldBe(0d);
     }
+
+    [Fact]
+    public void BudgetSamples_OlderThanTtl_AreDroppedAndEvicted()
+    {
+        var store = new BudgetSampleStore();
+        var at = new DateTimeOffset(2026, 10, 10, 10, 0, 0, TimeSpan.Zero);
+        store.Record("t", new BudgetStatus(10m, 12m, -2m, 1.2, BudgetState.Exceeded, EnforceOn: true), at);
+
+        Utilization(store, at + PipelineTelemetry.BudgetSampleTtl, "t").ShouldBe(1.2d, tolerance: 1e-9);
+        store.Observe(at + PipelineTelemetry.BudgetSampleTtl + TimeSpan.FromSeconds(1), enforced: false).ShouldBeEmpty();
+        store.Observe(at, enforced: true).ShouldBeEmpty(); // evicted, not just hidden
+    }
+
+    [Fact]
+    public void BudgetSamples_AfterMonthRollover_ReportZeroUtilization()
+    {
+        var store = new BudgetSampleStore();
+        var lastMonth = new DateTimeOffset(2026, 10, 31, 23, 55, 0, TimeSpan.Zero);
+        store.Record("t", new BudgetStatus(10m, 12m, -2m, 1.2, BudgetState.Exceeded, EnforceOn: true), lastMonth);
+
+        var newMonth = new DateTimeOffset(2026, 11, 1, 0, 5, 0, TimeSpan.Zero);
+        Utilization(store, newMonth, "t").ShouldBe(0d);
+        Value(store.Observe(newMonth, enforced: true), "t").ShouldBe(1d); // the enforce setting has no month
+    }
+
+    private static double Utilization(BudgetSampleStore store, DateTimeOffset now, string tenant) =>
+        Value(store.Observe(now, enforced: false), tenant);
+
+    private static double Value(IEnumerable<Measurement<double>> measurements, string tenant) =>
+        measurements.Single(m => m.Tags.ToArray().Any(t => t.Key == "agentos.tenant.id" && (t.Value as string) == tenant)).Value;
 
     [Fact]
     public async Task HealthMetricsPublisher_Report_RecordsStatusPerCheckAndOverall()

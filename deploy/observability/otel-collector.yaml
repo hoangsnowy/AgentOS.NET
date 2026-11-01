@@ -24,9 +24,11 @@ processors:
 exporters:
   prometheus:
     endpoint: 0.0.0.0:8889
-    # Drop series that stop updating (a stopped replica) after 15 minutes instead of the 5-minute default, so a
-    # budget gauge refreshed only at run start does not flap between evaluations.
-    metric_expiration: 15m
+    # Drop a series 5 minutes (the default) after its last update — a stopped replica, or a tenant's budget gauge
+    # once the app stops reporting it. The budget gauges are observable: the app re-reports every tenant it
+    # evaluated in the last 15 minutes on EVERY export and then stops (PipelineTelemetry.BudgetSampleTtl), so the
+    # app — not this expiry — decides how long a budget value lives; this only bounds how long a dead series lingers.
+    metric_expiration: 5m
     resource_to_telemetry_conversion:
       enabled: false
   # Traces + logs: send them wherever you keep them (Tempo, Jaeger, Loki, Azure Monitor …). `debug` keeps

@@ -65,18 +65,23 @@ groups:
   # ---------------------------------------------------------------------------------------------------
   # Budget — a tenant at / over its monthly LLM cap.
   # ---------------------------------------------------------------------------------------------------
+  # agentos_budget_utilization_ratio / agentos_budget_enforced are OBSERVABLE gauges: each replica reports a
+  # tenant's latest evaluation (0 once the cap is removed or the month rolls over) for 15 minutes after it last
+  # evaluated that tenant, then the series ends — so a stale replica stops voting in `max by` instead of
+  # holding an old over-cap value forever. Enforcement is its own gauge, never a label (toggling it would strand
+  # the old series); the description looks it up.
   - name: agentos-budget
     rules:
       - alert: AgentOsBudgetOverCap
-        expr: max by (agentos_tenant_id, agentos_budget_enforced) (agentos_budget_utilization_ratio) >= 1
+        expr: max by (agentos_tenant_id) (agentos_budget_utilization_ratio) >= 1
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "Tenant {{ $labels.agentos_tenant_id }} is over its monthly LLM budget ({{ $value | humanizePercentage }} of cap)"
           description: >-
-            Month-to-date spend has reached the cap. enforced={{ $labels.agentos_budget_enforced }}: when "true",
-            server-token runs and agent calls are refused; when "false", spend keeps growing past the cap.
+            Month-to-date spend has reached the cap.
+            {{ with printf "max(agentos_budget_enforced{agentos_tenant_id='%s'})" $labels.agentos_tenant_id | query }}{{ if eq (. | first | value) 1.0 }}The cap is ENFORCED: server-token runs and agent calls are refused.{{ else }}The cap is NOT enforced: spend keeps growing past it.{{ end }}{{ else }}Enforcement unknown (no agentos_budget_enforced sample).{{ end }}
           runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosbudgetovercap"
 
       - alert: AgentOsBudgetNearCap
@@ -186,12 +191,21 @@ groups:
           summary: "Health check {{ $labels.agentos_health_check }} is Unhealthy on {{ $labels.instance }}"
           runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshealthcheckunhealthy"
 
+      # Per job: a job that reported in the last 6 h but not in the last 10 min (one host went dark while the
+      # other still reports) — plus the whole-deployment case where nothing reports at all.
       - alert: AgentOsTelemetryMissing
-        expr: absent_over_time(agentos_health_status{agentos_health_check="overall"}[10m])
+        expr: |
+          (
+            group by (job) (max_over_time(agentos_health_status{agentos_health_check="overall"}[6h]))
+            unless
+            group by (job) (max_over_time(agentos_health_status{agentos_health_check="overall"}[10m]))
+          )
+          or
+          absent_over_time(agentos_health_status{agentos_health_check="overall"}[10m])
         labels:
           severity: warning
         annotations:
-          summary: "No AgentOS.NET telemetry has arrived for 10 minutes"
+          summary: "No AgentOS.NET telemetry from {{ with $labels.job }}job {{ . }}{{ else }}any job{{ end }} for 10 minutes"
           runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentostelemetrymissing"
 
   # ---------------------------------------------------------------------------------------------------
@@ -252,6 +266,9 @@ groups:
   # ---------------------------------------------------------------------------------------------------
   - name: agentos-llm
     rules:
+      # Attempts = errors + successful calls. A provider with NO successful call in the window (every attempt 429s
+      # after a restart, or a provider that is new on this deployment) has no agentos_llm_calls_total series, and
+      # `x + <nothing>` is empty — so the success side falls back to `errors * 0` (same labels, value 0).
       - alert: AgentOsLlmRateLimitStorm
         expr: |
           sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type="rate_limited"}[5m])) * 60 > 5
@@ -259,7 +276,11 @@ groups:
           (
             sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type="rate_limited"}[5m]))
             /
-            clamp_min(sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type="rate_limited"}[5m])) + sum by (gen_ai_system) (rate(agentos_llm_calls_total[5m])), 1e-9)
+            clamp_min(
+              sum by (gen_ai_system) (rate(agentos_llm_errors_total[5m]))
+              +
+              (sum by (gen_ai_system) (rate(agentos_llm_calls_total[5m])) or sum by (gen_ai_system) (rate(agentos_llm_errors_total[5m])) * 0),
+              1e-9)
           ) > 0.2
         for: 5m
         labels:
@@ -281,7 +302,11 @@ groups:
           (
             sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type!="rate_limited"}[10m]))
             /
-            clamp_min(sum by (gen_ai_system) (rate(agentos_llm_errors_total[10m])) + sum by (gen_ai_system) (rate(agentos_llm_calls_total[10m])), 1e-9)
+            clamp_min(
+              sum by (gen_ai_system) (rate(agentos_llm_errors_total[10m]))
+              +
+              (sum by (gen_ai_system) (rate(agentos_llm_calls_total[10m])) or sum by (gen_ai_system) (rate(agentos_llm_errors_total[10m])) * 0),
+              1e-9)
           ) > 0.1
         for: 10m
         labels:

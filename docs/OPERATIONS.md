@@ -45,14 +45,15 @@ dashboard or rule references a series no instrument emits.
 | | `agentos.llm.cost.usd` (`agentos_llm_cost_usd_*`) | histogram `{USD}` | system, model, agent | Cost per call. `_sum` = spend. RemoteAgent = 0 (member's own subscription). |
 | | `agentos.llm.calls` (`agentos_llm_calls_total`) | counter | system, model, agent | Successful calls. |
 | | `agentos.llm.tokens` (`agentos_llm_tokens_total`) | counter | system, model, agent, `agentos.token.class` = `fresh_input` · `cache_read` · `cache_write` · `output` · `reasoning` | **Owner directive 3 split.** The first four sum to all tokens; `reasoning` ⊂ `output` — never stack it. |
-| | `agentos.llm.errors` (`agentos_llm_errors_total`) | counter | system, model, agent, `error.type` = `rate_limited` · `transient` · `auth` · `bad_request` · `other` | Failed attempts, including a 429 the key pool then failed over. |
-| `AgentOs.Pipeline` | `agentos.pipeline.runs` (`agentos_pipeline_runs_total`) | counter | `agentos.run.kind` = `pipeline` · `workflow`, `agentos.run.outcome` = `done` · `max_iterations` · `failed` · `cancelled` · `budget_blocked` · `refused` | Every run attempt and how it ended. `budget_blocked` / `refused` never started. |
+| | `agentos.llm.errors` (`agentos_llm_errors_total`) | counter | system, model, agent, `error.type` = `rate_limited` · `transient` · `auth` · `bad_request` · `other` | Failed attempts: a 429 the key pool then failed over, and a non-retryable failure (`bad_request`, `other`) that propagates. RemoteAgent: runner timeout = `transient`, the member's plan limit = `rate_limited`, anything else (no runner, CLI failure) = `other`. |
+| `AgentOs.Pipeline` | `agentos.pipeline.runs` (`agentos_pipeline_runs_total`) | counter | `agentos.run.kind` = `pipeline` · `workflow`, `agentos.run.outcome` = `done` · `max_iterations` · `failed` · `cancelled` · `budget_blocked` · `refused` | Every run attempt and how it ended. `budget_blocked` / `refused` never started. Workflow runs end `done`, `failed` or `cancelled` — never `max_iterations` (a graph's loop caps end the loop, not the run), so QA convergence is a pipeline-only KPI. |
 | | `agentos.pipeline.run.duration` (`agentos_pipeline_run_duration_seconds_*`) | histogram `s` | kind, outcome | Wall time of runs that started. |
 | | `agentos.budget.blocked` (`agentos_budget_blocked_total`) | counter | `agentos.budget.scope` = `run` · `agent`, `gen_ai.agent.name` (agent scope) | Refusals by the enforced monthly cap. |
-| | `agentos.budget.utilization` (`agentos_budget_utilization_ratio`) | gauge `1` | `agentos.tenant.id`, `agentos.budget.enforced` | Month-to-date spend ÷ cap, refreshed at every budget evaluation (run start, Board agent call). Only tenants with a cap. |
+| | `agentos.budget.utilization` (`agentos_budget_utilization_ratio`) | observable gauge `1` | `agentos.tenant.id` | Month-to-date spend ÷ cap from the tenant's last budget evaluation in that process (run start, Board agent call); **0** when no cap is set or once the UTC month rolled over. Reported for 15 min after the last evaluation, then the series ends — so a removed cap, a new month or a replica that stopped seeing the tenant can never hold an old over-cap value. |
+| | `agentos.budget.enforced` (`agentos_budget_enforced`) | observable gauge `{flag}` | `agentos.tenant.id` | 1 when the tenant's cap is enforced (over-cap runs refused), else 0. Same lifetime as utilization; a separate series (not a label) so toggling enforcement never strands an old series. |
 | `AgentOs.Tools` | `agentos.evidence.inline_writes` (`agentos_evidence_inline_writes_total`) | counter | — | Evidence queue full → row written on the caller's path (slower, lossless). |
 | | `agentos.evidence.lost` (`agentos_evidence_lost_total`) | counter | — | Evidence row lost after every retry. **Must stay 0** (E0.3). |
-| `AgentOs.Health` | `agentos.health.status` (`agentos_health_status`) | gauge | `agentos.health.check` = `self` · `postgres` · `keycloak` · `overall` | 1 healthy · 0.5 degraded · 0 unhealthy, published every 30 s. |
+| `AgentOs.Health` | `agentos.health.status` (`agentos_health_status`) | gauge | `agentos.health.check` = `self` · `postgres` · `keycloak` · `overall` | 1 healthy · 0.5 degraded · 0 unhealthy, published every 60 s (each publish runs every check, so not more often). |
 
 Traces: the `AgentOs.Llm` ActivitySource emits one `chat {model}` client span per provider attempt (attributes
 `gen_ai.*`, `gen_ai.usage.*` incl. `cache_read.input_tokens` / `cache_creation.input_tokens`, `agentos.cost.usd`,
@@ -85,7 +86,6 @@ Every check is also the `agentos_health_status` gauge, so an unhealthy dependenc
 | Gap | Why it isn't here yet |
 |---|---|
 | Paired runners connected (count, disconnects) | Lives in `Modules.RemoteAgent`, which another work stream owns; until then `signalr_server_active_connections` on the Web includes the `/hubs/remote-agent` connections, and a disconnect shows as a failed call on that runner. |
-| RemoteAgent call errors in `agentos.llm.errors` | Same module; its spans carry the error status, but it calls the error overload without a type. Its tokens are ≈ estimates (the CLI reports none) and its cost is 0. |
 | Board / Autopilot ticket runs in `agentos.pipeline.runs` | The ticket flow is a separate work stream; Board agents do report LLM usage, budget refusals (`scope=agent`) and evidence. |
 | Per-tenant LLM spend as a metric label | Deliberately not a label on the high-volume LLM instruments (cardinality); per-tenant spend is in Insights and the budget gauge. |
 
@@ -164,8 +164,10 @@ time, and the structured logs (`LlmCallCompleted`, budget warnings, evidence err
 <a id="runbook-agentosbudgetovercap"></a>
 ### AgentOsBudgetOverCap (critical)
 
-A tenant's month-to-date LLM spend reached its monthly cap. With `enforced="true"` server-token runs and Board agent
-calls are refused (members' paired computers still work); with `enforced="false"` spend keeps growing.
+A tenant's month-to-date LLM spend reached its monthly cap. The alert description says whether the cap is enforced
+(`agentos_budget_enforced`): enforced → server-token runs and Board agent calls are refused (members' paired computers
+still work); not enforced → spend keeps growing. The gauge is the latest evaluation per replica for 15 minutes, so
+after raising / removing the cap the alert clears once every replica has re-evaluated the tenant or 15 minutes pass.
 1. Runs dashboard → *Budget used by tenant*; LLM dashboard → *Cost by agent × model* to see what drove it.
 2. Confirm with the tenant owner: raise the cap, or turn on enforcement — Insights → budget (*Monthly cap (USD)* +
    the enforce toggle; stored per tenant as `budget/monthly-cap-usd` / `budget/enforce`). An unenforced tenant over cap is a cost incident: enforce first, discuss after.
@@ -239,7 +241,8 @@ The in-process gauge reports a dependency check at 0. `postgres`: connectivity, 
 <a id="runbook-agentostelemetrymissing"></a>
 ### AgentOsTelemetryMissing (warning)
 
-No `agentos_health_status` series for 10 minutes: either every host is down (check the probe) or export broke —
+No `agentos_health_status` series for 10 minutes from one job (`job` label set: that host stopped exporting while
+the others still do) or from any job (no `job` label): either the host(s) are down (check the probe) or export broke —
 `OTEL_EXPORTER_OTLP_ENDPOINT` changed, the collector is down, or the Prometheus scrape of the collector fails (`up`).
 
 <a id="runbook-agentoshigh5xxrate"></a>

@@ -54,6 +54,21 @@ public class HealthChecksTests
             ("Auth:Keycloak:Authority", "https://id.example.com/realms/agentic"))
             .ShouldBe(["self", "keycloak"]);
 
+    [Fact]
+    public void AddDefaultHealthChecks_HealthMetricPublisher_RunsChecksOncePerMinute()
+    {
+        // E1.10: the health-status metric runs every check (incl. the Keycloak discovery fetch) per replica — not on
+        // the framework's 30 s default.
+        var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = "Production" });
+        builder.AddDefaultHealthChecks();
+
+        using var provider = builder.Services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<HealthCheckPublisherOptions>>().Value;
+        options.Period.ShouldBe(TimeSpan.FromSeconds(60));
+        options.Delay.ShouldBe(TimeSpan.FromSeconds(15));
+        provider.GetServices<IHealthCheckPublisher>().ShouldContain(p => p is HealthMetricsPublisher);
+    }
+
     // ── OIDC metadata probe behavior ─────────────────────────────────────────────────────────
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

@@ -70,10 +70,14 @@ public sealed class RemoteAgentLlmClient : ILlmClient
 
         var genAiSystem = LlmTelemetry.SystemFor(Provider);
         using var activity = LlmTelemetry.StartChat(genAiSystem, request.Model, target.TenantId);
+        // Every failure is counted on agentos.llm.errors under its error.type and the calling agent (E1.10), like the
+        // pooled clients — so the error-rate panel and alerts see remote-runner failures too.
+        void Fail(string message, string errorType) =>
+            LlmTelemetry.RecordError(activity, message, genAiSystem, request.Model, errorType, request.AgentRole);
 
         if (!_broker.HasRunnerFor(target))
         {
-            LlmTelemetry.RecordError(activity, "no remote runner connected");
+            Fail("no remote runner connected", LlmTelemetry.ErrorTypes.Other);
             throw new LlmException(
                 "No remote dev runner connected for you. Register a runner (POST /runners), start the AgentOS.NET "
                 + "remote agent on your dev machine with that runner id + token, or pick a different provider.",
@@ -130,12 +134,12 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         }
         catch (TimeoutException ex)
         {
-            LlmTelemetry.RecordError(activity, ex.Message);
+            Fail(ex.Message, LlmTelemetry.ErrorTypes.Transient);
             throw new LlmException($"Remote agent timed out after {timeout.TotalSeconds:0}s.", Provider, innerException: ex);
         }
         catch (InvalidOperationException ex)
         {
-            LlmTelemetry.RecordError(activity, ex.Message);
+            Fail(ex.Message, LlmTelemetry.ErrorTypes.Other);
             throw new LlmException(ex.Message, Provider, innerException: ex);
         }
         stopwatch.Stop();
@@ -144,7 +148,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         // member's wait is recorded so Autopilot holds off until the reset instead of burning its tries.
         if (PlanLimitDetector.FromReply(result.Ok, result.Content, result.Error, request.Cli, DateTimeOffset.UtcNow) is { } limit)
         {
-            LlmTelemetry.RecordError(activity, "plan limit");
+            Fail("plan limit", LlmTelemetry.ErrorTypes.RateLimited); // the member's plan is rate-limiting this runner
             _services.GetService<IPlanLimits>()?.Report(target.TenantId, target.MemberUserId, limit);
             _logger.LogWarning("[RemoteAgent] request {Id}: the member's {Plan} plan hit its limit (resets {Reset}).", id, limit.Plan, limit.ResetText ?? "unknown");
             throw new PlanLimitException(limit, Provider);
@@ -152,7 +156,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
 
         if (!result.Ok)
         {
-            LlmTelemetry.RecordError(activity, result.Error ?? "remote agent failure");
+            Fail(result.Error ?? "remote agent failure", LlmTelemetry.ErrorTypes.Other);
             throw new LlmException(result.Error ?? "Remote agent reported a failure.", Provider);
         }
 
@@ -167,7 +171,8 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         var real = result.InputTokens is not null && result.OutputTokens is not null;
         var inTok = real ? result.InputTokens!.Value : EstimateTokens(request.SystemPrompt) + EstimateTokens(request.UserPrompt);
         var outTok = real ? result.OutputTokens!.Value : EstimateTokens(result.Content);
-        LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, request.Model, inTok, outTok, 0m, stopwatch.Elapsed.TotalSeconds);
+        LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, request.Model, inTok, outTok, 0m, stopwatch.Elapsed.TotalSeconds,
+            agent: request.AgentRole);
         _logger.LogInformation("[RemoteAgent] request {Id} handled by a remote agent ({Count} connected); {In}->{Out} tokens ({Kind}), 0 API cost.",
             id, _broker.AgentCount, inTok, outTok, real ? "reported by the CLI" : "estimated");
 
