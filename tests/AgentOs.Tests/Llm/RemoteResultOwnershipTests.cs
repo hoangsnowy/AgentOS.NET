@@ -77,10 +77,8 @@ public class RemoteResultOwnershipTests
     {
         var broker = new InProcessRemoteAgentBroker();
         var runner = Runner();
-        var first = broker.RegisterRunner("conn-old", runner);
 
-        var task = broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m"), new RunnerTarget("t1", "m1"), Wait);
-        first.Dispose();
+        var task = OnFirstConnection(broker, runner, () => broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m"), new RunnerTarget("t1", "m1"), Wait));
         using var second = broker.RegisterRunner("conn-new", runner);
 
         broker.Complete("conn-new", new RemoteExecResult("r1", true, "after reconnect", null)).ShouldBeTrue();
@@ -133,10 +131,8 @@ public class RemoteResultOwnershipTests
     {
         var broker = new InProcessRemoteAgentBroker();
         var runner = Runner();
-        var first = broker.RegisterRunner("conn-old", runner);
 
-        var task = broker.DispatchToolCallAsync(new RunnerToolCall("r1", "tc1", "shell", "{}"), new RunnerTarget("t1", "m1"), Wait);
-        first.Dispose();
+        var task = OnFirstConnection(broker, runner, () => broker.DispatchToolCallAsync(new RunnerToolCall("r1", "tc1", "shell", "{}"), new RunnerTarget("t1", "m1"), Wait));
         using var second = broker.RegisterRunner("conn-new", runner);
 
         broker.CompleteToolCall("conn-new", new RunnerToolResult("r1", "tc1", true, "ok", null)).ShouldBeTrue();
@@ -285,13 +281,11 @@ public class RemoteResultOwnershipTests
     {
         var broker = new InProcessRemoteAgentBroker();
         var runner = Runner(member: "m1");
-        var first = broker.RegisterRunner("conn-old", runner);
         using var other = broker.RegisterRunner("conn-b", Runner(member: "m2"));
         var steps = new List<string>();
         broker.Progressed += p => steps.Add(p.Step);
 
-        var task = broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m"), new RunnerTarget("t1", "m1"), Wait);
-        first.Dispose();
+        var task = OnFirstConnection(broker, runner, () => broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m"), new RunnerTarget("t1", "m1"), Wait));
         using var second = broker.RegisterRunner("conn-new", runner);
 
         broker.ReportProgress("conn-new", "r1", "testing");
@@ -309,13 +303,11 @@ public class RemoteResultOwnershipTests
     {
         var broker = new InProcessRemoteAgentBroker();
         var runner = Runner(member: "m1");
-        var first = broker.RegisterRunner("conn-old", runner);
         using var other = broker.RegisterRunner("conn-b", Runner(member: "m2"));
         var content = "ticket notes"u8.ToArray();
         broker.StageFiles("r1", [new RunFile("notes.txt", content, RunFile.Hash(content), "text/plain")]);
 
-        var task = broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m"), new RunnerTarget("t1", "m1"), Wait);
-        first.Dispose();
+        var task = OnFirstConnection(broker, runner, () => broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m"), new RunnerTarget("t1", "m1"), Wait));
         using var second = broker.RegisterRunner("conn-new", runner);
 
         broker.ReadRunFile("conn-b", "r1", 0, 0).ShouldBeNull();      // another member's runner, same tenant
@@ -333,13 +325,11 @@ public class RemoteResultOwnershipTests
     {
         var broker = new InProcessRemoteAgentBroker();
         var runner = Runner(member: "m1");
-        var first = broker.RegisterRunner("conn-old", runner);
         using var other = broker.RegisterRunner("conn-b", Runner(member: "m2"));
         using var foreign = broker.RegisterRunner("conn-x", runner with { TenantId = "t2" });
         broker.ExpectUploads("r1", RunCollect.Screenshots).ShouldBeTrue();
 
-        var task = broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m", Collect: RunCollect.Screenshots), new RunnerTarget("t1", "m1"), Wait);
-        first.Dispose();
+        var task = OnFirstConnection(broker, runner, () => broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m", Collect: RunCollect.Screenshots), new RunnerTarget("t1", "m1"), Wait));
         using var second = broker.RegisterRunner("conn-new", runner);
 
         broker.UploadRunFile("conn-b", "r1", new RunUploadChunk("a.png", 0, Png(), true)).ShouldNotBeNull();
@@ -401,6 +391,14 @@ public class RemoteResultOwnershipTests
         (await toolCall).JsonOutput.ShouldBe("real");
         (await request).Content.ShouldBe("real");
         steps.ShouldBe(["testing"]);
+    }
+
+    // Dispatch while the runner is on its first connection ("conn-old"), which then drops — as just before a SignalR
+    // auto-reconnect gives the same runner a new connection id. The registration is disposed under `using`.
+    private static T OnFirstConnection<T>(InProcessRemoteAgentBroker broker, RunnerConnection runner, Func<T> dispatch)
+    {
+        using var first = broker.RegisterRunner("conn-old", runner);
+        return dispatch();
     }
 
     private static RemoteAgentHub Hub(IRemoteAgentBroker broker, string connectionId)
