@@ -24,3 +24,12 @@
   (#279 — live limits, the real merge rule, the plan-limit wait card). The older `agent-profiles.html` inlined its own
   token copy (217 KB); it now uses the shared frame (`../../styles.css`). Keep a full local mirror of the project's
   `tokens/*.css` (fetch with `get_file`) — a stale mirror hid that dark `--warn-soft` exists and rendered the wait card unreadable.
+- 2026-11-01: replaced `settings-autopilot.html` (Run time limits #289, Files for the AI #290, When a run ends without
+  its answer #295, Try the app #296) and pushed `workflow-ticket-flow.html` (#285 + the Design step #292),
+  `board-design-checks.html` (#292 incl. Check again), `board-ticket-files.html` (#290), `activity-tool-calls.html`
+  (#299 — the Where column; outcome badges are ok / refused / error). Token gaps found while authoring: no on-accent
+  text token (white on accent is raw `#fff`), no `--danger` (use `--err`), and light `--warn` / `--ok` are too faint as
+  text on white or their soft fills (cards darken them with `color-mix(… var(--text))`) — candidates for
+  `--warn-text` / `--ok-text` tokens, to be designed in Claude Design first.
+- Sub-agents can't call DesignSync: fetch `styles.css` + `tokens/*.css` (and a template card) yourself into the local
+  mirror before delegating card authoring.
