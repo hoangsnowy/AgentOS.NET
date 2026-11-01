@@ -104,11 +104,13 @@ public sealed class MafChatClient : ILlmClient
         {
             response = await chat.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
-        catch (System.Net.Http.HttpRequestException ex) { LlmTelemetry.RecordError(activity, ex.Message); throw; }
-        catch (ClientResultException ex) { LlmTelemetry.RecordError(activity, ex.Message); throw; }
-        catch (System.Text.Json.JsonException ex) { LlmTelemetry.RecordError(activity, ex.Message); throw; }
-        catch (TimeoutException ex) { LlmTelemetry.RecordError(activity, ex.Message); throw; }
-        catch (InvalidOperationException ex) { LlmTelemetry.RecordError(activity, ex.Message); throw; }
+        catch (System.Net.Http.HttpRequestException ex) { OnChatFailed(ex); throw; }
+        catch (ClientResultException ex) { OnChatFailed(ex); throw; }
+        catch (System.Text.Json.JsonException ex) { OnChatFailed(ex); throw; }
+        catch (TimeoutException ex) { OnChatFailed(ex); throw; }
+        catch (InvalidOperationException ex) { OnChatFailed(ex); throw; }
+        void OnChatFailed(Exception ex) => LlmTelemetry.RecordError(
+            activity, ex.Message, genAiSystem, deployment, SdkChatClients.ErrorTypeOf(ex), request.AgentRole);
         stopwatch.Stop();
 
         var usage = UsageReader.Read(response);
@@ -130,7 +132,9 @@ public sealed class MafChatClient : ILlmClient
                 LogSafe.Scrub(pricingModel));
         }
         LlmTelemetry.RecordSuccess(activity, genAiSystem, deployment, response.ModelId ?? deployment,
-            inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds);
+            inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds,
+            cacheReadTokens: usage.CacheRead, cacheWriteTokens: usage.CacheWrite,
+            reasoningTokens: usage.Reasoning, agent: request.AgentRole);
         _logger.LogInformation(
             "LlmCallCompleted {Provider} {Model} {InTok} {OutTok} {CostUsd} {Ms} {Tenant}",
             Provider, LogSafe.Scrub(deployment), inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalMilliseconds, LogSafe.Scrub(tenantId ?? ""));

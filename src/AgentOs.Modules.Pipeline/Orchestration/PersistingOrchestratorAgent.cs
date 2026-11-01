@@ -68,6 +68,8 @@ internal sealed class PersistingOrchestratorAgent : IOrchestratorAgent
 
         if (budget.IsBlocking)
         {
+            PipelineTelemetry.RecordBudgetBlocked(PipelineTelemetry.BudgetScopes.Run);
+            PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Pipeline, PipelineTelemetry.Outcomes.BudgetBlocked);
             throw new BudgetExceededException(tenantId, budget.CapUsd, budget.SpentUsd);
         }
         if (budget.State == BudgetState.Warn)
@@ -78,7 +80,12 @@ internal sealed class PersistingOrchestratorAgent : IOrchestratorAgent
         }
 
         // E0.6: per-tenant admission (concurrency + burst) — refused runs never reach an agent.
-        using var lease = _admission is null ? null : (await _admission.AdmitAsync(tenantId, cancellationToken).ConfigureAwait(false)).EnsureAdmitted();
+        using var lease = _admission is null ? null : await _admission.AdmitAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        if (lease is { Admitted: false })
+        {
+            PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Pipeline, PipelineTelemetry.Outcomes.Refused);
+            _ = lease.EnsureAdmitted(); // throws RunAdmissionDeniedException
+        }
 
         var runId = Guid.NewGuid();
         var createdAtUtc = _clock.GetUtcNow();
@@ -91,12 +98,28 @@ internal sealed class PersistingOrchestratorAgent : IOrchestratorAgent
         var runSink = new ConcurrentBag<RunMetric>();
 
         PipelineResult result;
-        using (MetricsContext.BeginScope(runId.ToString(), "ad-hoc", sink: runSink))
+        var finished = false;
+        try
         {
-            result = await _inner.RunAsync(story, cancellationToken).ConfigureAwait(false);
+            using (MetricsContext.BeginScope(runId.ToString(), "ad-hoc", sink: runSink))
+            {
+                result = await _inner.RunAsync(story, cancellationToken).ConfigureAwait(false);
+            }
+            finished = true;
+        }
+        finally
+        {
+            // E1.10: a run that threw is still counted (failed / cancelled) — the exception itself propagates untouched.
+            if (!finished)
+            {
+                PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Pipeline,
+                    cancellationToken.IsCancellationRequested ? PipelineTelemetry.Outcomes.Cancelled : PipelineTelemetry.Outcomes.Failed,
+                    _clock.GetUtcNow() - createdAtUtc);
+            }
         }
 
         var completedAtUtc = _clock.GetUtcNow();
+        PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Pipeline, PipelineTelemetry.OutcomeOf(result), completedAtUtc - createdAtUtc);
         await PersistAsync(runId, result, runSink, createdAtUtc, completedAtUtc, cancellationToken).ConfigureAwait(false);
         return result;
     }

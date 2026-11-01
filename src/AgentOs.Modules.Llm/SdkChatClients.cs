@@ -6,6 +6,7 @@ using System;
 using System.ClientModel;
 using System.Net;
 using System.Net.Http;
+using AgentOs.SharedKernel.Telemetry;
 using Anthropic.SDK;
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.AI;
@@ -45,6 +46,19 @@ internal static class SdkChatClients
     /// <summary>True when an exception represents an HTTP 429 / rate-limit / overloaded across the
     /// Azure (ClientResultException) and Anthropic (HttpRequestException) SDK shapes.</summary>
     public static bool IsRateLimited(Exception? ex) => IsRateLimitShaped(ex);
+
+    /// <summary>The <c>error.type</c> metric value for an SDK failure: <see cref="LlmTelemetry.ErrorTypes.RateLimited"/> for a
+    /// 429-shaped error, else the <see cref="Classify"/> kind.</summary>
+    public static string ErrorTypeOf(Exception? ex) => IsRateLimited(ex) ? LlmTelemetry.ErrorTypes.RateLimited : ErrorTypeOf(Classify(ex));
+
+    /// <summary>The <c>error.type</c> metric value for a classified failure (see <see cref="LlmTelemetry.ErrorTypes"/>).</summary>
+    public static string ErrorTypeOf(LlmErrorKind kind) => kind switch
+    {
+        LlmErrorKind.Transient => LlmTelemetry.ErrorTypes.Transient,
+        LlmErrorKind.Auth => LlmTelemetry.ErrorTypes.Auth,
+        LlmErrorKind.BadRequest => LlmTelemetry.ErrorTypes.BadRequest,
+        _ => LlmTelemetry.ErrorTypes.Other,
+    };
 
     /// <summary>Classifies an SDK exception so the pooled client can decide whether to fail over to the next
     /// key. <see cref="LlmErrorKind.Transient"/> (429 / 5xx / timeout) and <see cref="LlmErrorKind.Auth"/>

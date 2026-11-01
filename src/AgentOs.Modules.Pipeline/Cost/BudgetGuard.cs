@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Cost;
 using AgentOs.Modules.AppConfig;
+using AgentOs.Modules.Pipeline.Metrics;
 using AgentOs.Modules.Pipeline.Persistence;
 
 namespace AgentOs.Modules.Pipeline.Cost;
@@ -59,6 +60,8 @@ internal sealed class BudgetGuard : IBudgetGuard
             ? BudgetState.Exceeded
             : percent >= WarnThreshold ? BudgetState.Warn : BudgetState.Ok;
 
-        return new BudgetStatus(cap, spent, remaining, percent, state, enforce);
+        var status = new BudgetStatus(cap, spent, remaining, percent, state, enforce);
+        PipelineTelemetry.RecordBudget(tenantId, status); // E1.10: the budget-over-cap alert reads this gauge
+        return status;
     }
 }

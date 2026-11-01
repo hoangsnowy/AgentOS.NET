@@ -67,7 +67,7 @@ public sealed class ChatClientLlmClient : ILlmClient
         catch (InvalidOperationException ex) { throw OnChatFailed(ex); }
         LlmException OnChatFailed(Exception ex)
         {
-            LlmTelemetry.RecordError(activity, ex.Message);
+            LlmTelemetry.RecordError(activity, ex.Message, genAiSystem, request.Model, SdkChatClients.ErrorTypeOf(ex), request.AgentRole);
             return new LlmException($"{Provider} chat request failed: {ex.Message}", Provider, innerException: ex);
         }
         stopwatch.Stop();
@@ -75,7 +75,9 @@ public sealed class ChatClientLlmClient : ILlmClient
         var usage = UsageReader.Read(response);
         var cost = CostCalculator.Calculate(request.Model, usage);
         LlmTelemetry.RecordSuccess(activity, genAiSystem, request.Model, response.ModelId ?? request.Model,
-            usage.Input, usage.Output, cost, stopwatch.Elapsed.TotalSeconds);
+            usage.Input, usage.Output, cost, stopwatch.Elapsed.TotalSeconds,
+            cacheReadTokens: usage.CacheRead, cacheWriteTokens: usage.CacheWrite,
+            reasoningTokens: usage.Reasoning, agent: request.AgentRole);
 
         return new LlmResponse(
             Content: response.Text ?? string.Empty,

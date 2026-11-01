@@ -23,6 +23,15 @@ param PostgresUsername string
 param SmtpHost string
 param SmtpPort string
 
+@description('E1.10: deploy Application Insights, the operations workbook and the alert rules (docs/OPERATIONS.md).')
+param enableObservability bool = false
+
+@description('E-mail address for AgentOS.NET alerts (only with enableObservability).')
+param alertEmail string = ''
+
+@description('Public /health URL for the availability test, e.g. https://web.<domain>/health (only with enableObservability; empty = none).')
+param healthProbeUrl string = ''
+
 var tags = {
   'azd-env-name': environmentName
 }
@@ -70,6 +79,19 @@ module postgres_kv_roles 'postgres-kv-roles/postgres-kv-roles.module.bicep' = {
   }
 }
 
+module observability 'observability/observability.module.bicep' = if (enableObservability) {
+  name: 'observability'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    namePrefix: environmentName
+    logAnalyticsWorkspaceId: resources.outputs.AZURE_LOG_ANALYTICS_WORKSPACE_ID
+    alertEmail: alertEmail
+    healthProbeUrl: healthProbeUrl
+  }
+}
+
 output MANAGED_IDENTITY_CLIENT_ID string = resources.outputs.MANAGED_IDENTITY_CLIENT_ID
 output MANAGED_IDENTITY_NAME string = resources.outputs.MANAGED_IDENTITY_NAME
 output AZURE_LOG_ANALYTICS_WORKSPACE_NAME string = resources.outputs.AZURE_LOG_ANALYTICS_WORKSPACE_NAME
@@ -81,3 +103,5 @@ output AZURE_CONTAINER_APPS_ENVIRONMENT_ID string = resources.outputs.AZURE_CONT
 output AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN string = resources.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
 output POSTGRES_KV_VAULTURI string = postgres_kv.outputs.vaultUri
 output POSTGRES_HOSTNAME string = postgres.outputs.hostName
+#disable-next-line outputs-should-not-contain-secrets // azd hands it to the hosts as an env var; it is an ingestion key, not a credential to data
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = enableObservability ? observability!.outputs.connectionString : ''

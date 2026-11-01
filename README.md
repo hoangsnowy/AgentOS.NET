@@ -46,6 +46,7 @@ with its own DI surface, EF Core context and Postgres schema, so any one can lat
 | Test against real GitHub / Azure DevOps / LLMs (the lab server) | [docs/LAB.md](docs/LAB.md) |
 | Know what to set at deploy vs in the UI | [docs/CONFIG.md](docs/CONFIG.md) |
 | Understand the architecture | [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/README.md) |
+| Monitor it — dashboards, alerts, SLOs, runbooks | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
 | Deploy to Azure | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [infra/README.md](infra/README.md) · runbooks: [Keycloak](docs/keycloak-prod-runbook.md), [DataProtection DR](docs/dataprotection-dr-runbook.md) |
 | Contribute / conventions | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Build UI | [docs/design/design-system.md](docs/design/design-system.md) |

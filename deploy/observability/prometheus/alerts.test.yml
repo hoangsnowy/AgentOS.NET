@@ -1,0 +1,188 @@
+# promtool unit tests for alerts.yml — run: promtool test rules deploy/observability/prometheus/alerts.test.yml
+# Each case feeds synthetic series shaped exactly like the OTLP → Prometheus translation of the app's metrics.
+
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Budget: a tenant at 120% of an enforced cap fires OverCap (not NearCap); one at 85% fires NearCap only.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_budget_utilization_ratio{job="web", agentos_tenant_id="acme", agentos_budget_enforced="true"}'
+        values: '1.2x20'
+      - series: 'agentos_budget_utilization_ratio{job="web", agentos_tenant_id="globex", agentos_budget_enforced="false"}'
+        values: '0.85x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentOsBudgetOverCap
+        exp_alerts:
+          - exp_labels: { severity: critical, agentos_tenant_id: acme, agentos_budget_enforced: "true" }
+            exp_annotations:
+              summary: "Tenant acme is over its monthly LLM budget (120% of cap)"
+              description: >-
+                Month-to-date spend has reached the cap. enforced=true: when "true",
+                server-token runs and agent calls are refused; when "false", spend keeps growing past the cap.
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosbudgetovercap"
+      - eval_time: 20m
+        alertname: AgentOsBudgetNearCap
+        exp_alerts:
+          - exp_labels: { severity: warning, agentos_tenant_id: globex }
+            exp_annotations:
+              summary: "Tenant globex has used 85% of its monthly LLM budget"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosbudgetnearcap"
+
+  # Budget gate refusing runs.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_budget_blocked_total{job="web", agentos_budget_scope="run"}'
+        values: '0 0 1 2 2 2'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AgentOsBudgetBlockingRuns
+        exp_alerts:
+          - exp_labels: { severity: warning, agentos_budget_scope: run }
+            exp_annotations:
+              summary: "The budget gate refused 2 run(s) in the last 15 minutes"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosbudgetblockingruns"
+
+  # Failed-run spike: 6 failed of 7.5 started in 30 min fires; refusals never count as failures.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_pipeline_runs_total{job="web", agentos_run_kind="pipeline", agentos_run_outcome="failed"}'
+        values: '0+0.2x60'
+      - series: 'agentos_pipeline_runs_total{job="web", agentos_run_kind="pipeline", agentos_run_outcome="done"}'
+        values: '0+0.05x60'
+      - series: 'agentos_pipeline_runs_total{job="web", agentos_run_kind="pipeline", agentos_run_outcome="budget_blocked"}'
+        values: '0+5x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: AgentOsFailedRunSpike
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "More than 25% of agent runs failed in the last 30 minutes"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosfailedrunspike"
+
+  # Healthy runs: no spike.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_pipeline_runs_total{job="web", agentos_run_kind="pipeline", agentos_run_outcome="done"}'
+        values: '0+1x60'
+      - series: 'agentos_pipeline_runs_total{job="web", agentos_run_kind="pipeline", agentos_run_outcome="failed"}'
+        values: '0+0.01x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: AgentOsFailedRunSpike
+        exp_alerts: []
+
+  # Evidence lost fires at once; inline writes only after 15 min of saturation.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_evidence_lost_total{job="web", instance="web-1"}'
+        values: '0 0 0 1 1 1'
+      - series: 'agentos_evidence_inline_writes_total{job="web", instance="web-1"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AgentOsEvidenceLost
+        exp_alerts:
+          - exp_labels: { severity: critical, job: web, instance: web-1 }
+            exp_annotations:
+              summary: "1 tool-call evidence row(s) were LOST on web-1"
+              description: Every persistence attempt failed; the audit trail for those tool calls is incomplete.
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidencelost"
+      - eval_time: 25m
+        alertname: AgentOsEvidenceQueueSaturated
+        exp_alerts:
+          - exp_labels: { severity: warning, job: web, instance: web-1 }
+            exp_annotations:
+              summary: "The evidence queue on web-1 has been full for 15 minutes (writes are going inline)"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidencequeuesaturated"
+
+  # Health: blackbox probe failing + the in-process gauge reporting postgres Unhealthy.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="agentos-health", instance="https://agentos.example.com/health"}'
+        values: '1 1 0 0 0 0 0'
+      - series: 'agentos_health_status{job="api", instance="api-1", agentos_health_check="postgres"}'
+        values: '1 0 0 0 0 0 0'
+      - series: 'agentos_health_status{job="api", instance="api-1", agentos_health_check="overall"}'
+        values: '1 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AgentOsHealthProbeDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: agentos-health, instance: "https://agentos.example.com/health" }
+            exp_annotations:
+              summary: "https://agentos.example.com/health /health has failed for 2 minutes"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshealthprobedown"
+      - eval_time: 6m
+        alertname: AgentOsHealthCheckUnhealthy
+        exp_alerts:
+          - exp_labels: { severity: critical, job: api, instance: api-1, agentos_health_check: postgres }
+            exp_annotations:
+              summary: "Health check postgres is Unhealthy on api-1"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshealthcheckunhealthy"
+      - eval_time: 6m
+        alertname: AgentOsTelemetryMissing
+        exp_alerts: []
+
+  # 5xx: 10% of 2 rps failing for 10+ minutes fires the 5xx alert and the fast SLO burn.
+  - interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", http_route="/workspaces", http_response_status_code="200"}'
+        values: '0+108x90'
+      - series: 'http_server_request_duration_seconds_count{job="api", http_route="/workspaces", http_response_status_code="500"}'
+        values: '0+12x90'
+      - series: 'http_server_request_duration_seconds_count{job="api", http_route="/health", http_response_status_code="503"}'
+        values: '0+1000x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: AgentOsHigh5xxRate
+        exp_alerts:
+          - exp_labels: { severity: critical, job: api }
+            exp_annotations:
+              summary: "api: 10% of requests are failing with 5xx"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshigh5xxrate"
+      - eval_time: 75m
+        alertname: AgentOsAvailabilitySloFastBurn
+        exp_alerts:
+          - exp_labels: { severity: critical, slo: availability, job: api }
+            exp_annotations:
+              summary: "api is burning its 30-day error budget 14x too fast (2% of it per hour)"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosavailabilitysloburn"
+
+  # LLM 429 storm: 30 of 60 attempts per minute are 429s.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_llm_errors_total{job="web", gen_ai_system="anthropic", gen_ai_request_model="claude-sonnet-5-5", error_type="rate_limited"}'
+        values: '0+30x20'
+      - series: 'agentos_llm_calls_total{job="web", gen_ai_system="anthropic", gen_ai_request_model="claude-sonnet-5-5"}'
+        values: '0+30x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AgentOsLlmRateLimitStorm
+        exp_alerts:
+          - exp_labels: { severity: critical, gen_ai_system: anthropic }
+            exp_annotations:
+              summary: "anthropic: more than 20% of LLM attempts are rate-limited (HTTP 429)"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosllmratelimitstorm"
+      - eval_time: 15m
+        alertname: AgentOsLlmErrorRateHigh
+        exp_alerts: []
+
+  # A rejected key.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_llm_errors_total{job="web", gen_ai_system="azure.ai.openai", gen_ai_request_model="gpt-5.4", error_type="auth"}'
+        values: '0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AgentOsLlmAuthFailures
+        exp_alerts:
+          - exp_labels: { severity: warning, gen_ai_system: azure.ai.openai }
+            exp_annotations:
+              summary: "azure.ai.openai rejected an API key (1 auth failures in 15 min)"
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosllmauthfailures"

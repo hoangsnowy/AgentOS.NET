@@ -189,7 +189,9 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                         LogSafe.Scrub(model));
                 }
                 LlmTelemetry.RecordSuccess(activity, genAiSystem, model, response.ModelId ?? model,
-                    inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds);
+                    inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds,
+                    cacheReadTokens: usage.CacheRead, cacheWriteTokens: usage.CacheWrite,
+                    reasoningTokens: usage.Reasoning, agent: request.AgentRole);
                 _logger.LogInformation(
                     "LlmCallCompleted {Provider} {Model} {InTok} {CacheReadTok} {CacheWriteTok} {OutTok} {CostUsd} {Ms} {Tenant}",
                     Provider, LogSafe.Scrub(model), inputTokens, usage.CacheRead, usage.CacheWrite, outputTokens, cost,
@@ -222,9 +224,10 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
 
             async Task HandleFailover(Exception ex)
             {
-                LlmTelemetry.RecordError(activity, ex.Message);
                 last = ex;
                 var kind = _classify(ex);
+                LlmTelemetry.RecordError(activity, ex.Message, genAiSystem, model,
+                    _isRateLimited(ex) ? LlmTelemetry.ErrorTypes.RateLimited : SdkChatClients.ErrorTypeOf(kind), request.AgentRole);
                 // Penalize the key: a transient error honors the server's Retry-After; an auth failure has no
                 // cooldown signal (the key is simply wrong) so it gets the default cooldown.
                 _router.Penalize(Provider, key, kind == LlmErrorKind.Transient ? _retryAfter(ex) : null);

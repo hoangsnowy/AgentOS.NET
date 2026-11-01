@@ -279,6 +279,10 @@ az containerapp revision list     -n api -g <rg> -o table
 az containerapp revision activate -n api -g <rg> --revision <name>
 ```
 
+**Monitoring**: `azd env set AGENTOS_ENABLE_OBSERVABILITY true` (+ `AGENTOS_ALERT_EMAIL`, optional
+`AGENTOS_HEALTH_PROBE_URL`) before `azd provision` adds Application Insights, the operations workbook and the alert
+rules. SLOs, dashboards and per-alert runbooks: [OPERATIONS.md](OPERATIONS.md).
+
 ---
 
 ## Troubleshooting

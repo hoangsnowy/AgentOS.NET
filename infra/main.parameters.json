@@ -26,6 +26,15 @@
       "SmtpPort": {
         "value": "${SmtpPort}"
       },
+      "enableObservability": {
+        "value": "${AGENTOS_ENABLE_OBSERVABILITY=false}"
+      },
+      "alertEmail": {
+        "value": "${AGENTOS_ALERT_EMAIL}"
+      },
+      "healthProbeUrl": {
+        "value": "${AGENTOS_HEALTH_PROBE_URL}"
+      },
       "environmentName": {
         "value": "${AZURE_ENV_NAME}"
       },

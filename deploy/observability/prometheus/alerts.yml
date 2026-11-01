@@ -1,0 +1,301 @@
+# AgentOS.NET — Prometheus recording + alerting rules (E1.10).
+#
+# Metric names assume the standard OTLP → Prometheus translation (dots → underscores, unit suffixes,
+# counters end in _total), i.e. the OpenTelemetry Collector's `prometheus` exporter shipped in
+# deploy/observability/otel-collector.yaml, or Prometheus' native OTLP receiver with its default
+# translation strategy. `job` is the OTel service.name (Aspire / azd set `api` and `web`).
+#
+# Every alert links its runbook in docs/OPERATIONS.md (#runbook-<alert-name-lowercase>).
+# Validate:   promtool check rules deploy/observability/prometheus/alerts.yml
+# Unit tests: promtool test rules deploy/observability/prometheus/alerts.test.yml
+
+groups:
+  # ---------------------------------------------------------------------------------------------------
+  # SLO recording rules — the SLIs in docs/OPERATIONS.md#slos, pre-aggregated per window so dashboards
+  # and the multi-window burn-rate alerts below stay cheap.
+  # ---------------------------------------------------------------------------------------------------
+  - name: agentos-slo-recording
+    interval: 1m
+    rules:
+      # Availability SLI: share of HTTP requests answered with a 5xx (health probes excluded).
+      - record: agentos:http_error_ratio:rate5m
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive", http_response_status_code=~"5.."}[5m]))
+          /
+          clamp_min(sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive"}[5m])), 1e-9)
+      - record: agentos:http_error_ratio:rate30m
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive", http_response_status_code=~"5.."}[30m]))
+          /
+          clamp_min(sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive"}[30m])), 1e-9)
+      - record: agentos:http_error_ratio:rate1h
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive", http_response_status_code=~"5.."}[1h]))
+          /
+          clamp_min(sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive"}[1h])), 1e-9)
+      - record: agentos:http_error_ratio:rate6h
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive", http_response_status_code=~"5.."}[6h]))
+          /
+          clamp_min(sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/health|/alive"}[6h])), 1e-9)
+
+      # Latency SLI: p95 of short HTTP requests. Long-lived routes are excluded — a WebSocket / SSE request's
+      # "duration" is the connection lifetime (Blazor circuits, SignalR hubs, the pipeline stream, MCP).
+      - record: agentos:http_request_duration_seconds:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{http_route!~"/_blazor.*|/hubs/.*|/pipeline.*|/mcp.*|/health|/alive"}[5m])))
+
+      # Run-reliability SLI: share of STARTED runs that failed (refusals are policy, not failures).
+      - record: agentos:run_failure_ratio:rate1h
+        expr: |
+          sum(rate(agentos_pipeline_runs_total{agentos_run_outcome="failed"}[1h]))
+          /
+          clamp_min(sum(rate(agentos_pipeline_runs_total{agentos_run_outcome=~"done|max_iterations|failed"}[1h])), 1e-9)
+      - record: agentos:run_failure_ratio:rate6h
+        expr: |
+          sum(rate(agentos_pipeline_runs_total{agentos_run_outcome="failed"}[6h]))
+          /
+          clamp_min(sum(rate(agentos_pipeline_runs_total{agentos_run_outcome=~"done|max_iterations|failed"}[6h])), 1e-9)
+
+      # LLM call latency per model.
+      - record: agentos:llm_call_duration_seconds:p95_15m
+        expr: |
+          histogram_quantile(0.95, sum by (gen_ai_system, gen_ai_request_model, le) (rate(gen_ai_client_operation_duration_seconds_bucket[15m])))
+
+  # ---------------------------------------------------------------------------------------------------
+  # Budget — a tenant at / over its monthly LLM cap.
+  # ---------------------------------------------------------------------------------------------------
+  - name: agentos-budget
+    rules:
+      - alert: AgentOsBudgetOverCap
+        expr: max by (agentos_tenant_id, agentos_budget_enforced) (agentos_budget_utilization_ratio) >= 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tenant {{ $labels.agentos_tenant_id }} is over its monthly LLM budget ({{ $value | humanizePercentage }} of cap)"
+          description: >-
+            Month-to-date spend has reached the cap. enforced={{ $labels.agentos_budget_enforced }}: when "true",
+            server-token runs and agent calls are refused; when "false", spend keeps growing past the cap.
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosbudgetovercap"
+
+      - alert: AgentOsBudgetNearCap
+        expr: max by (agentos_tenant_id) (agentos_budget_utilization_ratio) >= 0.8 < 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.agentos_tenant_id }} has used {{ $value | humanizePercentage }} of its monthly LLM budget"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosbudgetnearcap"
+
+      - alert: AgentOsBudgetBlockingRuns
+        expr: sum by (agentos_budget_scope) (increase(agentos_budget_blocked_total[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "The budget gate refused {{ $value | humanize }} {{ $labels.agentos_budget_scope }}(s) in the last 15 minutes"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosbudgetblockingruns"
+
+  # ---------------------------------------------------------------------------------------------------
+  # Runs — failed-run spike + the run-reliability SLO.
+  # ---------------------------------------------------------------------------------------------------
+  - name: agentos-runs
+    rules:
+      - alert: AgentOsFailedRunSpike
+        expr: |
+          (
+            sum(increase(agentos_pipeline_runs_total{agentos_run_outcome="failed"}[30m])) >= 3
+          )
+          and
+          (
+            sum(rate(agentos_pipeline_runs_total{agentos_run_outcome="failed"}[30m]))
+            /
+            clamp_min(sum(rate(agentos_pipeline_runs_total{agentos_run_outcome=~"done|max_iterations|failed"}[30m])), 1e-9)
+          ) > 0.25
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 25% of agent runs failed in the last 30 minutes"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosfailedrunspike"
+
+      - alert: AgentOsRunReliabilitySloBurn
+        expr: agentos:run_failure_ratio:rate1h > (6 * 0.05) and agentos:run_failure_ratio:rate6h > (6 * 0.05)
+        for: 15m
+        labels:
+          severity: warning
+          slo: run-reliability
+        annotations:
+          summary: "Run failures are burning the 95% run-reliability SLO 6x too fast"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosrunreliabilitysloburn"
+
+      - alert: AgentOsRunsSlow
+        expr: |
+          histogram_quantile(0.95, sum by (agentos_run_kind, le) (rate(agentos_pipeline_run_duration_seconds_bucket{agentos_run_outcome=~"done|max_iterations"}[1h]))) > 1800
+        for: 30m
+        labels:
+          severity: warning
+          slo: run-latency
+        annotations:
+          summary: "p95 {{ $labels.agentos_run_kind }} run time is {{ $value | humanizeDuration }} (SLO: 30 min)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosrunsslow"
+
+  # ---------------------------------------------------------------------------------------------------
+  # Evidence — the governance trail must never drop a row (E0.3).
+  # ---------------------------------------------------------------------------------------------------
+  - name: agentos-evidence
+    rules:
+      - alert: AgentOsEvidenceLost
+        expr: sum by (job, instance) (increase(agentos_evidence_lost_total[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value | humanize }} tool-call evidence row(s) were LOST on {{ $labels.instance }}"
+          description: Every persistence attempt failed; the audit trail for those tool calls is incomplete.
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidencelost"
+
+      - alert: AgentOsEvidenceQueueSaturated
+        expr: sum by (job, instance) (rate(agentos_evidence_inline_writes_total[5m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The evidence queue on {{ $labels.instance }} has been full for 15 minutes (writes are going inline)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidencequeuesaturated"
+
+  # ---------------------------------------------------------------------------------------------------
+  # Health — outside-in probe (blackbox exporter on /health) + the in-process health-status gauge.
+  # ---------------------------------------------------------------------------------------------------
+  - name: agentos-health
+    rules:
+      - alert: AgentOsHealthProbeDown
+        expr: probe_success{job="agentos-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} /health has failed for 2 minutes"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshealthprobedown"
+
+      - alert: AgentOsHealthCheckUnhealthy
+        expr: min by (job, instance, agentos_health_check) (agentos_health_status{agentos_health_check!="overall"}) == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check {{ $labels.agentos_health_check }} is Unhealthy on {{ $labels.instance }}"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshealthcheckunhealthy"
+
+      - alert: AgentOsTelemetryMissing
+        expr: absent_over_time(agentos_health_status{agentos_health_check="overall"}[10m])
+        labels:
+          severity: warning
+        annotations:
+          summary: "No AgentOS.NET telemetry has arrived for 10 minutes"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentostelemetrymissing"
+
+  # ---------------------------------------------------------------------------------------------------
+  # HTTP — 5xx rate, availability SLO burn, latency SLO.
+  # ---------------------------------------------------------------------------------------------------
+  - name: agentos-http
+    rules:
+      - alert: AgentOsHigh5xxRate
+        expr: agentos:http_error_ratio:rate5m > 0.05 and on (job) sum by (job) (rate(http_server_request_duration_seconds_count[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }}: {{ $value | humanizePercentage }} of requests are failing with 5xx"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshigh5xxrate"
+
+      # Multi-window, multi-burn-rate alerts for the 99.5% availability SLO (error budget 0.5% / 30 days).
+      - alert: AgentOsAvailabilitySloFastBurn
+        expr: agentos:http_error_ratio:rate1h > (14.4 * 0.005) and agentos:http_error_ratio:rate5m > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "{{ $labels.job }} is burning its 30-day error budget 14x too fast (2% of it per hour)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosavailabilitysloburn"
+      - alert: AgentOsAvailabilitySloSlowBurn
+        expr: agentos:http_error_ratio:rate6h > (6 * 0.005) and agentos:http_error_ratio:rate30m > (6 * 0.005)
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "{{ $labels.job }} is burning its 30-day error budget 6x too fast"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosavailabilitysloburn"
+
+      - alert: AgentOsHttpLatencyHigh
+        expr: agentos:http_request_duration_seconds:p95_5m > 1
+        for: 15m
+        labels:
+          severity: warning
+          slo: http-latency
+        annotations:
+          summary: "{{ $labels.job }} p95 request latency is {{ $value | humanizeDuration }} (SLO: 1 s)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentoshttplatencyhigh"
+
+      - alert: AgentOsPostgresPoolExhausted
+        expr: sum by (job, instance) (db_client_connection_npgsql_pending_requests) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} has requests waiting for a Postgres connection for 5 minutes"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentospostgrespoolexhausted"
+
+  # ---------------------------------------------------------------------------------------------------
+  # LLM providers — 429 storm, auth failures, error rate, latency.
+  # ---------------------------------------------------------------------------------------------------
+  - name: agentos-llm
+    rules:
+      - alert: AgentOsLlmRateLimitStorm
+        expr: |
+          sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type="rate_limited"}[5m])) * 60 > 5
+          and
+          (
+            sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type="rate_limited"}[5m]))
+            /
+            clamp_min(sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type="rate_limited"}[5m])) + sum by (gen_ai_system) (rate(agentos_llm_calls_total[5m])), 1e-9)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.gen_ai_system }}: more than 20% of LLM attempts are rate-limited (HTTP 429)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosllmratelimitstorm"
+
+      - alert: AgentOsLlmAuthFailures
+        expr: sum by (gen_ai_system) (increase(agentos_llm_errors_total{error_type="auth"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.gen_ai_system }} rejected an API key ({{ $value | humanize }} auth failures in 15 min)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosllmauthfailures"
+
+      - alert: AgentOsLlmErrorRateHigh
+        expr: |
+          (
+            sum by (gen_ai_system) (rate(agentos_llm_errors_total{error_type!="rate_limited"}[10m]))
+            /
+            clamp_min(sum by (gen_ai_system) (rate(agentos_llm_errors_total[10m])) + sum by (gen_ai_system) (rate(agentos_llm_calls_total[10m])), 1e-9)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.gen_ai_system }}: {{ $value | humanizePercentage }} of LLM attempts fail (excluding 429s)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosllmerrorratehigh"
+
+      - alert: AgentOsLlmLatencyHigh
+        expr: agentos:llm_call_duration_seconds:p95_15m > 120
+        for: 15m
+        labels:
+          severity: warning
+          slo: llm-latency
+        annotations:
+          summary: "{{ $labels.gen_ai_request_model }} p95 call latency is {{ $value | humanizeDuration }} (SLO: 120 s)"
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosllmlatencyhigh"

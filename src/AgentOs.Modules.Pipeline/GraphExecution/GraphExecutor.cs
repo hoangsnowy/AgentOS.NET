@@ -162,6 +162,8 @@ public sealed class GraphExecutor : IGraphExecutor
 
             if (budget.IsBlocking)
             {
+                PipelineTelemetry.RecordBudgetBlocked(PipelineTelemetry.BudgetScopes.Run);
+                PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Workflow, PipelineTelemetry.Outcomes.BudgetBlocked);
                 return new GraphRunResult(false,
                     $"Budget exceeded for this workspace — spent ${budget.SpentUsd:0.00} of ${budget.CapUsd:0.00} this month. The run was blocked before any agent ran.");
             }
@@ -171,6 +173,7 @@ public sealed class GraphExecutor : IGraphExecutor
         using var lease = _admission is null ? null : await _admission.AdmitAsync(budgetTenant, ct).ConfigureAwait(false);
         if (lease is { Admitted: false })
         {
+            PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Workflow, PipelineTelemetry.Outcomes.Refused);
             return new GraphRunResult(false, lease.Reason);
         }
 
@@ -256,6 +259,8 @@ public sealed class GraphExecutor : IGraphExecutor
         // Meter the run's own LLM spend. Persisted even on failure (the tenant is billed for whatever ran),
         // stamping the explicit tenant so the budget gate sees it on the NEXT run — see PersistRunAsync.
         await PersistRunAsync(runGuid, state, budgetTenant, failure, startedAtUtc, ct).ConfigureAwait(false);
+        PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Workflow,
+            failure is null ? PipelineTelemetry.Outcomes.Done : PipelineTelemetry.Outcomes.Failed, _clock.GetUtcNow() - startedAtUtc);
 
         return new GraphRunResult(failure is null, failure, state.AnyOffline) { Usage = UsageByAgent(state.Spend) };
     }
