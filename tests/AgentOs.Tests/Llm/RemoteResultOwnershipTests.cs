@@ -68,7 +68,7 @@ public class RemoteResultOwnershipTests
     {
         var broker = new InProcessRemoteAgentBroker();
         var runner = Runner();
-        var first = broker.RegisterRunner("conn-old", runner);
+        using var first = broker.RegisterRunner("conn-old", runner);   // disposed below to simulate the drop; idempotent
 
         var task = broker.DispatchAsync(new RemoteExecRequest("r1", "s", "u", "m"), new RunnerTarget("t1", "m1"), Wait);
         first.Dispose();
@@ -124,7 +124,7 @@ public class RemoteResultOwnershipTests
     {
         var broker = new InProcessRemoteAgentBroker();
         var runner = Runner();
-        var first = broker.RegisterRunner("conn-old", runner);
+        using var first = broker.RegisterRunner("conn-old", runner);   // disposed below to simulate the drop; idempotent
 
         var task = broker.DispatchToolCallAsync(new RunnerToolCall("r1", "tc1", "shell", "{}"), new RunnerTarget("t1", "m1"), Wait);
         first.Dispose();
