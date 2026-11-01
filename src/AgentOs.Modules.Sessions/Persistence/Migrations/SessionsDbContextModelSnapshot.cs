@@ -58,6 +58,9 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                     b.Property<int>("IssueNumber")
                         .HasColumnType("integer");
 
+                    b.Property<int>("Retries")
+                        .HasColumnType("integer");
+
                     b.Property<int>("Run")
                         .HasColumnType("integer");
 

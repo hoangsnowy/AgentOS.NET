@@ -106,8 +106,21 @@ public sealed class DesignUploadTests : IDisposable
         RunUploads.ListedPaths(null).ShouldBeEmpty();
     }
 
+    // Send what the runner would send for these candidates, recording every piece; the fake server refuses `refuse` paths.
+    private async Task<(RunUploads.Outcome Outcome, List<RunUploadChunk> Chunks)> SendAsync(IReadOnlyList<string> listed, RunUploads.Limits? caps = null,
+        string? refuse = null)
+    {
+        var chunks = new List<RunUploadChunk>();
+        var outcome = await RunUploads.SendAsync(_runDir, RunUploads.Candidates(_runDir, listed), caps ?? Caps, c =>
+        {
+            chunks.Add(c);
+            return Task.FromResult(refuse is not null && c.Path.Contains(refuse, StringComparison.Ordinal) ? "Refused: no." : null);
+        });
+        return (outcome, chunks);
+    }
+
     [Fact]
-    public void Runner_Select_KeepsImagesInsideTheRunFolder_RefusesTheRest()
+    public async Task Runner_SendsImagesInsideTheRunFolder_RefusesTheRest()
     {
         Write(".agentos/screenshots/checkout-390-dark.png", Png(64));
         Write(".agentos/screenshots/fake-390-light.png", Encoding.UTF8.GetBytes("not an image at all"));
@@ -115,45 +128,47 @@ public sealed class DesignUploadTests : IDisposable
         var outside = Path.Join(_root, "outside.png");
         File.WriteAllBytes(outside, Png(64));
 
-        var picks = RunUploads.Select(_runDir,
+        var (outcome, chunks) = await SendAsync(
             [".agentos/screenshots/checkout-390-dark.png", ".agentos/screenshots/fake-390-light.png", "../outside.png", outside.Replace('\\', '/'),
-             "repo/secret.txt", ".agentos/screenshots/missing.png", ".agentos/screenshots/checkout-390-dark.png"],
-            Caps, out var refused);
+             "repo/secret.txt", ".agentos/screenshots/missing.png", ".agentos/screenshots/checkout-390-dark.png"]);
 
-        picks.Select(p => p.Path).ShouldBe([".agentos/screenshots/checkout-390-dark.png"]);   // the duplicate counts once
-        refused.Count.ShouldBe(5);
-        refused.ShouldContain(r => r.Contains("../outside.png", StringComparison.Ordinal));
+        outcome.Sent.ShouldBe([".agentos/screenshots/checkout-390-dark.png"]);    // the duplicate counts once
+        outcome.Problems.Count.ShouldBe(5);
+        outcome.Problems.ShouldContain(r => r.Contains("../outside.png", StringComparison.Ordinal));
+        chunks.ShouldAllBe(c => c.Path == ".agentos/screenshots/checkout-390-dark.png");   // nothing else was ever read out
     }
 
     [Fact]
-    public void Runner_Select_RespectsTheCaps()
+    public async Task Runner_RespectsTheCaps()
     {
         for (var i = 0; i < 4; i++) { Write($".agentos/screenshots/s{i}-390-light.png", Png(100)); }
         Write(".agentos/screenshots/big-1280-dark.png", Png(5000));
         var listed = Enumerable.Range(0, 4).Select(i => $".agentos/screenshots/s{i}-390-light.png").Append(".agentos/screenshots/big-1280-dark.png").ToList();
 
-        RunUploads.Select(_runDir, listed, new RunUploads.Limits(2, 10_000, 10_000), out var tooMany).Count.ShouldBe(2);
-        tooMany.ShouldContain(r => r.Contains("more than 2 files", StringComparison.Ordinal));
-        RunUploads.Select(_runDir, listed, new RunUploads.Limits(10, 1000, 10_000), out var tooBig).Count.ShouldBe(4);
-        tooBig.ShouldContain(r => r.Contains("bigger than 1000", StringComparison.Ordinal));
-        RunUploads.Select(_runDir, listed, new RunUploads.Limits(10, 10_000, 250), out var tooMuch).Count.ShouldBe(2);
-        tooMuch.ShouldContain(r => r.Contains("over the run's 250 bytes", StringComparison.Ordinal));
+        var tooMany = (await SendAsync(listed, new RunUploads.Limits(2, 10_000, 10_000))).Outcome;
+        tooMany.Sent.Count.ShouldBe(2);
+        tooMany.Problems.ShouldContain(r => r.Contains("more than 2 files", StringComparison.Ordinal));
+        var tooBig = (await SendAsync(listed, new RunUploads.Limits(10, 1000, 10_000))).Outcome;
+        tooBig.Sent.Count.ShouldBe(4);
+        tooBig.Problems.ShouldContain(r => r.Contains("bigger than 1000", StringComparison.Ordinal));
+        var tooMuch = (await SendAsync(listed, new RunUploads.Limits(10, 10_000, 250))).Outcome;
+        tooMuch.Sent.Count.ShouldBe(2);
+        tooMuch.Problems.ShouldContain(r => r.Contains("over the run's 250 bytes", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void Runner_NothingListed_FallsBackToTheScreenshotsFolder_TopLevelOnly()
+    public async Task Runner_NothingListed_FallsBackToTheScreenshotsFolder_TopLevelOnly()
     {
         Write(".agentos/screenshots/b-1280-light.png", Png(10));
         Write(".agentos/screenshots/a-390-dark.png", Png(10));
         Write(".agentos/screenshots/deeper/c.png", Png(10));
         Write(".agentos/screenshots/readme.md", Encoding.UTF8.GetBytes("#"));
 
-        RunUploads.Select(_runDir, [], Caps, out _).Select(p => p.Path)
-            .ShouldBe([".agentos/screenshots/a-390-dark.png", ".agentos/screenshots/b-1280-light.png"]);
+        (await SendAsync([])).Outcome.Sent.ShouldBe([".agentos/screenshots/a-390-dark.png", ".agentos/screenshots/b-1280-light.png"]);
     }
 
     [Fact]
-    public void Runner_ALinkedFolder_IsRefused_NothingReadThroughIt()
+    public async Task Runner_ALinkedFolder_IsRefused_NothingReadThroughIt()
     {
         var outside = Path.Join(_root, "elsewhere");
         Directory.CreateDirectory(outside);
@@ -165,9 +180,51 @@ public sealed class DesignUploadTests : IDisposable
             Assert.Skip("This machine can't create symbolic links (Windows without Developer Mode).");
         }
 
-        RunUploads.Select(_runDir, [".agentos/screenshots/x-390-light.png"], Caps, out var refused).ShouldBeEmpty();
-        refused.ShouldHaveSingleItem();
+        var (outcome, chunks) = await SendAsync([".agentos/screenshots/x-390-light.png"]);
+
+        outcome.Sent.ShouldBeEmpty();
+        outcome.Problems.ShouldHaveSingleItem();
+        chunks.ShouldBeEmpty();
         RunUploads.LinkBetween(_runDir, Path.Join(_runDir, ".agentos", "screenshots")).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Runner_ALinkedFile_IsRefused()
+    {
+        var outside = Path.Join(_root, "secret.png");
+        File.WriteAllBytes(outside, Png(10));
+        Directory.CreateDirectory(Path.Join(_runDir, ".agentos", "screenshots"));
+        try { File.CreateSymbolicLink(Path.Join(_runDir, ".agentos", "screenshots", "x-390-light.png"), outside); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Assert.Skip("This machine can't create symbolic links (Windows without Developer Mode).");
+        }
+
+        var (outcome, chunks) = await SendAsync([".agentos/screenshots/x-390-light.png"]);
+        outcome.Sent.ShouldBeEmpty();
+        chunks.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Runner_ChecksAndReadsOneHandle_TheFileCantBeSwappedOrGrowMeanwhile()
+    {
+        // The file is held open from the check to the last piece: while it is sent, nobody can replace or delete it, and
+        // it never sends more than the length the checks saw.
+        var full = Write(".agentos/screenshots/a-390-light.png", Png(100));
+        var swapped = false;
+        var grown = false;
+
+        var outcome = await RunUploads.SendAsync(_runDir, [".agentos/screenshots/a-390-light.png"], Caps, c =>
+        {
+            try { File.Delete(full); swapped = true; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try { File.AppendAllText(full, "more"); grown = true; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            c.Data.Length.ShouldBe(100);
+            return Task.FromResult<string?>(null);
+        });
+
+        outcome.Sent.ShouldHaveSingleItem();
+        swapped.ShouldBeFalse();
+        grown.ShouldBeFalse();
     }
 
     [Fact]
@@ -177,14 +234,8 @@ public sealed class DesignUploadTests : IDisposable
         big[^1] = 42;
         Write(".agentos/screenshots/a-390-light.png", big);
         Write(".agentos/screenshots/b-390-dark.png", Png(10));
-        var picks = RunUploads.Select(_runDir, [".agentos/screenshots/a-390-light.png", ".agentos/screenshots/b-390-dark.png"], Caps, out _);
-        var sent = new List<RunUploadChunk>();
 
-        var problems = await RunUploads.SendAsync(picks, c =>
-        {
-            sent.Add(c);
-            return Task.FromResult(c.Path.Contains("b-390", StringComparison.Ordinal) ? "Refused: no." : null);
-        });
+        var (outcome, sent) = await SendAsync([".agentos/screenshots/a-390-light.png", ".agentos/screenshots/b-390-dark.png"], refuse: "b-390");
 
         sent.Count.ShouldBe(3);
         sent[0].Offset.ShouldBe(0);
@@ -193,7 +244,8 @@ public sealed class DesignUploadTests : IDisposable
         sent[1].Offset.ShouldBe(RunUploadRules.ChunkBytes);
         sent[1].Last.ShouldBeTrue();
         sent[0].Data.Concat(sent[1].Data).ShouldBe(big);
-        problems.ShouldBe(["Refused: no."]);
+        outcome.Problems.ShouldBe(["Refused: no."]);
+        outcome.Sent.ShouldBe([".agentos/screenshots/a-390-light.png"]);
     }
 
     // ── Broker: heard only from the dispatched connection, every piece re-checked ──
@@ -289,6 +341,79 @@ public sealed class DesignUploadTests : IDisposable
     }
 
     // ── Client: what arrived is stored under the run's design scope, for the run's tenant ──
+
+    [Fact]
+    public void Broker_InFlightBudget_RefusesNewSlotsWhenFull_AndFreesThemWhenTaken()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        var perRun = RunCollect.Screenshots.MaxTotalBytes;
+        var fits = (int)(InProcessRemoteAgentBroker.MaxInFlightUploadBytes / perRun);
+        for (var i = 0; i < fits; i++) { broker.ExpectUploads($"req-{i}", RunCollect.Screenshots).ShouldBeTrue(); }
+        broker.ReservedUploadBytes.ShouldBe(fits * perRun);
+
+        broker.ExpectUploads("req-over", RunCollect.Screenshots).ShouldBeFalse();     // the server-wide budget is spent
+        broker.UploadRunFile("conn", "req-over", new RunUploadChunk("a.png", 0, Png(10), true)).ShouldNotBeNull();
+        broker.ExpectUploads("req-small", new RunCollect(1, 10, 10)).ShouldBeFalse();  // nothing left at all
+
+        broker.TakeUploads("req-0").ShouldBeEmpty();
+        broker.ExpectUploads("req-over", RunCollect.Screenshots).ShouldBeTrue();      // freed by the run that ended
+        broker.ExpectUploads("req-over", RunCollect.Screenshots).ShouldBeTrue();      // re-expecting the same id doesn't leak
+        broker.ReservedUploadBytes.ShouldBe(fits * perRun);
+        for (var i = 1; i < fits; i++) { broker.TakeUploads($"req-{i}"); }
+        broker.TakeUploads("req-over");
+        broker.ReservedUploadBytes.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Client_BudgetSpent_AsksForNothing_AndTheRunStillAnswers()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
+        for (var i = 0; broker.ExpectUploads($"busy-{i}", RunCollect.Screenshots); i++) { }
+        RemoteExecRequest? sent = null;
+        broker.Dispatched += d => { sent = d.Request; broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null)); };
+        await using var services = new ServiceCollection().AddSingleton<IScopedFileStore>(new InMemoryScopedFileStore()).BuildServiceProvider();
+
+        LlmResponse response;
+        using (AmbientIdentity.Push("t1", "u1"))
+        {
+            response = await new RemoteAgentLlmClient(broker, services, NullLogger<RemoteAgentLlmClient>.Instance)
+                .SendAsync(new LlmRequest("s", "u", "m") { Uploads = new RunUploadTarget("design:x:1:0", RunCollect.Screenshots) });
+        }
+
+        sent!.Collect.ShouldBeNull();
+        response.Content.ShouldBe("ok");
+        response.Uploaded.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Client_StoresUnderThePathPrefix_SoTwoReposNeverCollide()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
+        broker.Dispatched += d =>
+        {
+            broker.UploadRunFile(d.ConnectionId, d.Request.Id, new RunUploadChunk(".agentos/screenshots/home-390-light.png", 0, Png(20), true)).ShouldBeNull();
+            broker.Complete(new RemoteExecResult(d.Request.Id, true, "ok", null));
+        };
+        var store = new InMemoryScopedFileStore();
+        await using var services = new ServiceCollection().AddSingleton<IScopedFileStore>(store).BuildServiceProvider();
+        var client = new RemoteAgentLlmClient(broker, services, NullLogger<RemoteAgentLlmClient>.Instance);
+        var scope = AgentOs.Domain.Sessions.DesignScope.For(Guid.NewGuid(), 7, 0);
+        var repoA = AgentOs.Domain.Sessions.DesignCapture.PrefixFor(Guid.NewGuid());
+        var repoB = AgentOs.Domain.Sessions.DesignCapture.PrefixFor(Guid.NewGuid());
+
+        using (AmbientIdentity.Push("t1", "u1"))
+        {
+            foreach (var prefix in new[] { repoA, repoB })
+            {
+                await client.SendAsync(new LlmRequest("s", "u", "m") { Uploads = new RunUploadTarget(scope, RunCollect.Screenshots) { PathPrefix = prefix } });
+            }
+        }
+
+        (await store.ListAsync("t1", scope)).Select(f => f.Path).Order(StringComparer.Ordinal)
+            .ShouldBe(new[] { repoA, repoB }.Select(p => p + ".agentos/screenshots/home-390-light.png").Order(StringComparer.Ordinal));
+    }
 
     [Fact]
     public async Task Client_StoresWhatTheRunnerSentBack_InTheTenantsDesignScope()

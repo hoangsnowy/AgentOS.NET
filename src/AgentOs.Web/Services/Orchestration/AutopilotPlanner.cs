@@ -56,6 +56,11 @@ public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IR
 
     /// <summary>What goes back to the Coding agent when the Design gate asks for changes.</summary>
     public string? DesignFindings { get; init; }
+
+    /// <summary>The Designer couldn't run last time (computer offline, budget, a timeout) and may be run again
+    /// automatically (<see cref="AgentOs.Domain.Sessions.DesignReview.CanRetryAutomatically"/>) — unlike a real
+    /// "needs a person" verdict, which waits for the owner.</summary>
+    public bool DesignRetryable { get; init; }
 }
 
 /// <summary>One thing to do, and the sentence that explains it.</summary>
@@ -65,9 +70,19 @@ public abstract record AutopilotAction(string Why)
     public sealed record ResumeTask(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record FixChecks(Guid SessionId, int IssueNumber, string Report, int Round, string Why) : AutopilotAction(Why);
     public sealed record UpdateBranch(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
-    public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
+    public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why)
+    {
+        /// <summary>The task's flow runs the Design gate: this test run also takes the screenshots.</summary>
+        public bool CaptureDesign { get; init; }
+    }
+
     public sealed record RunReview(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
-    public sealed record RunDesign(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
+
+    public sealed record RunDesign(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why)
+    {
+        /// <summary>An automatic re-run of a check that couldn't run (counted against the bound).</summary>
+        public bool Retry { get; init; }
+    }
     public sealed record Merge(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why);
 }
@@ -209,7 +224,10 @@ public static class AutopilotPlanner
             {
                 if (!canTest || running >= maxParallel || testing >= maxParallelTests) { continue; }
                 actions.Add(new AutopilotAction.RunTests(task.SessionId, task.IssueNumber,
-                    $"Testing #{task.IssueNumber} against its acceptance criteria — its checks passed."));
+                    $"Testing #{task.IssueNumber} against its acceptance criteria — its checks passed.")
+                {
+                    CaptureDesign = task.Flow.Runs(TicketStepKind.Design),
+                });
                 running++;
                 testing++;
                 continue;
@@ -219,6 +237,16 @@ public static class AutopilotPlanner
             if (task.Flow.Runs(TicketStepKind.Design))
             {
                 var gate = task.Design;
+                if (gate == AgentOs.Domain.Sessions.DesignGateState.NeedsPerson && task.DesignRetryable)
+                {
+                    // The Designer couldn't run (computer offline, budget, a timeout) — not a verdict: run it again once a
+                    // computer is there, a bounded number of times; after that the owner decides.
+                    if (!canTest || running >= maxParallel) { continue; }
+                    actions.Add(new AutopilotAction.RunDesign(task.SessionId, task.IssueNumber,
+                        $"Checking #{task.IssueNumber}'s screens again — the last design check couldn't run.") { Retry = true });
+                    running++;
+                    continue;
+                }
                 if (gate is AgentOs.Domain.Sessions.DesignGateState.Checking or AgentOs.Domain.Sessions.DesignGateState.NeedsPerson)
                 {
                     // Being checked, or the owner decides on Board › Tasks (Approve design / Ask for changes).

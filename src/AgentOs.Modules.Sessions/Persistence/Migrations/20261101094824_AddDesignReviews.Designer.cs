@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AgentOs.Modules.Sessions.Persistence.Migrations
 {
     [DbContext(typeof(SessionsDbContext))]
-    [Migration("20261101090518_AddDesignReviews")]
+    [Migration("20261101094824_AddDesignReviews")]
     partial class AddDesignReviews
     {
         /// <inheritdoc />
@@ -59,6 +59,9 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                         .HasColumnType("text");
 
                     b.Property<int>("IssueNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Retries")
                         .HasColumnType("integer");
 
                     b.Property<int>("Run")

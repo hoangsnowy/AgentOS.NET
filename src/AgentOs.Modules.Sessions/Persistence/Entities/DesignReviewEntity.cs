@@ -31,6 +31,9 @@ public sealed class DesignReviewEntity
 
     public string? Error { get; set; }
 
+    /// <summary>Automatic re-runs of a check that couldn't run (<see cref="AgentOs.Domain.Sessions.DesignReview.MaxAutomaticRetries"/>).</summary>
+    public int Retries { get; set; }
+
     /// <summary><see cref="AgentOs.Domain.Sessions.DesignDecision"/> by name, or null when the owner hasn't decided.</summary>
     public string? Decision { get; set; }
 

@@ -216,8 +216,10 @@ public interface IRemoteAgentBroker
     // ── Files sent back (Design gate, ADR-0016) ──
 
     /// <summary>Accept files sent back for request <paramref name="id"/> within <paramref name="limits"/> — only from the
-    /// runner it is then dispatched to. Call before dispatching; <see cref="TakeUploads"/> after.</summary>
-    void ExpectUploads(string id, AgentOs.Domain.Files.RunCollect limits) { }
+    /// runner it is then dispatched to. Call before dispatching; <see cref="TakeUploads"/> after. False when the server's
+    /// budget for files in flight (<see cref="InProcessRemoteAgentBroker.MaxInFlightUploadBytes"/>) can't hold this run's
+    /// limit: then nothing may come back.</summary>
+    bool ExpectUploads(string id, AgentOs.Domain.Files.RunCollect limits) => false;
 
     /// <summary>Called by the hub: one piece of a file sent back. Null when accepted, else why it was refused (the file is
     /// then dropped). Only the connection the request was dispatched to is heard.</summary>
@@ -297,16 +299,38 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         public long Total;
     }
 
-    public void ExpectUploads(string id, AgentOs.Domain.Files.RunCollect limits)
+    /// <summary>The most bytes all runs together may be sending back at once (held in memory until each run ends): eight
+    /// runs at the full per-run cap. A run's whole cap is reserved when it is dispatched, so the budget can't be overrun.</summary>
+    public const long MaxInFlightUploadBytes = 8 * AgentOs.Domain.Files.RunUploadRules.MaxTotalBytes;
+
+    private long _reservedUploadBytes;
+
+    /// <summary>Bytes reserved by runs that may still send files back (diagnostics and tests).</summary>
+    public long ReservedUploadBytes => Interlocked.Read(ref _reservedUploadBytes);
+
+    public bool ExpectUploads(string id, AgentOs.Domain.Files.RunCollect limits)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentNullException.ThrowIfNull(limits);
         // Never above the hard caps, whatever a caller asks for.
-        _uploads[id] = new UploadSlot(new AgentOs.Domain.Files.RunCollect(
+        var capped = new AgentOs.Domain.Files.RunCollect(
             Math.Clamp(limits.MaxFiles, 0, AgentOs.Domain.Files.RunUploadRules.MaxFiles),
             Math.Clamp(limits.MaxFileBytes, 0, AgentOs.Domain.Files.RunUploadRules.MaxFileBytes),
-            Math.Clamp(limits.MaxTotalBytes, 0, AgentOs.Domain.Files.RunUploadRules.MaxTotalBytes)));
+            Math.Clamp(limits.MaxTotalBytes, 0, AgentOs.Domain.Files.RunUploadRules.MaxTotalBytes));
+        // The same request asked again: its earlier slot (and reservation) goes first.
+        if (_uploads.TryRemove(id, out var replaced)) { Release(replaced); }
+        // Reserve the run's whole cap against the server-wide budget, or refuse the slot.
+        while (true)
+        {
+            var reserved = Interlocked.Read(ref _reservedUploadBytes);
+            if (reserved + capped.MaxTotalBytes > MaxInFlightUploadBytes) { return false; }
+            if (Interlocked.CompareExchange(ref _reservedUploadBytes, reserved + capped.MaxTotalBytes, reserved) == reserved) { break; }
+        }
+        _uploads[id] = new UploadSlot(capped);
+        return true;
     }
+
+    private void Release(UploadSlot slot) => Interlocked.Add(ref _reservedUploadBytes, -slot.Limits.MaxTotalBytes);
 
     public string? UploadRunFile(string connectionId, string id, AgentOs.Domain.Files.RunUploadChunk chunk)
     {
@@ -363,6 +387,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public System.Collections.Generic.IReadOnlyList<RunUpload> TakeUploads(string id)
     {
         if (string.IsNullOrEmpty(id) || !_uploads.TryRemove(id, out var slot)) { return []; }
+        Release(slot);
         lock (slot.Gate)
         {
             foreach (var open in slot.Open.Values) { open.Dispose(); }

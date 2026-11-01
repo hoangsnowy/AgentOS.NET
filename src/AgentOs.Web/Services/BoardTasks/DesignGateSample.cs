@@ -57,7 +57,7 @@ public sealed class DesignGateSample(IServiceScopeFactory scopes) : IHostedServi
             await files.PutAsync(new StoredFileInfo(Guid.NewGuid(), tenant, review.ScopeKey, shot.Path, png.LongLength, RunFile.Hash(png),
                 "image/png", "Sample (Development)", DateTimeOffset.UtcNow), png, cancellationToken).ConfigureAwait(false);
         }
-        await reviews.SaveAsync(review with
+        await reviews.EnsureAsync(review with
         {
             Summary = Summary,
             Shots = shots,

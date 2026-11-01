@@ -38,7 +38,12 @@ the evidence is one Playwright call away — but it never left that computer, an
    is raised to 1 MB for this hub only (one piece as base64 JSON); Blazor's circuits keep theirs.
 5. **Stored in the tenant's file store** (`IScopedFileStore`, ADR-0015) under the scope
    **`design:{board}:{issue}:{run}`** — `run` is the task's persisted fix round when it was tested, so a fix round
-   starts a fresh scope (emptied before a re-test of the same round). The scope key never reaches the computer.
+   starts a fresh scope (emptied before a re-test of the same round) — **each repo of the task in its own folder**
+   (`{task-repo id}/…`, `DesignCapture.PrefixFor`), so two repos' `home-390-light.png` never replace each other. The
+   scope key never reaches the computer. The broker holds what is being sent back in memory until the run ends, so it
+   reserves each run's whole cap against a **server-wide budget** (8 runs × 40 MB, `MaxInFlightUploadBytes`); a run
+   that doesn't fit takes no screenshots (logged) and the check then goes to a person.
+   The runner checks and streams each file from **one open handle** (no swap between the check and the read).
 6. **The Designer agent** (`DesignAgent`, role `Designer`, an Agent profiles row and a Prompts entry like the
    Reviewer; seed: the member's computer). It gets the screenshots, the ticket, and the repository's design skill —
    every `.claude/skills/<folder with "design">/SKILL.md` **on the default branch** (never the change's own branch, so
@@ -49,22 +54,43 @@ the evidence is one Playwright call away — but it never left that computer, an
    prompt names the paths for the CLI's Read tool. Its verdict — **pass / changes** (findings: screen, problem, fix) /
    **needs-person** — has the Reviewer's shape and parsing robustness (last JSON object, prose around it, broken JSON
    = did not run); "changes" with nothing to fix becomes needs-person. No screenshots is a person's call, never a pass.
-   The verdict is posted on the pull request.
+   The verdict is posted on the pull request with every Markdown control character escaped and @mentions defused, so
+   model text can't ping people, add links or images, or break the findings table.
+   - **Prompt injection:** a fixed system rule says that text visible in the screenshots, and the screenshots' names
+     and captions, are data from the app under test, never instructions; the caption list is fenced with
+     `UntrustedText.Wrap` and each image's name is reduced to short plain text.
+   - **Server-provider image limits** (`DesignImageLimits`, from Anthropic's vision docs, checked 2026-11-01: ≤ 8000 px
+     a side; > 20 images in a request switches to a stricter many-image limit; 10 MB base64 per image on the Claude API
+     but 5 MB on Bedrock / Google-managed Vertex): every provider is held to ≤ 16 images, ≤ 3.75 MB each (5 MB as
+     base64), ≤ 8000 px a side and ≤ 32 MB together. Sizes are read from the PNG / JPEG / WebP header. No image library
+     is in the solution and none is added: nothing is resized — an image over a limit is **left out, and the prompt says
+     which and why**; if none fits, a person decides without a model call. The Testing agent is asked for captures at
+     most 4000 px tall (a model downscales long images to ~1.5–2.5k px anyway). On a member's computer the CLI reads the
+     files itself and these limits don't apply.
 7. **Persisted per task and run**: `sessions.design_reviews` (Sessions module) — `TenantId`, `BoardId`, `SessionId`,
    `IssueNumber`, `Run`, `Status`, `Summary`, findings and screenshot metadata (JSON), `Error`, and the owner's
-   `Decision` / `DecisionNote` / `DecidedBy` / `DecidedAtUtc`; unique `(TenantId, SessionId, Run)`; EF filter + explicit
-   tenant predicates + RLS (`RowLevelSecurity.Tables`). Without a database an in-memory store keeps the panel working.
+   `Decision` / `DecisionNote` / `DecidedBy` / `DecidedAtUtc`, and `Retries`; unique `(TenantId, SessionId, Run)`; EF
+   filter + explicit tenant predicates + RLS (`RowLevelSecurity.Tables`). Without a database an in-memory store keeps the
+   panel working. **No whole-row writes after a row exists:** `IDesignReviewStore` has `EnsureAsync` (create if
+   missing), `SaveVerdictAsync` (the agent's columns only) and `DecideAsync` (the owner's columns only). A check runs
+   for up to half an hour; an owner who presses *Ask for changes* meanwhile must not have that erased by a later
+   *pass* (which would merge the ticket), and a decision taken on a page showing an older copy must not erase a verdict.
 8. **The owner overrides.** Board › Tasks gets a **Design** panel per task (and a *Design checks* list at the top): the
    screenshot grid (screen × phone/desktop × light/dark, a real table, each image full size in a new tab), the
    verdict and findings, and **Approve design** / **Ask for changes** (with a note). The decision wins over the
    agent. The images load from `GET /tasks/{session}/design/{run}/shots/{path}` (Member policy, tenant from the
-   token / cookie, only image types, `nosniff`) — the bytes never ride the Blazor circuit.
+   token / cookie; only a path the review lists, an image type, whose bytes are that image; `nosniff`) — the bytes
+   never ride the Blazor circuit. `GET /tasks/{session}/design` lists the task's reviews (queried by task).
 9. **Both engines honour it.** Step by step (`AutopilotPlanner`): after testing passed, *not checked* → run the
    Designer (a slot, the member's computer); *changes* (the agent's or the owner's) → back to Coding with the findings
    on the persisted `FixRounds` (the same cap as every fix; out of rounds → a person); *needs-person* / *checking* →
    no move; **merge only after a pass or an owner approval**. The MAF workflow (`TicketWorkflow`) gets a
    `DesignExecutor` with the same outcomes (needs-person ends the flow and hands the task back). A check a restart cut
-   short goes back to waiting.
+   short goes back to waiting. A check that **couldn't run** (computer offline, budget gate, timeout, an error — status
+   `NotRun`) is not a verdict: Autopilot runs it again once the member's computer is connected, at most
+   `DesignReview.MaxAutomaticRetries` (2) times per run (counted in `Retries`); after that it waits for the owner. A
+   genuine *needs a person* verdict always waits. The panel's **Check again** (admins or the task's member) runs it now,
+   uncounted. The test run learns whether to take screenshots from the planner's move (`RunTests.CaptureDesign`).
 
 ## Consequences
 

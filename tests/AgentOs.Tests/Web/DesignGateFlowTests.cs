@@ -250,6 +250,47 @@ public sealed class DesignGateFlowTests
     }
 
     [Fact]
+    public void Planner_ACheckThatCouldntRun_IsRunAgain_OnceAComputerIsThere_Bounded()
+    {
+        var couldnt = Accepted(7, DesignGateState.NeedsPerson) with { DesignRetryable = true };
+
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [couldnt], canTest: false).ShouldBeEmpty();   // no computer yet
+        var again = AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [couldnt]).ShouldHaveSingleItem()
+            .ShouldBeOfType<AutopilotAction.RunDesign>();
+        again.Retry.ShouldBeTrue();
+        again.Why.ShouldContain("couldn't run");
+
+        // A real "needs a person" verdict (or the re-runs used up) waits for the owner — never merges.
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [couldnt with { DesignRetryable = false }]).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(DesignReviewStatus.NotRun, 0, null, true)]
+    [InlineData(DesignReviewStatus.NotRun, 1, null, true)]
+    [InlineData(DesignReviewStatus.NotRun, DesignReview.MaxAutomaticRetries, null, false)]
+    [InlineData(DesignReviewStatus.NotRun, 0, DesignDecision.Approved, false)]
+    [InlineData(DesignReviewStatus.NeedsPerson, 0, null, false)]
+    public void Review_CanRetryAutomatically_OnlyForACheckThatCouldntRun(DesignReviewStatus status, int retries, DesignDecision? decision, bool expected)
+    {
+        (DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, status) with { Retries = retries, Decision = decision })
+            .CanRetryAutomatically.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Planner_TheTestRun_TakesScreenshots_OnlyWhenTheTicketRunsDesign()
+    {
+        PlanTask Green(TicketFlowPlan flow) => new(System.Guid.NewGuid(), 9, "Done",
+            [new PlanChange(System.Guid.NewGuid(), 109, PrChecksState.Passed, null)], 0) { Flow = flow };
+
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [Green(DesignOn().Resolve(["area:ui"]))]).ShouldHaveSingleItem()
+            .ShouldBeOfType<AutopilotAction.RunTests>().CaptureDesign.ShouldBeTrue();
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [Green(DesignOn().Resolve(["area:api"]))]).ShouldHaveSingleItem()
+            .ShouldBeOfType<AutopilotAction.RunTests>().CaptureDesign.ShouldBeFalse();
+        AutopilotPlanner.Decide(AutopilotMode.BuildAndMerge, [], [Green(Default.Resolve(["area:ui"]))]).ShouldHaveSingleItem()
+            .ShouldBeOfType<AutopilotAction.RunTests>().CaptureDesign.ShouldBeFalse();
+    }
+
+    [Fact]
     public void WithinCaps_ADesignCheck_TakesASlot()
     {
         AutopilotAction[] picked = [new AutopilotAction.RunDesign(System.Guid.NewGuid(), 1, "a"), new AutopilotAction.StartTicket(2, "b")];

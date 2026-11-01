@@ -3,8 +3,9 @@
 //   GET /tasks/{sessionId}/design/{run}/shots/{**path}     → one screenshot (image/png, image/jpeg or image/webp)
 // Board › Tasks' Design panel loads its screenshot grid from the second route (plain <img> tags — the bytes never ride
 // the Blazor circuit). Auth: Member policy; the tenant comes from the token or cookie (ITenantContext) and every read is
-// tenant-explicit, so one tenant can never see another's screenshots. Only an image a review lists, of an allowed image
-// type, is served — inline, with nosniff, never anything that could run in this origin (no SVG, no HTML).
+// tenant-explicit, so one tenant can never see another's screenshots. A file is served only when (1) its path is one of
+// the screenshots the review of that run lists, (2) it has an image extension (png / jpg / jpeg / webp — never SVG or
+// HTML) and (3) its first bytes really are that image; it goes out inline with that image type and nosniff.
 
 using System;
 using System.Linq;
@@ -47,8 +48,8 @@ public static class DesignReviewEndpoints
 
     private static async Task<IResult> ListAsync(Guid sessionId, IDesignReviewStore reviews, ITenantContext tenant, CancellationToken ct)
     {
-        var recent = await reviews.ListRecentAsync(tenant.TenantId, 200, ct).ConfigureAwait(false);
-        return Results.Ok(recent.Where(r => r.SessionId == sessionId).OrderByDescending(r => r.Run)
+        var forTask = await reviews.ListForTaskAsync(tenant.TenantId, sessionId, ct).ConfigureAwait(false);
+        return Results.Ok(forTask
             .Select(r => new DesignReviewDto(r.Run, r.IssueNumber, r.Status.ToString(), r.Gate.ToString(), r.Summary, r.Findings, r.Shots,
                 r.Decision?.ToString(), r.DecisionNote, r.DecidedBy, r.DecidedAtUtc, r.UpdatedAtUtc))
             .ToList());
@@ -62,7 +63,7 @@ public static class DesignReviewEndpoints
             return Results.NotFound();
         }
         var review = await reviews.GetAsync(tenant.TenantId, sessionId, run, ct).ConfigureAwait(false);
-        if (review is null) { return Results.NotFound(); }
+        if (review is null || !review.Shots.Any(s => string.Equals(s.Path, normalized, StringComparison.OrdinalIgnoreCase))) { return Results.NotFound(); }
         var file = await files.GetAsync(tenant.TenantId, review.ScopeKey, normalized, ct).ConfigureAwait(false);
         if (file is null || !RunUploadRules.LooksLikeImage(normalized, file.Content)) { return Results.NotFound(); }
         http.Response.Headers.XContentTypeOptions = "nosniff";

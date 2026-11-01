@@ -85,11 +85,17 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         // goes to fetches them, before its CLI starts.
         var files = request.Files is { Count: > 0 } attached ? attached : null;
         // Files sent back (Design gate, ADR-0016): the runner learns only the caps; where they are stored stays here.
+        // The server-wide budget for files in flight may be spent: then this run takes no screenshots back (the design check
+        // will say none came) rather than queueing unbounded memory.
         var uploads = request.Uploads;
+        if (uploads is not null && !_broker.ExpectUploads(id, uploads.Limits))
+        {
+            _logger.LogWarning("[RemoteAgent] request {Id}: the server is already receiving as many files as it takes at once — no screenshots this run.", id);
+            uploads = null;
+        }
         var execRequest = new RemoteExecRequest(id, request.SystemPrompt, request.UserPrompt, request.Model, request.Cli, request.Autonomy,
             files is null ? null : RunFileEvidence.Manifest(files), uploads?.Limits);
         if (files is not null) { _broker.StageFiles(id, files); }
-        if (uploads is not null) { _broker.ExpectUploads(id, uploads.Limits); }
         IReadOnlyList<RunUpload> sentBack = [];
         var dispatchedAt = DateTimeOffset.UtcNow;
 
@@ -165,7 +171,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         _logger.LogInformation("[RemoteAgent] request {Id} handled by a remote agent ({Count} connected); {In}->{Out} tokens ({Kind}), 0 API cost.",
             id, _broker.AgentCount, inTok, outTok, real ? "reported by the CLI" : "estimated");
 
-        var stored = uploads is null || sentBack.Count == 0 ? [] : await StoreUploadsAsync(target.TenantId, uploads.ScopeKey, sentBack, id).ConfigureAwait(false);
+        var stored = uploads is null || sentBack.Count == 0 ? [] : await StoreUploadsAsync(target.TenantId, uploads, sentBack, id).ConfigureAwait(false);
 
         return new LlmResponse(
             Content: result.Content,
@@ -184,7 +190,9 @@ public sealed class RemoteAgentLlmClient : ILlmClient
 
     // The files the runner sent back, into the tenant's file store under the request's scope (never into git). Each was
     // already checked piece by piece (RunUploadRules); a store failure loses the screenshots, never the run's answer.
-    private async Task<IReadOnlyList<AgentOs.Domain.Files.StoredFileInfo>> StoreUploadsAsync(string tenantId, string scopeKey,
+    // Each file under the target's folder (one per repo of a multi-repo task), so two repos' "home-390-light.png" never
+    // replace each other; a path that would get too long is skipped (logged), never truncated into another name.
+    private async Task<IReadOnlyList<AgentOs.Domain.Files.StoredFileInfo>> StoreUploadsAsync(string tenantId, RunUploadTarget target,
         IReadOnlyList<RunUpload> uploads, string requestId)
     {
         var stored = new List<AgentOs.Domain.Files.StoredFileInfo>(uploads.Count);
@@ -194,7 +202,12 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             if (scope.ServiceProvider.GetService<AgentOs.Domain.Files.IScopedFileStore>() is not { } store) { return stored; }
             foreach (var u in uploads)
             {
-                var info = new AgentOs.Domain.Files.StoredFileInfo(Guid.NewGuid(), tenantId, scopeKey, u.Path, u.Content.LongLength,
+                if (AgentOs.Domain.Files.TicketFilePath.Normalize(target.PathPrefix + u.Path) is not { } path)
+                {
+                    _logger.LogWarning("[RemoteAgent] request {Id}: a file sent back has a path too long to store; skipped.", requestId);
+                    continue;
+                }
+                var info = new AgentOs.Domain.Files.StoredFileInfo(Guid.NewGuid(), tenantId, target.ScopeKey, path, u.Content.LongLength,
                     AgentOs.Domain.Files.RunFile.Hash(u.Content), u.ContentType, "Testing agent (member's computer)", DateTimeOffset.UtcNow);
                 stored.Add(await store.PutAsync(info, u.Content).ConfigureAwait(false));
             }

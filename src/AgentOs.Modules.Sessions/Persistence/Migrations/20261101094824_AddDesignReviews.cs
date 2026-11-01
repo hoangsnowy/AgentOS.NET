@@ -27,6 +27,7 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                     FindingsJson = table.Column<string>(type: "text", nullable: false),
                     ShotsJson = table.Column<string>(type: "text", nullable: false),
                     Error = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
+                    Retries = table.Column<int>(type: "integer", nullable: false),
                     Decision = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: true),
                     DecisionNote = table.Column<string>(type: "character varying(4000)", maxLength: 4000, nullable: true),
                     DecidedBy = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),

@@ -149,4 +149,8 @@ public sealed record LlmImage(string Name, byte[] Data, string MediaType)
 /// <summary>Where the files a runner sends back after a run are stored, and the caps on them.</summary>
 /// <param name="ScopeKey">The scope in the tenant's file store (e.g. <c>DesignScope.For(…)</c>).</param>
 /// <param name="Limits">How many files and bytes the run may send back.</param>
-public sealed record RunUploadTarget(string ScopeKey, AgentOs.Domain.Files.RunCollect Limits);
+public sealed record RunUploadTarget(string ScopeKey, AgentOs.Domain.Files.RunCollect Limits)
+{
+    /// <summary>A folder inside the scope the files are stored under (e.g. one per repo of a multi-repo task); "" = the root.</summary>
+    public string PathPrefix { get; init; } = string.Empty;
+}

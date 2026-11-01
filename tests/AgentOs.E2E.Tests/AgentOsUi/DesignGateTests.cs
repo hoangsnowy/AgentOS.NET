@@ -92,6 +92,11 @@ public sealed class DesignGateTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(findings).ToContainTextAsync("Use the accent button");
         await ShotAsync(panel, "panel");
 
+        // Check again is there for the owner (the sample has no task to run it on: it says so, nothing changes).
+        await panel.GetByRole(AriaRole.Button, new() { Name = "Run the design check of #7 again" }).ClickAsync();
+        await Assertions.Expect(_fx.Page.Locator(".toast").Last).ToContainTextAsync("Couldn't check #7 again");
+        await Assertions.Expect(panel.Locator("[data-testid=design-verdict]")).ToContainTextAsync("Designer agent: changes requested");
+
         // Ask for changes: needs a note, then it is recorded — the owner's decision wins over the agent.
         await panel.GetByRole(AriaRole.Button, new() { Name = "Ask for design changes on #7" }).ClickAsync();
         var send = panel.GetByRole(AriaRole.Button, new() { Name = "Send to the AI" });

@@ -304,11 +304,13 @@ public sealed class BoardTaskService(
     /// current change against the project's design skill and the ticket, posts its verdict on each pull request, and
     /// records it (pass / changes / needs a person) — the owner can still override it on Board › Tasks.
     /// </summary>
-    public async Task<TaskStart> DesignAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default) =>
-        (await BeginDesignAsync(tenantId, sessionId, cliProfile, ct).ConfigureAwait(false)).Status;
+    /// <param name="automaticRetry">Autopilot re-runs a check that couldn't run: counted against
+    /// <see cref="DesignReview.MaxAutomaticRetries"/> (a person's "Check again" isn't).</param>
+    public async Task<TaskStart> DesignAsync(string tenantId, Guid sessionId, string? cliProfile = null, bool automaticRetry = false, CancellationToken ct = default) =>
+        (await BeginDesignAsync(tenantId, sessionId, cliProfile, automaticRetry, ct).ConfigureAwait(false)).Status;
 
     /// <summary><see cref="DesignAsync"/>, returning the running work too.</summary>
-    public async Task<TaskRun> BeginDesignAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
+    public async Task<TaskRun> BeginDesignAsync(string tenantId, Guid sessionId, string? cliProfile = null, bool automaticRetry = false, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         using var scope = scopes.CreateScope();
@@ -326,9 +328,12 @@ public sealed class BoardTaskService(
             .GetForTenantAsync(tenantId, board.CredentialRef, ct).ConfigureAwait(false);
         if (string.IsNullOrEmpty(pat)) { return TaskStart.NoGitHubAccess; }
         var reviews = scope.ServiceProvider.GetRequiredService<IDesignReviewStore>();
-        var review = await reviews.GetAsync(tenantId, session.Id, session.FixRounds, ct).ConfigureAwait(false)
-            ?? DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending);
-        review = await reviews.SaveAsync(review with { Status = DesignReviewStatus.Checking, UpdatedAtUtc = DateTimeOffset.UtcNow }, ct).ConfigureAwait(false);
+        // Narrow writes only (never the whole row): the owner may decide while the check runs, and that must stand.
+        var review = await reviews.EnsureAsync(
+            DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending), ct).ConfigureAwait(false);
+        review = await reviews.SaveVerdictAsync(tenantId, session.Id, review.Run,
+            new DesignVerdictUpdate(DesignReviewStatus.Checking, Error: null, CountRetry: automaticRetry && review.Status == DesignReviewStatus.NotRun), ct)
+            .ConfigureAwait(false) ?? review;
 
         var stopLease = stops.Begin(tenantId, session.Id);
         var completion = Task.Run(() => RecordedAsync(tenantId, session, AgentOs.Modules.Pipeline.Agents.AgentRoles.Designer,
@@ -368,15 +373,9 @@ public sealed class BoardTaskService(
                 DesignOutcome.Changes => DesignReviewStatus.Changes,
                 _ => DesignReviewStatus.NeedsPerson,
             };
-            await reviews.SaveAsync(review with
-            {
-                Status = status,
-                Summary = verdict.Summary,
-                Findings = verdict.Findings,
-                Shots = screenshots.Select(s => s.Shot).ToList(),
-                Error = verdict.Error,
-                UpdatedAtUtc = DateTimeOffset.UtcNow,
-            }).ConfigureAwait(false);
+            // The agent's side only: a decision the owner made while the check ran (Ask for changes / Approve) stands.
+            await reviews.SaveVerdictAsync(tenantId, review.SessionId, review.Run, new DesignVerdictUpdate(status, verdict.Summary, verdict.Findings,
+                screenshots.Select(s => s.Shot).ToList(), verdict.Error)).ConfigureAwait(false);
             if (verdict.Ran)
             {
                 var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
@@ -397,25 +396,25 @@ public sealed class BoardTaskService(
         }
         catch (OperationCanceledException) when (stopLease.Token.IsCancellationRequested)
         {
-            await ResetDesignAsync(review).ConfigureAwait(false);
+            await ResetDesignAsync(review, new DesignVerdictUpdate(DesignReviewStatus.Pending)).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or System.IO.IOException or TimeoutException
                                    or System.Data.Common.DbException)
         {
-            await ResetDesignAsync(review with { Status = DesignReviewStatus.NotRun, Error = ex.Message }).ConfigureAwait(false);
+            await ResetDesignAsync(review, new DesignVerdictUpdate(DesignReviewStatus.NotRun, Error: ex.Message)).ConfigureAwait(false);
             feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step, $"{repoLabel} — couldn't check the design: {ex.Message}",
                 DateTimeOffset.UtcNow, repoLabel));
         }
     }
 
-    // A stopped or failed design check leaves no "Checking" behind: back to waiting (Stop) or to a person (an error).
-    private async Task ResetDesignAsync(DesignReview review)
+    // A stopped or failed design check leaves no "Checking" behind: back to waiting (Stop) or to "couldn't run" (an error,
+    // which Autopilot re-runs a bounded number of times). The agent's side only — never the owner's decision.
+    private async Task ResetDesignAsync(DesignReview review, DesignVerdictUpdate update)
     {
         try
         {
             using var scope = scopes.CreateScope();
-            await scope.ServiceProvider.GetRequiredService<IDesignReviewStore>().SaveAsync(
-                (review.Status == DesignReviewStatus.Checking ? review with { Status = DesignReviewStatus.Pending } : review) with { UpdatedAtUtc = DateTimeOffset.UtcNow })
+            await scope.ServiceProvider.GetRequiredService<IDesignReviewStore>().SaveVerdictAsync(review.TenantId, review.SessionId, review.Run, update)
                 .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException)
@@ -442,25 +441,24 @@ public sealed class BoardTaskService(
             .FirstOrDefault(s => s.Id == sessionId);
         if (session is null || session.IssueNumber is not > 0) { return null; }
         var reviews = scope.ServiceProvider.GetRequiredService<IDesignReviewStore>();
-        var review = await reviews.GetAsync(tenantId, session.Id, session.FixRounds, ct).ConfigureAwait(false)
-            ?? DesignReview.New(tenantId, session.WorkspaceId, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending);
+        var review = await reviews.EnsureAsync(
+            DesignReview.New(tenantId, session.WorkspaceId, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending), ct).ConfigureAwait(false);
         return await DecideAsync(reviews, review, decision, note, decidedBy, ct).ConfigureAwait(false);
     }
 
-    /// <summary>The owner's decision on <paramref name="review"/>, stored (also used for a review shown without its task).</summary>
-    public static async Task<DesignReview> DecideAsync(IDesignReviewStore reviews, DesignReview review, DesignDecision decision, string? note, string decidedBy,
+    /// <summary>The owner's decision on <paramref name="review"/> (also one shown without its task) — written by the
+    /// decision-only update, so a page that shows an older copy of the review never overwrites the agent's verdict.</summary>
+    public static async Task<DesignReview?> DecideAsync(IDesignReviewStore reviews, DesignReview review, DesignDecision decision, string? note, string decidedBy,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(reviews);
         ArgumentNullException.ThrowIfNull(review);
-        return await reviews.SaveAsync(review with
+        if (decision == DesignDecision.ChangesAsked && string.IsNullOrWhiteSpace(note))
         {
-            Decision = decision,
-            DecisionNote = decision == DesignDecision.ChangesAsked ? note?.Trim() : null,
-            DecidedBy = decidedBy,
-            DecidedAtUtc = DateTimeOffset.UtcNow,
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
-        }, ct).ConfigureAwait(false);
+            throw new ArgumentException("Say what should change.", nameof(note));
+        }
+        return await reviews.DecideAsync(review.TenantId, review.SessionId, review.Run,
+            new DesignOwnerDecision(decision, note, decidedBy, DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
     }
 
     // The repository's design skill(s) from its default branch. Best-effort: none on any failure.
@@ -505,7 +503,12 @@ public sealed class BoardTaskService(
                 var repoLabel = $"{change.Owner}/{change.Repo}";
                 var verdict = await tester.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
                     new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
-                    session.IssueNumber ?? 0, session.Title, body, cliProfile) { Files = ticketFiles, Design = capture }, stopLease.Token).ConfigureAwait(false);
+                    session.IssueNumber ?? 0, session.Title, body, cliProfile)
+                {
+                    Files = ticketFiles,
+                    // Each repo's screenshots under its own folder of the task's design scope — two repos never overwrite each other.
+                    Design = capture is null ? null : capture with { PathPrefix = DesignCapture.PrefixFor(change.Id) },
+                }, stopLease.Token).ConfigureAwait(false);
                 allPassed &= verdict is { Ran: true, Passed: true };
                 shots.AddRange(verdict.Screenshots);
                 if (!verdict.Ran)
@@ -534,8 +537,13 @@ public sealed class BoardTaskService(
             if (capture is not null && allPassed && session.IssueNumber is > 0
                 && scope.ServiceProvider.GetService<IDesignReviewStore>() is { } reviews)
             {
-                await reviews.SaveAsync(DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending)
-                    with { Shots = shots.DistinctBy(s => s.Path, StringComparer.OrdinalIgnoreCase).ToList() }).ConfigureAwait(false);
+                // Same fix round = same code: a re-test refreshes the screenshots and waits for the Designer again, but an
+                // owner's decision on this round stands (narrow writes only).
+                var fresh = shots.DistinctBy(s => s.Path, StringComparer.OrdinalIgnoreCase).ToList();
+                await reviews.EnsureAsync(DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending))
+                    .ConfigureAwait(false);
+                await reviews.SaveVerdictAsync(tenantId, session.Id, session.FixRounds,
+                    new DesignVerdictUpdate(DesignReviewStatus.Pending, string.Empty, [], fresh)).ConfigureAwait(false);
                 feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step,
                     shots.Count > 0 ? $"{shots.Count} screenshot(s) ready for the design check." : "No screenshots came back — the design check will need you.",
                     DateTimeOffset.UtcNow));

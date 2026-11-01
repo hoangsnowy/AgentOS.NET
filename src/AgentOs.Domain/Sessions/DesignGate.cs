@@ -132,6 +132,13 @@ public sealed record DesignCapture(string ScopeKey)
 {
     /// <summary>The caps on what the run may send back.</summary>
     public RunCollect Limits { get; init; } = RunCollect.Screenshots;
+
+    /// <summary>The folder this run's screenshots are stored under inside the scope ("" = the scope's root): one per repo
+    /// of a multi-repo task (<see cref="PrefixFor"/>), so repo B's <c>home-390-light.png</c> never replaces repo A's.</summary>
+    public string PathPrefix { get; init; } = string.Empty;
+
+    /// <summary>The folder of one repo of the task (its task-repo id).</summary>
+    public static string PrefixFor(Guid sessionRepoId) => string.Create(CultureInfo.InvariantCulture, $"{sessionRepoId:N}/");
 }
 
 /// <summary>Where a design review stands.</summary>
@@ -204,6 +211,16 @@ public sealed record DesignReview(
     DateTimeOffset? DecidedAtUtc,
     DateTimeOffset UpdatedAtUtc)
 {
+    /// <summary>How many automatic re-runs of a check that couldn't run (<see cref="DesignReviewStatus.NotRun"/>: computer
+    /// offline, budget, timeout) Autopilot has made for this run — at most <see cref="MaxAutomaticRetries"/>.</summary>
+    public int Retries { get; init; }
+
+    /// <summary>The most automatic re-runs of a check that couldn't run, per task and test run.</summary>
+    public const int MaxAutomaticRetries = 2;
+
+    /// <summary>The check couldn't run, nobody decided yet, and Autopilot may run it again (once a computer is there).</summary>
+    public bool CanRetryAutomatically => Status == DesignReviewStatus.NotRun && Decision is null && Retries < MaxAutomaticRetries;
+
     /// <summary>Where the screenshots of this review live.</summary>
     public string ScopeKey => DesignScope.For(BoardId, IssueNumber, Run);
 
@@ -233,7 +250,26 @@ public sealed record DesignReview(
         : new DesignVerdict(true, DesignOutcome.Changes, Findings, Summary, null).ChangeRequest();
 }
 
-/// <summary>Tenant-scoped store of design reviews (one per task and test run). Implemented by the Sessions module.</summary>
+/// <summary>A change to the agent's side of a review — never the owner's decision. Null fields are kept as they are.</summary>
+/// <param name="Status">The new status.</param>
+/// <param name="Summary">The verdict's summary, or null to keep it.</param>
+/// <param name="Findings">The findings, or null to keep them.</param>
+/// <param name="Shots">The screenshots, or null to keep them.</param>
+/// <param name="Error">Why the check couldn't run; null clears it.</param>
+/// <param name="CountRetry">This run is an automatic re-run of a check that couldn't run: count it.</param>
+public sealed record DesignVerdictUpdate(DesignReviewStatus Status, string? Summary = null, IReadOnlyList<DesignFinding>? Findings = null,
+    IReadOnlyList<DesignShot>? Shots = null, string? Error = null, bool CountRetry = false);
+
+/// <summary>The owner's decision on a review.</summary>
+public sealed record DesignOwnerDecision(DesignDecision Decision, string? Note, string DecidedBy, DateTimeOffset DecidedAtUtc);
+
+/// <summary>
+/// Tenant-scoped store of design reviews (one per task and test run). Implemented by the Sessions module.
+/// There is no whole-row save: the agent's side (<see cref="SaveVerdictAsync"/>) and the owner's decision
+/// (<see cref="DecideAsync"/>) are written by narrow updates that touch only their own columns, so a verdict that lands
+/// after the owner decided (a check runs for up to half an hour) can never erase the decision — and a decision made
+/// from a stale page can never erase a verdict.
+/// </summary>
 public interface IDesignReviewStore
 {
     /// <summary>The review of run <paramref name="run"/> of a task, or null.</summary>
@@ -242,9 +278,20 @@ public interface IDesignReviewStore
     /// <summary>A task's latest review (highest run), or null.</summary>
     Task<DesignReview?> LatestAsync(string tenantId, Guid sessionId, CancellationToken ct = default);
 
+    /// <summary>A task's reviews, newest run first.</summary>
+    Task<IReadOnlyList<DesignReview>> ListForTaskAsync(string tenantId, Guid sessionId, CancellationToken ct = default);
+
     /// <summary>The tenant's most recent reviews, newest first (Board › Tasks).</summary>
     Task<IReadOnlyList<DesignReview>> ListRecentAsync(string tenantId, int max = 50, CancellationToken ct = default);
 
-    /// <summary>Store <paramref name="review"/> — replacing the task's review of the same run.</summary>
-    Task<DesignReview> SaveAsync(DesignReview review, CancellationToken ct = default);
+    /// <summary>The task's review of <c>fresh.Run</c>: stored as <paramref name="fresh"/> when there is none yet, else the
+    /// existing one, untouched.</summary>
+    Task<DesignReview> EnsureAsync(DesignReview fresh, CancellationToken ct = default);
+
+    /// <summary>Write the agent's side of a review (status, summary, findings, screenshots, error, retries) — never the
+    /// owner's decision. Null when there is no such review.</summary>
+    Task<DesignReview?> SaveVerdictAsync(string tenantId, Guid sessionId, int run, DesignVerdictUpdate update, CancellationToken ct = default);
+
+    /// <summary>Write the owner's decision — nothing else. Null when there is no such review.</summary>
+    Task<DesignReview?> DecideAsync(string tenantId, Guid sessionId, int run, DesignOwnerDecision decision, CancellationToken ct = default);
 }

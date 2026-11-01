@@ -398,11 +398,10 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         if (!result.Ok || request.Collect is not { } collect) { return result; }
         try
         {
-            var picks = AgentOs.RemoteAgent.RunUploads.Select(runDir, AgentOs.RemoteAgent.RunUploads.ListedPaths(result.Content), collect, out var refused);
-            foreach (var why in refused) { Console.WriteLine($"[agent] {request.Id}: not sent back — {why}"); }
-            var problems = await AgentOs.RemoteAgent.RunUploads.SendAsync(picks, chunk => upload(request.Id, chunk)).ConfigureAwait(false);
-            foreach (var why in problems) { Console.WriteLine($"[agent] {request.Id}: the server refused — {why}"); }
-            Console.WriteLine($"[agent] {request.Id}: sent back {picks.Count - problems.Count} screenshot(s)");
+            var candidates = AgentOs.RemoteAgent.RunUploads.Candidates(runDir, AgentOs.RemoteAgent.RunUploads.ListedPaths(result.Content));
+            var outcome = await AgentOs.RemoteAgent.RunUploads.SendAsync(runDir, candidates, collect, chunk => upload(request.Id, chunk)).ConfigureAwait(false);
+            foreach (var why in outcome.Problems) { Console.WriteLine($"[agent] {request.Id}: not sent back — {why}"); }
+            Console.WriteLine($"[agent] {request.Id}: sent back {outcome.Sent.Count} screenshot(s)");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or Microsoft.AspNetCore.SignalR.HubException)
         {

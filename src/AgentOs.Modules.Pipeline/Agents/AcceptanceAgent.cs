@@ -77,7 +77,7 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
             AgentRole = AgentRoles.Acceptance,
             Autonomy = WorkspaceAutonomy.Scoped,
             Files = onComputer && request.Files.Count > 0 ? request.Files : null,
-            Uploads = capture is null ? null : new RunUploadTarget(capture.ScopeKey, capture.Limits),
+            Uploads = capture is null ? null : new RunUploadTarget(capture.ScopeKey, capture.Limits) { PathPrefix = capture.PathPrefix },
             Progress = new InlineProgress<string>(step =>
             {
                 if (TaskSteps.LabelFor(step) is { } label) { Emit(request, SessionRunEventKind.Step, "Testing — " + label, repoLabel); }
@@ -87,7 +87,8 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
         {
             var response = await llm.SendAsync(llmRequest, ct).ConfigureAwait(false);
             var verdict = Parse(response.Content ?? string.Empty);
-            return capture is null ? verdict : verdict with { Screenshots = Arrived(verdict.Screenshots, response.Uploaded) };
+            return capture is null ? verdict
+                : verdict with { Screenshots = Arrived(verdict.Screenshots.Select(s => s with { Path = capture.PathPrefix + s.Path }).ToList(), response.Uploaded) };
         }
         catch (Exception ex) when (ex is LlmException or TimeoutException or InvalidOperationException or System.Net.Http.HttpRequestException)
         {
@@ -252,10 +253,11 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
             while the app still runs, take a screenshot of each screen this change touches (at most {screens} screens) at two
             widths — {DesignShot.PhoneWidth} px (phone) and {DesignShot.DesktopWidth} px (desktop) — each in light and in
             dark colour scheme: four per screen. Use Playwright, e.g.
-            `npx playwright screenshot --viewport-size={DesignShot.PhoneWidth},844 --color-scheme=dark --full-page <url> <file>`
-            (or `colorScheme` on the browser context in a spec). Save them as PNG in `{RunUploadRules.Folder}/` of the run
+            `npx playwright screenshot --viewport-size={DesignShot.PhoneWidth},844 --color-scheme=dark <url> <file>`
+            (or `colorScheme` on the browser context in a spec). Keep each one at most {DesignImageLimits.RequestedMaxHeight} px tall: for a
+            longer page take its top part (`clip` in a spec) instead of the full page. Save them as PNG in `{RunUploadRules.Folder}/` of the run
             folder — the folder you started in, not inside the clone — named `<screen>-<width>-<theme>.png`
-            (e.g. `checkout-{DesignShot.PhoneWidth}-dark.png`); each under {limits.MaxFileBytes / (1024 * 1024)} MB. Never
+            (e.g. `checkout-{DesignShot.PhoneWidth}-dark.png`); each under {Math.Min(limits.MaxFileBytes, DesignImageLimits.MaxImageBytes) / (1024 * 1024)} MB. Never
             commit them: the runner sends them to AgentOS.NET itself. Add them to your JSON reply:
             "screenshots":[{"{"}"path":"{RunUploadRules.Folder}/checkout-{DesignShot.PhoneWidth}-dark.png","screen":"Checkout","width":{DesignShot.PhoneWidth},"theme":"dark"{"}"}]
             A screenshot you could not take is left out (say why in the summary); it never fails the verdict on its own.

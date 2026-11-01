@@ -45,8 +45,11 @@ public sealed class DesignReviewStoreTests
         var session = Guid.NewGuid();
         var scope = DesignScope.For(board, 7, 0);
 
-        await reviews.SaveAsync(Review("tenant-a", board, session, 0));
+        await reviews.EnsureAsync(Review("tenant-a", board, session, 0));
         await files.PutAsync(Shot("tenant-a", scope, ".agentos/screenshots/checkout-390-dark.png"), Png);
+        (await reviews.SaveVerdictAsync("tenant-b", session, 0, new DesignVerdictUpdate(DesignReviewStatus.Pass))).ShouldBeNull();
+        (await reviews.DecideAsync("tenant-b", session, 0, new DesignOwnerDecision(DesignDecision.Approved, null, "Eve", DateTimeOffset.UtcNow))).ShouldBeNull();
+        (await reviews.ListForTaskAsync("tenant-b", session)).ShouldBeEmpty();
 
         (await reviews.GetAsync("tenant-b", session, 0)).ShouldBeNull();
         (await reviews.LatestAsync("tenant-b", session)).ShouldBeNull();
@@ -58,24 +61,101 @@ public sealed class DesignReviewStoreTests
         a.Findings.ShouldHaveSingleItem().Fix.ShouldBe("Use the accent token");
         a.Shots.ShouldHaveSingleItem().IsDark.ShouldBeTrue();
         a.ScopeKey.ShouldBe(scope);
+        a.Gate.ShouldBe(DesignGateState.ChangesRequested);                    // nothing tenant B tried landed
         (await files.GetAsync("tenant-a", scope, ".agentos/screenshots/checkout-390-dark.png"))!.Content.ShouldBe(Png);
     }
 
     [Fact]
-    public async Task InMemory_OneReviewPerTaskAndRun_TheLatestRunWins_AndTheDecisionIsKept()
+    public async Task InMemory_OneReviewPerTaskAndRun_EnsureKeepsTheExisting_TheLatestRunWins()
     {
         var reviews = new InMemoryDesignReviewStore();
         var board = Guid.NewGuid();
         var session = Guid.NewGuid();
 
-        var first = await reviews.SaveAsync(Review("t", board, session, 0));
-        var decided = await reviews.SaveAsync(first with { Decision = DesignDecision.Approved, DecidedBy = "Ann", DecidedAtUtc = DateTimeOffset.UtcNow });
-        decided.Id.ShouldBe(first.Id);                                         // a replace, not a second row
-        await reviews.SaveAsync(Review("t", board, session, 1, DesignReviewStatus.Pending));
+        var first = await reviews.EnsureAsync(Review("t", board, session, 0));
+        await reviews.DecideAsync("t", session, 0, new DesignOwnerDecision(DesignDecision.Approved, null, "Ann", DateTimeOffset.UtcNow));
+        var again = await reviews.EnsureAsync(Review("t", board, session, 0, DesignReviewStatus.Pending));
+        again.Id.ShouldBe(first.Id);                                           // the existing row, untouched
+        again.Decision.ShouldBe(DesignDecision.Approved);
+        again.Status.ShouldBe(DesignReviewStatus.Changes);
+        await reviews.EnsureAsync(Review("t", board, session, 1, DesignReviewStatus.Pending));
 
         (await reviews.GetAsync("t", session, 0))!.Gate.ShouldBe(DesignGateState.Passed);
         (await reviews.LatestAsync("t", session))!.Run.ShouldBe(1);
+        (await reviews.ListForTaskAsync("t", session)).Select(r => r.Run).ShouldBe([1, 0]);
         (await reviews.ListRecentAsync("t")).Count.ShouldBe(2);
+    }
+
+    // ── Lost updates: the agent's side and the owner's decision never overwrite each other ──
+
+    // The race the security review found: the check starts (Decision null), the owner presses "Ask for changes" while the
+    // Designer runs (up to 30 minutes), then the Designer returns PASS. The decision must stand — or the ticket merges.
+    internal static async Task DecisionMadeWhileTheCheckRuns_SurvivesAPassVerdict(IDesignReviewStore reviews, string tenant, Guid board, Guid session)
+    {
+        await reviews.EnsureAsync(DesignReview.New(tenant, board, session, 7, 0, DesignReviewStatus.Pending));
+        var started = (await reviews.SaveVerdictAsync(tenant, session, 0, new DesignVerdictUpdate(DesignReviewStatus.Checking)))!;
+        started.Decision.ShouldBeNull();                                       // what the running check holds
+
+        await reviews.DecideAsync(tenant, session, 0, new DesignOwnerDecision(DesignDecision.ChangesAsked, "Stack the form on the phone.", "Ann", DateTimeOffset.UtcNow));
+        var after = await reviews.SaveVerdictAsync(tenant, session, started.Run, new DesignVerdictUpdate(DesignReviewStatus.Pass, "Looks right.", [], []));
+
+        after!.Status.ShouldBe(DesignReviewStatus.Pass);                       // the verdict is recorded…
+        after.Decision.ShouldBe(DesignDecision.ChangesAsked);                  // …and the owner's decision stands
+        after.DecisionNote.ShouldBe("Stack the form on the phone.");
+        after.DecidedBy.ShouldBe("Ann");
+        after.Gate.ShouldBe(DesignGateState.ChangesRequested);                 // so Autopilot sends it back, never merges
+        (await reviews.GetAsync(tenant, session, 0))!.Gate.ShouldBe(DesignGateState.ChangesRequested);
+    }
+
+    // The other way round: a decision taken on a page that shows an older copy (DesignChecks caches for 30 s) must not
+    // erase a verdict that landed since.
+    internal static async Task ADecisionFromAStalePage_KeepsTheVerdict(IDesignReviewStore reviews, string tenant, Guid board, Guid session)
+    {
+        var stale = await reviews.EnsureAsync(DesignReview.New(tenant, board, session, 7, 0, DesignReviewStatus.Pending));
+        await reviews.SaveVerdictAsync(tenant, session, 0, new DesignVerdictUpdate(DesignReviewStatus.Changes, "Two problems.",
+            [new DesignFinding("Checkout · phone · dark", "Unreadable", "Accent token")], []));
+
+        var decided = await AgentOs.Web.Services.BoardTasks.BoardTaskService.DecideAsync(reviews, stale, DesignDecision.Approved, null, "Ann");
+
+        decided!.Status.ShouldBe(DesignReviewStatus.Changes);
+        decided.Findings.ShouldHaveSingleItem();
+        decided.Summary.ShouldBe("Two problems.");
+        decided.Gate.ShouldBe(DesignGateState.Passed);
+    }
+
+    [Fact]
+    public Task InMemory_DecisionMadeWhileTheCheckRuns_SurvivesAPassVerdict() =>
+        DecisionMadeWhileTheCheckRuns_SurvivesAPassVerdict(new InMemoryDesignReviewStore(), "t", Guid.NewGuid(), Guid.NewGuid());
+
+    [Fact]
+    public Task InMemory_ADecisionFromAStalePage_KeepsTheVerdict() =>
+        ADecisionFromAStalePage_KeepsTheVerdict(new InMemoryDesignReviewStore(), "t", Guid.NewGuid(), Guid.NewGuid());
+
+    [Fact]
+    public async Task Verdict_KeepsWhatItDoesntName_AndCountsRetries()
+    {
+        var reviews = new InMemoryDesignReviewStore();
+        var session = Guid.NewGuid();
+        await reviews.EnsureAsync(Review("t", Guid.NewGuid(), session, 0));
+
+        var checking = await reviews.SaveVerdictAsync("t", session, 0, new DesignVerdictUpdate(DesignReviewStatus.Checking));
+        checking!.Summary.ShouldBe("Unreadable button.");                      // null fields are kept
+        checking.Findings.ShouldHaveSingleItem();
+        checking.Shots.ShouldHaveSingleItem();
+
+        var notRun = await reviews.SaveVerdictAsync("t", session, 0, new DesignVerdictUpdate(DesignReviewStatus.NotRun, Error: "No computer."));
+        notRun!.CanRetryAutomatically.ShouldBeTrue();
+        notRun.Gate.ShouldBe(DesignGateState.NeedsPerson);
+        for (var i = 0; i < DesignReview.MaxAutomaticRetries; i++)
+        {
+            await reviews.SaveVerdictAsync("t", session, 0, new DesignVerdictUpdate(DesignReviewStatus.Checking, CountRetry: true));
+            notRun = await reviews.SaveVerdictAsync("t", session, 0, new DesignVerdictUpdate(DesignReviewStatus.NotRun, Error: "No computer."));
+        }
+        notRun!.Retries.ShouldBe(DesignReview.MaxAutomaticRetries);
+        notRun.CanRetryAutomatically.ShouldBeFalse();                          // bounded: now the owner decides
+
+        var decided = await reviews.DecideAsync("t", session, 0, new DesignOwnerDecision(DesignDecision.Approved, null, "Ann", DateTimeOffset.UtcNow));
+        decided!.CanRetryAutomatically.ShouldBeFalse();
     }
 
     // ── Real Postgres ──
@@ -111,9 +191,9 @@ public sealed class DesignReviewStoreTests
             {
                 var reviews = new EfDesignReviewStore(db);
                 var files = new EfScopedFileStore(db);
-                var saved = await reviews.SaveAsync(Review("tenant-a", board, session, 0));
-                await reviews.SaveAsync(saved with { Decision = DesignDecision.ChangesAsked, DecisionNote = "Stack it on the phone.", DecidedBy = "Ann" });
-                await reviews.SaveAsync(Review("tenant-b", board, session, 0, DesignReviewStatus.Pass));
+                await reviews.EnsureAsync(Review("tenant-a", board, session, 0));
+                await reviews.DecideAsync("tenant-a", session, 0, new DesignOwnerDecision(DesignDecision.ChangesAsked, "Stack it on the phone.", "Ann", DateTimeOffset.UtcNow));
+                await reviews.EnsureAsync(Review("tenant-b", board, session, 0, DesignReviewStatus.Pass));
                 await files.PutAsync(Shot("tenant-a", scope, ".agentos/screenshots/checkout-390-dark.png"), Png);
             }
             await using (var db = new SessionsDbContext(options))
@@ -131,10 +211,38 @@ public sealed class DesignReviewStoreTests
                 (await files.GetAsync("tenant-a", scope, ".agentos/screenshots/checkout-390-dark.png"))!.Content.ShouldBe(Png);
             }
 
+            // Lost updates, as they really happen: the check's scope (its own context, holding the row it started with)
+            // and the owner's scope (another context) write the same row; neither erases the other's columns.
+            var raced = Guid.NewGuid();
+            await using (var check = new SessionsDbContext(options))
+            {
+                var checkStore = new EfDesignReviewStore(check);
+                await checkStore.EnsureAsync(DesignReview.New("tenant-a", board, raced, 7, 0, DesignReviewStatus.Pending));
+                (await checkStore.SaveVerdictAsync("tenant-a", raced, 0, new DesignVerdictUpdate(DesignReviewStatus.Checking)))!.Decision.ShouldBeNull();
+                await using (var owner = new SessionsDbContext(options))
+                {
+                    await new EfDesignReviewStore(owner).DecideAsync("tenant-a", raced, 0,
+                        new DesignOwnerDecision(DesignDecision.ChangesAsked, "Stack the form on the phone.", "Ann", DateTimeOffset.UtcNow));
+                }
+                await checkStore.SaveVerdictAsync("tenant-a", raced, 0, new DesignVerdictUpdate(DesignReviewStatus.Pass, "Looks right.", [], []));
+            }
+            await using (var read = new SessionsDbContext(options))
+            {
+                var after = (await new EfDesignReviewStore(read).GetAsync("tenant-a", raced, 0))!;
+                after.Status.ShouldBe(DesignReviewStatus.Pass);
+                after.Decision.ShouldBe(DesignDecision.ChangesAsked);
+                after.DecisionNote.ShouldBe("Stack the form on the phone.");
+                after.Gate.ShouldBe(DesignGateState.ChangesRequested);
+            }
+            await using (var db = new SessionsDbContext(options))
+            {
+                await ADecisionFromAStalePage_KeepsTheVerdict(new EfDesignReviewStore(db), "tenant-a", board, Guid.NewGuid());
+            }
+
             // The unique (tenant, task, run) index refuses a raw twin row.
             var twin = await Should.ThrowAsync<PostgresException>(() => Exec(cs, $"""
-                INSERT INTO sessions.design_reviews ("Id","TenantId","BoardId","SessionId","IssueNumber","Run","Status","Summary","FindingsJson","ShotsJson","UpdatedAtUtc")
-                VALUES (gen_random_uuid(), 'tenant-a', '{board}', '{session}', 7, 0, 'Pending', '', '[]', '[]', now())
+                INSERT INTO sessions.design_reviews ("Id","TenantId","BoardId","SessionId","IssueNumber","Run","Status","Summary","FindingsJson","ShotsJson","Retries","UpdatedAtUtc")
+                VALUES (gen_random_uuid(), 'tenant-a', '{board}', '{session}', 7, 0, 'Pending', '', '[]', '[]', 0, now())
                 """));
             twin.SqlState.ShouldBe("23505");
 
@@ -146,11 +254,11 @@ public sealed class DesignReviewStoreTests
             await using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText = "SELECT count(*) FROM sessions.design_reviews";
-                ((long)(await cmd.ExecuteScalarAsync())!).ShouldBe(1L);
+                ((long)(await cmd.ExecuteScalarAsync())!).ShouldBe(3L);   // tenant A's three reviews; never B's
             }
             var refused = await Should.ThrowAsync<PostgresException>(() => Exec(conn, $"""
-                INSERT INTO sessions.design_reviews ("Id","TenantId","BoardId","SessionId","IssueNumber","Run","Status","Summary","FindingsJson","ShotsJson","UpdatedAtUtc")
-                VALUES (gen_random_uuid(), 'tenant-b', '{board}', '{Guid.NewGuid()}', 7, 0, 'Pending', '', '[]', '[]', now())
+                INSERT INTO sessions.design_reviews ("Id","TenantId","BoardId","SessionId","IssueNumber","Run","Status","Summary","FindingsJson","ShotsJson","Retries","UpdatedAtUtc")
+                VALUES (gen_random_uuid(), 'tenant-b', '{board}', '{Guid.NewGuid()}', 7, 0, 'Pending', '', '[]', '[]', 0, now())
                 """));
             refused.SqlState.ShouldBe("42501");
             await Exec(conn, "RESET ROLE");
