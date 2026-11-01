@@ -190,9 +190,10 @@ public static partial class SecretRedactor
             // mixed-case base64 / base64url — not a CamelCase name with a date in it (20261101_MemberComputerEvidence)
             return digitGroups >= 3 || flips * 10 >= letterPairs * 3;
         }
-        return digitGroups >= 3 && beyondHex > 0
-            && ((upper == 0 && digit >= 4 && lower >= 8) // lowercase base32 (an Azure DevOps PAT)
-                || (lower == 0 && digit >= 4 && upper >= 8)); // uppercase base32 (a TOTP seed)
+        if (digitGroups < 3 || beyondHex == 0 || digit < 4) { return false; }
+        var lowercaseBase32 = upper == 0 && lower >= 8; // an Azure DevOps PAT
+        var uppercaseBase32 = lower == 0 && upper >= 8; // a TOTP seed
+        return lowercaseBase32 || uppercaseBase32;
     }
 
     private static bool IsGuid(ReadOnlySpan<char> s) =>

@@ -334,7 +334,8 @@ public sealed class RunnerToolEvidenceTests
 
         await Hub(broker, log, "conn-a").ReportToolCalls("req-1", "scoped", [Call("toolu_1")]);
 
-        log.Seen.ShouldHaveSingleItem().ShouldBe(("tenant-a", (Guid?)Guid.Parse("11111111-1111-1111-1111-111111111111")));
+        (string Tenant, Guid? Session) expected = ("tenant-a", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        log.Seen.ShouldHaveSingleItem().ShouldBe(expected);
         AgentOs.SharedKernel.Identity.AmbientIdentity.Current.ShouldBeNull(); // restored afterwards
     }
 

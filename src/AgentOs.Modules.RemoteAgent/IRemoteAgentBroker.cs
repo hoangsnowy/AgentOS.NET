@@ -366,6 +366,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
 
     private readonly Microsoft.Extensions.Logging.ILogger? _logger;
 
+    /// <summary>The in-process broker; refused tool-call evidence is counted and, with a logger, logged.</summary>
     /// <param name="time">The clock for the grace window (a fake one in tests); null = the system clock.</param>
     /// <param name="logger">Where refused evidence is reported; null = counted only.</param>
     public InProcessRemoteAgentBroker(TimeProvider? time = null, Microsoft.Extensions.Logging.ILogger<InProcessRemoteAgentBroker>? logger = null)
