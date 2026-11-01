@@ -51,4 +51,27 @@ public sealed class DevSecretGuardTests
             ("Auth:Keycloak:Admin:Password", "admin"));
         Should.NotThrow(() => DevSecretGuard.EnsureNoDevDefaults(cfg, "Development"));
     }
+
+    [Fact]
+    public void EnsureNoDevDefaults_ProductionWithChangeMePlaceholder_Throws()
+    {
+        var cfg = Config(("Auth:Keycloak:Admin:ClientSecret", "CHANGE_ME"));
+        var ex = Should.Throw<InvalidOperationException>(() => DevSecretGuard.EnsureNoDevDefaults(cfg, "Production"));
+        ex.Message.ShouldContain("Auth:Keycloak:Admin:ClientSecret");
+    }
+
+    [Fact]
+    public void EnsureNoDevDefaults_ProductionWithChangeMeInsideConnectionString_Throws()
+    {
+        var cfg = Config(("ConnectionStrings:DefaultConnection", "Host=postgres;Username=agentos;Password=CHANGE_ME"));
+        var ex = Should.Throw<InvalidOperationException>(() => DevSecretGuard.EnsureNoDevDefaults(cfg, "Production"));
+        ex.Message.ShouldContain("ConnectionStrings:DefaultConnection");
+    }
+
+    [Fact]
+    public void EnsureNoDevDefaults_DevelopmentWithChangeMe_DoesNotThrow()
+    {
+        var cfg = Config(("Auth:Keycloak:ClientSecret", "CHANGE_ME"));
+        Should.NotThrow(() => DevSecretGuard.EnsureNoDevDefaults(cfg, "Development"));
+    }
 }

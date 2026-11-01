@@ -1,0 +1,97 @@
+{{- if .Values.ollama.enabled }}
+{{- $selector := dict "root" . "name" "ollama" -}}
+{{- $o := .Values.ollama -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with $o.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $o.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" $selector | nindent 8 }}
+    spec:
+      {{- include "agentos.imagePullSecrets" . | nindent 6 }}
+      automountServiceAccountToken: false
+      # The upstream image runs as root by default; it works as any uid when HOME (its ed25519 identity key)
+      # and the model store point at a writable volume.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: ollama
+          image: {{ include "agentos.image" (dict "root" . "image" $o.image) }}
+          imagePullPolicy: {{ $o.image.pullPolicy }}
+          env:
+            - name: HOME
+              value: /data
+            - name: OLLAMA_MODELS
+              value: /data/models
+          ports:
+            - name: http
+              containerPort: 11434
+          readinessProbe:
+            httpGet: { path: /api/version, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/version, port: http }
+            periodSeconds: 30
+          securityContext:
+            {{- include "agentos.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          resources:
+            {{- toYaml $o.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ include "agentos.component" $selector }}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  selector:
+    {{- include "agentos.selectorLabels" $selector | nindent 4 }}
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+{{- end }}

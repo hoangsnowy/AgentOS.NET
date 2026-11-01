@@ -33,7 +33,9 @@ pg_dump -Fc -h <host> -U <user> -d agentos -f agentos-$(date +%F).dump
 
 ## Restore procedure
 
-1. Provision Postgres, restore: `pg_restore -d agentos agentos-<date>.dump`.
+1. Provision Postgres, restore: `pg_restore -d agentos --no-owner --no-privileges agentos-<date>.dump`.
+   (`--no-privileges`: the dump carries grants to the RLS role `agentos_rls`, which a fresh server does not
+   have yet — the hosts re-create the role, its grants and the policies at boot. On-prem steps: [ONPREM.md](ONPREM.md#5-backup--restore).)
 2. Point `ConnectionStrings:DefaultConnection` at the restored server; start the hosts. Migrations
    are idempotent (and serialized by a `pg_advisory_lock` per schema since 0.6.0).
 3. Verify decryption BEFORE declaring recovery: sign in as a tenant admin → Settings → the saved

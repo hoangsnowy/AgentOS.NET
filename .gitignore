@@ -59,6 +59,7 @@ docs/design/claude-design-shots/
 **/appsettings.Local.json
 **/.env
 **/.env.*
+!**/.env.example
 **/secrets.json
 **/*.pfx
 **/*.key
@@ -85,3 +86,6 @@ infra/AgentOs.AppHost/aspire-manifest.json
 # local screenshot + design-push scratch (not committed)
 .shot/
 .design-push/
+
+# On-prem compose: the generated DataProtection certificate directory (deploy/compose/init-secrets.sh)
+deploy/compose/dataprotection/

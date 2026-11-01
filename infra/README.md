@@ -16,7 +16,8 @@ Deployment is driven by **.NET Aspire + Azure Developer CLI (`azd`)**. The AppHo
 
 `infra/main.bicep`, `resources.bicep` and the `postgres*` modules are the azd-generated infrastructure
 (`azd infra synth`), committed so the provisioned shape is reviewable — regenerate them rather than
-hand-editing when the app model changes. `azd` builds images with the .NET SDK (no Dockerfile needed).
+hand-editing when the app model changes. `azd` builds images with the .NET SDK (no Dockerfile needed); the root `Dockerfile` / `Dockerfile.web`
+and `infra/keycloak/Dockerfile` build the images for the on-prem install ([docs/ONPREM.md](../docs/ONPREM.md)).
 
 ## First deploy (local)
 

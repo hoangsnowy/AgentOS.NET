@@ -1,0 +1,232 @@
+# AgentOS.NET Helm chart — values (docs/ONPREM.md).
+#
+# Deploy/bootstrap configuration only. Product settings (LLM providers + keys, agent profiles, budgets, …)
+# are set in the desktop (Settings), per ADR-0011 — never here.
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  # Prefix for EVERY image (Api, Web, Keycloak, Postgres, Ollama) — your private/air-gapped registry, e.g.
+  # registry.corp:5000. deploy/bundle.sh push <registry> publishes the bundle under exactly these names.
+  imageRegistry: ""
+  # Names of existing docker-registry Secrets.
+  imagePullSecrets: []
+
+# ---------------------------------------------------------------------------------------------------------
+# Ingress — one Ingress for the desktop, the bundled Keycloak and (optionally) the Api.
+# The public URLs below are derived from these hosts: https when tls.enabled, else http.
+# ---------------------------------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: ""
+  # e.g. cert-manager.io/cluster-issuer: corp-ca. Blazor Server keeps a live circuit per browser tab — with
+  # web.replicaCount > 1 add your controller's sticky-session (cookie affinity) annotations here.
+  annotations: {}
+  hosts:
+    web: agentos.example.com
+    # Bundled Keycloak only (keycloak.enabled=true).
+    keycloak: sso.agentos.example.com
+    # Empty = the REST Api / MCP endpoint / remote-agent hub are not exposed outside the cluster.
+    api: ""
+  tls:
+    enabled: true
+    # Existing kubernetes.io/tls Secrets (cert-manager or your PKI), one per host.
+    secretNames:
+      web: agentos-web-tls
+      keycloak: agentos-sso-tls
+      api: agentos-api-tls
+
+# ---------------------------------------------------------------------------------------------------------
+# Secrets. Production: create ONE Secret yourself and name it here (see docs/ONPREM.md) — keys:
+#   postgres-password, keycloak-admin-password, keycloak-web-client-secret, keycloak-admin-client-secret,
+#   operator-password, [member-password], [smtp-password], [dataprotection-certificate-password]
+# Without existingSecret the chart creates one from the values below; empty values are generated randomly
+# once and kept on upgrade (read them back with kubectl — NOTES.txt shows how). Generation reads the live
+# Secret with `lookup`, which offline renders (helm template, ArgoCD, Flux) cannot do: GitOps installs MUST
+# use existingSecret.
+# ---------------------------------------------------------------------------------------------------------
+secrets:
+  existingSecret: ""
+  # false = never generate: every key must come from existingSecret or a value below, else the render fails.
+  # Set it in GitOps pipelines so a missing secret fails the sync instead of rotating credentials.
+  generate: true
+  postgresPassword: ""
+  # Master-realm bootstrap admin — used only by Keycloak itself and the realm Job, never by the hosts.
+  keycloakAdminPassword: ""
+  keycloakWebClientSecret: ""
+  # Secret of the agentos-admin service-account client the hosts use for member management.
+  keycloakAdminClientSecret: ""
+  # First AgentOS.NET admin: user `operator` (tenant admin + platform-admin).
+  operatorPassword: ""
+  # Optional demo user `member`; empty = the seed user is disabled.
+  memberPassword: ""
+  smtpPassword: ""
+  dataProtectionCertificatePassword: ""
+
+# ---------------------------------------------------------------------------------------------------------
+# DataProtection key ring — persisted in Postgres (config.data_protection_keys) and WRAPPED with a key the
+# database never holds (docs/dataprotection-dr-runbook.md). Back the certificate up separately from the DB.
+# ---------------------------------------------------------------------------------------------------------
+dataProtection:
+  # true = a pod that lost its wrapping config refuses to start instead of writing unwrapped keys.
+  requireKeyWrapping: true
+  certificate:
+    # Secret holding the PFX — create it BEFORE installing (docs/ONPREM.md):
+    #   kubectl create secret generic agentos-dataprotection --from-file=dataprotection.pfx
+    # Its password goes in the main secret under dataprotection-certificate-password. Empty = no certificate.
+    existingSecret: agentos-dataprotection
+    key: dataprotection.pfx
+  # Alternative: Azure Key Vault key id (pods need a workload identity with Key Vault Crypto User).
+  keyVaultKeyId: ""
+
+# ---------------------------------------------------------------------------------------------------------
+# Postgres — bundled single-instance StatefulSet (same major as the AppHost: 18), or your own server.
+# ---------------------------------------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "18.6"
+    pullPolicy: IfNotPresent
+  username: agentos
+  database: agentos
+  # Keycloak's own database on the same server (created on first boot).
+  keycloakDatabase: keycloak
+  persistence:
+    size: 20Gi
+    storageClass: ""
+    accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 2Gi }
+
+# Used when postgresql.enabled=false. The user must OWN both databases and hold CREATEROLE: the hosts create
+# the row-level-security role `agentos_rls`, its grants and the policies at every boot (ADR-0012). Create
+# both databases before installing.
+externalDatabase:
+  host: ""
+  port: 5432
+  database: agentos
+  username: agentos
+  # Npgsql SSL Mode (Disable, Prefer, Require, VerifyCA, VerifyFull).
+  sslMode: Require
+  keycloakDatabase: keycloak
+  keycloakJdbcParams: "sslmode=require"
+
+# ---------------------------------------------------------------------------------------------------------
+# Keycloak — bundled (the AgentOS.NET image from infra/keycloak: realm `agentic` + login theme baked in),
+# or an existing Keycloak you already run (keycloak.enabled=false + publicUrl; import the realm first).
+# ---------------------------------------------------------------------------------------------------------
+keycloak:
+  enabled: true
+  image:
+    repository: agentos-net/keycloak
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Public URL — default https://<ingress.hosts.keycloak>. REQUIRED for an external Keycloak.
+  publicUrl: ""
+  # Back channel from the pods — default the bundled Service (http), else publicUrl.
+  internalUrl: ""
+  realm: agentic
+  # Master-realm bootstrap admin (Keycloak's KC_BOOTSTRAP_ADMIN_* + the realm Job). Rotate or disable it
+  # after the first install — the hosts never use it (docs/ONPREM.md → Keycloak admin access).
+  adminUsername: admin
+  # Confidential service-account client in the realm that the Api/Web use (client_credentials) for member
+  # management; the realm Job creates it with only realm-management manage-users, view-users, query-users,
+  # view-realm.
+  adminClientId: agentos-admin
+  # Plain-HTTP discovery is only acceptable inside the cluster; default: https required unless the back
+  # channel is the bundled in-cluster Service.
+  requireHttpsMetadata: ""
+  # Post-install/upgrade Job: point the realm at web's URL, set the client secrets + the agentos-admin service
+  # account; seed passwords on the first run only.
+  configureRealm: true
+  service:
+    port: 8080
+  smtp:
+    # Empty host = no mail: email verification off, invitations not mailed.
+    host: ""
+    port: 25
+    from: noreply@agentos.local
+    starttls: false
+    auth: false
+    user: ""
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { memory: 1536Mi }
+  extraEnv: []
+
+# ---------------------------------------------------------------------------------------------------------
+# AgentOS.NET hosts
+# ---------------------------------------------------------------------------------------------------------
+web:
+  # Default <scheme>://<ingress.hosts.web>.
+  publicUrl: ""
+  replicaCount: 1
+  image:
+    repository: agentos-net/web
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  # Distinct auth-cookie names when several installs share one parent domain.
+  cookiePrefix: ""
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 2Gi }
+  extraEnv: []
+
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: agentos-net/api
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 2Gi }
+  extraEnv: []
+
+# Shared by Api + Web.
+email:
+  from: noreply@agentos.local
+# OTLP collector for traces/metrics/logs, e.g. http://otel-collector.observability:4317.
+otlpEndpoint: ""
+
+# Health endpoints of both hosts (ServiceDefaults): /alive = liveness, /health = readiness (Postgres + Keycloak).
+probes:
+  startup: { path: /alive, periodSeconds: 10, failureThreshold: 30 }
+  liveness: { path: /alive, periodSeconds: 20, failureThreshold: 3 }
+  readiness: { path: /health, periodSeconds: 10, failureThreshold: 3 }
+
+podSecurityContext:
+  runAsNonRoot: true
+  # The aspnet images' non-root `app` user.
+  runAsUser: 1654
+  runAsGroup: 1654
+  fsGroup: 1654
+
+# ---------------------------------------------------------------------------------------------------------
+# Optional local LLM server. Point the platform at it in the desktop: Settings → LLM providers →
+# OpenAI-compatible endpoint = http://<release>-agentos-net-ollama:11434/v1 (NOTES.txt prints it).
+# ---------------------------------------------------------------------------------------------------------
+# Runs as uid/gid 1000 (non-root) with HOME + the model store on the volume (/data); the upstream image
+# defaults to root with /root/.ollama.
+ollama:
+  enabled: false
+  image:
+    repository: ollama/ollama
+    tag: "0.40.13"
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 50Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: "1", memory: 4Gi }
+    limits: { memory: 16Gi }

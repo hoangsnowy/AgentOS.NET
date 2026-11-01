@@ -1,5 +1,7 @@
 # Deployment — Azure Container Apps (via `azd` + Aspire)
 
+> Installing on your own hardware (docker compose, Helm, air-gapped)? See [ONPREM.md](ONPREM.md).
+
 Deployment is driven by **.NET Aspire + Azure Developer CLI (`azd`)**. The AppHost
 (`infra/AgentOs.AppHost`) is the single source of truth for the topology — `azd` provisions
 the whole app model (API + Web + Keycloak + managed Postgres + Container Apps env + ACR) from it.

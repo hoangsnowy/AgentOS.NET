@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentos.component" (dict "root" . "name" "scripts") }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+data:
+  # Shared with docker compose (deploy/compose mounts the same files) — one source for both installs.
+  configure-realm.sh: |
+    {{- .Files.Get "files/configure-realm.sh" | nindent 4 }}
+  postgres-init.sh: |
+    {{- .Files.Get "files/postgres-init.sh" | nindent 4 }}

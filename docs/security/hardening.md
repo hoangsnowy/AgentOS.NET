@@ -13,7 +13,12 @@ Tick every box before exposing a deployment to people outside the team that oper
       and `member`/`member` (`infra/keycloak/agentic-realm.json:147-171`). Follow the
       [Keycloak runbook](../keycloak-prod-runbook.md). **(manual — GAP-03)**
 - [ ] **Replace the dev client secret.** Hosts refuse the committed `agentic-web-dev-secret` and admin password
-      `admin` outside Development (`src/AgentOs.SharedKernel/Security/DevSecretGuard.cs:19-29`) — set real ones.
+      `admin` outside Development (`src/AgentOs.SharedKernel/Security/DevSecretGuard.cs`) — set real ones. The
+      on-prem templates' `CHANGE_ME` placeholder is refused the same way.
+- [ ] **Use a least-privilege service account for member admin.** Set `Auth:Keycloak:Admin:ClientSecret` so
+      the hosts use `client_credentials` with a confidential client holding only the user-management roles
+      instead of a master-realm admin password ([ONPREM.md](../ONPREM.md#keycloak-admin-access); the on-prem
+      install creates `agentos-admin` for you).
 - [ ] **Turn on brute-force detection, a password policy and OTP for admins** in the realm (Realm settings →
       Security defenses / Authentication). None is set in the realm file. **(manual — GAP-03)**
 - [ ] **Decide on self-registration.** The realm has `registrationAllowed: true` and AgentOS.NET's `/signup`

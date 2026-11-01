@@ -1,0 +1,111 @@
+{{- if .Values.postgresql.enabled }}
+{{- $selector := dict "root" . "name" "postgres" -}}
+{{- $p := .Values.postgresql -}}
+# Bundled single-instance Postgres — fine for one site; use postgresql.enabled=false + your managed/HA server
+# for anything that needs failover. Back it up with pg_dump (docs/ONPREM.md → Backup).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "agentos.component" $selector }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" $selector | nindent 8 }}
+    spec:
+      {{- include "agentos.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        # The postgres image's `postgres` user.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: {{ include "agentos.image" (dict "root" . "image" $p.image) }}
+          imagePullPolicy: {{ $p.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ $p.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ include "agentos.secretName" . }}, key: postgres-password }
+            - name: POSTGRES_DB
+              value: {{ $p.database | quote }}
+            - name: KEYCLOAK_DB
+              value: {{ $p.keycloakDatabase | quote }}
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 20
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 10
+          securityContext:
+            {{- include "agentos.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml $p.resources | nindent 12 }}
+          volumeMounts:
+            # Postgres 18 images keep PGDATA under /var/lib/postgresql/18/docker — mount the parent (also keeps
+            # the volume's lost+found out of the data directory).
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            - name: run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: init
+          configMap:
+            name: {{ include "agentos.component" (dict "root" . "name" "scripts") }}
+            items:
+              - key: postgres-init.sh
+                path: 10-keycloak-db.sh
+        - name: run
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- toYaml $p.persistence.accessModes | nindent 10 }}
+        {{- with $p.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $p.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    {{- include "agentos.selectorLabels" $selector | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+{{- end }}

@@ -1,0 +1,21 @@
+apiVersion: v2
+name: agentos-net
+description: >-
+  AgentOS.NET on Kubernetes — the Api and Web hosts, Keycloak with the AgentOS.NET realm + login theme, and
+  (optionally) a bundled Postgres and Ollama. On-prem / air-gapped install: docs/ONPREM.md.
+type: application
+# The chart is versioned with the product: version = appVersion = the AgentOS.NET release the images carry
+# (<Version> in Directory.Build.props). deploy/bundle.sh save packages it with --version/--app-version set to
+# the bundle version, so the bundled file is always helm/agentos-net-<version>.tgz.
+version: 0.6.0
+appVersion: "0.6.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/hoangsnowy/AgentOS.NET
+sources:
+  - https://github.com/hoangsnowy/AgentOS.NET
+keywords:
+  - agentos-net
+  - ai-agents
+  - sdlc
+  - keycloak
+  - postgres

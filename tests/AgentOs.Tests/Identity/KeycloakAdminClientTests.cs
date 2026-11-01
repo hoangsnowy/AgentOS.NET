@@ -106,6 +106,50 @@ public sealed class KeycloakAdminClientTests
         handler.Calls[2].RequestUri!.AbsolutePath.ShouldEndWith("/users");
     }
 
+    [Fact]
+    public async Task CreateUserAsync_ClientSecretSet_UsesClientCredentialsAgainstAppRealm()
+    {
+        using var handler = new StubHandler();
+        string? tokenForm = null;
+        handler.Enqueue(req =>
+            {
+                tokenForm = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                return req.Method == HttpMethod.Post
+                    && req.RequestUri!.AbsolutePath.EndsWith("/realms/agentic/protocol/openid-connect/token");
+            },
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent("{\"access_token\":\"sa-tok\",\"expires_in\":300}"),
+            });
+        handler.Enqueue(_ => true, new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Headers = { Location = new Uri("http://kc/admin/realms/agentic/users/u-9") },
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri("http://kc/") };
+        var client = new KeycloakAdminClient(
+            http,
+            Options.Create(new KeycloakAdminOptions
+            {
+                BaseUrl = "http://kc",
+                Realm = "agentic",
+                ClientId = "agentos-admin",
+                ClientSecret = "s3cret",
+            }),
+            NullLogger<KeycloakAdminClient>.Instance);
+
+        var userId = await client.CreateUserAsync("bob", string.Empty, "acme", System.Array.Empty<string>(), sendVerifyEmail: false);
+
+        userId.ShouldBe("u-9");
+        handler.Calls.Count.ShouldBe(2);
+        tokenForm.ShouldNotBeNull();
+        tokenForm.ShouldContain("grant_type=client_credentials");
+        tokenForm.ShouldContain("client_id=agentos-admin");
+        tokenForm.ShouldContain("client_secret=s3cret");
+        tokenForm.ShouldNotContain("username=");
+        handler.Calls[1].Headers.Authorization.ShouldBe(new AuthenticationHeaderValue("Bearer", "sa-tok"));
+    }
+
     private static StringContent JsonContent(string body)
     {
         var c = new StringContent(body, System.Text.Encoding.UTF8);

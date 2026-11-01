@@ -51,6 +51,11 @@ dotnet ef migrations add <Name> \
 ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AgentOs.Web -c Release --no-build --urls http://localhost:5199 --no-launch-profile
 RUN_AGENTOS_E2E=true AGENTOS_URL=http://localhost:5199 dotnet test --project tests/AgentOs.E2E.Tests -c Release
 
+# On-prem install (docs/ONPREM.md) — compose cold install, Helm chart lint, offline bundle
+cd deploy/compose && cp .env.example .env && ./init-secrets.sh && docker compose up -d --wait
+helm lint --strict deploy/helm/agentos-net && helm template t deploy/helm/agentos-net -f deploy/helm/agentos-net/ci/kind-values.yaml
+deploy/bundle.sh build && deploy/bundle.sh save     # → dist/agentos-net-<version>.tar.gz (docker save); bundle.sh load|push on the target
+
 # Lab server — long-running full stack for REAL GitHub / Azure DevOps / LLM tests, side by side with dev
 # (own worktree ..\AgentOs-lab, own ports/volumes, own hostnames). See docs/LAB.md.
 pwsh infra/lab/lab.ps1 up | update [-Ref origin/<branch>] | status | test | down | reset
