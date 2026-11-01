@@ -62,8 +62,12 @@ When reporting, include: affected component, reproduction steps, and impact.
   there. Each command has a timeout that kills the whole process tree. The runner sends its pairing token in a
   header, never in the URL (the hub still accepts a legacy query-string form — tracked as a gap).
 - **Supply chain / SAST** — Dependabot, dependency review, SHA-pinned actions, CodeQL with
-  compiler-enforced twins for its query classes.
+  compiler-enforced twins for its query classes. Release images are cosign-signed (keyless), carry SLSA
+  build provenance and a CycloneDX SBOM attestation, and every release attaches the SBOMs — verify an image
+  before deploying it ([docs/RELEASE.md](docs/RELEASE.md#verify-an-image)).
 
 ## Supported versions
 
-This project is pre-1.0; security fixes land on `main`.
+This project is pre-1.0. Security fixes land on `main` and ship as a patch release of the latest minor; the
+previous minor gets security fixes for 90 days after the next one ships. The full policy (SemVer, prereleases,
+image tags) is in [docs/RELEASE.md](docs/RELEASE.md#supported-versions).

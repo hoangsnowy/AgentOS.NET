@@ -40,6 +40,9 @@ You need the **.NET 10 SDK** (pinned in `global.json`); tests need no API keys o
   `ISettingsContributor`, read through `ISettings` — not an `appsettings.json` key
   ([ADR-0011](docs/adr/0011-ui-first-configuration.md), [CONFIG.md](docs/CONFIG.md)).
 - **Documented** where behaviour or configuration changed (README, CONFIG.md, an ADR for decisions).
+- **In the changelog.** A user- or operator-visible change adds a line under `## [Unreleased]` in
+  [CHANGELOG.md](CHANGELOG.md), plus a **Migration notes** bullet when an upgrade needs an action
+  ([docs/RELEASE.md](docs/RELEASE.md#migration-notes-convention)).
 
 ## Conventions
 
