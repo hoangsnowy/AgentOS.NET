@@ -42,7 +42,7 @@ internal static class Corpus
 [MemoryDiagnoser]
 public class UntrustedTextBenchmarks
 {
-    private string _title = "#7 Add xiangqi core: board, pieces and legal moves";
+    private readonly string _title = "#7 Add xiangqi core: board, pieces and legal moves";
     private string _body = null!;
     private string _hostileBody = null!;
     private string _oversized = null!;
@@ -112,11 +112,11 @@ public class RepoInstructionsBenchmarks
 [MemoryDiagnoser]
 public class PullRequestTextBenchmarks
 {
-    private string _summary = "Adds the xiangqi core: board model, piece rules and legal move generation.";
+    private readonly string _summary = "Adds the xiangqi core: board model, piece rules and legal move generation.";
     private string _description = null!;
     private string _descriptionWithCloses = null!;
     private string _hugeDescription = null!;
-    private int? _issue = 7;
+    private readonly int? _issue = 7;
 
     /// <summary>Agent-written descriptions of realistic sizes.</summary>
     [GlobalSetup]

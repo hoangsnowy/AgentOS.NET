@@ -29,9 +29,10 @@ public class JsonExtractorBenchmarks
     public void Setup()
     {
         var files = new List<CodeReplyFile>(60);
+        var sb = new StringBuilder();
         for (var i = 0; i < 60; i++)
         {
-            var sb = new StringBuilder();
+            sb.Clear();
             sb.Append(CultureInfo.InvariantCulture, $"namespace Xiangqi.Core;\n\n/// <summary>Piece rules #{i}.</summary>\npublic sealed class Rule{i}\n{{\n");
             for (var m = 0; m < 12; m++)
             {

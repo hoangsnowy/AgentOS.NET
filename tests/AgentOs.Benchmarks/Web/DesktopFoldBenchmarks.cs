@@ -40,7 +40,7 @@ public class InsightsFoldBenchmarks
     public void Setup()
     {
         _costBuckets = _storedNames.Select((n, i) => new CostBucket(n, 0.37m * (i + 1), 12_000 * (i + 1), 1_800 * (i + 1), 3 + i, 4_000L * i, 600L * i)).ToArray();
-        _latencyBuckets = _storedNames.Select((n, i) => new AgentLatencyBucket(n, 850.0 + 97 * i, 3 + i)).ToArray();
+        _latencyBuckets = _storedNames.Select((n, i) => new AgentLatencyBucket(n, 850.0 + 97.0 * i, 3 + i)).ToArray();
     }
 
     /// <summary>Canonicalise every stored name once (the per-bucket cost inside both folds).</summary>

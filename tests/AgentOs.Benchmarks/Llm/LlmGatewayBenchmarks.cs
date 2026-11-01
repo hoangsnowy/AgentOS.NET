@@ -12,14 +12,14 @@ namespace AgentOs.Benchmarks.Llm;
 public class CostCalculatorBenchmarks
 {
     // Instance fields (not constants) so the JIT cannot fold the lookup away.
-    private string _exact = "claude-sonnet-5-5";
-    private string _exactMixedCase = "GPT-5.4-mini";
-    private string _anthropicSnapshot = "claude-sonnet-4-20250514";
-    private string _openAiSnapshot = "gpt-4o-mini-2024-07-18";
-    private string _vertexSnapshot = "claude-opus-4-5@20251101";
-    private string _unknown = "my-azure-deployment-prod";
-    private string _longContextModel = "claude-haiku-5-5";
-    private TokenUsage _usage = new(Input: 18_400, Output: 2_100, CacheRead: 12_000, CacheWrite: 1_600);
+    private readonly string _exact = "claude-sonnet-5-5";
+    private readonly string _exactMixedCase = "GPT-5.4-mini";
+    private readonly string _anthropicSnapshot = "claude-sonnet-4-20250514";
+    private readonly string _openAiSnapshot = "gpt-4o-mini-2024-07-18";
+    private readonly string _vertexSnapshot = "claude-opus-4-5@20251101";
+    private readonly string _unknown = "my-azure-deployment-prod";
+    private readonly string _longContextModel = "claude-haiku-5-5";
+    private readonly TokenUsage _usage = new(Input: 18_400, Output: 2_100, CacheRead: 12_000, CacheWrite: 1_600);
 
     /// <summary>Warm the snapshot memo once (the steady state on a running host).</summary>
     [GlobalSetup]
@@ -72,10 +72,10 @@ public class CostCalculatorBenchmarks
 [MemoryDiagnoser]
 public class ModelCapabilitiesBenchmarks
 {
-    private string _reasoningModel = "claude-opus-5-5";
-    private string _legacyModel = "gpt-4.1-mini";
-    private string _legacySnapshot = "claude-sonnet-4-5-20250929";
-    private string _unknown = "my-azure-deployment-prod";
+    private readonly string _reasoningModel = "claude-opus-5-5";
+    private readonly string _legacyModel = "gpt-4.1-mini";
+    private readonly string _legacySnapshot = "claude-sonnet-4-5-20250929";
+    private readonly string _unknown = "my-azure-deployment-prod";
 
     /// <summary>Warm the snapshot memo.</summary>
     [GlobalSetup]

@@ -98,10 +98,9 @@ public static class UntrustedText
                 // "<untrusted" / "</untrusted" can no longer be parsed as the fence
                 if (StartsFenceTag(source, i)) { sb.Append("&lt;"); } else { sb.Append('<'); }
             }
-            else if (c == '\r')
+            else if (c == '\r' && !(i + 1 < take && window[i + 1] == '\n'))
             {
-                // CRLF → LF; a lone CR → LF
-                if (!(i + 1 < take && window[i + 1] == '\n')) { sb.Append('\n'); }
+                sb.Append('\n');   // a lone CR → LF (the CR of a CRLF is simply dropped)
             }
             // other control chars (NUL, ESC, C0/C1 controls) are dropped
             i++;

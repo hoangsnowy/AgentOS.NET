@@ -85,11 +85,11 @@ internal static class SettingsFixture
 public class SettingsServiceBenchmarks
 {
     private SettingsService _settings = null!;
-    private string _tenantKey = SettingsFixture.TenantKey;
-    private string _platformKey = SettingsFixture.PlatformKey;
-    private string _seedKey = SettingsFixture.SeedKey;
-    private string _defaultKey = SettingsFixture.DefaultKey;
-    private string _tenant = SettingsFixture.Tenant;
+    private readonly string _tenantKey = SettingsFixture.TenantKey;
+    private readonly string _platformKey = SettingsFixture.PlatformKey;
+    private readonly string _seedKey = SettingsFixture.SeedKey;
+    private readonly string _defaultKey = SettingsFixture.DefaultKey;
+    private readonly string _tenant = SettingsFixture.Tenant;
 
     /// <summary>One tenant override + one platform value.</summary>
     [GlobalSetup]
@@ -130,9 +130,9 @@ public class AppConfigStoreBenchmarks
 {
     private ServiceProvider _services = null!;
     private EfAppConfigStore _store = null!;
-    private string _tenant = SettingsFixture.Tenant;
-    private string _setKey = "Agents:Coding:Model";
-    private string _unsetKey = "Agents:Qa:MaxTokens";
+    private readonly string _tenant = SettingsFixture.Tenant;
+    private readonly string _setKey = "Agents:Coding:Model";
+    private readonly string _unsetKey = "Agents:Qa:MaxTokens";
 
     /// <summary>EF in-memory provider stands in for Postgres; both keys are cached before measuring.</summary>
     [GlobalSetup]
