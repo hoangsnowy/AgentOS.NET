@@ -50,4 +50,28 @@ internal sealed class InMemoryToolInvocationLog : IToolInvocationLog
         }
         return Task.FromResult<IReadOnlyList<ToolInvocationEvidence>>(snapshot);
     }
+
+    public Task<IReadOnlyList<ToolInvocationEvidence>> ListRecentAsync(
+        string tenantId, ToolEvidenceFilter filter, int limit = 50, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        return Task.FromResult<IReadOnlyList<ToolInvocationEvidence>>(Snapshot(tenantId).Where(filter.Matches).Take(Math.Max(1, limit)).ToArray());
+    }
+
+    public Task<IReadOnlyList<ToolCallsByRole>> SummarizeMemberComputerAsync(
+        string tenantId, DateTimeOffset? sinceUtc, CancellationToken cancellationToken = default) =>
+        Task.FromResult(ToolCallsByRole.Fold(Snapshot(tenantId), ToolEvidenceOrigins.MemberComputer, sinceUtc));
+
+    // The tenant's whole bucket, newest first (bounded by PerTenantCap).
+    private ToolInvocationEvidence[] Snapshot(string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || !_byTenant.TryGetValue(tenantId, out var bucket))
+        {
+            return [];
+        }
+        lock (bucket)
+        {
+            return [.. bucket];
+        }
+    }
 }

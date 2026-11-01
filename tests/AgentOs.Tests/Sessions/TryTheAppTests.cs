@@ -161,17 +161,27 @@ public class TryTheAppTests
     }
 
     [Fact]
-    public void RunnerDisconnect_ReportsItsPreviewsStopped()
+    public void RunnerDisconnect_KeepsItsPreviewsUntilTheGraceRunsOut()
     {
-        var broker = new InProcessRemoteAgentBroker();
+        var clock = new ManualClock();
+        var broker = new InProcessRemoteAgentBroker(clock);
         using var registration = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         var reports = new List<PreviewStatus>();
         broker.PreviewReported += reports.Add;
         broker.StartPreview(Start(), new RunnerTarget("t1", "u1"));
 
         registration.Dispose();
+        broker.SweepDetachedPreviews();
+        reports.ShouldBeEmpty(); // the app runs on outside the runner — the Board keeps it while the computer comes back
 
-        reports.ShouldHaveSingleItem().State.ShouldBe(PreviewStates.Stopped);
+        clock.Advance(InProcessRemoteAgentBroker.PreviewReconnectGrace);
+        broker.SweepDetachedPreviews();
+        var report = reports.ShouldHaveSingleItem();
+        report.State.ShouldBe(PreviewStates.Stopped);
+        // The server only stopped following it: the Board says the app may still run there, and how to close it.
+        report.Message.ShouldBe(InProcessRemoteAgentBroker.OfflineMessage);
+        report.Message!.ShouldContain("may still be running");
+        report.Message!.ShouldContain("stop-previews");
     }
 
     // ── Runner host guards ──
@@ -199,20 +209,30 @@ public class TryTheAppTests
         PreviewHost.IsSafeBranch(branch).ShouldBe(expected);
 
     [Fact]
-    public void ShellFor_RunsTheLineInTheCheckout()
+    public void ShellFor_RunsTheLineInTheCheckout_DetachedWithItsOutputInTheLog()
     {
-        var psi = PreviewHost.ShellFor("npm run dev -- --host \"x y\"", "C:/work");
-        psi.WorkingDirectory.ShouldBe("C:/work");
+        var psi = PreviewProcess.ShellFor("npm run dev -- --host \"x y\"", "/work", "/tmp/p1.log");
+        psi.WorkingDirectory.ShouldBe("/work");
         psi.UseShellExecute.ShouldBeFalse();
-        if (OperatingSystem.IsWindows())
-        {
-            psi.FileName.ShouldBe("cmd.exe");
-            psi.Arguments.ShouldBe("/d /s /c \"npm run dev -- --host \"x y\"\"");
-        }
-        else
-        {
-            psi.ArgumentList.ShouldBe(["-c", "npm run dev -- --host \"x y\""]);
-        }
+        psi.CreateNoWindow.ShouldBeTrue();
+        psi.RedirectStandardOutput.ShouldBeFalse(); // no pipe to the runner: a dead reader would take the app down
+        psi.RedirectStandardInput.ShouldBeFalse();
+        psi.Environment["AGENTOS_PREVIEW_LOG"].ShouldBe("/tmp/p1.log");
+        psi.ArgumentList[^2].ShouldBe("-c");
+        // The line as written, between the log redirect and a trailing exit that keeps sh as the recorded process.
+        psi.ArgumentList[^1].ShouldBe("exec >>\"$AGENTOS_PREVIEW_LOG\" 2>&1 </dev/null\nnpm run dev -- --host \"x y\"\n\nexit $?");
+        PreviewProcess.StartsOwnGroup(psi).ShouldBe(!OperatingSystem.IsWindows() && psi.FileName.EndsWith("setsid", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("npm run dev -- --host \"x y\"")]
+    [InlineData("echo (hi) & dotnet run --project src/App")]
+    public void WindowsCommandLine_PassesTheLineToCmdAsWritten(string line)
+    {
+        // No parentheses wrapped around it (they broke a line with its own unquoted parentheses) and no redirect appended:
+        // /s strips exactly the outer quotes, and the output goes to the log by handle.
+        PreviewProcess.WindowsCommandLine(@"C:\Windows\System32\cmd.exe", line)
+            .ShouldBe("\"C:\\Windows\\System32\\cmd.exe\" /d /s /c \"" + line + "\"");
     }
 
     [Fact]
@@ -244,6 +264,13 @@ public class TryTheAppTests
         reports.ShouldBe([("p1", "Failed")]);
     }
 
+    internal sealed class ManualClock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 11, 1, 9, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now += by;
+    }
+
     // ── Board-side state ──
 
     private static (PreviewService Service, InProcessRemoteAgentBroker Broker) Service()
@@ -258,18 +285,18 @@ public class TryTheAppTests
     private static PreviewRecipe Recipe() => PreviewRecipe.TryParse("""{ "command": "npm start", "url": "http://localhost:3000" }""", out _)!;
 
     [Fact]
-    public void Start_NoComputer_KeepsNoState()
+    public async Task Start_NoComputer_KeepsNoState()
     {
         var (service, _) = Service();
         using var _s = service;
         var repo = Repo();
 
-        service.Start("t1", "u1", Guid.NewGuid(), repo, Recipe()).ShouldBe(PreviewStartResult.NoComputer);
+        (await service.StartAsync("t1", "u1", Guid.NewGuid(), repo, Recipe())).ShouldBe(PreviewStartResult.NoComputer);
         service.Get("t1", repo.Id).ShouldBeNull();
     }
 
     [Fact]
-    public void Start_ThenReports_TrackStateAndHoldTheBoard()
+    public async Task Start_ThenReports_TrackStateAndHoldTheBoard()
     {
         var (service, broker) = Service();
         using var _s = service;
@@ -281,7 +308,7 @@ public class TryTheAppTests
         var changes = 0;
         service.Changed += t => { if (t == "t1") { changes++; } };
 
-        service.Start("t1", "u1", board, repo, Recipe()).ShouldBe(PreviewStartResult.Started);
+        (await service.StartAsync("t1", "u1", board, repo, Recipe())).ShouldBe(PreviewStartResult.Started);
         service.IsActiveOnBoard("t1", board).ShouldBeTrue();
         service.IsActiveOnBoard("t2", board).ShouldBeFalse();
 

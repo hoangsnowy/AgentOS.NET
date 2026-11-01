@@ -76,6 +76,13 @@ public sealed record PreviewRecipe(string Command, Uri Url, int ReadyTimeoutSeco
             || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>True for an absolute http(s) address on this computer (<see cref="IsLocal"/>) — the only kind of address the
+    /// Board puts behind <em>Open the app</em>. Anything else (<c>javascript:</c>, <c>data:</c>, another host) is refused.</summary>
+    public static bool IsLocalHttpUrl(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var parsed)
+        && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps)
+        && IsLocal(parsed);
+
     /// <summary>A starter recipe for a repo that has none (shown to the person and put in the set-up ticket).</summary>
     public const string Example = """
         {

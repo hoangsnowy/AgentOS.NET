@@ -37,7 +37,7 @@ public static class SettingsSearch
     private static readonly Page[] Pages =
     [
         new("keys", "Model keys", Ai, "key", "api key apikey secret byok anthropic claude azure openai gpt gemini google xai grok endpoint", Access.Admin),
-        new("routing", "Routing", Ai, "lightning", "force provider default provider routing test connection offline fallback remoteagent remote agent paired", Access.Admin),
+        new("routing", "Routing", Ai, "lightning", "force provider default provider routing test connection offline fallback remoteagent remote agent paired tool output budget tokens", Access.Admin),
         new("agents", "Agent profiles", Ai, "diamond", "agent model per agent temperature max tokens output qa loop iterations cap profile coding testing requirement orchestrator", Access.Admin),
         new("prompts", "Prompts", Ai, "file", "prompt system prompt workspace rules instructions version history rollback", Access.Admin),
         new("autopilot", "Autopilot", Ai, "play", "autopilot orchestrator decided by rules maf workflow step by step tasks at once parallel acceptance tests fix rounds retries checks timeout poll merge plan limit files attachments ticket files upload size", Access.Admin),
@@ -80,6 +80,7 @@ public static class SettingsSearch
         { Category: "Agent profiles" or "Pipeline" } => "agents",
         { Category: "LLM providers" } => ModelKeySettings.Contains(d.Key) ? "keys" : "routing",
         { Category: "Build sandbox" or "Platform" } => "platform",
+        { Category: "Tools" } => "routing", // Tools:MaxOutputTokens sits with the tenant's routing settings
         { Category: AgentOs.Modules.Pipeline.Agents.AutopilotSettings.Category } => SettingsLinks.Autopilot,
         _ => null,
     };

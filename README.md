@@ -46,10 +46,12 @@ with its own DI surface, EF Core context and Postgres schema, so any one can lat
 | Test against real GitHub / Azure DevOps / LLMs (the lab server) | [docs/LAB.md](docs/LAB.md) |
 | Know what to set at deploy vs in the UI | [docs/CONFIG.md](docs/CONFIG.md) |
 | Understand the architecture | [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/README.md) |
+| Cut a release / verify a release image / what changed | [docs/RELEASE.md](docs/RELEASE.md) · [CHANGELOG.md](CHANGELOG.md) |
 | Deploy to Azure | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [infra/README.md](infra/README.md) · runbooks: [Keycloak](docs/keycloak-prod-runbook.md), [DataProtection DR](docs/dataprotection-dr-runbook.md) |
 | Contribute / conventions | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Build UI | [docs/design/design-system.md](docs/design/design-system.md) |
 | See where it's going | [ROADMAP.md](ROADMAP.md) · [execution plan](docs/plans/agentic-sdlc-v2.md) |
+| Review security — threat model, data flow, sub-processors, hardening | [docs/security/](docs/security/README.md) |
 | Report a vulnerability | [SECURITY.md](SECURITY.md) |
 
 ## Quick start
@@ -122,8 +124,20 @@ files by default). ([ADR-0015](docs/adr/0015-ticket-files.md))
 ```
 
 The command is shown before anything runs, and the computer re-reads it from its own checkout and refuses if it
-changed. A project without the file gets an *Ask the AI to set it up* button that opens a ticket for it. Testing on
-that project waits while the app runs (same ports). `REMOTE_AGENT_PREVIEWS=off` refuses previews on a computer.
+changed. A project without the file gets an *Ask the AI to set it up* button that opens a ticket for it.
+
+The app keeps running when the computer's runner restarts (an update, a re-pairing, a crash): it runs in a process
+group of its own, the runner keeps its state on disk and re-attaches it on the next start, and the Board card keeps
+showing it with the same URL. It ends when you press *Stop* — also after a restart — or when nobody has had it open
+for *Stop an unused app after* (Settings › Autopilot, default 120 minutes). Testing on that project waits while the
+app runs (same ports, often the same data) unless the project is listed under *Test while trying the app* — safe
+when the app keeps its data separately for each copy. `REMOTE_AGENT_PREVIEWS=off` refuses previews on a computer.
+A computer that stays offline for more than 15 minutes drops off the card, which then says the app may still be running
+there; `AgentOs.RemoteAgent stop-previews` on that computer closes every preview (`AgentOs.RemoteAgent unpair` does that
+and forgets the pairing — run it before removing the runner). A *Stop* pressed while the computer is offline is kept for
+7 days (in memory: a Web restart forgets it) and closes the app when the computer reconnects. On macOS there is no
+`setsid`, so a Ctrl+C in the runner's terminal stops its previews too. The Board only opens an app at a `localhost`
+http(s) address, and only re-attaches a preview to a repo of that board in your own workspace.
 
 ### 4 — Build and test
 
@@ -183,7 +197,9 @@ Light and dark are first-class (top bar → appearance toggle, or System → App
   a built-in table of official list prices (Claude 5.x, GPT-6/5.x, o-series, incl. prompt-cache and
   long-context tiers); an unknown model is charged at a fail-closed ceiling, never `$0`, so it cannot
   slip past the budget gate.
-- **Governed.** Tools run only through `IToolGateway` → per-tenant policy → evidence log. Production
+- **Governed.** Tools run only through `IToolGateway` → per-tenant policy → evidence log, and the tools a
+  CLI agent uses on a member's paired computer (Bash, Edit, Write, Read…) are reported back and recorded as evidence
+  too, with the computer's own permissions as the deciding policy ([ADR-0017](docs/adr/0017-member-computer-tool-evidence.md)). Production
   pins the riskiest switches (remote auto-approve, tool enforcement, offline fallback, build sandbox)
   as operator locks the UI cannot flip. Third-party text in prompts is fenced as untrusted input.
 - **Multi-tenant from day one.** Keycloak OIDC `tenant` claim → `ITenantContext`; row-level isolation
@@ -245,6 +261,17 @@ through the gateway: `LlmRequest.Tools = ["build_verifier"]` makes `PooledChatLl
 name in `IToolRegistry`, adapt it into a `Microsoft.Extensions.AI.AIFunction`, and run the tool-call
 loop with `FunctionInvokingChatClient`. Every invocation passes `IToolPolicy` (gate) and
 `IToolInvocationLog` (evidence), so refused and successful calls alike are auditable.
+
+**Tool calls on a member's computer.** A Board "Run on my machine" task runs `claude -p` on the member's paired
+computer, and that CLI calls its own tools — the server's gateway never sees them; the CLI's scoped permissions there
+allow or refuse each one. The runner reads them off the CLI's `stream-json` events and reports them over the hub
+(`ReportToolCalls`, in batches during the run): tool, a one-line summary (the command, the file's path — never file
+contents or output, redacted by `SecretRedactor` on both sides, ≤ 500 characters), ok / error / refused, duration.
+The server accepts a batch only for a run it dispatched, from that run's connection, and records each call through
+`IToolInvocationLog` with origin `member-computer`, the task, tenant, agent role, runner and the policy that decided.
+Settings › Activity log › Tool calls › **On a member's computer** lists them (a task's activity panel links to its
+own); Insights counts tool calls and refusals per run by agent role. See
+[ADR-0017](docs/adr/0017-member-computer-tool-evidence.md).
 
 `AgentOs.Modules.Mcp` connects to upstream **MCP servers** and registers their tools as
 `{server}.{tool}` — local and remote tools share one registry. The Api also **serves MCP** at `/mcp`
@@ -339,6 +366,11 @@ in the desktop and applies on the next call:
   rounds (one count per task across engines and restarts), Orchestrator retries, the checks wait, and the limits on
   the files a person may attach to a ticket for the AI. When your
   computer's Claude / Codex plan hits its limit, Autopilot waits for the reset — no tries spent — and carries on.
+  A Coding, Reviewer or Testing run that ends without its JSON reply (out of turns or context after doing the work) is
+  asked once, briefly, for it — in the same folder and CLI session when the computer still has them — instead of being
+  discarded; a recovered branch counts only once it is on the remote, an approval or pass only from the run's own
+  resumed session (with every criterion checked), and Insights counts how often it happens
+  (`Autopilot:RecoverMissingReply`, on by default — [CONFIG](docs/CONFIG.md#settings--autopilot)).
 - **Workflow › Ticket flow** — the steps Autopilot runs for every ticket (Code → Checks → Review → Test → Merge by
   default), drawn as a graph with a table view: an admin turns Review or Test off, picks the agent per step and skips a
   step for tickets with a label (e.g. no Review for `type:chore`); per tenant with an optional per-project flow,
@@ -466,6 +498,9 @@ azd up   # provision + deploy to Azure Container Apps from the Aspire AppHost
 A post-deploy hook aligns the Keycloak realm with the cloud URLs, rotates the client secret and seed
 passwords, and ensures the `platform-admin` role. Production applies operator locks for the riskiest
 settings. Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [infra/README.md](infra/README.md).
+
+Tagged releases publish signed `ghcr.io/hoangsnowy/agentos-api` / `agentos-web` images with CycloneDX SBOMs
+and SLSA provenance — how to verify one and the version policy: [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Contributing
 
