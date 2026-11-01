@@ -21,6 +21,15 @@ public sealed class ToolInvocationEvidenceEntity
     public DateTimeOffset StartedUtc { get; set; }
     public DateTimeOffset FinishedUtc { get; set; }
 
+    /// <summary>Full tool-output length in chars (2.7 shaping evidence); null on rows written before it.</summary>
+    public int? OutputChars { get; set; }
+
+    /// <summary>Length the model received after shaping; null on rows written before it.</summary>
+    public int? ShapedOutputChars { get; set; }
+
+    /// <summary>The Tools:MaxOutputTokens budget the result was shaped against; null when unshaped and on older rows.</summary>
+    public int? MaxOutputTokens { get; set; }
+
     /// <summary>Null = on the server; "member-computer" = the CLI on a member's paired computer ran it.</summary>
     public string? Origin { get; set; }
     public string? AgentRole { get; set; }

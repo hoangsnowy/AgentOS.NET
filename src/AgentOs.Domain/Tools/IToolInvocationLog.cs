@@ -18,6 +18,11 @@ namespace AgentOs.Domain.Tools;
 /// <param name="StartedUtc">When the invocation started (UTC).</param>
 /// <param name="FinishedUtc">When the invocation finished or was denied (UTC).</param>
 /// <param name="SessionId">Remote-session correlator, when the call ran inside a member×workspace session.</param>
+/// <param name="OutputChars">Length of the full tool output (what <paramref name="Output"/> holds); null on legacy rows.</param>
+/// <param name="ShapedOutputChars">Length of what the model actually received after tool-output shaping (equal to
+/// <paramref name="OutputChars"/> when nothing was shaped); null on legacy rows.</param>
+/// <param name="MaxOutputTokens">The <c>Tools:MaxOutputTokens</c> budget the result was shaped against; null when the
+/// caller was not model-facing (no shaping) and on legacy rows.</param>
 public sealed record ToolInvocationEvidence(
     string CallId,
     string ToolName,
@@ -28,10 +33,16 @@ public sealed record ToolInvocationEvidence(
     bool IsError,
     System.DateTimeOffset StartedUtc,
     System.DateTimeOffset FinishedUtc,
-    string? SessionId = null)
+    string? SessionId = null,
+    int? OutputChars = null,
+    int? ShapedOutputChars = null,
+    int? MaxOutputTokens = null)
 {
     /// <summary>Wall-clock duration of the invocation.</summary>
     public System.TimeSpan Duration => FinishedUtc - StartedUtc;
+
+    /// <summary>Characters shaping kept away from the model (0 when unshaped or unknown).</summary>
+    public int SavedChars => OutputChars is { } full && ShapedOutputChars is { } shaped ? System.Math.Max(0, full - shaped) : 0;
 
     /// <summary>Where the side effect ran: null = on the server (through <see cref="IToolGateway"/>), or
     /// <see cref="ToolEvidenceOrigins.MemberComputer"/> for a tool the CLI on a member's paired computer ran itself.</summary>

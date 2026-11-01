@@ -53,6 +53,9 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                     b.Property<bool>("IsError")
                         .HasColumnType("boolean");
 
+                    b.Property<int?>("MaxOutputTokens")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Origin")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
@@ -60,6 +63,9 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                     b.Property<string>("Output")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<int?>("OutputChars")
+                        .HasColumnType("integer");
 
                     b.Property<string>("PolicySource")
                         .HasMaxLength(64)
@@ -76,6 +82,9 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                     b.Property<string>("SessionId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<int?>("ShapedOutputChars")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("StartedUtc")
                         .HasColumnType("timestamp with time zone");

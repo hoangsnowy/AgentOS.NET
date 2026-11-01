@@ -78,6 +78,7 @@ Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant
 |---|---|---|---|
 | `Llm:Provider` | `Claude` | Tenant | Used by any agent whose profile names no provider. `Anthropic` is an alias of `Claude`. |
 | `Llm:ForceProvider` | empty | Tenant | Route every agent to one provider. |
+| `Tools:MaxOutputTokens` | `4000` (500–50000) | Tenant | Budget for one tool result sent back to the model (≈ chars / 4), on the **Routing** page. See *Tool-output shaping* below. |
 | `Llm:OfflineFallback` | **`true` in Development, else `false`** | Platform | Keyless provider → canned, schema-valid output, labelled Offline everywhere (runs, Workflow chip, PR refusal). Lets a fresh checkout run with no secrets. Locked off in Production. Never applies to Board agent runs (New idea, Coding, Reviewer, Testing, the Autopilot lead, Retrospective): those act on a real project, so they fail with the real reason (e.g. a plan limit) instead of getting canned text. |
 | `Llm:Claude:ApiKey` / `ApiKeys` | empty | Tenant | Secret, write-only in the UI. Pool = round-robin with 429 failover. |
 | `Llm:AzureOpenAi:Endpoint` / `ApiKey` / `ApiKeys` | empty | Tenant | Endpoint must be absolute `https://`. |
@@ -95,6 +96,26 @@ Code-only (no UI yet; seed via env if you must): `Llm:Claude:Endpoint` (`https:/
 `Llm:Claude:ApiVersion` (`2023-06-01`), `Llm:*:TimeoutSeconds` (60), `Llm:Fallbacks`
 (inter-provider failover map). Resilience today is key-pool cooldown + failover; `Llm:*:MaxRetries`
 exists on the options type but is not honoured yet.
+
+**Tool-output shaping** — a tool result headed back to the **model** (the LLM tool loop: `AIToolFunction` builds a
+model-facing `DefaultToolGateway`) is shaped there; data consumers such as a workflow Tool node (whose result feeds
+`${…}`, ExtractJson, Transform) always get the full output (`ToolGatewayResult.Output`; the shaped text is
+`ModelOutput`). A result within `Tools:MaxOutputTokens` × 4 chars is passed through **unchanged**. A larger one:
+build/test logs (MSBuild, `dotnet build`/`test`, VSTest, xUnit / Microsoft.Testing.Platform — recognised by lines
+only a build/test tool prints, not by a keyword anywhere; LF, CRLF or mixed line endings) keep their
+`error`/`warning` lines (`error CS…`, analyzer ids), failed-test blocks with their first 5 stack frames, summary lines
+and a short head/tail window; restore/progress noise is dropped and repeated lines collapse to one with a `(×N)`
+count. JSON results (objects or arrays, at any depth — `build_verifier`'s `output`, MCP `content[].text`) are shaped
+in place and stay valid JSON: long string values get the log pass and a share of the budget, over-long arrays keep
+their first elements plus a `"[… N more items omitted …]"` marker element. Whatever is still over the budget is cut
+as text, head + tail around an explicit `[… N lines omitted …]` marker (never inside a surrogate pair) — so errors
+are kept by the log pass, but this final cut may still drop some (it says so), and JSON that could not be fitted
+structurally (e.g. an object with thousands of keys) is then no longer valid JSON. A shaping failure never fails the
+call: it falls back to that plain cut. The evidence log (`tools.tool_invocations`) still stores the **full** output
+plus `OutputChars`, `ShapedOutputChars` (= `OutputChars` when nothing was shaped) and the `MaxOutputTokens` budget
+used (null for non-model callers), and the `AgentOs.Tools` meter counts the difference as
+`agentos.tools.output.saved_chars` (tag `kind` = `builtin` | `mcp` | `remote`; ≈ chars / 4 tokens — an estimate,
+not billed usage).
 
 ### Settings → Agent profiles
 

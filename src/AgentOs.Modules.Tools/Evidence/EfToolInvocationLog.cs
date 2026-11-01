@@ -54,6 +54,9 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
                 IsError = entry.IsError,
                 StartedUtc = entry.StartedUtc,
                 FinishedUtc = entry.FinishedUtc,
+                OutputChars = entry.OutputChars,
+                ShapedOutputChars = entry.ShapedOutputChars,
+                MaxOutputTokens = entry.MaxOutputTokens,
                 Origin = entry.Origin,
                 AgentRole = entry.AgentRole,
                 RunnerId = entry.RunnerId,
@@ -106,6 +109,7 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
         const string sql = """
             SELECT "CallId", "ToolName", "TenantId", "RunId", "SessionId",
                    "Input", "Output", "IsError", "StartedUtc", "FinishedUtc",
+                   "OutputChars", "ShapedOutputChars", "MaxOutputTokens",
                    "Origin", "AgentRole", "RunnerId", "PolicySource", "Denied"
             FROM tools.tool_invocations
             WHERE "TenantId" = @tenantId
@@ -175,7 +179,7 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
 
     private static ToolInvocationEvidence ToEvidence(ToolInvocationEvidenceEntity x) => new(
         x.CallId, x.ToolName, x.TenantId, x.RunId, x.Input, x.Output, x.IsError,
-        x.StartedUtc, x.FinishedUtc, x.SessionId)
+        x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars, x.MaxOutputTokens)
     {
         Origin = x.Origin,
         AgentRole = x.AgentRole,

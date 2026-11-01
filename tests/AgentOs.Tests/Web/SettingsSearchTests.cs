@@ -15,7 +15,8 @@ namespace AgentOs.Tests.Web;
 public sealed class SettingsSearchTests
 {
     private static readonly SettingDescriptor[] Descriptors =
-        [.. new LlmSettings().Describe(), .. new AgentSettings().Describe(), .. new AutopilotSettings().Describe()];
+        [.. new LlmSettings().Describe(), .. new AgentSettings().Describe(), .. new AutopilotSettings().Describe(),
+         .. new AgentOs.Modules.Tools.ToolsSettings(enforceByDefault: false).Describe()];
 
     [Theory]
     [InlineData("gemini key", "keys")]
@@ -68,6 +69,9 @@ public sealed class SettingsSearchTests
         SettingsSearch.Find("anthropic api key", Descriptors, true, false, max: 10)
             .ShouldContain(h => h.Title == "Anthropic API key" && h.Target == "keys");
         SettingsSearch.Find("key pool", Descriptors, true, false).ShouldBeEmpty();
+        // Tools:MaxOutputTokens (2.7) is edited with the tenant's routing settings.
+        SettingsSearch.Find("tool output budget", Descriptors, true, false)
+            .ShouldContain(h => h.Target == "routing");
     }
 
     [Theory]

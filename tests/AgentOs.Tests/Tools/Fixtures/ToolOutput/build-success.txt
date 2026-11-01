@@ -1,0 +1,46 @@
+Build started 11/01/2026 09:36:49.
+     1>Project "/work/ok/Sample.Ok.csproj" on node 1 (Restore target(s)).
+     1>_GetAllRestoreProjectPathItems:
+         Determining projects to restore...
+     1>Project "/work/ok/Sample.Ok.csproj" (1) is building "/work/ok/Sample.Ok.csproj" (1:6) on node 1 (_GenerateProjectRestoreGraph target(s)).
+     1>AddPrunePackageReferences:
+         Loading prune package data from PrunePackageData folder
+         Failed to load prune package data from PrunePackageData folder, loading from targeting packs instead
+         Looking for targeting packs in /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref
+         Pack directories found: /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/10.0.14
+         Found package overrides file /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/10.0.14/data/PackageOverrides.txt
+     1>Done Building Project "/work/ok/Sample.Ok.csproj" (_GenerateProjectRestoreGraph target(s)).
+     1>Restore:
+         X.509 certificate chain validation will use the fallback certificate bundle at '/usr/share/dotnet/sdk/10.0.114/trustedroots/codesignctl.pem'.
+         X.509 certificate chain validation will use the fallback certificate bundle at '/usr/share/dotnet/sdk/10.0.114/trustedroots/timestampctl.pem'.
+         Assets file has not changed. Skipping assets file writing. Path: /work/ok/obj/project.assets.json
+         Restored /work/ok/Sample.Ok.csproj (in 79 ms).
+         
+         NuGet Config files used:
+             /root/.nuget/NuGet/NuGet.Config
+         
+         Feeds used:
+             https://api.nuget.org/v3/index.json
+             /usr/share/dotnet/library-packs
+         All projects are up-to-date for restore.
+     1>Done Building Project "/work/ok/Sample.Ok.csproj" (Restore target(s)).
+   1:7>Project "/work/ok/Sample.Ok.csproj" on node 1 (default targets).
+     1>GenerateTargetFrameworkMonikerAttribute:
+       Skipping target "GenerateTargetFrameworkMonikerAttribute" because all output files are up-to-date with respect to the input files.
+       CoreGenerateAssemblyInfo:
+       Skipping target "CoreGenerateAssemblyInfo" because all output files are up-to-date with respect to the input files.
+       _GenerateSourceLinkFile:
+         Source Link is empty, file 'obj/Release/net10.0/Sample.Ok.sourcelink.json' does not exist.
+       CoreCompile:
+       Skipping target "CoreCompile" because all output files are up-to-date with respect to the input files.
+       GenerateBuildDependencyFile:
+       Skipping target "GenerateBuildDependencyFile" because all output files are up-to-date with respect to the input files.
+       CopyFilesToOutputDirectory:
+         Sample.Ok -> /work/ok/bin/Release/net10.0/Sample.Ok.dll
+     1>Done Building Project "/work/ok/Sample.Ok.csproj" (default targets).
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.38

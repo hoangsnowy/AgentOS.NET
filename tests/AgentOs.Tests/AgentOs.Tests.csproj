@@ -10,6 +10,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Real MSBuild / dotnet test output captured for the tool-output shaping tests (2.7). -->
+    <EmbeddedResource Include="Tools\Fixtures\ToolOutput\*.txt" LogicalName="ToolOutput.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AgentOs.Domain\AgentOs.Domain.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.SharedKernel\AgentOs.SharedKernel.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.Modules.AppConfig\AgentOs.Modules.AppConfig.csproj" />
