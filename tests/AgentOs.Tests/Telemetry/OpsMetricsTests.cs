@@ -266,7 +266,7 @@ public sealed class OpsMetricsTests
         await new HealthMetricsPublisher().PublishAsync(report, CancellationToken.None);
 
         var values = capture.Of(HealthMetricsPublisher.InstrumentName)
-            .Where(m => m.Tag("agentos.health.check") != "overall" || m.Value == 0d) // a hosted app elsewhere may publish "overall" = 1
+            .Where(m => m.Tag("agentos.health.check") != "overall" || m.Value < 0.5d) // statuses are 0 / 0.5 / 1; a hosted app elsewhere may publish "overall" = 1
             .GroupBy(m => m.Tag("agentos.health.check")!)
             .ToDictionary(g => g.Key, g => g.Last().Value);
         values["ops-db"].ShouldBe(0d);
