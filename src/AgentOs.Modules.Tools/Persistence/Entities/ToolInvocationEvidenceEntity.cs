@@ -26,4 +26,7 @@ public sealed class ToolInvocationEvidenceEntity
 
     /// <summary>Length the model received after shaping; null on rows written before it.</summary>
     public int? ShapedOutputChars { get; set; }
+
+    /// <summary>The Tools:MaxOutputTokens budget the result was shaped against; null when unshaped and on older rows.</summary>
+    public int? MaxOutputTokens { get; set; }
 }

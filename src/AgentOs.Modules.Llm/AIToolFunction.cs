@@ -4,7 +4,8 @@
 // InvokeCoreAsync override serializes the model-emitted arguments back into the ITool's string
 // Input and runs it through the shared IToolGateway (policy gate + evidence), returning the
 // textual Output for the next LLM turn. All governance lives in the gateway (M1) so the
-// remote-session path enforces the same policy + evidence — and the same tool-output shaping (2.7).
+// remote-session path enforces the same policy + evidence. This adapter is model-facing, so its gateway
+// also shapes the result for the next turn (2.7, ToolGatewayResult.ForModel); the evidence keeps the full output.
 
 using System;
 using System.Collections.Generic;
@@ -48,7 +49,8 @@ internal sealed class AIToolFunction : AIFunction
         _runId = runId;
         // All policy + evidence enforcement lives in the gateway so every path (here + the remote
         // session executor) governs identically.
-        _gateway = new DefaultToolGateway(policy, log, settings);
+        // This adapter feeds the model, so the gateway shapes the result (2.7); its evidence keeps the full output.
+        _gateway = new DefaultToolGateway(policy, log, settings, shapeForModel: true);
 
         var def = tool.Definition;
         def.Validate();
@@ -81,6 +83,6 @@ internal sealed class AIToolFunction : AIFunction
             RunId: _runId);
 
         var result = await _gateway.InvokeAsync(_tool, request, cancellationToken).ConfigureAwait(false);
-        return result.Output;
+        return result.ForModel;
     }
 }

@@ -33,9 +33,9 @@ public sealed class ToolsSettings(bool enforceByDefault) : ISettingsContributor
             DefaultValue = ToolOutputShaper.DefaultMaxOutputTokens.ToString(CultureInfo.InvariantCulture),
             Min = ToolOutputShaper.MinMaxOutputTokens,
             Max = ToolOutputShaper.MaxMaxOutputTokens,
-            Help = "Largest tool result (≈ chars / 4) sent back to the model. Build/test logs are first trimmed to errors, "
-                + "failed tests and summaries; anything still larger is cut head + tail with an explicit omitted-lines marker. "
-                + "The evidence log keeps the full output.",
+            Help = "Largest tool result (≈ chars / 4) sent back to the model; smaller results pass unchanged. A larger build/test "
+                + "log is first trimmed to errors, failed tests and summaries, and JSON keeps its shape; anything still larger is "
+                + "cut head + tail with an explicit omitted-lines marker. The evidence log keeps the full output.",
         };
     }
 }

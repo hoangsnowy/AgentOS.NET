@@ -97,16 +97,25 @@ Code-only (no UI yet; seed via env if you must): `Llm:Claude:Endpoint` (`https:/
 (inter-provider failover map). Resilience today is key-pool cooldown + failover; `Llm:*:MaxRetries`
 exists on the options type but is not honoured yet.
 
-**Tool-output shaping** — every tool result passes `DefaultToolGateway` on its way back to the model (the in-process
-tool loop and every other `IToolGateway` caller) and is shaped there: build/test logs (MSBuild, `dotnet build`/`test`, VSTest,
-xUnit / Microsoft.Testing.Platform — also when wrapped in a JSON result such as `build_verifier`'s `output`) keep
-their `error`/`warning` lines (`error CS…`, analyzer ids), failed-test blocks with their first 5 stack frames,
-summary lines and a short head/tail window; restore/progress noise is dropped and repeated lines collapse to one
-with a `(×N)` count. Anything still larger than `Tools:MaxOutputTokens` × 4 chars is cut head + tail around an
-explicit `[… N lines omitted …]` marker (never inside a surrogate pair). The evidence log
-(`tools.tool_invocations`) still stores the **full** output plus `OutputChars` and `ShapedOutputChars`, and the
-`AgentOs.Tools` meter counts the difference as `agentos.tools.output.saved_chars` (tag `tool`; ≈ chars / 4
-tokens — an estimate, not billed usage).
+**Tool-output shaping** — a tool result headed back to the **model** (the LLM tool loop: `AIToolFunction` builds a
+model-facing `DefaultToolGateway`) is shaped there; data consumers such as a workflow Tool node (whose result feeds
+`${…}`, ExtractJson, Transform) always get the full output (`ToolGatewayResult.Output`; the shaped text is
+`ModelOutput`). A result within `Tools:MaxOutputTokens` × 4 chars is passed through **unchanged**. A larger one:
+build/test logs (MSBuild, `dotnet build`/`test`, VSTest, xUnit / Microsoft.Testing.Platform — recognised by lines
+only a build/test tool prints, not by a keyword anywhere; LF, CRLF or mixed line endings) keep their
+`error`/`warning` lines (`error CS…`, analyzer ids), failed-test blocks with their first 5 stack frames, summary lines
+and a short head/tail window; restore/progress noise is dropped and repeated lines collapse to one with a `(×N)`
+count. JSON results (objects or arrays, at any depth — `build_verifier`'s `output`, MCP `content[].text`) are shaped
+in place and stay valid JSON: long string values get the log pass and a share of the budget, over-long arrays keep
+their first elements plus a `"[… N more items omitted …]"` marker element. Whatever is still over the budget is cut
+as text, head + tail around an explicit `[… N lines omitted …]` marker (never inside a surrogate pair) — so errors
+are kept by the log pass, but this final cut may still drop some (it says so), and JSON that could not be fitted
+structurally (e.g. an object with thousands of keys) is then no longer valid JSON. A shaping failure never fails the
+call: it falls back to that plain cut. The evidence log (`tools.tool_invocations`) still stores the **full** output
+plus `OutputChars`, `ShapedOutputChars` (= `OutputChars` when nothing was shaped) and the `MaxOutputTokens` budget
+used (null for non-model callers), and the `AgentOs.Tools` meter counts the difference as
+`agentos.tools.output.saved_chars` (tag `kind` = `builtin` | `mcp` | `remote`; ≈ chars / 4 tokens — an estimate,
+not billed usage).
 
 ### Settings → Agent profiles
 

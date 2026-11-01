@@ -1,7 +1,9 @@
 // 2.7 — tool-output shaping. Real MSBuild / dotnet test logs (Fixtures/ToolOutput, captured from the .NET 10 SDK)
-// keep their diagnostics, failed tests and summaries and lose restore/progress noise; anything over the cap is cut
-// head + tail around an explicit marker without splitting a surrogate pair; the gateway hands the model the shaped
-// text while the evidence keeps the full output and both sizes; the setting is bounded.
+// keep their diagnostics, failed tests and summaries and lose restore/progress noise — identically for LF, CRLF and
+// mixed line endings; a result within the budget is never rewritten; anything over the cap is cut head + tail
+// around an explicit marker without splitting a surrogate pair; JSON stays valid JSON; only a MODEL-FACING gateway
+// shapes (data consumers get the full output); the evidence keeps the full output, both sizes and the cap whatever
+// goes wrong after the tool ran; the metric tag is bounded; the setting is bounded.
 
 using System;
 using System.Collections.Generic;
@@ -27,12 +29,46 @@ namespace AgentOs.Tests.Tools;
 
 public sealed class ToolOutputShaperTests
 {
+    // The smallest budget (2 000 chars): every fixture is above it, so Shape() actually shapes them.
+    private const int Small = ToolOutputShaper.MinMaxOutputTokens;
+
+    private static readonly string[] FixtureNames = ["build-errors", "build-success", "test-failures"];
+
     private static string Fixture(string name)
     {
         using var stream = typeof(ToolOutputShaperTests).Assembly.GetManifestResourceStream($"ToolOutput.{name}.txt")
             ?? throw new InvalidOperationException($"fixture {name} missing");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
+    }
+
+    // .gitattributes forces LF on checked-in files, so the CRLF / mixed variants are built here.
+    private static string Crlf(string lf) => lf.Replace("\n", "\r\n", StringComparison.Ordinal);
+
+    private static string Mixed(string lf)
+    {
+        var lines = lf.Split('\n');
+        var sb = new StringBuilder(lf.Length + lines.Length);
+        for (var i = 0; i < lines.Length; i++)
+        {
+            sb.Append(lines[i]);
+            if (i < lines.Length - 1)
+            {
+                sb.Append(i % 2 == 0 ? "\r\n" : "\n");
+            }
+        }
+        return sb.ToString();
+    }
+
+    // A test log well over the DEFAULT budget (16 000 chars): hundreds of passed tests + the failing fixture.
+    private static string BigTestLog()
+    {
+        var sb = new StringBuilder();
+        for (var i = 0; i < 700; i++)
+        {
+            sb.Append("  Passed Sample.Tests.Bulk.Passes_").Append(i).Append(" [< 1 ms]\n");
+        }
+        return sb.Append(Fixture("test-failures")).ToString();
     }
 
     // --- 1. build/test logs ---------------------------------------------------------------------------------
@@ -42,7 +78,7 @@ public sealed class ToolOutputShaperTests
     {
         var log = Fixture("build-errors");
 
-        var shaped = ToolOutputShaper.Shape(log, ToolOutputShaper.DefaultMaxOutputTokens);
+        var shaped = ToolOutputShaper.Shape(log, Small);
 
         shaped.LogShaped.ShouldBeTrue();
         shaped.Capped.ShouldBeFalse();
@@ -67,7 +103,7 @@ public sealed class ToolOutputShaperTests
     {
         var log = Fixture("build-success");
 
-        var shaped = ToolOutputShaper.Shape(log, ToolOutputShaper.DefaultMaxOutputTokens);
+        var shaped = ToolOutputShaper.Shape(log, Small);
 
         shaped.LogShaped.ShouldBeTrue();
         shaped.Text.ShouldContain("Build succeeded.");
@@ -80,24 +116,106 @@ public sealed class ToolOutputShaperTests
     }
 
     [Fact]
-    public void Shape_FailingTests_KeepsFailedBlocks_WithFirstFrames_AndTheTotals_DropsPassedTests()
+    public void TryShapeLog_FailingTests_KeepsFailedBlocks_WithFirstFrames_AndTheTotals_DropsPassedTests()
     {
         var log = Fixture("test-failures");
+
+        ToolOutputShaper.TryShapeLog(log, out var shaped).ShouldBeTrue();
+
+        shaped.ShouldContain("Failed Sample.Tests.CalculatorTests.Compare_Values_AreEqual(a: 1, b: 2)");
+        shaped.ShouldContain("Failed Sample.Tests.CalculatorTests.Divide_ByZero_Throws");
+        shaped.ShouldContain("Assert.Equal() Failure: Values differ");
+        shaped.ShouldContain("System.DivideByZeroException");
+        shaped.ShouldContain("at Sample.Tests.Helper.Deep(Int32 a, Int32 b)");
+        shaped.ShouldContain("Test Run Failed.");
+        shaped.ShouldContain("Total tests: 35");
+        shaped.ShouldContain("Failed: 2");
+        shaped.ShouldNotContain("Passed Sample.Tests.T1.");
+        shaped.ShouldNotContain("Starting test execution");
+        shaped.Length.ShouldBeLessThan(log.Length);
+    }
+
+    [Fact]
+    public void Shape_FailingTestsOverTheDefaultBudget_KeepsTheFailures()
+    {
+        var log = BigTestLog();
+        log.Length.ShouldBeGreaterThan(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
 
         var shaped = ToolOutputShaper.Shape(log, ToolOutputShaper.DefaultMaxOutputTokens);
 
         shaped.LogShaped.ShouldBeTrue();
-        shaped.Text.ShouldContain("Failed Sample.Tests.CalculatorTests.Compare_Values_AreEqual(a: 1, b: 2)");
+        shaped.Capped.ShouldBeFalse();
         shaped.Text.ShouldContain("Failed Sample.Tests.CalculatorTests.Divide_ByZero_Throws");
-        shaped.Text.ShouldContain("Assert.Equal() Failure: Values differ");
-        shaped.Text.ShouldContain("System.DivideByZeroException");
-        shaped.Text.ShouldContain("at Sample.Tests.Helper.Deep(Int32 a, Int32 b)");
-        shaped.Text.ShouldContain("Test Run Failed.");
         shaped.Text.ShouldContain("Total tests: 35");
-        shaped.Text.ShouldContain("Failed: 2");
-        shaped.Text.ShouldNotContain("Passed Sample.Tests.T1.");
-        shaped.Text.ShouldNotContain("Starting test execution");
-        shaped.ShapedChars.ShouldBeLessThan(log.Length);
+        shaped.Text.ShouldNotContain("Passes_350");
+    }
+
+    // Line endings: CRLF and mixed logs shape to exactly what the LF log shapes to — no shifted slices, no lost lines.
+    [Theory]
+    [InlineData("build-errors")]
+    [InlineData("build-success")]
+    [InlineData("test-failures")]
+    public void TryShapeLog_CrlfAndMixedEndings_ShapeExactlyLikeLf(string name)
+    {
+        var lf = Fixture(name);
+        ToolOutputShaper.TryShapeLog(lf, out var expected).ShouldBeTrue();
+
+        ToolOutputShaper.TryShapeLog(Crlf(lf), out var crlf).ShouldBeTrue();
+        ToolOutputShaper.TryShapeLog(Mixed(lf), out var mixed).ShouldBeTrue();
+
+        crlf.ShouldBe(expected);
+        mixed.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Shape_CrlfFixtures_KeepEveryDiagnosticAndSummary()
+    {
+        foreach (var name in FixtureNames)
+        {
+            var crlf = Crlf(Fixture(name));
+
+            var shaped = ToolOutputShaper.Shape(crlf, Small);
+
+            shaped.LogShaped.ShouldBeTrue(name);
+            shaped.Text.ShouldNotContain("\r", customMessage: name);
+        }
+        var errors = ToolOutputShaper.Shape(Crlf(Fixture("build-errors")), Small).Text;
+        errors.ShouldContain("/work/bad/Class1.cs(7,49): error CS1061");
+        errors.ShouldContain("Build FAILED.");
+        errors.ShouldContain("5 Error(s)");
+    }
+
+    [Fact]
+    public void TryShapeLog_LoneCarriageReturnProgress_BeforeTheErrors_KeepsEveryErrorAndTheVerdict()
+    {
+        // Progress output redraws one line with bare '\r'; it must neither end the scan nor shift the line count.
+        var progress = string.Join('\r', Enumerable.Range(0, 30).Select(i => $"Progress {i}%"));
+        var log = "  Determining projects to restore...\n" + progress + "\n" + Fixture("build-errors");
+
+        ToolOutputShaper.TryShapeLog(log, out var shaped).ShouldBeTrue();
+
+        foreach (var code in new[] { "error CS0029", "error CS0103", "error CS1061" })
+        {
+            shaped.ShouldContain(code);
+        }
+        shaped.ShouldContain("Build FAILED.");
+        shaped.ShouldContain("5 Error(s)");
+        shaped.ShouldContain("Time Elapsed");
+    }
+
+    // U+2028 LINE SEPARATOR, built at run time (a literal one would end the C# string literal).
+    private static readonly string LineSeparator = char.ConvertFromUtf32(0x2028);
+
+    [Fact]
+    public void TryShapeLog_UnicodeLineSeparatorInsideALine_IsAnOrdinaryCharacter()
+    {
+        var lf = Fixture("build-errors");
+        var withSeparator = lf.Replace("Cannot implicitly", "Cannot" + LineSeparator + "implicitly", StringComparison.Ordinal);
+        ToolOutputShaper.TryShapeLog(lf, out var expected).ShouldBeTrue();
+
+        ToolOutputShaper.TryShapeLog(withSeparator, out var shaped).ShouldBeTrue();
+
+        shaped.ShouldBe(expected.Replace("Cannot implicitly", "Cannot" + LineSeparator + "implicitly", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -125,6 +243,29 @@ public sealed class ToolOutputShaperTests
         shaped.ShouldContain($"[… {30 - ToolOutputShaper.StackFramesPerFailure} more stack frames …]");
         shaped.ShouldContain("Failed!  - Failed:     1");
         shaped.ShouldContain("boom");
+    }
+
+    [Fact]
+    public void TryShapeLog_AssertionMessageMentioningTotals_DoesNotEndTheFailedTestBlock()
+    {
+        // "total:" / "failed:" inside an assertion message are not a summary: the block (and its frames) continues.
+        var sb = new StringBuilder();
+        for (var i = 0; i < 25; i++)
+        {
+            sb.Append("  Passed Ns.Ok.Test").Append(i).Append(" [1 ms]\n");
+        }
+        sb.Append("  Failed Ns.Broken.Totals [4 ms]\n  Error Message:\n   Expected row total: 3, rows failed: 1\n  Stack Trace:\n");
+        sb.Append("     at Ns.Report.Sum() in /src/R.cs:line 9\n");
+        for (var i = 0; i < 20; i++)
+        {
+            sb.Append("  Passed Ns.Ok.After").Append(i).Append(" [1 ms]\n");
+        }
+        sb.Append("\nFailed!  - Failed:     1, Passed:    45, Skipped:     0, Total:    46\n");
+
+        ToolOutputShaper.TryShapeLog(sb.ToString(), out var shaped).ShouldBeTrue();
+
+        shaped.ShouldContain("Expected row total: 3, rows failed: 1");
+        shaped.ShouldContain("at Ns.Report.Sum() in /src/R.cs:line 9");
     }
 
     [Fact]
@@ -174,6 +315,41 @@ public sealed class ToolOutputShaperTests
     }
 
     [Fact]
+    public void Shape_SmallSourceFileMentioningLogKeywords_IsUnchanged()
+    {
+        // A file the model asked to read, well within budget, that merely talks about build output.
+        var src = new StringBuilder("// Parser for build output: looks for \"Build FAILED\" and \"error CS\" lines\n");
+        for (var i = 0; i < 60; i++)
+        {
+            src.Append("    var x").Append(i).Append(" = Compute(").Append(i).Append("); // step ").Append(i).Append('\n');
+        }
+        var text = src.ToString();
+
+        var shaped = ToolOutputShaper.Shape(text, ToolOutputShaper.DefaultMaxOutputTokens);
+
+        shaped.Text.ShouldBeSameAs(text);
+        shaped.LogShaped.ShouldBeFalse();
+        shaped.Capped.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryShapeLog_KeywordsWithoutLogStructure_AreNotALog()
+    {
+        // Over any budget, a text whose only "signal" is a keyword inside prose/comments is cut as text, not
+        // log-shaped (which would keep head/tail + summaries and drop everything else).
+        var src = new StringBuilder("// Parser for build output: looks for \"Build FAILED\" lines\n");
+        for (var i = 0; i < 400; i++)
+        {
+            src.Append("    var x").Append(i).Append(" = Compute(").Append(i).Append("); // total: ").Append(i).Append('\n');
+        }
+
+        ToolOutputShaper.TryShapeLog(src.ToString(), out _).ShouldBeFalse();
+        var shaped = ToolOutputShaper.Shape(src.ToString(), Small);
+        shaped.LogShaped.ShouldBeFalse();
+        shaped.Capped.ShouldBeTrue();
+    }
+
+    [Fact]
     public void Shape_PlainTextThatIsNotALog_IsUntouchedUnderTheCap()
     {
         var text = string.Join('\n', Enumerable.Range(0, 200).Select(i => $"row {i}: value"));
@@ -186,11 +362,14 @@ public sealed class ToolOutputShaperTests
         shaped.SavedChars.ShouldBe(0);
     }
 
+    // --- 2. JSON --------------------------------------------------------------------------------------------
+
     [Fact]
     public void Shape_BuildVerifierJson_ShapesTheEmbeddedLog_AndStaysValidJson()
     {
-        var log = Fixture("build-errors") + string.Concat(Enumerable.Repeat("  Restored /work/x.csproj (in 79 ms).\n", 200));
+        var log = Fixture("build-errors") + string.Concat(Enumerable.Repeat("  Restored /work/x.csproj (in 79 ms).\n", 500));
         var json = JsonSerializer.Serialize(new { success = false, exit_code = 1, output = log });
+        json.Length.ShouldBeGreaterThan(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
 
         var shaped = ToolOutputShaper.Shape(json, ToolOutputShaper.DefaultMaxOutputTokens);
 
@@ -204,7 +383,54 @@ public sealed class ToolOutputShaperTests
         output.ShouldNotContain("Restored /work/x.csproj");
     }
 
-    // --- 2. the cap -----------------------------------------------------------------------------------------
+    [Fact]
+    public void Shape_JsonArrayOverTheCap_DropsTrailingItems_BehindAMarker_AndStaysValidJson()
+    {
+        var json = "[" + string.Join(",", Enumerable.Range(0, 2000).Select(i => $"{{\"id\":{i},\"name\":\"file{i}.cs\"}}")) + "]";
+
+        var shaped = ToolOutputShaper.Shape(json, Small);
+
+        shaped.ShapedChars.ShouldBeLessThanOrEqualTo(Small * ToolOutputShaper.CharsPerToken);
+        shaped.Capped.ShouldBeFalse();
+        using var doc = JsonDocument.Parse(shaped.Text);
+        var items = doc.RootElement.EnumerateArray().ToList();
+        items[0].GetProperty("id").GetInt32().ShouldBe(0);
+        var marker = items[^1].GetString()!;
+        marker.ShouldStartWith("[… ");
+        marker.ShouldEndWith(" more items omitted …]");
+        (items.Count - 1 + int.Parse(marker.Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture)).ShouldBe(2000);
+    }
+
+    [Fact]
+    public void Shape_NestedMcpJsonOverTheCap_CapsTheNestedText_AndStaysValidJson()
+    {
+        var text = string.Join('\n', Enumerable.Range(0, 3000).Select(i => $"row {i}"));
+        var json = JsonSerializer.Serialize(new { content = new[] { new { type = "text", text } }, isError = false });
+
+        var shaped = ToolOutputShaper.Shape(json, Small);
+
+        shaped.ShapedChars.ShouldBeLessThanOrEqualTo(Small * ToolOutputShaper.CharsPerToken);
+        using var doc = JsonDocument.Parse(shaped.Text);
+        var inner = doc.RootElement.GetProperty("content")[0].GetProperty("text").GetString()!;
+        inner.ShouldStartWith("row 0\n");
+        inner.ShouldEndWith("row 2999");
+        inner.ShouldContain(" lines omitted …]");
+        doc.RootElement.GetProperty("isError").GetBoolean().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Shape_JsonWithDuplicateKeys_DoesNotThrow_AndIsCutAsText()
+    {
+        var dupe = "{\"output\":\"" + string.Join("\\n", Enumerable.Range(0, 400).Select(i => $"line {i} Build FAILED")) + "\",\"output\":\"x\"}";
+
+        var shaped = ToolOutputShaper.Shape(dupe, Small);
+
+        shaped.Capped.ShouldBeTrue();
+        shaped.ShapedChars.ShouldBeLessThanOrEqualTo(Small * ToolOutputShaper.CharsPerToken);
+        shaped.Text.ShouldStartWith("{\"output\":\"line 0 Build FAILED");
+    }
+
+    // --- 3. the cap -----------------------------------------------------------------------------------------
 
     [Theory]
     [InlineData(500)]
@@ -295,35 +521,57 @@ public sealed class ToolOutputShaperTests
         ToolOutputShaper.Shape("", 4000).SavedChars.ShouldBe(0);
     }
 
-    // --- 3. the gateway + evidence + metric ------------------------------------------------------------------
+    // --- 4. the gateway + evidence + metric ------------------------------------------------------------------
 
     [Fact]
-    public async Task Gateway_ShapesWhatTheModelSees_EvidenceKeepsFullOutputAndBothSizes()
+    public async Task Gateway_ModelFacing_ShapesForTheModel_OutputAndEvidenceKeepTheFullResult()
     {
-        var log = Fixture("test-failures");
+        var log = BigTestLog();
         var evidence = new InMemoryToolInvocationLog();
-        var gateway = new DefaultToolGateway(policy: null, log: evidence);
+        var gateway = new DefaultToolGateway(policy: null, log: evidence, shapeForModel: true);
 
         var result = await gateway.InvokeAsync(new FixedTool(log), Request("tenant-a"), CancellationToken.None);
 
-        result.Output.Length.ShouldBeLessThan(log.Length);
-        result.Output.ShouldContain("Failed Sample.Tests.CalculatorTests.Divide_ByZero_Throws");
+        result.Output.ShouldBe(log);
+        var forModel = result.ModelOutput.ShouldNotBeNull();
+        result.ForModel.ShouldBeSameAs(forModel);
+        forModel.Length.ShouldBeLessThan(log.Length);
+        forModel.ShouldContain("Failed Sample.Tests.CalculatorTests.Divide_ByZero_Throws");
         var row = (await evidence.ListRecentAsync("tenant-a")).ShouldHaveSingleItem();
         row.Output.ShouldBe(log);
         row.OutputChars.ShouldBe(log.Length);
-        row.ShapedOutputChars.ShouldBe(result.Output.Length);
-        row.SavedChars.ShouldBe(log.Length - result.Output.Length);
+        row.ShapedOutputChars.ShouldBe(forModel.Length);
+        row.SavedChars.ShouldBe(log.Length - forModel.Length);
+        row.MaxOutputTokens.ShouldBe(ToolOutputShaper.DefaultMaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task Gateway_NotModelFacing_NeverShapes_EqualSizes_NoCap()
+    {
+        var log = BigTestLog();
+        var evidence = new InMemoryToolInvocationLog();
+        var gateway = new DefaultToolGateway(policy: null, log: evidence);
+
+        var result = await gateway.InvokeAsync(new FixedTool(log), Request("tenant-data"), CancellationToken.None);
+
+        result.Output.ShouldBe(log);
+        result.ModelOutput.ShouldBeNull();
+        result.ForModel.ShouldBe(log);
+        var row = (await evidence.ListRecentAsync("tenant-data")).ShouldHaveSingleItem();
+        row.ShapedOutputChars.ShouldBe(log.Length);
+        row.SavedChars.ShouldBe(0);
+        row.MaxOutputTokens.ShouldBeNull();
     }
 
     [Fact]
     public async Task Gateway_SmallOutput_IsPassedThrough_WithEqualSizes()
     {
         var evidence = new InMemoryToolInvocationLog();
-        var gateway = new DefaultToolGateway(policy: null, log: evidence);
+        var gateway = new DefaultToolGateway(policy: null, log: evidence, shapeForModel: true);
 
         var result = await gateway.InvokeAsync(new FixedTool("happy"), Request("tenant-b"), CancellationToken.None);
 
-        result.Output.ShouldBe("happy");
+        result.ForModel.ShouldBe("happy");
         var row = (await evidence.ListRecentAsync("tenant-b")).ShouldHaveSingleItem();
         row.OutputChars.ShouldBe(5);
         row.ShapedOutputChars.ShouldBe(5);
@@ -336,33 +584,98 @@ public sealed class ToolOutputShaperTests
         var text = string.Join('\n', Enumerable.Range(0, 20_000).Select(i => $"row {i:D5}"));
         var settings = Settings();
         (await settings.SetAsync(ToolsSettings.MaxOutputTokens, "500", SettingScope.Tenant, "small", "admin")).Ok.ShouldBeTrue();
-        var gateway = new DefaultToolGateway(policy: null, log: null, settings: settings);
+        var gateway = new DefaultToolGateway(policy: null, log: null, settings: settings, shapeForModel: true);
 
         var small = await gateway.InvokeAsync(new FixedTool(text), Request("small"), CancellationToken.None);
         var other = await gateway.InvokeAsync(new FixedTool(text), Request("other"), CancellationToken.None);
 
-        small.Output.Length.ShouldBeLessThanOrEqualTo(500 * ToolOutputShaper.CharsPerToken);
-        other.Output.Length.ShouldBeGreaterThan(500 * ToolOutputShaper.CharsPerToken);
-        other.Output.Length.ShouldBeLessThanOrEqualTo(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
+        small.ForModel.Length.ShouldBeLessThanOrEqualTo(500 * ToolOutputShaper.CharsPerToken);
+        other.ForModel.Length.ShouldBeGreaterThan(500 * ToolOutputShaper.CharsPerToken);
+        other.ForModel.Length.ShouldBeLessThanOrEqualTo(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
     }
 
     [Fact]
     public async Task Gateway_ToolError_IsShapedToo()
     {
-        var log = Fixture("build-errors");
-        var gateway = new DefaultToolGateway();
+        var log = BigTestLog();
+        var gateway = new DefaultToolGateway(shapeForModel: true);
 
         var result = await gateway.InvokeAsync(new FixedTool(log, isError: true), Request("tenant-c"), CancellationToken.None);
 
         result.IsError.ShouldBeTrue();
-        result.Output.Length.ShouldBeLessThan(log.Length);
-        result.Output.ShouldContain("error CS0103");
+        result.ForModel.Length.ShouldBeLessThan(log.Length);
+        result.ForModel.ShouldContain("System.DivideByZeroException");
     }
 
     [Fact]
-    public async Task Gateway_RecordsSavedChars_OnTheToolsMeter()
+    public async Task Gateway_DuplicateKeyJson_StillAnswers_AndRecordsEvidence()
+    {
+        var dupe = "{\"output\":\"" + string.Join("\\n", Enumerable.Range(0, 2000).Select(i => $"line {i} Build FAILED")) + "\",\"output\":\"x\"}";
+        var evidence = new InMemoryToolInvocationLog();
+        var gateway = new DefaultToolGateway(policy: null, log: evidence, shapeForModel: true);
+
+        var result = await gateway.InvokeAsync(new FixedTool(dupe), Request("tenant-dupe"), CancellationToken.None);
+
+        result.Output.ShouldBe(dupe);
+        result.ForModel.Length.ShouldBeLessThanOrEqualTo(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
+        (await evidence.ListRecentAsync("tenant-dupe")).ShouldHaveSingleItem().Output.ShouldBe(dupe);
+    }
+
+    [Fact]
+    public async Task Gateway_SettingsStoreThrows_FallsBackToTheDefaultCap_AndRecordsEvidence()
+    {
+        var text = string.Join('\n', Enumerable.Range(0, 20_000).Select(i => $"row {i:D5}"));
+        var evidence = new InMemoryToolInvocationLog();
+        var gateway = new DefaultToolGateway(
+            policy: null, log: evidence, settings: new ThrowingSettings(new KeyNotFoundException("no such key")), shapeForModel: true);
+
+        var result = await gateway.InvokeAsync(new FixedTool(text), Request("tenant-flaky"), CancellationToken.None);
+
+        result.ForModel.Length.ShouldBeLessThanOrEqualTo(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
+        var row = (await evidence.ListRecentAsync("tenant-flaky")).ShouldHaveSingleItem();
+        row.Output.ShouldBe(text);
+        row.MaxOutputTokens.ShouldBe(ToolOutputShaper.DefaultMaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task Gateway_SettingsStoreTimesOutOnItsOwn_IsAHiccup_NotACancellation()
+    {
+        // A store's own timeout surfaces as TaskCanceledException while the CALLER's token is fine.
+        var evidence = new InMemoryToolInvocationLog();
+        var gateway = new DefaultToolGateway(
+            policy: null, log: evidence, settings: new ThrowingSettings(new TaskCanceledException("store timeout")), shapeForModel: true);
+
+        var result = await gateway.InvokeAsync(new FixedTool("ok"), Request("tenant-slow"), CancellationToken.None);
+
+        result.ForModel.ShouldBe("ok");
+        (await evidence.ListRecentAsync("tenant-slow")).ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task Gateway_CancelledAfterTheToolRan_StillRecordsTheEvidence()
+    {
+        using var cts = new CancellationTokenSource();
+        var evidence = new InMemoryToolInvocationLog();
+        var gateway = new DefaultToolGateway(policy: null, log: evidence, settings: Settings(), shapeForModel: true);
+        var log = BigTestLog();
+
+        // The tool completes its side effect, and the caller cancels right as it returns.
+        var result = await gateway.InvokeAsync(new FixedTool(log, onInvoke: cts.Cancel), Request("tenant-cancel"), cts.Token);
+
+        cts.IsCancellationRequested.ShouldBeTrue();
+        result.Output.ShouldBe(log);
+        var row = (await evidence.ListRecentAsync("tenant-cancel")).ShouldHaveSingleItem();
+        row.Output.ShouldBe(log);
+        row.ShapedOutputChars.ShouldBe(result.ForModel.Length);
+    }
+
+    private static readonly AsyncLocal<bool> MeterProbe = new();
+
+    [Fact]
+    public async Task Gateway_RecordsSavedChars_OnTheToolsMeter_WithABoundedKindTag()
     {
         long saved = 0;
+        var kinds = new List<string>();
         using var listener = new MeterListener
         {
             InstrumentPublished = (instrument, l) =>
@@ -375,22 +688,36 @@ public sealed class ToolOutputShaperTests
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
-            foreach (var tag in tags)
+            // Only this test's async flow counts (other tests shape in parallel on the same static meter).
+            if (!MeterProbe.Value)
             {
-                if (tag.Key == "tool" && Equals(tag.Value, "fixed_meter_probe"))
-                {
-                    Interlocked.Add(ref saved, value);
-                }
+                return;
+            }
+            Interlocked.Add(ref saved, value);
+            lock (kinds)
+            {
+                kinds.AddRange(tags.ToArray().Select(t => $"{t.Key}={t.Value}"));
             }
         });
         listener.Start();
-        var log = Fixture("build-success");
+        var log = BigTestLog();
 
-        var result = await new DefaultToolGateway().InvokeAsync(
-            new FixedTool(log, name: "fixed_meter_probe"), Request("tenant-d", "fixed_meter_probe"), CancellationToken.None);
+        MeterProbe.Value = true;
+        var result = await new DefaultToolGateway(shapeForModel: true).InvokeAsync(
+            new FixedTool(log, name: "github.search_code"), Request("tenant-d", "github.search_code"), CancellationToken.None);
+        MeterProbe.Value = false;
 
-        Interlocked.Read(ref saved).ShouldBe(log.Length - result.Output.Length);
+        Interlocked.Read(ref saved).ShouldBe(log.Length - result.ForModel.Length);
+        kinds.ShouldHaveSingleItem().ShouldBe("kind=mcp");
     }
+
+    [Theory]
+    [InlineData("build_verifier", "builtin")]
+    [InlineData("github.search_code", "mcp")]
+    [InlineData("runner_shell", "remote")]
+    [InlineData("", "builtin")]
+    [InlineData(null, "builtin")]
+    public void KindOf_IsBounded(string? tool, string expected) => ToolTelemetry.KindOf(tool).ShouldBe(expected);
 
     // --- the setting -----------------------------------------------------------------------------------------
 
@@ -436,13 +763,32 @@ public sealed class ToolOutputShaperTests
     }
 
     // A small fake (not NSubstitute) so no ValueTask/Task member is configured on a substitute.
-    private sealed class FixedTool(string output, bool isError = false, string name = "fixed") : ITool
+    private sealed class FixedTool(string output, bool isError = false, string name = "fixed", Action? onInvoke = null) : ITool
     {
         public ToolDefinition Definition { get; } = new(name, "returns a fixed output", """{"type":"object"}""");
 
-        public Task<ToolInvocationResult> InvokeAsync(ToolInvocationRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(isError
+        public Task<ToolInvocationResult> InvokeAsync(ToolInvocationRequest request, CancellationToken cancellationToken = default)
+        {
+            onInvoke?.Invoke();
+            return Task.FromResult(isError
                 ? ToolInvocationResult.Error(request.CallId, output)
                 : ToolInvocationResult.Success(request.CallId, output));
+        }
+    }
+
+    // ISettings whose reads fail (a hand-written fake: ISettings is ValueTask-returning, never substituted).
+    private sealed class ThrowingSettings(Exception error) : ISettings
+    {
+        public long Version => 0;
+
+        public ValueTask<SettingValue> GetAsync(string key, string? tenantId, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<SettingValue>(error);
+
+        public ValueTask<IReadOnlyList<SettingView>> ListAsync(string? tenantId, string? category = null, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<IReadOnlyList<SettingView>>(error);
+
+        public ValueTask<SettingWriteResult> SetAsync(
+            string key, string? value, SettingScope scope, string? tenantId, string actor, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<SettingWriteResult>(error);
     }
 }

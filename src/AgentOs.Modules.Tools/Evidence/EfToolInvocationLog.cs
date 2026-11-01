@@ -56,6 +56,7 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
                 FinishedUtc = entry.FinishedUtc,
                 OutputChars = entry.OutputChars,
                 ShapedOutputChars = entry.ShapedOutputChars,
+                MaxOutputTokens = entry.MaxOutputTokens,
             });
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -93,7 +94,7 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
 
         return rows.Select(x => new ToolInvocationEvidence(
             x.CallId, x.ToolName, x.TenantId, x.RunId, x.Input, x.Output, x.IsError,
-            x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars)).ToList();
+            x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars, x.MaxOutputTokens)).ToList();
     }
 
     // Dapper fast-path: tool_invocations under the "tools" schema; PascalCase columns are quoted and
@@ -105,7 +106,7 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
         const string sql = """
             SELECT "CallId", "ToolName", "TenantId", "RunId", "SessionId",
                    "Input", "Output", "IsError", "StartedUtc", "FinishedUtc",
-                   "OutputChars", "ShapedOutputChars"
+                   "OutputChars", "ShapedOutputChars", "MaxOutputTokens"
             FROM tools.tool_invocations
             WHERE "TenantId" = @tenantId
             ORDER BY "StartedUtc" DESC
@@ -119,6 +120,6 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
 
         return rows.Select(x => new ToolInvocationEvidence(
             x.CallId, x.ToolName, x.TenantId, x.RunId, x.Input, x.Output, x.IsError,
-            x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars)).ToList();
+            x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars, x.MaxOutputTokens)).ToList();
     }
 }

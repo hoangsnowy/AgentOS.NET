@@ -73,10 +73,11 @@ public sealed class ToolsModule : IModule, IInitializableModule
         // M1 — the shared policy-gate + invoke + evidence seam. Every governed execution path
         // (the in-process LLM tool loop and the remote-session executor) resolves this so tools
         // are gated + recorded identically regardless of where the side effect runs.
+        // Not model-facing: DI consumers (a workflow Tool node feeding ${…} / ExtractJson) use the result as DATA,
+        // so this gateway never shapes it (2.7) — AIToolFunction builds its own model-facing gateway.
         services.TryAddSingleton<IToolGateway>(sp => new DefaultToolGateway(
             sp.GetService<IToolPolicy>(),
-            sp.GetService<IToolInvocationLog>(),
-            sp.GetService<AgentOs.Domain.Configuration.ISettings>()));
+            sp.GetService<IToolInvocationLog>()));
     }
 
     public async Task InitializeAsync(IServiceProvider services, CancellationToken ct)

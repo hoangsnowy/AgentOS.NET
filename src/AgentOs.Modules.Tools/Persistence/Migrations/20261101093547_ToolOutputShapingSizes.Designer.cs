@@ -51,6 +51,9 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int?>("MaxOutputTokens")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("OutputChars")
                         .HasColumnType("integer");
 

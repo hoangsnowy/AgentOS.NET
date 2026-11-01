@@ -11,6 +11,13 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<int>(
+                name: "MaxOutputTokens",
+                schema: "tools",
+                table: "tool_invocations",
+                type: "integer",
+                nullable: true);
+
+            migrationBuilder.AddColumn<int>(
                 name: "OutputChars",
                 schema: "tools",
                 table: "tool_invocations",
@@ -28,6 +35,11 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropColumn(
+                name: "MaxOutputTokens",
+                schema: "tools",
+                table: "tool_invocations");
+
             migrationBuilder.DropColumn(
                 name: "OutputChars",
                 schema: "tools",

@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Tools;
@@ -67,6 +68,26 @@ public sealed class AIToolFunctionTests
             CancellationToken.None);
 
         result?.ToString().ShouldBe("boom");
+    }
+
+    [Fact]
+    public async Task Adapter_Invoke_HandsTheModelTheShapedOutput_OverTheBudget()
+    {
+        // 2.7: the adapter is the model-facing path, so a result over Tools:MaxOutputTokens reaches the model capped.
+        var big = string.Join('\n', Enumerable.Range(0, 20_000).Select(i => $"row {i:D5}"));
+        var tool = Substitute.For<ITool>();
+        tool.Definition.Returns(new ToolDefinition("dump", "desc", """{"type":"object"}"""));
+        tool.InvokeAsync(Arg.Any<ToolInvocationRequest>(), Arg.Any<CancellationToken>())
+            .Returns(ci => Task.FromResult(ToolInvocationResult.Success(ci.Arg<ToolInvocationRequest>()!.CallId, big)));
+
+        var fn = new AIToolFunction(tool, "tenant-1", runId: null);
+        var result = (await fn.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>()), CancellationToken.None))?.ToString();
+
+        result.ShouldNotBeNull();
+        result.Length.ShouldBeLessThanOrEqualTo(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
+        result.ShouldStartWith("row 00000");
+        result.ShouldEndWith("row 19999");
+        result.ShouldContain(" lines omitted …]");
     }
 
     [Fact]
