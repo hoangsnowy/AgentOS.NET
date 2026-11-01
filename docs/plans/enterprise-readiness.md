@@ -49,7 +49,7 @@ real services:
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
-| E1.9 on-prem install (compose + Helm + offline bundle) | this PR, [ONPREM.md](../ONPREM.md) | Compose cold install → themed login → desktop; pg_dump restore drill; air-gapped bundle (`docker save`→`load`, no repo) boots; key ring certificate-wrapped, RLS on; chart lint/template + strict schema check; kind cold install + upgrade in CI (`deploy-lint`) |
+| E1.9 on-prem install (compose + Helm + offline bundle) | #298, [ONPREM.md](../ONPREM.md) | Compose cold install → themed login → desktop; pg_dump restore drill; air-gapped bundle (`docker save`→`load`, no repo) boots; key ring certificate-wrapped, RLS on; chart lint/template + strict schema check; kind cold install + upgrade in CI (`deploy-lint`) |
 | (pre-E0) QA gate before PR, platform-only tenant endpoints, settings audit, isolation E2E, About | #191–#194 | Real-auth suite |
 
 Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machine's `claude -p` (#204). The full
