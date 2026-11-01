@@ -1,5 +1,6 @@
-// The perf gate (.github/workflows/perf.yml) fails a run on > 20 % Mean regression or a new allocation on a
-// zero-allocation benchmark. These tests pin that contract and check the committed baseline stays readable.
+// The perf gate (.github/workflows/perf.yml) fails a run on allocation growth (0 B → anything, or > 20 % + 64 B), a
+// crashed benchmark, a missing one on a full run, or — unless timing is advisory — a > 20 % Mean regression.
+// These tests pin that contract and check the committed baseline stays readable.
 
 using System;
 using System.Collections.Generic;
@@ -44,10 +45,64 @@ public class BaselineComparerTests
     {
         var rows = BaselineComparer.ReadReport(Report);
 
-        rows.Count.ShouldBe(2);
+        rows.Count.ShouldBe(3);
         rows[0].ShouldBe(new BenchmarkMeasurement("AgentOs.Benchmarks.Llm.CostCalculatorBenchmarks.ExactId", 41.5, 0));
         rows[1].MeanNs.ShouldBe(5200.25);
         rows[1].AllocatedBytes.ShouldBe(16440);
+        rows[2].FullName.ShouldBe("AgentOs.Benchmarks.Broken.DidNotRun");
+        rows[2].Failed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Compare_BenchmarkWithoutStatistics_FailsAsFailed()
+    {
+        var current = BaselineComparer.ReadReport(Report).ToDictionary(r => r.FullName, StringComparer.Ordinal);
+        var baseline = Set(new BenchmarkMeasurement("AgentOs.Benchmarks.Broken.DidNotRun", 100, 0));
+
+        var row = BaselineComparer.Compare(baseline, current).Single(r => r.FullName == "AgentOs.Benchmarks.Broken.DidNotRun");
+
+        row.Verdict.ShouldBe(ComparisonVerdict.Failed);
+        row.IsFailure.ShouldBeTrue();
+        row.Ratio.ShouldBeNull();
+        BaselineComparer.ToMarkdown([row], new ComparisonOptions()).ShouldContain("crashed");
+    }
+
+    [Fact]
+    public void Compare_NewBenchmarkThatCrashed_FailsAsFailed()
+    {
+        var rows = BaselineComparer.Compare(Set(), Set(BenchmarkMeasurement.FailedRun("New.Broken")));
+
+        var row = rows.ShouldHaveSingleItem();
+        row.Verdict.ShouldBe(ComparisonVerdict.Failed);
+        row.IsFailure.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Compare_MissingOnAFullRun_Fails()
+    {
+        var rows = BaselineComparer.Compare(
+            Set(new BenchmarkMeasurement("Old.Gone", 10, 0)), Set(new BenchmarkMeasurement("Kept.One", 10, 0)), new ComparisonOptions(RequireAll: true));
+
+        var missing = rows.Single(r => r.FullName == "Old.Gone");
+        missing.Verdict.ShouldBe(ComparisonVerdict.Missing);
+        missing.IsFailure.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Compare_TimingAdvisory_SlowerIsAWarningButAllocationsStillGate()
+    {
+        var options = new ComparisonOptions(TimingAdvisory: true);
+
+        var rows = BaselineComparer.Compare(
+            Set(new BenchmarkMeasurement("A.Slow", 1_000, 100), new("B.Alloc", 1_000, 0)),
+            Set(new BenchmarkMeasurement("A.Slow", 5_000, 100), new("B.Alloc", 1_000, 32)),
+            options);
+
+        rows[0].Verdict.ShouldBe(ComparisonVerdict.SlowerAdvisory);
+        rows[0].IsFailure.ShouldBeFalse();
+        rows[1].Verdict.ShouldBe(ComparisonVerdict.NewAllocation);
+        rows[1].IsFailure.ShouldBeTrue();
+        BaselineComparer.ToMarkdown(rows, options).ShouldContain("advisory");
     }
 
     [Fact]
@@ -112,13 +167,57 @@ public class BaselineComparerTests
         row.IsFailure.ShouldBeTrue();
     }
 
-    [Fact]
-    public void Compare_AllocatingBaselineAllocatesMore_IsNotAnAllocationFailure()
+    [Theory]
+    [InlineData(100, 184, false)]          // +84 B = 20 % + 64 B floor exactly: tolerated
+    [InlineData(100, 185, true)]           // one byte past the threshold + floor
+    [InlineData(16_440, 19_700, false)]    // +19.8 %
+    [InlineData(16_440, 32_880, true)]
+    [InlineData(200, 100, false)]          // fewer allocations never fail
+    public void Compare_AllocatingBaselineAllocatesMore_FailsBeyondThresholdPlusFloor(long was, long now, bool fails)
     {
-        var rows = BaselineComparer.Compare(Set(new BenchmarkMeasurement("A.B", 40, 100)), Set(new BenchmarkMeasurement("A.B", 40, 200)));
+        var rows = BaselineComparer.Compare(Set(new BenchmarkMeasurement("A.B", 40, was)), Set(new BenchmarkMeasurement("A.B", 40, now)));
 
-        rows.ShouldHaveSingleItem().Verdict.ShouldBe(ComparisonVerdict.Ok);
+        var row = rows.ShouldHaveSingleItem();
+        row.Verdict.ShouldBe(fails ? ComparisonVerdict.MoreAllocation : ComparisonVerdict.Ok);
+        row.IsFailure.ShouldBe(fails);
     }
+
+    [Theory]
+    [InlineData(null, 0.20)]
+    [InlineData("0.20", 0.20)]
+    [InlineData("1", 1.0)]
+    [InlineData("15%", 0.15)]
+    [InlineData(" 100 % ", 1.0)]
+    public void TryParseThreshold_FractionOrPercent_Parses(string? text, double expected)
+    {
+        ComparerArguments.TryParseThreshold(text, out var fraction, out var error).ShouldBeTrue();
+        error.ShouldBeNull();
+        fraction.ShouldBe(expected, 1e-12);
+    }
+
+    [Theory]
+    [InlineData("20")]      // would be 2000 %
+    [InlineData("0")]
+    [InlineData("-0.1")]
+    [InlineData("150%")]
+    [InlineData("abc")]
+    [InlineData("NaN")]
+    public void TryParseThreshold_OutOfRangeOrGarbage_IsRejected(string text)
+    {
+        ComparerArguments.TryParseThreshold(text, out _, out var error).ShouldBeFalse();
+        error.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void Positional_SkipsOptionValuesButNotFlags()
+    {
+        ComparerArguments.Positional(["--require-all", "base", "--threshold", "0.2", "results", "--summary", "s.md"])
+            .ShouldBe(["base", "results"]);
+    }
+
+    [Fact]
+    public void EscapeAnnotation_EscapesWorkflowCommandCharacters() =>
+        ComparerArguments.EscapeAnnotation("a%b\r\nc").ShouldBe("a%25b%0D%0Ac");
 
     [Fact]
     public void Compare_FasterBeyondThreshold_IsImprovedNotFailure()
@@ -131,7 +230,7 @@ public class BaselineComparerTests
     }
 
     [Fact]
-    public void Compare_NewAndMissingBenchmarks_AreInformational()
+    public void Compare_NewAndMissingBenchmarksOnAFilteredRun_AreInformational()
     {
         var rows = BaselineComparer.Compare(Set(new BenchmarkMeasurement("Old.Gone", 10, 0)), Set(new BenchmarkMeasurement("New.One", 10, 0)));
 

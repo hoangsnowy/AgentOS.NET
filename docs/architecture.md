@@ -251,20 +251,36 @@ network or database (the EF settings store runs on the EF in-memory provider).
 dotnet run -c Release --project tests/AgentOs.Benchmarks -- --filter '*' --job short
 # One class, full statistical run
 dotnet run -c Release --project tests/AgentOs.Benchmarks -- --filter '*CostCalculator*'
-# The perf gate: compare a run with the committed baseline (exit 1 on regression)
+# The perf gate: compare a run with the committed baseline (exit 1 on regression, 2 on bad arguments / no data)
 dotnet run -c Release --project tests/AgentOs.Benchmarks -- compare tests/AgentOs.Benchmarks/baseline BenchmarkDotNet.Artifacts/results
+#   [--threshold 0.20|20%] [--timing gate|advisory] [--require-all] [--alloc-floor-bytes 64] [--noise-floor-ns 2]
 ```
 
 **Regression gate.** `.github/workflows/perf.yml` (manual + nightly) runs the suite with `--job short`, uploads the
 BenchmarkDotNet artifacts, and runs the comparer against `tests/AgentOs.Benchmarks/baseline/*.json` (BenchmarkDotNet's
-brief JSON reports). A benchmark fails the job when its Mean grows by **more than 20 %** (and by more than a 2 ns
-noise floor), or when its baseline allocates **0 B** and it now allocates anything. New benchmarks and benchmarks
-missing from a filtered run are reported, never failed. The comparer (`Comparison/BaselineComparer.cs`) is pure BCL and
-unit-tested in `AgentOs.Tests` (`BaselineComparerTests`).
+brief JSON reports). The job fails when a benchmark:
+
+- **allocates more** — its baseline allocates **0 B** and it now allocates anything, or its allocated bytes per
+  operation grow by more than the threshold (20 %) **plus a 64 B floor** (one extra small object is not a regression);
+- **crashes** — the report lists it without statistics, or the run itself exits non-zero (a failed build/run or a
+  critical validation error makes the benchmark run exit 1);
+- **is missing on a full run** — with `--filter '*'` the workflow passes `--require-all`, so a baseline benchmark that
+  never produced a report fails instead of passing as "not run" (a filtered run reports missing rows, never fails);
+- **got slower** — its Mean grows by more than 20 % (and by more than a 2 ns noise floor). This is a **failure only on
+  manual runs** (`timing: gate`, the default for `workflow_dispatch`); on the **nightly it is advisory**: a `::warning`
+  annotation and a ⚠️ row in the summary, not a red job (see the machine caveat below).
+
+`--threshold` takes a fraction in (0, 1] (`0.20`) or a percentage with `%` (`20%`); a bare `20` is rejected rather than
+read as 2000 %. New benchmarks are reported, never failed. The nightly's concurrency group is separate from manual runs
+and never cancels in progress. The comparer (`Comparison/BaselineComparer.cs`, `Comparison/ComparerArguments.cs`) is
+pure BCL and unit-tested in `AgentOs.Tests` (`BaselineComparerTests`).
 
 **Machine caveat.** Absolute timings belong to the machine that recorded them. The committed baseline was recorded
 on a 4-vCPU cloud Linux VM (see `HostEnvironmentInfo` inside each baseline file), not on a GitHub-hosted runner, and
-shared runners are noisy. Allocation numbers are machine-independent and are the reliable signal; treat a lone timing
-regression on a hosted runner as "re-run before you believe it". To re-record: download the `benchmark-results`
+shared runners are noisy; the nightly's ShortRun job (3 iterations) on that hardware against a fixed 2 ns floor would
+fail on noise alone. That is why the nightly gates on allocations only — they are machine-independent and the reliable
+signal — and reports timing as advisory. The simpler alternative (benchmark base and head in the same job) was rejected
+for now: it doubles the run time and still compares two noisy ShortRuns. Treat an advisory timing warning as "re-run on a
+quiet machine (or dispatch with `timing: gate`) before you believe it". To re-record: download the `benchmark-results`
 artifact of a `perf.yml` run on `main`, copy its `results/*-report-brief.json` over `tests/AgentOs.Benchmarks/baseline/`,
 and commit that with a note of the runner it came from.

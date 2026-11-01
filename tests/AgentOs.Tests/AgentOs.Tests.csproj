@@ -64,6 +64,7 @@
     <!-- The perf gate's comparer (tests/AgentOs.Benchmarks) is pure BCL: compiled in here so it is unit-tested
          without pulling BenchmarkDotNet into the test run. -->
     <Compile Include="..\AgentOs.Benchmarks\Comparison\BaselineComparer.cs" Link="Linked\BaselineComparer.cs" />
+    <Compile Include="..\AgentOs.Benchmarks\Comparison\ComparerArguments.cs" Link="Linked\ComparerArguments.cs" />
   </ItemGroup>
 
 </Project>
