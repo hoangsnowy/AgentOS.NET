@@ -128,24 +128,16 @@ public sealed class AzurePlatformKeyIsolationTests
     {
         // A real listener on 127.0.0.1: "localhost" resolves to it. The hardened handler must refuse at connect,
         // so the listener never sees a connection — a plain transport would have connected.
-        var listener = new TcpListener(IPAddress.Loopback, 0);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);   // Dispose stops it
         listener.Start();
-        try
-        {
-            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            var chat = AzureEndpoints.CreateClient(new AzureEndpoints.Resolved($"https://localhost:{port}", Untrusted: true), TenantKey)
-                .GetChatClient("gpt-4.1").AsIChatClient();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var chat = AzureEndpoints.CreateClient(new AzureEndpoints.Resolved($"https://localhost:{port}", Untrusted: true), TenantKey)
+            .GetChatClient("gpt-4.1").AsIChatClient();
 
-            var ex = await Should.ThrowAsync<Exception>(() => chat.GetResponseAsync("hi", cancellationToken: TestContext.Current.CancellationToken));
+        var ex = await Should.ThrowAsync<Exception>(() => chat.GetResponseAsync("hi", cancellationToken: TestContext.Current.CancellationToken));
 
-            Chain(ex).ShouldContain(e => e.Message.Contains("Refusing to connect to 'localhost'", StringComparison.Ordinal));
-            listener.Pending().ShouldBeFalse();
-        }
-        finally
-        {
-            listener.Stop();
-            listener.Dispose();
-        }
+        Chain(ex).ShouldContain(e => e.Message.Contains("Refusing to connect to 'localhost'", StringComparison.Ordinal));
+        listener.Pending().ShouldBeFalse();
     }
 
     // ── helpers ──
