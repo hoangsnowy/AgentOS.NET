@@ -744,6 +744,9 @@ public sealed class BoardTaskService(
                 // board's credentials stay here.
                 BranchExists = (r, branch, ct) => prService.BranchExistsAsync(
                     RepoDescriptor(board, tenantId, r.Owner, r.Repo, r.DefaultBranch, pat), branch, ct),
+                // …and a revision of an existing pull request only when its head moved.
+                BranchHead = (r, branch, ct) => prService.GetBranchHeadAsync(
+                    RepoDescriptor(board, tenantId, r.Owner, r.Repo, r.DefaultBranch, pat), branch, ct),
             };
 
             var workResult = await agent.RunAsync(issueRequest, stopLease.Token).ConfigureAwait(false);

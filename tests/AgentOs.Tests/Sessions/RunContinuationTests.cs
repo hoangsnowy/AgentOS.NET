@@ -5,6 +5,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using AgentOs.Domain.Llm;
 using AgentOs.Modules.RemoteAgent;
@@ -130,7 +131,105 @@ public sealed class RunContinuationTests
         RunContinuation.ResumeArgs(command, null).ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData("scoped", true)]
+    [InlineData(" Scoped ", true)]
+    [InlineData(null, false)]   // answer-only — even on a machine with REMOTE_AGENT_AUTONOMY=scoped, never kept or "stopped short"
+    [InlineData("", false)]
+    [InlineData("off", false)]
+    public void AskedForHands_IsThePerRequestValue_NotTheMachineGrant(string? autonomy, bool expected)
+    {
+        RunContinuation.AskedForHands(autonomy).ShouldBe(expected);
+        ScopedAutonomy.Grants(autonomy, "scoped").ShouldBeTrue();   // what the machine-wide grant alone would have said
+    }
+
+    [Fact]
+    public void Take_AfterTheKeepWindow_DeletesTheFolderAndItsMarker()
+    {
+        var dir = Directory.CreateTempSubdirectory("agentos-run-").FullName;
+        try
+        {
+            var runs = new RunContinuation();
+            RunContinuation.Mark(dir);
+            runs.Park("late", dir, Session, false, Now);
+
+            runs.Take("late", Now.Add(RunContinuation.Keep).AddMinutes(1)).ShouldBeNull();
+
+            Directory.Exists(dir).ShouldBeFalse();
+            File.Exists(RunContinuation.MarkerFor(dir)).ShouldBeFalse();
+        }
+        finally { RunContinuation.Discard(dir); }
+    }
+
+    [Fact]
+    public void Take_InTime_RemovesTheMarker_ButKeepsTheFolderForTheFollowUp()
+    {
+        var dir = Directory.CreateTempSubdirectory("agentos-run-").FullName;
+        try
+        {
+            var runs = new RunContinuation();
+            RunContinuation.Mark(dir);
+            runs.Park("req", dir, Session, false, Now);
+
+            runs.Take("req", Now.AddMinutes(1)).ShouldNotBeNull();
+
+            Directory.Exists(dir).ShouldBeTrue();
+            File.Exists(RunContinuation.MarkerFor(dir)).ShouldBeFalse();
+        }
+        finally { RunContinuation.Discard(dir); }
+    }
+
+    [Fact]
+    public void TakeAll_ForgetsEveryKeptRun_ForTheShutdownCleanup()
+    {
+        var runs = new RunContinuation();
+        runs.Park("a", "/runs/a", null, false, Now);
+        runs.Park("b", "/runs/b", null, false, Now.AddMinutes(14));
+
+        runs.TakeAll().OrderBy(f => f, StringComparer.Ordinal).ShouldBe(["/runs/a", "/runs/b"]);
+        runs.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public void SweepLeftovers_DeletesOnlyOldMarkedFolders()
+    {
+        var root = Directory.CreateTempSubdirectory("agentos-runs-").FullName;
+        try
+        {
+            var old = Directory.CreateDirectory(Path.Join(root, "20261101-080000-old")).FullName;
+            var fresh = Directory.CreateDirectory(Path.Join(root, "20261101-085900-fresh")).FullName;
+            var running = Directory.CreateDirectory(Path.Join(root, "20261101-070000-running")).FullName;   // another runner's, unmarked
+            RunContinuation.Mark(old);
+            RunContinuation.Mark(fresh);
+            File.SetLastWriteTimeUtc(RunContinuation.MarkerFor(old), DateTime.UtcNow.AddHours(-1));
+
+            RunContinuation.SweepLeftovers(root, DateTimeOffset.UtcNow).ShouldBe(1);
+
+            Directory.Exists(old).ShouldBeFalse();
+            File.Exists(RunContinuation.MarkerFor(old)).ShouldBeFalse();
+            Directory.Exists(fresh).ShouldBeTrue();
+            Directory.Exists(running).ShouldBeTrue();
+            RunContinuation.SweepLeftovers(Path.Join(root, "missing"), DateTimeOffset.UtcNow).ShouldBe(0);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     // ── RemoteAgentLlmClient ───────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Client_Resumed_OnlyForAFollowUp_WhenTheRunnerSaysItResumed()
+    {
+        var broker = new InProcessRemoteAgentBroker();
+        using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "default", "member-1"));
+        var resumed = true;
+        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, true, "{}", null) { Resumed = resumed });
+        var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
+
+        (await client.SendAsync(new LlmRequest("s", "u", "m") { Autonomy = WorkspaceAutonomy.Scoped, ResumeOf = "req-1" })).Resumed.ShouldBeTrue();
+        (await client.SendAsync(new LlmRequest("s", "u", "m") { Autonomy = WorkspaceAutonomy.Scoped })).Resumed.ShouldBeFalse();   // not a follow-up
+        resumed = false;   // a fresh conversation in the kept folder, or an older runner
+        (await client.SendAsync(new LlmRequest("s", "u", "m") { Autonomy = WorkspaceAutonomy.Scoped, ResumeOf = "req-1" })).Resumed.ShouldBeFalse();
+    }
 
     private static IServiceProvider Tenant()
     {

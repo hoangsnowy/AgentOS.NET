@@ -84,15 +84,17 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
             var verdict = Parse(response.Content ?? string.Empty);
             // No verdict — usually a run that ran out of turns or context after reading the change: cheaper to ask once
             // for the verdict than to review again.
-            if (verdict.Ran || !await ReplyRecovery.EnabledAsync(profiles, ct).ConfigureAwait(false)) { return verdict; }
+            if (verdict.Ran || !await ReplyRecovery.ShouldAskAsync(profiles, response, ct).ConfigureAwait(false)) { return verdict; }
             Emit(request, SessionRunEventKind.Step, "Reviewing — the run ended without its verdict; asking the agent once for it.", repoLabel);
             var answer = await ReplyRecovery.AskAsync(llm, ReplyRecovery.FollowUp(llmRequest, response, RecoverySystem, RecoveryAsk(request)),
                 logger, nameof(ReviewAgent), ct).ConfigureAwait(false);
-            var recovered = Recovered(answer.Reply);
-            Emit(request, SessionRunEventKind.ReplyRecovered, recovered is null
-                ? "Reviewing — asked again, but the Reviewer agent still gave no verdict."
-                : $"Reviewing — verdict recovered: {(recovered.Approved ? "approved" : "changes requested")}.", repoLabel);
-            return recovered ?? NotRun(verdict.Error + " (asked once more; still none)" + answer.Why);
+            var recovered = Recovered(answer.Reply, answer.Resumed, out var setAside);
+            Emit(request, SessionRunEventKind.ReplyRecovered, recovered is not null
+                ? $"Reviewing — verdict recovered: {(recovered.Approved ? "approved" : "changes requested")}."
+                : setAside is not null
+                    ? $"Reviewing — asked again, but its approval was set aside: {setAside}."
+                    : "Reviewing — asked again, but the Reviewer agent still gave no verdict.", repoLabel);
+            return recovered ?? NotRun(verdict.Error + $" (asked once more; {setAside ?? "still none"})" + answer.Why);
         }
         catch (Exception ex) when (ex is LlmException or TimeoutException or InvalidOperationException or System.Net.Http.HttpRequestException)
         {
@@ -101,13 +103,21 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
         }
     }
 
-    /// <summary>A follow-up's reply as a verdict — only when it holds one (an <c>{"error":…}</c> reply means the review
-    /// could not finish and stays not-run, never a silent "changes requested").</summary>
-    internal static ReviewVerdict? Recovered(string? reply)
+    /// <summary>A follow-up's reply as a verdict — only when it holds a valid one (an <c>{"error":…}</c> reply, or one
+    /// whose verdict is not "approve"/"changes", means the review could not finish and stays not-run, never a silent
+    /// "changes requested"). "Changes" stands as reported; an approval counts only from the run's own resumed session
+    /// (<paramref name="resumed"/>) — a fresh conversation never saw the diff. A set-aside approval returns null with
+    /// <paramref name="setAside"/> saying why.</summary>
+    internal static ReviewVerdict? Recovered(string? reply, bool resumed, out string? setAside)
     {
-        if (reply is null || !reply.Contains("\"verdict\"", StringComparison.Ordinal)) { return null; }
-        var verdict = Parse(reply);
-        return verdict.Ran ? verdict : null;
+        setAside = null;
+        var claimed = ReplyRecovery.VerdictOf(reply, nameof(ReviewAgent), "approve", "changes");
+        if (claimed is null) { return null; }
+        var verdict = Parse(reply!);
+        if (!verdict.Ran) { return null; }
+        if (claimed == "changes" || !verdict.Approved) { return verdict with { Approved = false }; }
+        if (!resumed) { setAside = ReplyRecovery.NotResumedNote; return null; }
+        return verdict;
     }
 
     /// <summary>The system prompt of the one follow-up asking for a missing verdict (its first line is the routing key).</summary>

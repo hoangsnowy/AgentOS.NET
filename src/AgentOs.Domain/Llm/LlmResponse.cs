@@ -40,6 +40,12 @@ public sealed record LlmResponse(
     /// runner keeps a run's folder and CLI session for a short while when its reply looked unfinished. Null when the
     /// provider can't continue a run (every server-side provider).</summary>
     public string? Continuation { get; init; }
+
+    /// <summary>True only when this reply came from a follow-up (<see cref="LlmRequest.ResumeOf"/>) that really continued
+    /// the earlier run — the paired runner ran <c>claude -p --resume &lt;session&gt;</c> in that run's kept folder — so the
+    /// model answering remembers the work it is asked about. False for a fresh conversation (context was full, the CLI
+    /// has no resume, the keep window expired, another runner took it) and for every server-side provider.</summary>
+    public bool Resumed { get; init; }
 }
 
 /// <summary>

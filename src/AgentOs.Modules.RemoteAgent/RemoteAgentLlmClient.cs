@@ -188,6 +188,8 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             // A run with hands may be continued (its reply asked for again): the runner keeps the folder of a run whose
             // reply looked unfinished for a short while, keyed by this request id. Answer-only runs keep nothing.
             Continuation = string.Equals(request.Autonomy, WorkspaceAutonomy.Scoped, StringComparison.Ordinal) ? id : null,
+            // Only the runner knows whether it really continued the earlier run's session (vs a fresh conversation).
+            Resumed = request.ResumeOf is not null && result.Resumed,
         };
     }
 

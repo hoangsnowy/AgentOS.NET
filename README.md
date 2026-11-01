@@ -341,7 +341,8 @@ in the desktop and applies on the next call:
   computer's Claude / Codex plan hits its limit, Autopilot waits for the reset — no tries spent — and carries on.
   A Coding, Reviewer or Testing run that ends without its JSON reply (out of turns or context after doing the work) is
   asked once, briefly, for it — in the same folder and CLI session when the computer still has them — instead of being
-  discarded; a recovered branch counts only once it is on the remote, and Insights counts how often it happens
+  discarded; a recovered branch counts only once it is on the remote, an approval or pass only from the run's own
+  resumed session (with every criterion checked), and Insights counts how often it happens
   (`Autopilot:RecoverMissingReply`, on by default — [CONFIG](docs/CONFIG.md#settings--autopilot)).
 - **Workflow › Ticket flow** — the steps Autopilot runs for every ticket (Code → Checks → Review → Test → Merge by
   default), drawn as a graph with a table view: an admin turns Review or Test off, picks the agent per step and skips a

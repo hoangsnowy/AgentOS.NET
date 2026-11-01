@@ -195,11 +195,31 @@ JSON (or that stopped at its turn / context limit) for 15 minutes, and the follo
 resumes the same session (`claude -p --resume <session id>`) unless the context was full; otherwise the follow-up is
 a fresh short prompt with the scrubbed tail (1,500 characters, credentials masked) of what the run said, asking it
 to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). The follow-up never carries the
-ticket, its files or the original instructions again. A recovered Coding summary counts only when its branch is on
-the remote (`IPrCreationService.BranchExistsAsync`); otherwise the run fails with *"The work was done but not
-pushed — …"*, so the Orchestrator agent's retry tells the next run to push. The follow-up is metered like any call
-(the agent's run, tagged `reply-recovery`), each attempt shows in the task's live feed, and Insights › Delivery counts
-them (*Replies asked again*).
+ticket, its files or the original instructions again. Only a run on a member's computer is asked (a server-side
+provider's run has no folder or session left to look at); a Testing run's screenshot target (Design gate) carries
+over, so the screenshots the run already saved in the kept folder are sent back with the recovered verdict.
+
+What a recovered reply may decide is limited by what the model answering can know:
+
+- **Approve / pass only from the run's own session.** A Reviewer approval or a Testing pass counts only when the
+  follow-up really resumed the run's Claude Code session (the runner reports `Resumed`). A fresh conversation — the
+  context was full, the CLI was Codex, the 15 minutes had passed, another computer took it — may report changes /
+  a failure, never vouch for the work: its approval or pass is set aside and the step stays *not run*.
+- **A recovered pass checks every criterion.** It names at least one criterion, each with evidence, none
+  `not-checked`; otherwise the step stays *not run* (never a pass).
+- **A recovered Coding summary is checked against the remote.** Its branch must be there
+  (`IPrCreationService.BranchExistsAsync`); for a revision of an existing pull request — whose branch is always
+  there — the branch head must have moved since before the run (`GetBranchHeadAsync`). Otherwise the run fails with
+  *"The work was done but not pushed — …"*, so the Orchestrator agent's retry tells the next run to push. When the
+  remote can't tell — **on Azure DevOps it never can** (no branch or head lookup there yet) — the agent's word stands
+  only if the follow-up resumed the run's own session; from a fresh conversation the summary is rejected.
+
+The follow-up is metered like any call (the agent's run, tagged `reply-recovery`), each attempt shows in the task's
+live feed, and Insights › Delivery counts them (*Replies asked again*). On the computer, a follow-up runs in its own
+lane (one at a time) so its 2 minutes aren't spent queued behind long coding runs; a kept folder that is never asked
+for is deleted within a minute of its 15 minutes, every kept folder is deleted when the runner stops, and the next
+start deletes those a crashed runner left. `REMOTE_AGENT_KEEP_RUNS` (keep every run folder, for debugging) turns
+keeping-for-a-follow-up off: a follow-up then starts in a fresh folder.
 
 ### Workflow › Ticket flow
 

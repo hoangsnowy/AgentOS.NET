@@ -68,6 +68,10 @@ public sealed record RemoteExecResult(string Id, bool Ok, string Content, string
 
     /// <summary>Input tokens written to the prompt cache (a subset of <see cref="InputTokens"/>).</summary>
     public int? CacheWriteTokens { get; init; }
+
+    /// <summary>True only when the runner continued the earlier run this request resumed (<see cref="RemoteExecRequest.ResumeOf"/>):
+    /// it ran the CLI with <c>--resume &lt;session&gt;</c> in that run's kept folder. An older runner never sets it.</summary>
+    public bool Resumed { get; init; }
 }
 
 /// <summary>Identity of a connected runner, established by the hub's pairing handshake.</summary>
