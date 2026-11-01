@@ -1,0 +1,81 @@
+{{- if .Values.ollama.enabled }}
+{{- $selector := dict "root" . "name" "ollama" -}}
+{{- $o := .Values.ollama -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with $o.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $o.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" $selector | nindent 8 }}
+    spec:
+      {{- include "agentos.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: ollama
+          image: {{ include "agentos.image" (dict "root" . "image" $o.image) }}
+          imagePullPolicy: {{ $o.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 11434
+          readinessProbe:
+            httpGet: { path: /api/version, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/version, port: http }
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            {{- toYaml $o.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ include "agentos.component" $selector }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  selector:
+    {{- include "agentos.selectorLabels" $selector | nindent 4 }}
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+{{- end }}

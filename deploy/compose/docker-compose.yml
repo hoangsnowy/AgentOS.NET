@@ -1,0 +1,218 @@
+# AgentOS.NET — on-prem install with docker compose (docs/ONPREM.md).
+#
+#   cp .env.example .env && ./init-secrets.sh      # fill secrets + DataProtection certificate
+#   docker compose up -d --wait                     # Postgres → Keycloak → realm config → Api + Web
+#   docker compose --profile ollama up -d --wait    # … plus a local Ollama for keyless LLM runs
+#
+# The topology mirrors infra/AgentOs.AppHost/Program.cs (the Aspire app model, which stays the source of truth):
+# one Postgres server holding the app database + Keycloak's own database, Keycloak with the `agentic` realm
+# and the AgentOS.NET login theme baked in (infra/keycloak/Dockerfile), and the Api + Web hosts in Production.
+# Every secret comes from .env (never committed — see .env.example); `docker compose config` fails fast
+# when one is missing.
+name: agentos-net
+
+x-app-env: &app-env
+  ASPNETCORE_ENVIRONMENT: Production
+  ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-agentos};Username=${POSTGRES_USER:-agentos};Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  # Fail at boot (not on the first request) when the database is unreachable or misconfigured.
+  Persistence__RequireDatabase: "true"
+  Auth__DevAutoLogin: "false"
+  # Authority = the PUBLIC realm URL (browser redirects + token issuer). MetadataAddress = the back channel
+  # (discovery, token, JWKS) over the compose network — Keycloak runs with KC_HOSTNAME_BACKCHANNEL_DYNAMIC so
+  # both resolve to the same issuer. The back channel is plain HTTP inside the network, hence
+  # RequireHttpsMetadata=false.
+  Auth__Keycloak__Authority: "${KEYCLOAK_PUBLIC_URL:-http://localhost:8081}/realms/agentic"
+  Auth__Keycloak__MetadataAddress: "http://keycloak:8080/realms/agentic/.well-known/openid-configuration"
+  Auth__Keycloak__RequireHttpsMetadata: "false"
+  Auth__Keycloak__Audience: agentic-api
+  Auth__Keycloak__Admin__BaseUrl: "http://keycloak:8080"
+  Auth__Keycloak__Admin__Realm: agentic
+  Auth__Keycloak__Admin__ClientId: admin-cli
+  Auth__Keycloak__Admin__Username: "${KEYCLOAK_ADMIN_USERNAME:-admin}"
+  Auth__Keycloak__Admin__Password: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}"
+  Email__From: "${SMTP_FROM:-noreply@agentos.local}"
+  Email__FromName: AgentOS.NET
+  Email__SmtpHost: "${SMTP_HOST:-}"
+  Email__SmtpPort: "${SMTP_PORT:-25}"
+  # The hosts relay unauthenticated (invitations); SMTP_AUTH/USER/PASSWORD apply to Keycloak's mail only.
+  Email__UseStartTls: "${SMTP_STARTTLS:-false}"
+  # DataProtection key ring: persisted in Postgres (config.data_protection_keys) by both hosts, wrapped with
+  # the certificate init-secrets.sh generates (docs/dataprotection-dr-runbook.md). Back the certificate up
+  # SEPARATELY from the database — one without the other loses every tenant secret.
+  DataProtection__CertificatePath: "${DATAPROTECTION_CERTIFICATE_PATH:-}"
+  DataProtection__CertificatePassword: "${DATAPROTECTION_CERTIFICATE_PASSWORD:-}"
+  DataProtection__RequireKeyWrapping: "${DATAPROTECTION_REQUIRE_KEY_WRAPPING:-true}"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+
+# The aspnet runtime image ships neither curl nor wget — probe /health with bash's /dev/tcp.
+x-app-healthcheck: &app-healthcheck
+  test:
+    - CMD
+    - bash
+    - -c
+    - "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 90s
+
+services:
+  postgres:
+    # Same major as the AppHost's local Postgres (Aspire 13.5 → postgres 18.x). No extensions needed: the app
+    # uses built-in full-text search (tsvector) only.
+    image: postgres:18.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-agentos}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:-agentos}"
+      KEYCLOAK_DB: keycloak
+    volumes:
+      # Postgres 18 images keep PGDATA under /var/lib/postgresql/18/docker — mount the parent so a later
+      # major upgrade (pg_upgrade --link) can see both data directories.
+      - postgres-data:/var/lib/postgresql
+      - ../helm/agentos-net/files/postgres-init.sh:/docker-entrypoint-initdb.d/10-keycloak-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Not published on the host by default — uncomment to reach it with psql/pg_dump from outside:
+    # ports: ["127.0.0.1:5432:5432"]
+
+  keycloak:
+    # infra/keycloak/Dockerfile: Keycloak 26.x + Postgres driver + the `agentic` realm + the AgentOS.NET theme.
+    image: "${AGENTOS_REGISTRY:-agentos-net}/keycloak:${AGENTOS_VERSION:-local}"
+    build:
+      context: ../../infra/keycloak
+    restart: unless-stopped
+    command: ["start", "--import-realm", "--optimized"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: "${POSTGRES_USER:-agentos}"
+      KC_DB_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN_USERNAME:-admin}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}"
+      # Public URL (issuer + browser redirects). Back-channel calls from the hosts use http://keycloak:8080.
+      KC_HOSTNAME: "${KEYCLOAK_PUBLIC_URL:-http://localhost:8081}"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      # Heavy cookie jars on a shared host overflow the default header limit (HTTP 431) — see CLAUDE.md.
+      QUARKUS_HTTP_LIMITS_MAX_HEADER_SIZE: 128K
+      # SMTP for verification / password-reset mail — read by the realm import (agentic-realm.json).
+      KC_SMTP_HOST: "${SMTP_HOST:-}"
+      KC_SMTP_PORT: "${SMTP_PORT:-25}"
+      KC_SMTP_FROM: "${SMTP_FROM:-noreply@agentos.local}"
+      KC_SMTP_FROM_NAME: AgentOS.NET
+      KC_SMTP_STARTTLS: "${SMTP_STARTTLS:-false}"
+      KC_SMTP_AUTH: "${SMTP_AUTH:-false}"
+      KC_SMTP_USER: "${SMTP_USER:-}"
+      KC_SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_PORT:-8081}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Management interface (port 9000, health enabled at image build). No curl in the image — bash /dev/tcp.
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # One-shot: point the realm at this install (redirect URIs, client secret, seed passwords). Same script the
+  # Helm chart runs as a post-install/post-upgrade Job; uses kcadm.sh from the Keycloak image (air-gap safe).
+  keycloak-config:
+    image: "${AGENTOS_REGISTRY:-agentos-net}/keycloak:${AGENTOS_VERSION:-local}"
+    restart: "no"
+    entrypoint: ["/bin/bash", "/opt/agentos/configure-realm.sh"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN_USERNAME: "${KEYCLOAK_ADMIN_USERNAME:-admin}"
+      KEYCLOAK_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}"
+      WEB_PUBLIC_URL: "${WEB_PUBLIC_URL:-http://localhost:8080}"
+      KEYCLOAK_WEB_CLIENT_SECRET: "${KEYCLOAK_WEB_CLIENT_SECRET:?set KEYCLOAK_WEB_CLIENT_SECRET in .env}"
+      OPERATOR_PASSWORD: "${OPERATOR_PASSWORD:?set OPERATOR_PASSWORD in .env}"
+      MEMBER_PASSWORD: "${MEMBER_PASSWORD:-}"
+      KC_SMTP_HOST: "${SMTP_HOST:-}"
+    volumes:
+      - ../helm/agentos-net/files/configure-realm.sh:/opt/agentos/configure-realm.sh:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  api:
+    image: "${AGENTOS_REGISTRY:-agentos-net}/api:${AGENTOS_VERSION:-local}"
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    volumes:
+      - ./dataprotection:/app/dataprotection:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-5080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck: *app-healthcheck
+
+  web:
+    image: "${AGENTOS_REGISTRY:-agentos-net}/web:${AGENTOS_VERSION:-local}"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      Auth__Keycloak__ClientId: agentic-web
+      Auth__Keycloak__ClientSecret: "${KEYCLOAK_WEB_CLIENT_SECRET:?set KEYCLOAK_WEB_CLIENT_SECRET in .env}"
+      Auth__CookiePrefix: "${COOKIE_PREFIX:-}"
+      # System → About shows the Api's version + health. The desktop never depends on the Api being up.
+      services__api__http__0: http://api:8080
+    volumes:
+      - ./dataprotection:/app/dataprotection:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      keycloak-config:
+        condition: service_completed_successfully
+    healthcheck: *app-healthcheck
+
+  # Optional local LLM server (`--profile ollama`). Point the platform at it in the desktop:
+  # Settings → LLM providers → OpenAI-compatible endpoint = http://ollama:11434/v1 (ADR-0011: a setting, not env).
+  ollama:
+    image: ollama/ollama:0.40.13
+    profiles: ["ollama"]
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    # GPU: uncomment on a host with the NVIDIA container toolkit.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+volumes:
+  postgres-data:
+  ollama-data:

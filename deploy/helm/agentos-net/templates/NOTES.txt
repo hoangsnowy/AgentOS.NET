@@ -1,0 +1,46 @@
+AgentOS.NET {{ .Chart.AppVersion }} — release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Desktop:   {{ include "agentos.webUrl" . }}
+Sign-in:   {{ include "agentos.keycloakUrl" . }}/realms/{{ .Values.keycloak.realm }}/account
+{{- if and .Values.api.enabled .Values.ingress.enabled .Values.ingress.hosts.api }}
+Api:       {{ include "agentos.scheme" . }}://{{ .Values.ingress.hosts.api }}  (Scalar UI at /scalar/v1, MCP at /mcp)
+{{- end }}
+
+1. Wait for the rollout (first boot runs the database migrations + the row-level-security bootstrap):
+
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "agentos.component" (dict "root" . "name" "web") }}
+{{- if .Values.keycloak.configureRealm }}
+     kubectl -n {{ .Release.Namespace }} logs job/{{ include "agentos.component" (dict "root" . "name" "realm") }}   # realm configured (deleted on success)
+{{- end }}
+
+2. First admin login — user "operator" (tenant admin + platform-admin). Password:
+
+     kubectl -n {{ .Release.Namespace }} get secret {{ include "agentos.secretName" . }} \
+       -o jsonpath='{.data.operator-password}' | base64 -d; echo
+
+   Keycloak admin console ({{ include "agentos.keycloakUrl" . }}/admin): user "{{ .Values.keycloak.adminUsername }}", key keycloak-admin-password.
+{{- if not .Values.secrets.existingSecret }}
+
+   NOTE: the chart generated the credentials into Secret {{ include "agentos.secretName" . }} (kept on uninstall).
+   For production create your own Secret and set secrets.existingSecret (docs/ONPREM.md).
+{{- end }}
+
+3. Add an LLM provider in the desktop: Settings → LLM providers (per tenant; ADR-0011).
+{{- if .Values.ollama.enabled }}
+   Local Ollama: as platform admin set "OpenAI-compatible endpoint" to
+     http://{{ include "agentos.component" (dict "root" . "name" "ollama") }}:11434/v1
+   and pull a model:  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "agentos.component" (dict "root" . "name" "ollama") }} -- ollama pull <model>
+{{- end }}
+{{- if not .Values.ingress.tls.enabled }}
+
+WARNING: ingress.tls.enabled=false — sign-in cookies are Secure-only outside localhost, so browsers will
+not keep a session over plain http. Terminate TLS at the ingress (or in front of it).
+{{- end }}
+{{- if not .Values.dataProtection.requireKeyWrapping }}
+
+WARNING: dataProtection.requireKeyWrapping=false — tenant secrets are protected by a key ring stored in
+the same database. Wrap it before go-live (docs/dataprotection-dr-runbook.md).
+{{- end }}
+
+Back up BOTH the database (pg_dump) and the DataProtection certificate Secret — one without the other loses
+every tenant secret. Upgrade / backup / restore: docs/ONPREM.md.

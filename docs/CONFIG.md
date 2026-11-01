@@ -44,7 +44,7 @@ to the next request.
 | `Auth:Keycloak:Admin:{Realm,Username,Password,ClientId}` | `agentic`/`admin`/`admin`/`admin-cli` | Use a service account + secrets in production. |
 | `Auth:DevAutoLogin` | `true` in Development only | Fixed-user auth for the standalone Web. Hard-throws outside Development; AppHost forces it off. |
 | `DataProtection:KeyVaultKeyId` | empty | Wrap the DataProtection key ring (which encrypts every tenant secret) with an Azure Key Vault key — `https://<vault>.vault.azure.net/keys/<key>`, via managed identity. |
-| `DataProtection:CertificatePath` / `CertificatePassword` / `CertificateThumbprint` | empty | Wrap it with a certificate instead (on-prem / k8s secret mount, or the Windows cert store). |
+| `DataProtection:CertificatePath` / `CertificatePassword` / `CertificateThumbprint` | empty | Wrap it with a certificate instead (on-prem / k8s secret mount, or the Windows cert store). The on-prem compose file and Helm chart wire it by default — [ONPREM.md](ONPREM.md). |
 | `DataProtection:RequireKeyWrapping` | `false` | Refuse to start with an unwrapped ring outside Development. System → About shows the key ring's protection either way. |
 | `Api:BaseUrl` | empty | Empty = Web runs the engine in-process. Set = Web is a thin client of the Api host. System → About probes the Api at Aspire's `services:api:*` address first (the AppHost references the Api from the Web for that card only), then this. |
 | `Settings:Locks:<key>` | Production pins 4 keys (below) | Operator locks. Change with an env var, e.g. `Settings__Locks__RemoteAgent__AutoApprove=true` — a deployment decision, not a click. |

@@ -1,0 +1,49 @@
+{{- $kcUrl := include "agentos.keycloakUrl" . -}}
+{{- $kcInternal := include "agentos.keycloakInternalUrl" . -}}
+{{- $requireHttps := .Values.keycloak.requireHttpsMetadata | toString -}}
+{{- if eq $requireHttps "" -}}
+{{- $requireHttps = ternary "true" "false" (hasPrefix "https://" $kcInternal) -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentos.component" (dict "root" . "name" "config") }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+data:
+  # Non-secret host configuration shared by Api + Web (the same keys the AppHost wires — see
+  # infra/AgentOs.AppHost/Program.cs). Secrets come from the Secret, never from here.
+  ASPNETCORE_ENVIRONMENT: Production
+  Persistence__RequireDatabase: "true"
+  Auth__DevAutoLogin: "false"
+  # Authority = the public realm URL (browser redirects + token issuer); MetadataAddress = the in-cluster back
+  # channel (Keycloak runs with KC_HOSTNAME_BACKCHANNEL_DYNAMIC so both name the same issuer).
+  Auth__Keycloak__Authority: {{ printf "%s/realms/%s" $kcUrl .Values.keycloak.realm | quote }}
+  Auth__Keycloak__MetadataAddress: {{ printf "%s/realms/%s/.well-known/openid-configuration" $kcInternal .Values.keycloak.realm | quote }}
+  Auth__Keycloak__RequireHttpsMetadata: {{ $requireHttps | quote }}
+  Auth__Keycloak__Audience: agentic-api
+  Auth__Keycloak__ClientId: agentic-web
+  Auth__Keycloak__Admin__BaseUrl: {{ $kcInternal | quote }}
+  Auth__Keycloak__Admin__Realm: {{ .Values.keycloak.realm | quote }}
+  Auth__Keycloak__Admin__ClientId: admin-cli
+  Auth__Keycloak__Admin__Username: {{ .Values.keycloak.adminUsername | quote }}
+  Auth__CookiePrefix: {{ .Values.web.cookiePrefix | quote }}
+  Email__From: {{ .Values.email.from | quote }}
+  Email__FromName: AgentOS.NET
+  Email__SmtpHost: {{ .Values.keycloak.smtp.host | quote }}
+  Email__SmtpPort: {{ .Values.keycloak.smtp.port | quote }}
+  Email__UseStartTls: {{ .Values.keycloak.smtp.starttls | quote }}
+  DataProtection__RequireKeyWrapping: {{ .Values.dataProtection.requireKeyWrapping | quote }}
+  {{- if .Values.dataProtection.keyVaultKeyId }}
+  DataProtection__KeyVaultKeyId: {{ .Values.dataProtection.keyVaultKeyId | quote }}
+  {{- end }}
+  {{- if .Values.dataProtection.certificate.existingSecret }}
+  DataProtection__CertificatePath: {{ printf "/app/dataprotection/%s" .Values.dataProtection.certificate.key | quote }}
+  {{- end }}
+  {{- if .Values.otlpEndpoint }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otlpEndpoint | quote }}
+  {{- end }}
+  {{- if .Values.api.enabled }}
+  # System → About shows the Api's version + health (the desktop never depends on the Api being up).
+  services__api__http__0: {{ printf "http://%s:%d" (include "agentos.component" (dict "root" . "name" "api")) (int .Values.api.service.port) | quote }}
+  {{- end }}

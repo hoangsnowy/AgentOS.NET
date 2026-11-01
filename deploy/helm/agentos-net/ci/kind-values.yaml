@@ -1,0 +1,15 @@
+# Local kind / laptop cluster (docs/ONPREM.md → "Try it on kind"): no ingress controller — reach the desktop
+# and Keycloak with `kubectl port-forward` on localhost (a secure context, so plain http works there).
+ingress:
+  enabled: false
+web:
+  publicUrl: http://localhost:8080
+keycloak:
+  publicUrl: http://localhost:8081
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+postgresql:
+  persistence:
+    size: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }

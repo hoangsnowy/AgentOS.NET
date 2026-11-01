@@ -1,0 +1,45 @@
+{{- if .Values.ingress.enabled }}
+{{- $hosts := .Values.ingress.hosts -}}
+{{- $tls := .Values.ingress.tls -}}
+{{- $routes := list (dict "host" $hosts.web "service" "web" "port" .Values.web.service.port "tls" $tls.secretNames.web) -}}
+{{- if and .Values.keycloak.enabled $hosts.keycloak -}}
+{{- $routes = append $routes (dict "host" $hosts.keycloak "service" "keycloak" "port" .Values.keycloak.service.port "tls" $tls.secretNames.keycloak) -}}
+{{- end -}}
+{{- if and .Values.api.enabled $hosts.api -}}
+{{- $routes = append $routes (dict "host" $hosts.api "service" "api" "port" .Values.api.service.port "tls" $tls.secretNames.api) -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agentos.fullname" . }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $tls.enabled }}
+  tls:
+    {{- range $routes }}
+    - hosts: [{{ .host | quote }}]
+      secretName: {{ .tls }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range $routes }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "agentos.component" (dict "root" $ "name" .service) }}
+                port:
+                  number: {{ .port }}
+    {{- end }}
+{{- end }}

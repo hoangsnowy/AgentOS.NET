@@ -1,0 +1,123 @@
+{{- if .Values.keycloak.enabled }}
+{{- $selector := dict "root" . "name" "keycloak" -}}
+{{- $secret := include "agentos.secretName" . -}}
+{{- $smtp := .Values.keycloak.smtp -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+spec:
+  # One instance: clustering needs a shared cache (JGroups) — run your own Keycloak for HA.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" $selector | nindent 8 }}
+      {{- if not .Values.secrets.existingSecret }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      {{- include "agentos.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        # The Keycloak image's `keycloak` user.
+        runAsUser: 1000
+        runAsGroup: 0
+      containers:
+        - name: keycloak
+          image: {{ include "agentos.image" (dict "root" . "image" .Values.keycloak.image) }}
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          # infra/keycloak/Dockerfile: Postgres + health built in; imports the realm on first start only.
+          args: ["start", "--import-realm", "--optimized"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: {{ include "agentos.db.keycloakJdbcUrl" . | quote }}
+            - name: KC_DB_USERNAME
+              value: {{ include "agentos.db.user" . | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: postgres-password }
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.keycloak.adminUsername | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: keycloak-admin-password }
+            # Public URL = issuer + browser redirects; back-channel calls from the pods use the Service.
+            - name: KC_HOSTNAME
+              value: {{ include "agentos.keycloakUrl" . | quote }}
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            # TLS terminates at the ingress, which forwards X-Forwarded-* (KC_PROXY=edge was removed in KC 24).
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: QUARKUS_HTTP_LIMITS_MAX_HEADER_SIZE
+              value: 128K
+            # SMTP — read by the realm import (infra/keycloak/agentic-realm.json placeholders).
+            - name: KC_SMTP_HOST
+              value: {{ $smtp.host | quote }}
+            - name: KC_SMTP_PORT
+              value: {{ $smtp.port | quote }}
+            - name: KC_SMTP_FROM
+              value: {{ $smtp.from | quote }}
+            - name: KC_SMTP_FROM_NAME
+              value: AgentOS.NET
+            - name: KC_SMTP_STARTTLS
+              value: {{ $smtp.starttls | quote }}
+            - name: KC_SMTP_AUTH
+              value: {{ $smtp.auth | quote }}
+            - name: KC_SMTP_USER
+              value: {{ $smtp.user | quote }}
+            - name: KC_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: smtp-password, optional: true }
+            {{- with .Values.keycloak.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet: { path: /health/started, port: management }
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: { path: /health/live, port: management }
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management }
+            periodSeconds: 10
+          securityContext:
+            {{- include "agentos.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentos.component" $selector }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+spec:
+  selector:
+    {{- include "agentos.selectorLabels" $selector | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.keycloak.service.port }}
+      targetPort: http
+{{- end }}

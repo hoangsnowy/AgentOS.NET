@@ -1,0 +1,18 @@
+# CI variant: your own Postgres + your own Keycloak, Api exposed, existing secrets, Ollama on.
+postgresql:
+  enabled: false
+externalDatabase:
+  host: pg.corp.internal
+  sslMode: VerifyFull
+keycloak:
+  enabled: false
+  publicUrl: https://sso.corp.example
+ingress:
+  className: nginx
+  hosts:
+    web: agentos.corp.example
+    api: agentos-api.corp.example
+secrets:
+  existingSecret: agentos-secrets
+ollama:
+  enabled: true

@@ -46,6 +46,7 @@ with its own DI surface, EF Core context and Postgres schema, so any one can lat
 | Test against real GitHub / Azure DevOps / LLMs (the lab server) | [docs/LAB.md](docs/LAB.md) |
 | Know what to set at deploy vs in the UI | [docs/CONFIG.md](docs/CONFIG.md) |
 | Understand the architecture | [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/README.md) |
+| Install on-prem (docker compose, Helm, air-gapped) | [docs/ONPREM.md](docs/ONPREM.md) |
 | Deploy to Azure | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [infra/README.md](infra/README.md) · runbooks: [Keycloak](docs/keycloak-prod-runbook.md), [DataProtection DR](docs/dataprotection-dr-runbook.md) |
 | Contribute / conventions | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Build UI | [docs/design/design-system.md](docs/design/design-system.md) |
@@ -192,8 +193,9 @@ Light and dark are first-class (top bar → appearance toggle, or System → App
   run says what it can't persist.
 - **Resilient gateway.** Multi-key pools with round-robin, HTTP 429 cooldown honouring `Retry-After`,
   and optional inter-provider failover chains.
-- **Cloud-ready.** A .NET Aspire AppHost runs the full stack locally; `azd up` deploys it to Azure
-  Container Apps.
+- **Cloud-ready or on-prem.** A .NET Aspire AppHost runs the full stack locally; `azd up` deploys it to
+  Azure Container Apps; docker compose, a Helm chart and an offline image bundle install it on your own
+  hardware, air-gapped included.
 
 ## Concepts
 
@@ -466,6 +468,15 @@ azd up   # provision + deploy to Azure Container Apps from the Aspire AppHost
 A post-deploy hook aligns the Keycloak realm with the cloud URLs, rotates the client secret and seed
 passwords, and ensures the `platform-admin` role. Production applies operator locks for the riskiest
 settings. Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [infra/README.md](infra/README.md).
+
+**On-prem** — docker compose on one host, the Helm chart on Kubernetes, or an offline bundle for air-gapped
+sites (Postgres, Keycloak with the AgentOS.NET realm + theme, Api, Web, optional Ollama):
+
+```bash
+cd deploy/compose && cp .env.example .env && ./init-secrets.sh && docker compose up -d --wait
+```
+
+Cold install, Helm on kind/k8s, upgrade, backup/restore and first admin login: [docs/ONPREM.md](docs/ONPREM.md).
 
 ## Contributing
 

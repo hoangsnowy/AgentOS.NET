@@ -1,0 +1,3 @@
+{{- $secret := include "agentos.secretName" . -}}
+{{- $extra := list (dict "name" "Auth__Keycloak__ClientSecret" "valueFrom" (dict "secretKeyRef" (dict "name" $secret "key" "keycloak-web-client-secret"))) -}}
+{{ include "agentos.appWorkload" (dict "root" . "name" "web" "values" .Values.web "extraEnv" $extra) }}
