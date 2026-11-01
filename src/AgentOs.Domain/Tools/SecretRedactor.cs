@@ -190,10 +190,12 @@ public static partial class SecretRedactor
             // mixed-case base64 / base64url — not a CamelCase name with a date in it (20261101_MemberComputerEvidence)
             return digitGroups >= 3 || flips * 10 >= letterPairs * 3;
         }
-        return digitGroups >= 3 && beyondHex > 0
-            && ((upper == 0 && digit >= 4 && lower >= 8) // lowercase base32 (an Azure DevOps PAT)
-                || (lower == 0 && digit >= 4 && upper >= 8)); // uppercase base32 (a TOTP seed)
+        return digitGroups >= 3 && beyondHex > 0 && digit >= 4 && IsSingleCaseBase32(upper, lower);
     }
+
+    // Letters of one case only, at least 8 of them: lowercase base32 (an Azure DevOps PAT) or uppercase (a TOTP seed).
+    private static bool IsSingleCaseBase32(int upper, int lower) =>
+        (upper == 0 && lower >= 8) || (lower == 0 && upper >= 8);
 
     private static bool IsGuid(ReadOnlySpan<char> s) =>
         s.Length == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-' && Guid.TryParseExact(s, "D", out _);

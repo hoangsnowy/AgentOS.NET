@@ -221,9 +221,9 @@ internal static class RunFiles
         try
         {
             if (!Directory.Exists(root)) { return; }
-            foreach (var dir in Directory.EnumerateDirectories(root, "*-files-*"))
+            foreach (var dir in Directory.EnumerateDirectories(root, "*-files-*").Where(d => DateTime.UtcNow - Directory.GetCreationTimeUtc(d) > age))
             {
-                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > age) { ScopedAutonomy.TryDelete(dir); }
+                ScopedAutonomy.TryDelete(dir);
             }
         }
         catch (IOException) { /* next start tries again */ }
