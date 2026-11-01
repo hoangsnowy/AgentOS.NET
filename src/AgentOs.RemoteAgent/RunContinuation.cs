@@ -97,27 +97,17 @@ internal sealed class RunContinuation
     }
 
     /// <summary>Forget the runs whose follow-up never came and return their folders, to <see cref="Discard"/>.</summary>
-    internal IReadOnlyList<string> Expired(DateTimeOffset now)
-    {
-        var gone = new List<string>();
-        foreach (var id in _runs.Where(r => now - r.Value.At > Keep).Select(r => r.Key).ToList())
-        {
-            if (_runs.TryRemove(id, out var removed)) { gone.Add(removed.Folder); }
-        }
-        return gone;
-    }
+    internal IReadOnlyList<string> Expired(DateTimeOffset now) =>
+        Remove(_runs.Where(r => now - r.Value.At > Keep).Select(r => r.Key));
 
     /// <summary>Forget every kept run and return the folders, to <see cref="Discard"/> (the runner is stopping: no follow-up
     /// can reach it any more).</summary>
-    internal IReadOnlyList<string> TakeAll()
-    {
-        var gone = new List<string>();
-        foreach (var id in _runs.Keys.ToList())
-        {
-            if (_runs.TryRemove(id, out var removed)) { gone.Add(removed.Folder); }
-        }
-        return gone;
-    }
+    internal IReadOnlyList<string> TakeAll() => Remove(_runs.Keys);
+
+    // Forget these runs and return their folders. The ids are listed first (a snapshot), so removing while reading
+    // the dictionary is safe; a run another caller took meanwhile is simply not returned.
+    private List<string> Remove(IEnumerable<string> ids) =>
+        [.. ids.ToList().Select(id => _runs.TryRemove(id, out var removed) ? removed.Folder : null).OfType<string>()];
 
     /// <summary>The marker file beside a kept folder.</summary>
     internal static string MarkerFor(string folder) => folder.TrimEnd('/', '\\') + MarkerSuffix;
