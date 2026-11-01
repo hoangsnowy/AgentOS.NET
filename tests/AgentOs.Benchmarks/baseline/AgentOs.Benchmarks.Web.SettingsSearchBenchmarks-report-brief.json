@@ -1,0 +1,220 @@
+{
+   "Title":"AgentOs.Benchmarks.Web.SettingsSearchBenchmarks-20261101-095100",
+   "HostEnvironmentInfo":{
+      "BenchmarkDotNetCaption":"BenchmarkDotNet",
+      "BenchmarkDotNetVersion":"0.15.8",
+      "OsVersion":"Linux Ubuntu 24.04.5 LTS (Noble Numbat)",
+      "ProcessorName":"Intel Xeon Processor 2.10GHz",
+      "PhysicalProcessorCount":1,
+      "PhysicalCoreCount":4,
+      "LogicalCoreCount":4,
+      "RuntimeVersion":".NET 10.0.14 (10.0.14, 10.0.1426.52326)",
+      "Architecture":"X64",
+      "HasAttachedDebugger":false,
+      "HasRyuJit":true,
+      "Configuration":"RELEASE",
+      "DotNetCliVersion":"10.0.403",
+      "ChronometerFrequency":{
+         "Hertz":1000000000
+      },
+      "HardwareTimerKind":"Unknown"
+   },
+   "Benchmarks":[
+      {
+         "DisplayInfo":"SettingsSearchBenchmarks.Find: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3) [Query=coding model]",
+         "Namespace":"AgentOs.Benchmarks.Web",
+         "Type":"SettingsSearchBenchmarks",
+         "Method":"Find",
+         "MethodTitle":"Find",
+         "Parameters":"Query=coding model",
+         "FullName":"AgentOs.Benchmarks.Web.SettingsSearchBenchmarks.Find(Query: \"coding model\")",
+         "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
+         "Statistics":{
+            "OriginalValues":[
+               35413.93029785156,43222.01257324219,34114.900939941406
+            ],
+            "N":3,
+            "Min":34114.900939941406,
+            "LowerFence":27934.0818939209,
+            "Q1":34764.415618896484,
+            "Median":35413.93029785156,
+            "Mean":37583.61460367838,
+            "Q3":39317.971435546875,
+            "UpperFence":46148.30516052246,
+            "Max":43222.01257324219,
+            "InterquartileRange":4553.555816650391,
+            "LowerOutliers":[
+               
+            ],
+            "UpperOutliers":[
+               
+            ],
+            "AllOutliers":[
+               
+            ],
+            "StandardError":2844.02989116758,
+            "Variance":24265518.065564025,
+            "StandardDeviation":4926.0042697468325,
+            "Skewness":0.35500655556601574,
+            "Kurtosis":0.6666666666666671,
+            "ConfidenceInterval":{
+               "N":3,
+               "Mean":37583.61460367838,
+               "StandardError":2844.02989116758,
+               "Level":12,
+               "Margin":89868.65538436983,
+               "Lower":-52285.04078069145,
+               "Upper":127452.26998804821
+            },
+            "Percentiles":{
+               "P0":34114.900939941406,
+               "P25":34764.415618896484,
+               "P50":35413.93029785156,
+               "P67":38068.67827148437,
+               "P80":40098.77966308594,
+               "P85":40879.587890625,
+               "P90":41660.39611816406,
+               "P95":42441.204345703125,
+               "P100":43222.01257324219
+            }
+         },
+         "Memory":{
+            "Gen0Collections":4,
+            "Gen1Collections":0,
+            "Gen2Collections":0,
+            "TotalOperations":16384,
+            "BytesAllocatedPerOperation":33944
+         }
+      },{
+         "DisplayInfo":"SettingsSearchBenchmarks.Find: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3) [Query=dark]",
+         "Namespace":"AgentOs.Benchmarks.Web",
+         "Type":"SettingsSearchBenchmarks",
+         "Method":"Find",
+         "MethodTitle":"Find",
+         "Parameters":"Query=dark",
+         "FullName":"AgentOs.Benchmarks.Web.SettingsSearchBenchmarks.Find(Query: \"dark\")",
+         "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
+         "Statistics":{
+            "OriginalValues":[
+               38060.229431152344,36950.59637451172,36413.85028076172
+            ],
+            "N":3,
+            "Min":36413.85028076172,
+            "LowerFence":35447.43896484375,
+            "Q1":36682.22332763672,
+            "Median":36950.59637451172,
+            "Mean":37141.55869547526,
+            "Q3":37505.41290283203,
+            "UpperFence":38740.197265625,
+            "Max":38060.229431152344,
+            "InterquartileRange":823.1895751953125,
+            "LowerOutliers":[
+               
+            ],
+            "UpperOutliers":[
+               
+            ],
+            "AllOutliers":[
+               
+            ],
+            "StandardError":484.76490272126625,
+            "Variance":704991.0327310761,
+            "StandardDeviation":839.6374412394174,
+            "Skewness":0.21566991839551217,
+            "Kurtosis":0.6666666666666691,
+            "ConfidenceInterval":{
+               "N":3,
+               "Mean":37141.55869547526,
+               "StandardError":484.76490272126625,
+               "Level":12,
+               "Margin":15318.11255584586,
+               "Lower":21823.4461396294,
+               "Upper":52459.67125132112
+            },
+            "Percentiles":{
+               "P0":36413.85028076172,
+               "P25":36682.22332763672,
+               "P50":36950.59637451172,
+               "P67":37327.87161376953,
+               "P80":37616.37620849609,
+               "P85":37727.33951416016,
+               "P90":37838.30281982422,
+               "P95":37949.26612548828,
+               "P100":38060.229431152344
+            }
+         },
+         "Memory":{
+            "Gen0Collections":4,
+            "Gen1Collections":0,
+            "Gen2Collections":0,
+            "TotalOperations":16384,
+            "BytesAllocatedPerOperation":33688
+         }
+      },{
+         "DisplayInfo":"SettingsSearchBenchmarks.Find: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3) [Query=zzz]",
+         "Namespace":"AgentOs.Benchmarks.Web",
+         "Type":"SettingsSearchBenchmarks",
+         "Method":"Find",
+         "MethodTitle":"Find",
+         "Parameters":"Query=zzz",
+         "FullName":"AgentOs.Benchmarks.Web.SettingsSearchBenchmarks.Find(Query: \"zzz\")",
+         "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
+         "Statistics":{
+            "OriginalValues":[
+               43169.676208496094,35088.313232421875,35071.81134033203
+            ],
+            "N":3,
+            "Min":35071.81134033203,
+            "LowerFence":29006.663635253906,
+            "Q1":35080.06228637695,
+            "Median":35088.313232421875,
+            "Mean":37776.600260416664,
+            "Q3":39128.994720458984,
+            "UpperFence":45202.39337158203,
+            "Max":43169.676208496094,
+            "InterquartileRange":4048.9324340820312,
+            "LowerOutliers":[
+               
+            ],
+            "UpperOutliers":[
+               
+            ],
+            "AllOutliers":[
+               
+            ],
+            "StandardError":2696.5421817842475,
+            "Variance":21814019.214425243,
+            "StandardDeviation":4670.548063602948,
+            "Skewness":0.38489477400961347,
+            "Kurtosis":0.6666666666666675,
+            "ConfidenceInterval":{
+               "N":3,
+               "Mean":37776.600260416664,
+               "StandardError":2696.5421817842475,
+               "Level":12,
+               "Margin":85208.1832250708,
+               "Lower":-47431.58296465413,
+               "Upper":122984.78348548745
+            },
+            "Percentiles":{
+               "P0":35071.81134033203,
+               "P25":35080.06228637695,
+               "P50":35088.313232421875,
+               "P67":37835.97664428711,
+               "P80":39937.13101806641,
+               "P85":40745.26731567383,
+               "P90":41553.40361328125,
+               "P95":42361.53991088867,
+               "P100":43169.676208496094
+            }
+         },
+         "Memory":{
+            "Gen0Collections":4,
+            "Gen1Collections":0,
+            "Gen2Collections":0,
+            "TotalOperations":16384,
+            "BytesAllocatedPerOperation":33192
+         }
+      }
+   ]
+}

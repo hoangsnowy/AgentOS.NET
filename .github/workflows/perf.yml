@@ -1,0 +1,74 @@
+name: Perf
+
+# Plan 1.9 (owner directive 2 — "measure, then fix"): run the BenchmarkDotNet suite (tests/AgentOs.Benchmarks) and
+# compare it with the committed baseline (tests/AgentOs.Benchmarks/baseline/*.json). The job fails when a benchmark's
+# Mean grows by more than the threshold (default 20 %, ignoring moves under 2 ns) or when a benchmark whose baseline
+# allocates 0 B starts allocating. Not part of CI: benchmarks are slow and need a quiet machine.
+#
+# Machine caveat: a hosted runner is not the machine the baseline was recorded on, and neighbours on a shared VM add
+# noise. When the hardware changes, re-record the baseline from this workflow's own artifact (docs/architecture.md §8).
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "BenchmarkDotNet --filter glob (e.g. '*CostCalculator*')"
+        required: false
+        default: "*"
+      threshold:
+        description: "Allowed Mean regression as a fraction (0.20 = 20 %)"
+        required: false
+        default: "0.20"
+  schedule:
+    - cron: "17 3 * * *"   # nightly, 03:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmarks:
+    name: Benchmarks vs baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build benchmarks (Release)
+        run: dotnet build tests/AgentOs.Benchmarks --configuration Release
+
+      # ShortRun job (3 warm-ups, 3 iterations, 1 launch) keeps the nightly under ~20 minutes; the memory diagnoser
+      # is always on (BenchmarkConfig). Inputs reach the script through env, never interpolated into it.
+      - name: Run benchmarks
+        env:
+          FILTER: ${{ inputs.filter || '*' }}
+        run: |
+          dotnet run --configuration Release --no-build --project tests/AgentOs.Benchmarks -- \
+            --filter "$FILTER" --job short --artifacts "$GITHUB_WORKSPACE/BenchmarkDotNet.Artifacts"
+
+      - name: Upload BenchmarkDotNet artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmark-results
+          path: BenchmarkDotNet.Artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Compare with baseline
+        env:
+          THRESHOLD: ${{ inputs.threshold || '0.20' }}
+        run: |
+          dotnet run --configuration Release --no-build --project tests/AgentOs.Benchmarks -- \
+            compare tests/AgentOs.Benchmarks/baseline "$GITHUB_WORKSPACE/BenchmarkDotNet.Artifacts/results" \
+            --threshold "$THRESHOLD" --summary "$GITHUB_STEP_SUMMARY"

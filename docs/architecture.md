@@ -230,3 +230,41 @@ flowchart LR
 registers the product apps in `AppCatalog` (Insights, Workflow, Board, Settings, Terminal, Files, and
 the Settings-hub screens) and renders them as windows. Design rules: [design-system.md](design/design-system.md).
 Plugins (`IAgentOsPlugin`, loaded from `plugins/`) can add tools, providers and windows.
+
+## 8. Performance benchmarks
+
+Hot paths are measured, not guessed (owner directive 2; plan §2.7 / PR 1.9). `tests/AgentOs.Benchmarks` is a
+[BenchmarkDotNet](https://benchmarkdotnet.org/) console app in `AgentOs.slnx`; it is **not** a test project, so
+`dotnet test` never runs it. Every benchmark runs with the memory diagnoser, uses realistic inputs, and touches no
+network or database (the EF settings store runs on the EF in-memory provider).
+
+| Area | Benchmarks | Why it is hot |
+|---|---|---|
+| LLM gateway | `CostCalculatorBenchmarks` (exact id, dated/Vertex snapshots, unknown model, long-context tier), `ModelCapabilitiesBenchmarks` | priced and shaped on every LLM call; the budget gate reads the price |
+| Settings (ADR-0011) | `SettingsServiceBenchmarks` (tenant → platform → seed → default chain), `AppConfigStoreBenchmarks` (EF store cache hits) | read on every LLM call, policy check and agent profile lookup |
+| Prompt text | `UntrustedTextBenchmarks`, `RepoInstructionsBenchmarks`, `PullRequestTextBenchmarks`, `JsonExtractorBenchmarks` (~100 KB replies: bare, fenced, prose-wrapped) | every agent prompt / reply / PR |
+| Queues | `SessionRunFeedBenchmarks` (publish fan-out, subscribe round trip), `ToolEvidenceBenchmarks` (buffered evidence enqueue + drain) | on the agent's critical path |
+| Desktop folds | `InsightsFoldBenchmarks` (by-role folds, `AgentRoles.Canonical`), `SettingsSearchBenchmarks` (per keystroke), `KnowledgeLayoutBenchmarks` | run per render / keystroke on the Blazor circuit |
+
+```bash
+# Everything (ShortRun, ~20 min) — artifacts land in ./BenchmarkDotNet.Artifacts (git-ignored)
+dotnet run -c Release --project tests/AgentOs.Benchmarks -- --filter '*' --job short
+# One class, full statistical run
+dotnet run -c Release --project tests/AgentOs.Benchmarks -- --filter '*CostCalculator*'
+# The perf gate: compare a run with the committed baseline (exit 1 on regression)
+dotnet run -c Release --project tests/AgentOs.Benchmarks -- compare tests/AgentOs.Benchmarks/baseline BenchmarkDotNet.Artifacts/results
+```
+
+**Regression gate.** `.github/workflows/perf.yml` (manual + nightly) runs the suite with `--job short`, uploads the
+BenchmarkDotNet artifacts, and runs the comparer against `tests/AgentOs.Benchmarks/baseline/*.json` (BenchmarkDotNet's
+brief JSON reports). A benchmark fails the job when its Mean grows by **more than 20 %** (and by more than a 2 ns
+noise floor), or when its baseline allocates **0 B** and it now allocates anything. New benchmarks and benchmarks
+missing from a filtered run are reported, never failed. The comparer (`Comparison/BaselineComparer.cs`) is pure BCL and
+unit-tested in `AgentOs.Tests` (`BaselineComparerTests`).
+
+**Machine caveat.** Absolute timings belong to the machine that recorded them. The committed baseline was recorded
+on a 4-vCPU cloud Linux VM (see `HostEnvironmentInfo` inside each baseline file), not on a GitHub-hosted runner, and
+shared runners are noisy. Allocation numbers are machine-independent and are the reliable signal; treat a lone timing
+regression on a hosted runner as "re-run before you believe it". To re-record: download the `benchmark-results`
+artifact of a `perf.yml` run on `main`, copy its `results/*-report-brief.json` over `tests/AgentOs.Benchmarks/baseline/`,
+and commit that with a note of the runner it came from.

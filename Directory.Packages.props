@@ -113,6 +113,10 @@
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
 
+    <!-- Benchmarks (tests/AgentOs.Benchmarks — not run by `dotnet test`; see .github/workflows/perf.yml).
+         0.15.8 is the latest stable as of 2026-11-01 (0.16 is preview-only). -->
+    <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
+
     <!-- Test stack -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <!-- xunit.v3 4.0.0 is Microsoft.Testing.Platform (MTP)-native — it drops the legacy VSTest
