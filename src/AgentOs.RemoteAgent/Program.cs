@@ -656,14 +656,19 @@ async Task ReportProgressAsync(string requestId, string step)
 }
 
 // Evidence of the tool calls a CLI run made (the server records them). Best effort for the run — a lost batch never fails
-// the work — but never silent: the console says how many calls could not be reported.
+// the work, and NO send failure may end the caller's stdout read loop (the CLI would block on a full pipe) — but never
+// silent: the console says how many calls could not be reported. Sent in messages of at most 200 calls, the most the
+// server accepts in one batch, so a closing line with hundreds of permission_denials is not cut.
 async Task ReportToolCallsAsync(string requestId, string permissions, IReadOnlyList<AgentOs.RemoteAgent.RunnerToolEvent> calls)
 {
     if (calls.Count == 0) { return; }
-    try { await connection.SendAsync("ReportToolCalls", requestId, permissions, calls).ConfigureAwait(false); }
-    catch (Exception ex) when (ex is InvalidOperationException or IOException)
+    foreach (var message in AgentOs.RemoteAgent.CliToolCalls.Messages(calls))
     {
-        Console.WriteLine($"[agent] {requestId}: {calls.Count} tool call(s) could not be reported to the server: {ex.Message}");
+        try { await connection.SendAsync("ReportToolCalls", requestId, permissions, message).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.WriteLine($"[agent] {requestId}: {message.Count} tool call(s) could not be reported to the server: {ex.Message}");
+        }
     }
 }
 

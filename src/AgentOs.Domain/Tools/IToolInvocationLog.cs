@@ -51,29 +51,72 @@ public sealed record ToolInvocationEvidence(
     public bool Denied { get; init; }
 
     /// <summary>A one-line, redacted view of <see cref="Input"/> for lists: a member's-computer row's recorded summary,
-    /// else the input itself, redacted and cut to 160 characters.</summary>
+    /// else the input itself, redacted and cut to 160 characters. Only a <see cref="ToolEvidenceOrigins.MemberComputer"/>
+    /// row is read as the recorded shape — a server tool whose input happens to carry a "summary" field is shown as-is.
+    /// Computed on each read (JSON + redaction): a list computes it once per row, not per render.</summary>
     public string InputSummary
     {
         get
         {
             if (string.IsNullOrWhiteSpace(Input)) { return string.Empty; }
-            if (Input.StartsWith('{') && Input.Contains("\"summary\"", System.StringComparison.Ordinal))
+            return IsMemberComputer && MemberComputerInput.TryRead(Input, out var summary, out _)
+                ? SecretRedactor.Summary(summary)
+                : SecretRedactor.Summary(Input, 160);
+        }
+    }
+
+    /// <summary>For a <see cref="ToolEvidenceOrigins.MemberComputer"/> row: what the SERVER asked the CLI to be allowed
+    /// for this run (null = answer only, "scoped"…). <see cref="PolicySource"/> is what the computer itself reported.</summary>
+    public string? RequestedAutonomy =>
+        IsMemberComputer && MemberComputerInput.TryRead(Input, out _, out var requested) ? requested : null;
+
+    private bool IsMemberComputer => string.Equals(Origin, ToolEvidenceOrigins.MemberComputer, System.StringComparison.Ordinal);
+}
+
+/// <summary>The <see cref="ToolInvocationEvidence.Input"/> of a tool call made on a member's computer:
+/// <c>{"summary": "…", "requestedAutonomy": "scoped" | null}</c>.</summary>
+public static class MemberComputerInput
+{
+    /// <summary>The stored input for a call's (already redacted) <paramref name="summary"/> and the autonomy the server
+    /// requested for its run.</summary>
+    public static string Write(string summary, string? requestedAutonomy)
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>(256);
+        using (var json = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            json.WriteString("summary", summary);
+            if (requestedAutonomy is null) { json.WriteNull("requestedAutonomy"); }
+            else { json.WriteString("requestedAutonomy", requestedAutonomy); }
+            json.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    /// <summary>Read a stored input back; false when it is not that shape.</summary>
+    public static bool TryRead(string? input, out string summary, out string? requestedAutonomy)
+    {
+        summary = string.Empty;
+        requestedAutonomy = null;
+        if (string.IsNullOrWhiteSpace(input) || !input.StartsWith('{')) { return false; }
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(input);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !root.TryGetProperty("summary", out var s) || s.ValueKind != System.Text.Json.JsonValueKind.String)
             {
-                try
-                {
-                    using var doc = System.Text.Json.JsonDocument.Parse(Input);
-                    if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
-                        && doc.RootElement.TryGetProperty("summary", out var s) && s.ValueKind == System.Text.Json.JsonValueKind.String)
-                    {
-                        return SecretRedactor.Summary(s.GetString());
-                    }
-                }
-                catch (System.Text.Json.JsonException)
-                {
-                    // not the recorded shape — fall through to the raw input
-                }
+                return false;
             }
-            return SecretRedactor.Summary(Input, 160);
+            summary = s.GetString() ?? string.Empty;
+            requestedAutonomy = root.TryGetProperty("requestedAutonomy", out var r) && r.ValueKind == System.Text.Json.JsonValueKind.String
+                ? r.GetString()
+                : null;
+            return true;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
         }
     }
 }

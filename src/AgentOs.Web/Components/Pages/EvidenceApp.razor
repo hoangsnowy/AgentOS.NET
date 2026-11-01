@@ -3,7 +3,8 @@
    for the current tenant. Admin-gated (AdminOnly in AppCatalog + a re-check here). Tenant is read from
    AuthenticationState — a circuit has no HttpContext — and passed to the tenant-explicit ListRecentAsync.
    "On a member's computer" narrows it to the tool calls a CLI run made on a paired computer (Bash, Edit, Write…),
-   reported by its runner — their policy is the CLI's scoped permissions there, not the server's tool policy. A task's
+   reported by its runner — their policy is the CLI's scoped permissions there (as the computer reports it; the "Where"
+   tooltip shows it next to what the server asked for), not the server's tool policy. A task's
    activity panel on the Board opens this view filtered to that task (Origin + SessionId parameters). *@
 
 @using System.Security.Claims
@@ -65,15 +66,15 @@ else
                     <tr><th>Tool</th><th>Where</th><th>What</th><th>Agent</th><th>Status</th><th>Run</th><th>Task</th><th>Started (UTC)</th><th class="num">Duration</th></tr>
                 </thead>
                 <tbody>
-                    @foreach (var e in _rows)
+                    @foreach (var row in _rows)
                     {
-                        var onComputer = e.Origin == ToolEvidenceOrigins.MemberComputer;
+                        var e = row.Entry;
                         <tr data-origin="@(e.Origin ?? "server")">
                             <td><code>@e.ToolName</code></td>
-                            <td title="@(onComputer ? $"Computer {e.RunnerId} · policy: {e.PolicySource}" : "On the server, through the tool gateway")">@(onComputer ? "Member's computer" : "Server")</td>
-                            <td class="ev-what">@(e.InputSummary is { Length: > 0 } what ? what : "—")</td>
+                            <td title="@row.WhereTip">@(row.OnComputer ? "Member's computer" : "Server")</td>
+                            <td class="ev-what">@(row.What.Length > 0 ? row.What : "—")</td>
                             <td>@(string.IsNullOrEmpty(e.AgentRole) ? "—" : e.AgentRole)</td>
-                            <td title="@e.Output">
+                            <td title="@row.OutcomeTip">
                                 @if (e.Denied) { <Badge Variant="Badge.BadgeVariant.Warn">refused</Badge> }
                                 else if (e.IsError) { <Badge Variant="Badge.BadgeVariant.Err">error</Badge> }
                                 else { <Badge Variant="Badge.BadgeVariant.Ok">ok</Badge> }
@@ -107,7 +108,21 @@ else
     private bool _isAdmin;
     private bool _loading;
     private string _tenantId = "default";
-    private IReadOnlyList<ToolInvocationEvidence>? _rows;
+    private IReadOnlyList<EvidenceRow>? _rows;
+
+    // One row as shown, computed once per load (JSON + redaction are not free — never per render). The outcome tooltip
+    // is a bounded, redacted summary of the tool's output, never the raw (unbounded) server output.
+    private sealed record EvidenceRow(ToolInvocationEvidence Entry, bool OnComputer, string What, string WhereTip, string OutcomeTip)
+    {
+        public static EvidenceRow From(ToolInvocationEvidence e)
+        {
+            var onComputer = e.Origin == ToolEvidenceOrigins.MemberComputer;
+            var where = onComputer
+                ? $"Computer {e.RunnerId ?? "unknown"} · permissions as reported by the computer: {e.PolicySource ?? "unknown"} · the server asked for: {e.RequestedAutonomy ?? "answer only"}"
+                : "On the server, through the tool gateway";
+            return new EvidenceRow(e, onComputer, e.InputSummary, where, SecretRedactor.Summary(e.Output, 300));
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -150,9 +165,10 @@ else
         _loading = true;
         try
         {
-            _rows = _origin is null && _sessionId is null
+            var entries = _origin is null && _sessionId is null
                 ? await Evidence.ListRecentAsync(_tenantId, 100)
                 : await Evidence.ListRecentAsync(_tenantId, new ToolEvidenceFilter(_origin, _sessionId), 200);
+            _rows = [.. entries.Select(EvidenceRow.From)];
         }
         catch (System.InvalidOperationException ex)
         {

@@ -190,6 +190,37 @@ public sealed class CliToolCallsTests
         last[^1].Summary.ShouldStartWith("7 more tool call(s)");
     }
 
+    [Fact]
+    public void Messages_ABigBatch_IsSplitIntoMessagesTheServerAccepts()
+    {
+        // A closing result with hundreds of permission_denials must not be cut by the server's per-batch cap.
+        var calls = new CliToolCalls(T0);
+        for (var i = 0; i < 450; i++) { Finish(calls, $"toolu_{i}", T0); }
+
+        var messages = CliToolCalls.Messages(calls.Complete(T0)).ToList();
+
+        messages.Select(m => m.Count).ShouldBe([200, 200, 50]);
+        messages.SelectMany(m => m).Select(c => c.ToolUseId).Distinct().Count().ShouldBe(450);
+        CliToolCalls.MaxPerMessage.ShouldBe(AgentOs.Modules.RemoteAgent.InProcessRemoteAgentBroker.MaxToolCallsPerBatch);
+        CliToolCalls.Messages([]).ShouldHaveSingleItem().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Tracker_LateRefusalForACallAlreadySent_IsNotSentTwice()
+    {
+        // A refusal the closing result names for a call that already went out (as an error) can't be flipped any more —
+        // and is never reported a second time (one row per call); one still waiting is flipped (test above).
+        const string vague = """{"type":"user","message":{"content":[{"type":"tool_result","content":"Error","is_error":true,"tool_use_id":"toolu_03C"}]}}""";
+        var calls = new CliToolCalls(T0);
+        calls.Observe(CliProgress.Read(PushUse), T0);
+        calls.Observe(CliProgress.Read(vague), T0);
+        calls.Take(T0).ShouldHaveSingleItem().Denied.ShouldBeFalse();
+
+        calls.Observe(CliProgress.Read(Result), T0);
+
+        calls.Complete(T0).ShouldNotContain(c => c.ToolUseId == "toolu_03C");
+    }
+
     private static void Finish(CliToolCalls calls, string id, DateTimeOffset at)
     {
         calls.Observe(new CliProgress.Event(null, null, [new CliProgress.ToolUse(id, "Read", "README.md")], []), at);

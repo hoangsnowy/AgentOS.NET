@@ -223,18 +223,133 @@ public sealed class RunnerToolEvidenceTests
         feed.Events.ShouldContain(e => e.SessionId == session && e.Message.Contains("2 tool call(s) on the computer (1 refused", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Broker_RunnerReconnectedMidRun_IsStillAcceptedFromItsNewConnection()
+    {
+        // SignalR's auto-reconnect gives the same runner a new connection id: its later batches still count.
+        var (broker, runnerId) = DispatchedRun("tenant-a", "conn-a", "req-1");
+        broker.RegisterRunner("conn-a2", new RunnerConnection(runnerId, "tenant-a", "member-1"));
+
+        broker.AcceptToolCalls("conn-a2", "req-1", "scoped", [Call("toolu_after_reconnect")]).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Broker_AnotherRunnerOfTheSameTenant_IsRefused()
+    {
+        var (broker, _) = DispatchedRun("tenant-a", "conn-a", "req-1");
+        broker.RegisterRunner("conn-other", new RunnerConnection(Guid.NewGuid(), "tenant-a", "member-2"));
+
+        broker.AcceptToolCalls("conn-other", "req-1", "scoped", [Call("toolu_x")]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Broker_SameRunnerIdUnderAnotherTenant_IsRefused()
+    {
+        var (broker, runnerId) = DispatchedRun("tenant-a", "conn-a", "req-1");
+        broker.RegisterRunner("conn-b", new RunnerConnection(runnerId, "tenant-b", "member-1"));
+
+        broker.AcceptToolCalls("conn-b", "req-1", "scoped", [Call("toolu_x")]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Broker_ReportedPermissions_ArePinnedByTheFirstBatch()
+    {
+        var (broker, _) = DispatchedRun("tenant-a", "conn-a", "req-1");
+
+        broker.AcceptToolCalls("conn-a", "req-1", "scoped", [Call("toolu_1")]).ShouldNotBeNull().Permissions.ShouldBe(RunnerPermissions.Scoped);
+        // A later batch can't relabel the run's evidence.
+        broker.AcceptToolCalls("conn-a", "req-1", "yolo", [Call("toolu_2")]).ShouldNotBeNull().Permissions.ShouldBe(RunnerPermissions.Scoped);
+    }
+
+    [Fact]
+    public async Task Evidence_KeepsWhatTheServerAskedForNextToWhatTheComputerReported()
+    {
+        var (broker, _) = DispatchedRun("tenant-a", "conn-a", "req-1", requestedAutonomy: "scoped");
+        var log = new InMemoryToolInvocationLog();
+
+        await Hub(broker, log, "conn-a").ReportToolCalls("req-1", "yolo", [Call("toolu_1")]);
+
+        var row = (await log.ListRecentAsync("tenant-a")).ShouldHaveSingleItem();
+        row.PolicySource.ShouldBe(ToolEvidencePolicies.CliSkipPermissions); // as the computer reported it
+        row.RequestedAutonomy.ShouldBe("scoped"); // as the server asked
+        row.InputSummary.ShouldBe("dotnet test");
+    }
+
+    [Theory]
+    [InlineData("Bash\nrm -rf /")]
+    [InlineData("Bash\u0007")]
+    [InlineData("<script>")]
+    [InlineData("Bash; rm")]
+    public void SafeToolName_UnsafeCharacters_AreUnknown(string tool) =>
+        InProcessRemoteAgentBroker.SafeToolName(tool).ShouldBe("unknown");
+
+    [Fact]
+    public void SafeToolName_OverLongName_IsCutThenChecked()
+    {
+        InProcessRemoteAgentBroker.SafeToolName(new string('a', 70)).ShouldBe(new string('a', 64));
+        // The unsafe part inside the first 64 characters is still caught after the cut.
+        InProcessRemoteAgentBroker.SafeToolName(new string('a', 10) + "\n<x>" + new string('b', 80)).ShouldBe("unknown");
+        InProcessRemoteAgentBroker.SafeToolName("mcp__github__create_issue").ShouldBe("mcp__github__create_issue");
+        InProcessRemoteAgentBroker.SafeToolName("  ").ShouldBe("unknown");
+    }
+
+    [Fact]
+    public void Broker_RefusedCalls_AreCountedByReason()
+    {
+        var refused = new List<(long Count, string? Reason)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Name == "agentos.evidence.remote_refused") { l.EnableMeasurementEvents(instrument); }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            string? reason = null;
+            foreach (var tag in tags) { if (tag.Key == "reason") { reason = tag.Value as string; } }
+            lock (refused) { refused.Add((value, reason)); }
+        });
+        listener.Start();
+        var (broker, _) = DispatchedRun("tenant-a", "conn-a", "req-metrics");
+        broker.RegisterRunner("conn-x", new RunnerConnection(Guid.NewGuid(), "tenant-x", "mallory"));
+
+        broker.AcceptToolCalls("conn-x", "req-metrics", "scoped", [Call("toolu_1"), Call("toolu_2")]).ShouldBeNull();
+        broker.AcceptToolCalls("conn-a", "req-metrics-unknown", "scoped", [Call("toolu_3")]).ShouldBeNull();
+        var many = Enumerable.Range(0, InProcessRemoteAgentBroker.MaxToolCallsPerBatch + 5).Select(i => Call($"toolu_m{i}")).ToList();
+        broker.AcceptToolCalls("conn-a", "req-metrics", "scoped", many).ShouldNotBeNull();
+
+        lock (refused)
+        {
+            refused.ShouldContain((2L, RunnerToolRefusals.WrongConnection));
+            refused.ShouldContain((1L, RunnerToolRefusals.UnknownRun));
+            refused.ShouldContain((5L, RunnerToolRefusals.BatchCap));
+        }
+    }
+
+    [Fact]
+    public async Task Hub_PushesTheRunsTenantBeforeRecording()
+    {
+        // RLS stage 2: a write that happens inline (the evidence queue full) must run with app.tenant_id set.
+        var (broker, _) = DispatchedRun("tenant-a", "conn-a", "req-1", sessionId: "11111111-1111-1111-1111-111111111111");
+        var log = new AmbientCapturingLog();
+
+        await Hub(broker, log, "conn-a").ReportToolCalls("req-1", "scoped", [Call("toolu_1")]);
+
+        log.Seen.ShouldHaveSingleItem().ShouldBe(("tenant-a", (Guid?)Guid.Parse("11111111-1111-1111-1111-111111111111")));
+        AgentOs.SharedKernel.Identity.AmbientIdentity.Current.ShouldBeNull(); // restored afterwards
+    }
+
     // ── helpers ──
 
     private static ServerSide Call(string id, bool denied = false) =>
         new(id, "Bash", "dotnet test", !denied, denied, DateTimeOffset.UtcNow, 10);
 
     private static (InProcessRemoteAgentBroker Broker, Guid RunnerId) DispatchedRun(string tenant, string connection, string requestId,
-        string? sessionId = null, string? role = null)
+        string? sessionId = null, string? role = null, string? requestedAutonomy = null)
     {
         var broker = new InProcessRemoteAgentBroker();
         var runnerId = Guid.NewGuid();
         broker.RegisterRunner(connection, new RunnerConnection(runnerId, tenant, "member-1"));
-        broker.TrackRun(requestId, new RemoteRunContext(tenant, sessionId, role));
+        broker.TrackRun(requestId, new RemoteRunContext(tenant, sessionId, role, requestedAutonomy));
         // Dispatch (binds the run to the connection), then let the runner answer; the run stays tracked for the grace window.
         var pending = broker.DispatchAsync(new RemoteExecRequest(requestId, "s", "u", "m"), new RunnerTarget(tenant, "member-1"), TimeSpan.FromMinutes(5));
         broker.Complete(new RemoteExecResult(requestId, true, "ok", null));
@@ -261,6 +376,21 @@ public sealed class RunnerToolEvidenceTests
         public override IFeatureCollection Features { get; } = new FeatureCollection();
         public override CancellationToken ConnectionAborted => CancellationToken.None;
         public override void Abort() { }
+    }
+
+    private sealed class AmbientCapturingLog : IToolInvocationLog
+    {
+        public List<(string? Tenant, Guid? Session)> Seen { get; } = [];
+
+        public Task AppendAsync(ToolInvocationEvidence entry, CancellationToken cancellationToken = default)
+        {
+            var current = AgentOs.SharedKernel.Identity.AmbientIdentity.Current;
+            lock (Seen) { Seen.Add((current?.TenantId, current?.SessionId)); }
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<ToolInvocationEvidence>> ListRecentAsync(string tenantId, int limit = 50, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ToolInvocationEvidence>>([]);
     }
 
     private sealed class CapturingFeed : ISessionRunFeed

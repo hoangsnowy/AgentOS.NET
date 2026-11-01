@@ -99,7 +99,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         IReadOnlyList<RunUpload> sentBack = [];
         // Governance: the tool calls the CLI makes on that computer are reported back and recorded under this run.
         var sessionId = amb?.SessionId?.ToString("D");
-        _broker.TrackRun(id, new RemoteRunContext(target.TenantId, sessionId, request.AgentRole));
+        _broker.TrackRun(id, new RemoteRunContext(target.TenantId, sessionId, request.AgentRole, request.Autonomy));
         var dispatchedAt = DateTimeOffset.UtcNow;
 
         // A single full-prompt dispatch (M3) caps at 120s, but an agentic issue-work run on the local

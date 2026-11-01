@@ -1,12 +1,11 @@
 // Governance of a CLI run on a member's computer — the server half. The runner reports every tool call its CLI made
-// (CliToolCalls.cs on the runner); the broker accepted the batch (right connection, tracked run, within its cap,
-// sanitised); this records each call through IToolInvocationLog as one evidence row: the run (request) id, the task
+// (CliToolCalls.cs on the runner); the broker accepted the batch (the run's runner, tracked run, within its cap,
+// sanitised, permissions pinned by the first batch); this records each call through IToolInvocationLog as one evidence row: the run (request) id, the task
 // (session), tenant, agent role, runner id, origin "member-computer", and the policy that decided — the CLI's scoped
 // permissions on that machine, not the server's IToolPolicy. Refusals are recorded too (Denied). Best-effort: evidence
 // never fails the run, and the buffered log keeps the write off the hub's receive loop.
 
 using System;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Tools;
@@ -26,7 +25,9 @@ internal static class RunnerToolEvidence
             ToolName: call.Tool,
             TenantId: batch.Context.TenantId,
             RunId: batch.RequestId,
-            Input: JsonSerializer.Serialize(new { summary = call.Summary }),
+            // The server's own request sits next to the computer's report (PolicySource), so a mismatch is visible.
+            Input: MemberComputerInput.Write(call.Summary,
+                batch.Context.RequestedAutonomy is { Length: > 0 } a ? SecretRedactor.Bound(a, 32) : null),
             Output: Outcome(call, batch.Permissions),
             IsError: !call.Ok || call.Denied,
             StartedUtc: call.StartedUtc,

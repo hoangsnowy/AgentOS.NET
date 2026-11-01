@@ -18,7 +18,7 @@
 // (Bash, Edit, Write, Read…) and IToolGateway never sees them — the allow/deny decision is the CLI's scoped
 // permissions on that machine (ScopedAutonomy.cs), not IToolPolicy. Governance there is evidence after the fact: the
 // runner reports every call (ReportToolCalls — a bounded, redacted summary, ok / error / refused) during the run, the
-// broker accepts a batch only from the connection the run was dispatched to (TrackRun / AcceptToolCalls), and the hub
+// broker accepts a batch only from the runner the run was dispatched to (TrackRun / AcceptToolCalls), and the hub
 // records each call through IToolInvocationLog with origin "member-computer" (RunnerToolEvidence.cs).
 
 using System;
@@ -128,12 +128,38 @@ public sealed record RunnerToolEvent(string ToolUseId, string Tool, string Summa
 /// <param name="TenantId">The tenant (the dispatch target's).</param>
 /// <param name="SessionId">The Board task (session) the run belongs to, when there is one.</param>
 /// <param name="AgentRole">The agent role (Coding, Reviewer, Testing…), when the caller named one.</param>
-public sealed record RemoteRunContext(string TenantId, string? SessionId, string? AgentRole);
+/// <param name="RequestedAutonomy">What the SERVER asked the CLI to be allowed (<see cref="RemoteExecRequest.Autonomy"/>:
+/// null = answer only, "scoped"…) — recorded next to what the computer reports it actually used.</param>
+public sealed record RemoteRunContext(string TenantId, string? SessionId, string? AgentRole, string? RequestedAutonomy = null);
 
-/// <summary>A batch of tool calls the broker accepted: from the connection the run went to, sanitised and within the
-/// run's cap — ready to record.</summary>
+/// <summary>A batch of tool calls the broker accepted: from the runner the run went to, sanitised and within the run's
+/// cap — ready to record. <paramref name="Permissions"/> is what the computer reported with the run's FIRST batch,
+/// pinned for the rest of the run (a later batch can't relabel it).</summary>
 public sealed record RunnerToolCallBatch(string RequestId, RemoteRunContext Context, Guid RunnerId, string Permissions,
     System.Collections.Generic.IReadOnlyList<RunnerToolEvent> Calls);
+
+/// <summary>Why the broker refused (part of) a runner's batch — the low-cardinality <c>reason</c> tag of
+/// <c>agentos.evidence.remote_refused</c>.</summary>
+public static class RunnerToolRefusals
+{
+    /// <summary>No run with that id is tracked (never dispatched here, or forgotten after its grace window).</summary>
+    public const string UnknownRun = "unknown_run";
+
+    /// <summary>Tracked, but not dispatched yet.</summary>
+    public const string NotDispatched = "not_dispatched";
+
+    /// <summary>The batch came from a connection that is not the run's runner (another computer or tenant).</summary>
+    public const string WrongConnection = "wrong_connection";
+
+    /// <summary>The run ended longer ago than the grace window.</summary>
+    public const string GracePassed = "grace_passed";
+
+    /// <summary>The run already recorded its cap of calls.</summary>
+    public const string RunCap = "run_cap";
+
+    /// <summary>Calls beyond the per-batch cap.</summary>
+    public const string BatchCap = "batch_cap";
+}
 
 /// <summary>What decided which tools a CLI run could use, as the runner reports it with each batch.</summary>
 public static class RunnerPermissions
@@ -299,8 +325,10 @@ public interface IRemoteAgentBroker
     void TrackRun(string requestId, RemoteRunContext context) { }
 
     /// <summary>Called by the hub: a batch of tool calls a runner reports for <paramref name="requestId"/>. Accepted only
-    /// from the connection the run was dispatched to, while it runs or shortly after (a stopped run's last batch), within
-    /// the run's cap; null when refused. The calls come back sanitised (bounded, redacted again).</summary>
+    /// from the runner the run was dispatched to (its connection, or its new one after a reconnect — same runner, same
+    /// tenant), while it runs or shortly after (a stopped run's last batch), within the run's cap; null when refused
+    /// (counted and logged, never silent). The calls come back sanitised (bounded, redacted again), and the reported
+    /// permissions are pinned by the run's first batch.</summary>
     RunnerToolCallBatch? AcceptToolCalls(string connectionId, string requestId, string? permissions,
         System.Collections.Generic.IReadOnlyList<RunnerToolEvent>? calls) => null;
 
@@ -331,10 +359,20 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     /// <summary>The most calls accepted from one batch.</summary>
     internal const int MaxToolCallsPerBatch = 200;
 
-    public InProcessRemoteAgentBroker() : this(TimeProvider.System) { }
+    // Evidence must never be dropped silently: every refused call is counted here (reason tag) and logged.
+    private static readonly System.Diagnostics.Metrics.Meter EvidenceMeter = new("AgentOs.Tools");
+    private static readonly System.Diagnostics.Metrics.Counter<long> RemoteRefused = EvidenceMeter.CreateCounter<long>(
+        "agentos.evidence.remote_refused", description: "Tool calls a runner reported that the server refused to record (tag: reason).");
 
-    /// <summary>Test seam: a fake clock for the grace window.</summary>
-    public InProcessRemoteAgentBroker(TimeProvider time) => _time = time ?? throw new ArgumentNullException(nameof(time));
+    private readonly Microsoft.Extensions.Logging.ILogger? _logger;
+
+    /// <param name="time">The clock for the grace window (a fake one in tests); null = the system clock.</param>
+    /// <param name="logger">Where refused evidence is reported; null = counted only.</param>
+    public InProcessRemoteAgentBroker(TimeProvider? time = null, Microsoft.Extensions.Logging.ILogger<InProcessRemoteAgentBroker>? logger = null)
+    {
+        _time = time ?? TimeProvider.System;
+        _logger = logger;
+    }
 
     private sealed class TrackedRun(RemoteRunContext context, DateTimeOffset trackedAt)
     {
@@ -345,6 +383,8 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         public long EndedAtUnixMs; // 0 = still running
         public int Accepted;
         public int Denials;
+        // What the computer reported with the run's first accepted batch — never relabelled by a later one.
+        public string? Permissions;
     }
 
     public void TrackRun(string requestId, RemoteRunContext context)
@@ -358,26 +398,60 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public RunnerToolCallBatch? AcceptToolCalls(string connectionId, string requestId, string? permissions,
         System.Collections.Generic.IReadOnlyList<RunnerToolEvent>? calls)
     {
-        if (calls is not { Count: > 0 } || string.IsNullOrEmpty(requestId) || !_runs.TryGetValue(requestId, out var run)
-            || run.ConnectionId is not { } owner || !string.Equals(owner, connectionId, StringComparison.Ordinal))
+        if (calls is not { Count: > 0 }) { return null; }
+        if (string.IsNullOrEmpty(requestId) || !_runs.TryGetValue(requestId, out var run))
         {
-            return null;
+            return Refuse(RunnerToolRefusals.UnknownRun, requestId, calls.Count);
         }
+        if (run.ConnectionId is not { } owner) { return Refuse(RunnerToolRefusals.NotDispatched, requestId, calls.Count); }
+        if (!IsRunnersConnection(run, owner, connectionId)) { return Refuse(RunnerToolRefusals.WrongConnection, requestId, calls.Count); }
         var now = _time.GetUtcNow();
         var ended = Interlocked.Read(ref run.EndedAtUnixMs);
         if (ended != 0 && now.ToUnixTimeMilliseconds() - ended > (long)ToolCallGrace.TotalMilliseconds)
         {
             _runs.TryRemove(requestId, out _);
-            return null;
+            return Refuse(RunnerToolRefusals.GracePassed, requestId, calls.Count);
         }
         var room = MaxToolCallsPerRun - Volatile.Read(ref run.Accepted);
-        if (room <= 0) { return null; }
-        var accepted = calls.Where(c => c is not null).Take(Math.Min(room, MaxToolCallsPerBatch))
-            .Select(c => Sanitize(c, run.TrackedAt, now)).ToList();
+        if (room <= 0) { return Refuse(RunnerToolRefusals.RunCap, requestId, calls.Count); }
+        var present = calls.Where(c => c is not null).ToList();
+        var take = Math.Min(room, MaxToolCallsPerBatch);
+        if (present.Count > take)
+        {
+            Refuse(take == room ? RunnerToolRefusals.RunCap : RunnerToolRefusals.BatchCap, requestId, present.Count - take);
+        }
+        var accepted = present.Take(take).Select(c => Sanitize(c, run.TrackedAt, now)).ToList();
         if (accepted.Count == 0) { return null; }
         Interlocked.Add(ref run.Accepted, accepted.Count);
         Interlocked.Add(ref run.Denials, accepted.Count(c => c.Denied));
-        return new RunnerToolCallBatch(requestId, run.Context, run.RunnerId, RunnerPermissions.Normalize(permissions), accepted);
+        // The computer's own report of its permissions is pinned on the first batch: an altered runner can't turn a
+        // run's evidence from "scoped" into something else halfway through.
+        Interlocked.CompareExchange(ref run.Permissions, RunnerPermissions.Normalize(permissions), null);
+        return new RunnerToolCallBatch(requestId, run.Context, run.RunnerId, run.Permissions!, accepted);
+    }
+
+    // The run's own connection, or — after the runner's SignalR auto-reconnect gave it a new connection id — any live
+    // connection registered for the SAME runner in the SAME tenant (it authenticated with that runner's token).
+    private bool IsRunnersConnection(TrackedRun run, string owner, string connectionId)
+    {
+        if (string.Equals(owner, connectionId, StringComparison.Ordinal)) { return true; }
+        return run.RunnerId != Guid.Empty
+            && _connections.TryGetValue(connectionId, out var conn)
+            && conn.RunnerId == run.RunnerId
+            && string.Equals(conn.TenantId, run.Context.TenantId, StringComparison.Ordinal);
+    }
+
+    // Counted (agentos.evidence.remote_refused{reason}) and logged — the request id is runner-supplied, so it is scrubbed.
+    private RunnerToolCallBatch? Refuse(string reason, string? requestId, int count)
+    {
+        RemoteRefused.Add(count, new System.Collections.Generic.KeyValuePair<string, object?>("reason", reason));
+        if (_logger is not null)
+        {
+            Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(_logger,
+                "Tool-call evidence refused: {Count} call(s) reported for run {RequestId} were not recorded ({Reason}).",
+                count, AgentOs.Domain.Tools.SecretRedactor.Bound(AgentOs.SharedKernel.Logging.LogSafe.Scrub(requestId), 80), reason);
+        }
+        return null;
     }
 
     public (int ToolCalls, int Denials) ToolCallTotals(string requestId) =>
@@ -398,10 +472,12 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     }
 
     // A tool name as the CLI names it (Bash, mcp__github__create_issue): letters, digits, _ . : - and ( ), ≤ 64.
+    // An over-long name is cut first and then checked like any other (the cut never skips the character check).
     internal static string SafeToolName(string? tool)
     {
         var t = (tool ?? string.Empty).Trim();
-        if (t.Length == 0 || t.Length > 64) { return t.Length == 0 ? "unknown" : t[..64]; }
+        if (t.Length > 64) { t = t[..64]; }
+        if (t.Length == 0) { return "unknown"; }
         return t.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '_' or '.' or ':' or '-' or '(' or ')') ? t : "unknown";
     }
 
@@ -427,15 +503,17 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private void PruneRuns()
     {
         var now = _time.GetUtcNow();
-        foreach (var (id, run) in _runs)
+        foreach (var id in _runs.Where(kv => IsStale(kv.Value, now)).Select(kv => kv.Key))
         {
-            var ended = Interlocked.Read(ref run.EndedAtUnixMs);
-            if ((ended != 0 && now.ToUnixTimeMilliseconds() - ended > (long)ToolCallGrace.TotalMilliseconds)
-                || (ended == 0 && run.ConnectionId is null && now - run.TrackedAt > TimeSpan.FromDays(1)))
-            {
-                _runs.TryRemove(id, out _);
-            }
+            _runs.TryRemove(id, out _);
         }
+    }
+
+    private static bool IsStale(TrackedRun run, DateTimeOffset now)
+    {
+        var ended = Interlocked.Read(ref run.EndedAtUnixMs);
+        return (ended != 0 && now.ToUnixTimeMilliseconds() - ended > (long)ToolCallGrace.TotalMilliseconds)
+            || (ended == 0 && run.ConnectionId is null && now - run.TrackedAt > TimeSpan.FromDays(1));
     }
 
     // The ticket files of one dispatch. A file's bytes are released as soon as its runner has fetched the last piece.

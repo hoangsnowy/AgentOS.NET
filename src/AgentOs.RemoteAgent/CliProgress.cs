@@ -221,13 +221,11 @@ internal static class CliProgress
         if (c.ValueKind == JsonValueKind.String) { return (c.GetString() ?? string.Empty).TrimStart(); }
         if (c.ValueKind == JsonValueKind.Array)
         {
-            foreach (var block in c.EnumerateArray())
-            {
-                if (IsPart(block, "text") && block.TryGetProperty("text", out var tx) && tx.ValueKind == JsonValueKind.String)
-                {
-                    return (tx.GetString() ?? string.Empty).TrimStart();
-                }
-            }
+            var first = c.EnumerateArray()
+                .Where(block => IsPart(block, "text") && block.TryGetProperty("text", out var tx) && tx.ValueKind == JsonValueKind.String)
+                .Select(block => block.GetProperty("text").GetString())
+                .FirstOrDefault();
+            return (first ?? string.Empty).TrimStart();
         }
         return string.Empty;
     }

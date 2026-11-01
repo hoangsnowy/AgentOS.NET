@@ -122,6 +122,32 @@ public sealed class MemberComputerEvidenceStoreTests
         row.InputSummary.ShouldNotContain("abcdefghijklmnopqrstu");
     }
 
+    [Fact]
+    public void InputSummary_ServerRowWithASummaryField_IsNotReadAsAMemberComputerRow()
+    {
+        // Only a member-computer row is the recorded {"summary": …} shape; a server tool's input is shown as-is.
+        var server = new ToolInvocationEvidence("c", "notes", "t1", null, "{\"summary\":\"short\",\"body\":\"more\"}", "ok", false, T0, T0);
+        var member = server with { Origin = ToolEvidenceOrigins.MemberComputer };
+
+        server.InputSummary.ShouldBe("{\"summary\":\"short\",\"body\":\"more\"}");
+        server.RequestedAutonomy.ShouldBeNull();
+        member.InputSummary.ShouldBe("short");
+    }
+
+    [Theory]
+    [InlineData("scoped")]
+    [InlineData(null)]
+    public void MemberComputerInput_RoundTrips(string? requested)
+    {
+        var input = MemberComputerInput.Write("git push \"origin\" main", requested);
+
+        MemberComputerInput.TryRead(input, out var summary, out var back).ShouldBeTrue();
+        summary.ShouldBe("git push \"origin\" main");
+        back.ShouldBe(requested);
+        MemberComputerInput.TryRead("{\"other\":1}", out _, out _).ShouldBeFalse();
+        MemberComputerInput.TryRead("not json {", out _, out _).ShouldBeFalse();
+    }
+
     private static EfToolInvocationLog NewLog()
     {
         var services = new ServiceCollection();

@@ -34,6 +34,19 @@ internal sealed class CliToolCalls
     /// <summary>…or this long after the last one went out.</summary>
     internal static readonly TimeSpan FlushEvery = TimeSpan.FromSeconds(5);
 
+    /// <summary>The most calls in one ReportToolCalls message — the server accepts at most this many per batch
+    /// (<c>InProcessRemoteAgentBroker.MaxToolCallsPerBatch</c>), so a bigger batch (a closing result with hundreds of
+    /// permission_denials) goes out in several messages instead of being cut.</summary>
+    internal const int MaxPerMessage = 200;
+
+    /// <summary><paramref name="calls"/> split into messages of at most <see cref="MaxPerMessage"/>, in order.</summary>
+    internal static IEnumerable<IReadOnlyList<RunnerToolEvent>> Messages(IReadOnlyList<RunnerToolEvent> calls)
+    {
+        ArgumentNullException.ThrowIfNull(calls);
+        if (calls.Count <= MaxPerMessage) { return [calls]; }
+        return calls.Chunk(MaxPerMessage);
+    }
+
     private readonly Dictionary<string, (string Tool, string Summary, DateTimeOffset Started)> _open = new(StringComparer.Ordinal);
     private readonly List<RunnerToolEvent> _ready = [];
     // Every id already finished (sent or waiting), so a closing permission_denials entry is never counted twice.
