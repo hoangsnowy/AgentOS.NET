@@ -36,13 +36,19 @@ spec:
       {{- if $root.Values.postgresql.enabled }}
       initContainers:
         # Wait for the bundled Postgres so the first boot's migrations don't race it (crash-loop otherwise).
+        # -U/-d are required: the pod's uid (1654) has no passwd entry in the postgres image, and without -U
+        # pg_isready can't name a user and exits 3 ("no attempt") without ever probing — an endless loop.
         - name: wait-for-postgres
           image: {{ include "agentos.image" (dict "root" $root "image" $root.Values.postgresql.image) }}
           imagePullPolicy: {{ $root.Values.postgresql.image.pullPolicy }}
-          command: ["sh", "-c", "until pg_isready -h \"$DB_HOST\" -p 5432; do sleep 2; done"]
+          command: ["sh", "-c", "until pg_isready -h \"$DB_HOST\" -p 5432 -U \"$DB_USER\" -d \"$DB_NAME\"; do sleep 2; done"]
           env:
             - name: DB_HOST
               value: {{ include "agentos.db.host" $root | quote }}
+            - name: DB_USER
+              value: {{ include "agentos.db.user" $root | quote }}
+            - name: DB_NAME
+              value: {{ include "agentos.db.name" $root | quote }}
           securityContext:
             {{- include "agentos.containerSecurityContext" $root | nindent 12 }}
           resources:
