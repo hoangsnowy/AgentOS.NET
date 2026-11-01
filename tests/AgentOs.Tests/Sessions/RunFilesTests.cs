@@ -27,10 +27,7 @@ public sealed class RunFilesTests : IDisposable
         Directory.CreateDirectory(_runDir);
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-    }
+    public void Dispose() => _ = TestFiles.TryDeleteDirectory(_root); // still held: the OS temp cleanup removes it
 
     private static byte[] Bytes(string s) => Encoding.UTF8.GetBytes(s);
 

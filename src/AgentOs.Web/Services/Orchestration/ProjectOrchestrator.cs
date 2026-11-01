@@ -231,13 +231,16 @@ public sealed partial class ProjectOrchestrator(
                 var flow = await TaskFlowAsync(board, s.TicketFlowVersion, taskFlows, ct).ConfigureAwait(false);
                 var plan = flow.Definition.Resolve(LabelsOf(s, labels));
                 // The Design gate reads the review of the task's CURRENT change (its fix round): a fix round starts afresh.
-                var reviews = plan.Runs(TicketStepKind.Design) ? sp.GetService<AgentOs.Domain.Sessions.IDesignReviewStore>() : null;
-                var design = reviews is null ? null : await reviews.GetAsync(tenant, s.Id, s.FixRounds, ct).ConfigureAwait(false);
-                // A check a restart cut short reads "Checking" with nothing running: it waits for the Designer again.
-                if (design is { Status: AgentOs.Domain.Sessions.DesignReviewStatus.Checking, Decision: null } && reviews is not null && !stops.IsRunning(tenant, s.Id))
+                AgentOs.Domain.Sessions.DesignReview? design = null;
+                if (plan.Runs(TicketStepKind.Design) && sp.GetService<AgentOs.Domain.Sessions.IDesignReviewStore>() is { } reviews)
                 {
-                    design = await reviews.SaveVerdictAsync(tenant, s.Id, design.Run, new AgentOs.Domain.Sessions.DesignVerdictUpdate(AgentOs.Domain.Sessions.DesignReviewStatus.Pending), ct)
-                        .ConfigureAwait(false) ?? design;
+                    design = await reviews.GetAsync(tenant, s.Id, s.FixRounds, ct).ConfigureAwait(false);
+                    // A check a restart cut short reads "Checking" with nothing running: it waits for the Designer again.
+                    if (design is { Status: AgentOs.Domain.Sessions.DesignReviewStatus.Checking, Decision: null } && !stops.IsRunning(tenant, s.Id))
+                    {
+                        design = await reviews.SaveVerdictAsync(tenant, s.Id, design.Run, new AgentOs.Domain.Sessions.DesignVerdictUpdate(AgentOs.Domain.Sessions.DesignReviewStatus.Pending), ct)
+                            .ConfigureAwait(false) ?? design;
+                    }
                 }
                 planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds)
                 {

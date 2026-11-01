@@ -85,9 +85,10 @@ public sealed class DesignAgent(ILlmClientFactory factory, ILogger<DesignAgent> 
                     "None of the screenshots could be sent to the model (" + leftOut[0].Why + ") — a person needs to look at them.", null);
             }
         }
-        var shown = onComputer
-            ? shots.Select(s => ((string?)(RunFile.Folder + "/" + s.File.Path), s.Caption)).ToList()
-            : images.Select(i => ((string?)null, i.Name)).ToList();
+        // Target-typed: the element type comes from the declaration, so neither branch needs a cast to string?.
+        IReadOnlyList<(string? Path, string Caption)> shown = onComputer
+            ? [.. shots.Select(s => (RunFile.Folder + "/" + s.File.Path, s.Caption))]
+            : [.. images.Select(i => (default(string), i.Name))];
         var llmRequest = new LlmRequest(
             SystemPrompt: await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Designer, InstructionsTemplate, Values(request),
                 UntrustedText.SystemRule + "\n" + ScreenshotRule, ct).ConfigureAwait(false),

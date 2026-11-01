@@ -22,6 +22,7 @@
 // records each call through IToolInvocationLog with origin "member-computer" (RunnerToolEvidence.cs).
 
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Linq;
@@ -467,6 +468,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
 
     private readonly Microsoft.Extensions.Logging.ILogger? _logger;
 
+    /// <summary>A broker that tracks runs, runners and previews in this process's memory.</summary>
     /// <param name="time">The clock for the grace window (a fake one in tests); null = the system clock.</param>
     /// <param name="logger">Where refused evidence is reported; null = counted only.</param>
     public InProcessRemoteAgentBroker(TimeProvider? time = null, Microsoft.Extensions.Logging.ILogger<InProcessRemoteAgentBroker>? logger = null)
@@ -617,8 +619,16 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     // The ticket files of one dispatch. A file's bytes are released as soon as its runner has fetched the last piece.
     private sealed class StagedFiles(System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile> files)
     {
-        public readonly byte[]?[] Contents = files.Select(f => (byte[]?)f.Content).ToArray();
+        public readonly byte[]?[] Contents = Copy(files);
         public volatile DispatchOwner? Owner; // null until dispatched
+
+        // Each slot is nulled once its file is delivered, so the array is typed byte[]?[] from the start.
+        private static byte[]?[] Copy(System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile> files)
+        {
+            var contents = new byte[]?[files.Count];
+            for (var i = 0; i < contents.Length; i++) { contents[i] = files[i].Content; }
+            return contents;
+        }
         public int Delivered;
     }
 
@@ -670,7 +680,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         public readonly AgentOs.Domain.Files.RunCollect Limits = limits;
         public readonly object Gate = new();
         public volatile DispatchOwner? Owner; // null until dispatched
-        public readonly System.Collections.Generic.Dictionary<string, System.IO.MemoryStream> Open = new(StringComparer.OrdinalIgnoreCase);
+        public readonly System.Collections.Generic.Dictionary<string, ArrayBufferWriter<byte>> Open = new(StringComparer.OrdinalIgnoreCase);
         public readonly System.Collections.Generic.List<RunUpload> Done = [];
         public long Total;
     }
@@ -729,21 +739,20 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
                 if (chunk.Offset != 0) { return $"Refused \"{path}\": it must start at the beginning."; }
                 if (slot.Done.Exists(d => string.Equals(d.Path, path, StringComparison.OrdinalIgnoreCase))) { return $"Refused \"{path}\": it was already sent."; }
                 if (slot.Done.Count + slot.Open.Count >= slot.Limits.MaxFiles) { return $"Refused \"{path}\": at most {slot.Limits.MaxFiles} files come back from one run."; }
-                buffer = new System.IO.MemoryStream();
+                buffer = new ArrayBufferWriter<byte>();
                 slot.Open[path] = buffer;
             }
             string? refused = null;
-            if (chunk.Offset != buffer.Length) { refused = $"Refused \"{path}\": pieces must arrive in order."; }
-            else if (buffer.Length + data.Length > slot.Limits.MaxFileBytes) { refused = $"Refused \"{path}\": a file is at most {slot.Limits.MaxFileBytes} bytes."; }
+            if (chunk.Offset != buffer.WrittenCount) { refused = $"Refused \"{path}\": pieces must arrive in order."; }
+            else if (data.Length > slot.Limits.MaxFileBytes - buffer.WrittenCount) { refused = $"Refused \"{path}\": a file is at most {slot.Limits.MaxFileBytes} bytes."; }
             else if (slot.Total + data.Length > slot.Limits.MaxTotalBytes) { refused = $"Refused \"{path}\": one run sends back at most {slot.Limits.MaxTotalBytes} bytes."; }
             else if (!chunk.Last && data.Length == 0) { refused = $"Refused \"{path}\": an empty piece."; }
             if (refused is not null) { Drop(slot, path, buffer); return refused; }
             buffer.Write(data);
             slot.Total += data.Length;
             if (!chunk.Last) { return null; }
-            var content = buffer.ToArray();
+            var content = buffer.WrittenSpan.ToArray();
             slot.Open.Remove(path);
-            buffer.Dispose();
             if (!AgentOs.Domain.Files.RunUploadRules.LooksLikeImage(path, content))
             {
                 slot.Total -= content.LongLength;
@@ -753,11 +762,10 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             return null;
         }
 
-        static void Drop(UploadSlot slot, string path, System.IO.MemoryStream buffer)
+        static void Drop(UploadSlot slot, string path, ArrayBufferWriter<byte> buffer)
         {
-            slot.Total -= buffer.Length;
+            slot.Total -= buffer.WrittenCount;
             slot.Open.Remove(path);
-            buffer.Dispose();
         }
     }
 
@@ -767,7 +775,6 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         Release(slot);
         lock (slot.Gate)
         {
-            foreach (var open in slot.Open.Values) { open.Dispose(); }
             slot.Open.Clear();
             return [.. slot.Done];
         }
