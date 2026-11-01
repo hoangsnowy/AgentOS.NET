@@ -185,7 +185,9 @@ Light and dark are first-class (top bar → appearance toggle, or System → App
   a built-in table of official list prices (Claude 5.x, GPT-6/5.x, o-series, incl. prompt-cache and
   long-context tiers); an unknown model is charged at a fail-closed ceiling, never `$0`, so it cannot
   slip past the budget gate.
-- **Governed.** Tools run only through `IToolGateway` → per-tenant policy → evidence log. Production
+- **Governed.** Tools run only through `IToolGateway` → per-tenant policy → evidence log, and the tools a
+  CLI agent uses on a member's paired computer (Bash, Edit, Write, Read…) are reported back and recorded as evidence
+  too, with the computer's own permissions as the deciding policy ([ADR-0017](docs/adr/0017-member-computer-tool-evidence.md)). Production
   pins the riskiest switches (remote auto-approve, tool enforcement, offline fallback, build sandbox)
   as operator locks the UI cannot flip. Third-party text in prompts is fenced as untrusted input.
 - **Multi-tenant from day one.** Keycloak OIDC `tenant` claim → `ITenantContext`; row-level isolation
@@ -247,6 +249,17 @@ through the gateway: `LlmRequest.Tools = ["build_verifier"]` makes `PooledChatLl
 name in `IToolRegistry`, adapt it into a `Microsoft.Extensions.AI.AIFunction`, and run the tool-call
 loop with `FunctionInvokingChatClient`. Every invocation passes `IToolPolicy` (gate) and
 `IToolInvocationLog` (evidence), so refused and successful calls alike are auditable.
+
+**Tool calls on a member's computer.** A Board "Run on my machine" task runs `claude -p` on the member's paired
+computer, and that CLI calls its own tools — the server's gateway never sees them; the CLI's scoped permissions there
+allow or refuse each one. The runner reads them off the CLI's `stream-json` events and reports them over the hub
+(`ReportToolCalls`, in batches during the run): tool, a one-line summary (the command, the file's path — never file
+contents or output, redacted by `SecretRedactor` on both sides, ≤ 500 characters), ok / error / refused, duration.
+The server accepts a batch only for a run it dispatched, from that run's connection, and records each call through
+`IToolInvocationLog` with origin `member-computer`, the task, tenant, agent role, runner and the policy that decided.
+Settings › Activity log › Tool calls › **On a member's computer** lists them (a task's activity panel links to its
+own); Insights counts tool calls and refusals per run by agent role. See
+[ADR-0017](docs/adr/0017-member-computer-tool-evidence.md).
 
 `AgentOs.Modules.Mcp` connects to upstream **MCP servers** and registers their tools as
 `{server}.{tool}` — local and remote tools share one registry. The Api also **serves MCP** at `/mcp`
