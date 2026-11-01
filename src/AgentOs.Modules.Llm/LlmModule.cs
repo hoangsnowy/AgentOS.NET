@@ -89,7 +89,8 @@ public sealed class LlmModule : IModule
                 "AzureOpenAI",
                 (key, model) => SdkChatClients.CreateAzure(
                     key,
-                    !string.IsNullOrWhiteSpace(ov.AzureEndpoint) ? ov.AzureEndpoint! : opts.Value.AzureOpenAi.Endpoint,
+                    // GAP-01: a Settings endpoint must be an Azure host and is called through SsrfGuard.
+                    AzureEndpoints.Resolve(ov.AzureEndpoint, opts.Value.AzureOpenAi.Endpoint),
                     string.IsNullOrWhiteSpace(model) ? DefaultDeployment() : model),
                 ct => AzureKeyPoolAsync(opts.Value.AzureOpenAi, ov, ct),
                 sp.GetRequiredService<ApiKeyRouter>(),

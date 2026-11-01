@@ -69,7 +69,9 @@ public sealed class LlmSettings(bool offlineFallbackDefault = false) : ISettings
         };
         yield return new(AppConfigKeys.LlmAzureEndpoint, SettingKind.Url, Category, "Azure OpenAI endpoint")
         {
-            Help = "https://<resource>.openai.azure.com",
+            Help = "https://<resource>.openai.azure.com — an Azure OpenAI resource host (other hosts: operator config only).",
+            // GAP-01: tenant-scoped and called server-side with the tenant's key — Azure resource hosts only.
+            Validator = AgentOs.SharedKernel.Security.AzureOpenAiEndpoint.Validate,
         };
         yield return new(AppConfigKeys.LlmAzureApiKey, SettingKind.Secret, Category, "Azure OpenAI API key");
         yield return new(AppConfigKeys.LlmAzureApiKeys, SettingKind.Secret, Category, "Azure OpenAI key pool");

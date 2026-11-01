@@ -82,7 +82,8 @@ public sealed class MafChatClient : ILlmClient
         }
 
         var deployment = string.IsNullOrWhiteSpace(_options.Model) ? request.Model : _options.Model;
-        var azure = GetOrCreateClient(endpoint, apiKey);
+        // GAP-01: a Settings endpoint must be an Azure host and is called through SsrfGuard.
+        var azure = GetOrCreateClient(AzureEndpoints.Resolve(_overrides.AzureEndpoint, _options.Endpoint), apiKey);
         IChatClient chat = azure.GetChatClient(deployment).AsIChatClient();
 
         var messages = LlmMessages.For(request);
@@ -164,7 +165,10 @@ public sealed class MafChatClient : ILlmClient
     // Returns a cached AzureOpenAIClient for the (endpoint, key) pair, building one on first use. Internal
     // for the reuse test (InternalsVisibleTo "AgentOs.Tests"); callers must validate endpoint/key first.
     internal static AzureOpenAIClient GetOrCreateClient(string endpoint, string apiKey) =>
+        GetOrCreateClient(new AzureEndpoints.Resolved(endpoint, Untrusted: false), apiKey);
+
+    internal static AzureOpenAIClient GetOrCreateClient(AzureEndpoints.Resolved endpoint, string apiKey) =>
         ClientCache.GetOrAdd(
-            $"{endpoint}|{apiKey}",
-            _ => new AzureOpenAIClient(new Uri(endpoint), new ApiKeyCredential(apiKey)));
+            $"{endpoint.Endpoint}|{endpoint.Untrusted}|{apiKey}",
+            _ => AzureEndpoints.CreateClient(endpoint, apiKey));
 }

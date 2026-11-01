@@ -21,12 +21,33 @@ public interface ITenantSignupService
     /// message on validation / invitation / collision errors.</summary>
     Task<TenantSignupOutcome> SignupAsync(TenantSignupRequest request, CancellationToken ct = default);
 
+    /// <summary>True when anyone may create a NEW workspace (the platform setting <c>Tenants:OpenSignup</c>, GAP-01).
+    /// When false, <see cref="SignupAsync"/> accepts only invitations and throws <see cref="SignupClosedException"/>
+    /// otherwise.</summary>
+    Task<bool> IsOpenSignupEnabledAsync(CancellationToken ct = default);
+
     /// <summary>Mint a signed, time-limited invitation token for the given tenant + role.</summary>
     InvitationToken CreateInvitation(string tenantId, string role, string? email, TimeSpan ttl);
 
     /// <summary>Decode an invitation token; returns null when the token is missing, malformed,
     /// or expired. Never throws — callers can branch on null to fall back to a different mode.</summary>
     InvitationPreview? PreviewInvitation(string? token);
+}
+
+/// <summary>Open self-signup is turned off on this server (GAP-01): only an invitation can create an account.</summary>
+public sealed class SignupClosedException : InvalidOperationException
+{
+    /// <summary>The user-facing message.</summary>
+    public const string DefaultMessage = "Creating a new workspace is turned off on this server. Ask an administrator for an invitation.";
+
+    /// <inheritdoc />
+    public SignupClosedException() : base(DefaultMessage) { }
+
+    /// <inheritdoc />
+    public SignupClosedException(string message) : base(message) { }
+
+    /// <inheritdoc />
+    public SignupClosedException(string message, Exception innerException) : base(message, innerException) { }
 }
 
 /// <summary>Inputs for a single self-service signup attempt.</summary>

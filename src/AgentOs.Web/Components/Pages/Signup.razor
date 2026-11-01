@@ -7,6 +7,24 @@
 
 <PageTitle>Create workspace — AgentOS.NET</PageTitle>
 
+@if (_closed)
+{
+    <div class="login-card" data-testid="signup-closed">
+        <div class="login-brand">
+            <BrandMark Size="44" Decorative="true" />
+            <div>
+                <div class="brand-title">Sign-up is closed</div>
+                <div class="brand-sub">New workspaces are created by invitation on this server</div>
+            </div>
+        </div>
+        <div class="login-form">
+            <p class="login-hint" role="status">Ask an administrator of your workspace for an invitation link.</p>
+            <div class="login-hint">Already have an account? <a href="/login">Sign in</a></div>
+        </div>
+    </div>
+}
+else
+{
 <div class="login-card login-card-wide">
     <div class="login-brand">
         <BrandMark Size="44" Decorative="true" />
@@ -54,6 +72,7 @@
         </div>
     </div>
 </div>
+}
 
 @code {
     [SupplyParameterFromQuery(Name = "invite")] public string? InviteToken { get; set; }
@@ -67,10 +86,13 @@
     private string _error = "";
     private bool _busy;
     private InvitationPreview? _invitePreview;
+    // GAP-01: without an invitation the page offers workspace creation only when open self-signup is on.
+    private bool _closed;
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
         _invitePreview = string.IsNullOrWhiteSpace(InviteToken) ? null : SignupSvc.PreviewInvitation(InviteToken);
+        _closed = _invitePreview is null && !await SignupSvc.IsOpenSignupEnabledAsync();
         if (_invitePreview is not null && string.IsNullOrEmpty(_email) && !string.IsNullOrEmpty(_invitePreview.Email))
         {
             _email = _invitePreview.Email;

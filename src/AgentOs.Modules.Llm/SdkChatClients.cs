@@ -26,7 +26,12 @@ internal static class SdkChatClients
 
     /// <summary>Azure OpenAI via the official SDK, surfaced as <see cref="IChatClient"/>.</summary>
     public static IChatClient CreateAzure(string apiKey, string endpoint, string deployment)
-        => new AzureOpenAIClient(new Uri(endpoint), new ApiKeyCredential(apiKey))
+        => CreateAzure(apiKey, new AzureEndpoints.Resolved(endpoint, Untrusted: false), deployment);
+
+    /// <summary>Azure OpenAI for a resolved endpoint: one that came from Settings goes through the SSRF-hardened transport
+    /// (GAP-01); the operator's bootstrap endpoint uses the default one (Private Link resolves to private addresses).</summary>
+    public static IChatClient CreateAzure(string apiKey, AzureEndpoints.Resolved endpoint, string deployment)
+        => AzureEndpoints.CreateClient(endpoint, apiKey)
             .GetChatClient(deployment)
             .AsIChatClient();
 

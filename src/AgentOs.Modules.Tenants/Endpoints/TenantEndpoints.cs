@@ -94,8 +94,8 @@ internal static class TenantEndpoints
         .RequireAuthorization("PlatformAdmin");
 
         // Self-service sign-up: dispatches to ITenantSignupService which picks one of three modes
-        // (invite / slug / auto-create) by request shape. Open by design for OSS dev; production
-        // deployments should put this behind CAPTCHA / rate-limit.
+        // (invite / slug / auto-create) by request shape. Creating a NEW workspace needs the platform setting
+        // Tenants:OpenSignup (off outside Development — GAP-01); an invitation always works.
         app.MapPost("/tenants/register", async (
             RegisterTenantRequest body,
             ITenantSignupService signup,
@@ -113,6 +113,10 @@ internal static class TenantEndpoints
                 return Results.Created(
                     $"/tenants/{outcome.TenantId}",
                     new RegisteredTenantResponse(outcome.TenantId, outcome.KeycloakUserId, outcome.Mode.ToString()));
+            }
+            catch (SignupClosedException ex)
+            {
+                return Results.Problem(detail: ex.Message, statusCode: StatusCodes.Status403Forbidden);
             }
             catch (InvalidOperationException ex)
             {

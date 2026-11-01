@@ -152,8 +152,26 @@ public sealed class TenantSignupServiceTests
         svc.PreviewInvitation("not-a-token").ShouldBeNull();
     }
 
+    // These tests exercise the open-signup modes, so the platform setting is on (GAP-01: it is off by default outside
+    // Development, and the service fails closed without a settings registry — see OpenSignupAndAzureEndpointTests).
     private static TenantSignupService NewService(ITenantsRepository repo, IKeycloakAdminClient kc) =>
-        new(repo, kc, new NullAuditLog(), new EphemeralDataProtectionProvider(), NullLogger<TenantSignupService>.Instance);
+        new(repo, kc, new NullAuditLog(), new EphemeralDataProtectionProvider(), NullLogger<TenantSignupService>.Instance, new OpenSignupSettings());
+
+    // ISettings is ValueTask-returning — a hand-written fake, never substituted.
+    private sealed class OpenSignupSettings : AgentOs.Domain.Configuration.ISettings
+    {
+        public long Version => 0;
+
+        public ValueTask<AgentOs.Domain.Configuration.SettingValue> GetAsync(string key, string? tenantId, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(new AgentOs.Domain.Configuration.SettingValue("true", AgentOs.Domain.Configuration.SettingSource.Platform));
+
+        public ValueTask<IReadOnlyList<AgentOs.Domain.Configuration.SettingView>> ListAsync(string? tenantId, string? category = null, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<IReadOnlyList<AgentOs.Domain.Configuration.SettingView>>([]);
+
+        public ValueTask<AgentOs.Domain.Configuration.SettingWriteResult> SetAsync(
+            string key, string? value, AgentOs.Domain.Configuration.SettingScope scope, string? tenantId, string actor, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(AgentOs.Domain.Configuration.SettingWriteResult.Success);
+    }
 
     private sealed class NullAuditLog : IAuditLog
     {

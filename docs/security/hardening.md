@@ -21,10 +21,11 @@ Tick every box before exposing a deployment to people outside the team that oper
       install creates `agentos-admin` for you).
 - [ ] **Turn on brute-force detection, a password policy and OTP for admins** in the realm (Realm settings →
       Security defenses / Authentication). None is set in the realm file. **(manual — GAP-03)**
-- [ ] **Decide on self-registration.** The realm has `registrationAllowed: true` and AgentOS.NET's `/signup`
-      lets an anonymous caller create a tenant and become its admin (`src/AgentOs.Modules.Tenants/TenantSignupService.cs:77-96`).
-      For a closed deployment disable realm registration and put `/signup` + `POST /tenants/register` behind your
-      edge (WAF / IP allowlist / CAPTCHA). **(manual — GAP-01)**
+- [ ] **Decide on self-registration.** AgentOS.NET's open self-signup (`/signup`, `POST /tenants/register`) is the
+      platform setting `Tenants:OpenSignup`, **off by default outside Development** (GAP-01): only invitations create
+      accounts. If you turn it on, put those routes behind your edge (WAF / rate limit / CAPTCHA), because the caller
+      becomes admin of the new tenant. Separately, the realm has `registrationAllowed: true`: disable it for a
+      closed deployment. **(manual — GAP-03)**
 - [ ] **Set a stable public hostname** (`KC_HOSTNAME`) and keep `Auth:Keycloak:RequireHttpsMetadata=true`
       (default; pinned in `src/AgentOs.Web/appsettings.Production.json:6-10`). The ACA template sets it `false` only
       for the internal back-channel metadata address.
