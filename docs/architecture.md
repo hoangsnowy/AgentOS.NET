@@ -243,6 +243,7 @@ network or database (the EF settings store runs on the EF in-memory provider).
 | LLM gateway | `CostCalculatorBenchmarks` (exact id, dated/Vertex snapshots, unknown model, long-context tier), `ModelCapabilitiesBenchmarks` | priced and shaped on every LLM call; the budget gate reads the price |
 | Settings (ADR-0011) | `SettingsServiceBenchmarks` (tenant → platform → seed → default chain), `AppConfigStoreBenchmarks` (EF store cache hits) | read on every LLM call, policy check and agent profile lookup |
 | Prompt text | `UntrustedTextBenchmarks`, `RepoInstructionsBenchmarks`, `PullRequestTextBenchmarks`, `JsonExtractorBenchmarks` (~100 KB replies: bare, fenced, prose-wrapped) | every agent prompt / reply / PR |
+| Tool output | `ToolOutputShaperBenchmarks` (a ~1 MB failing `dotnet build` log, as text and inside build_verifier JSON) | every tool result headed back to the model (not in the baseline yet: reported as new until the next re-record) |
 | Queues | `SessionRunFeedBenchmarks` (publish fan-out, subscribe round trip), `ToolEvidenceBenchmarks` (buffered evidence enqueue + drain) | on the agent's critical path |
 | Desktop folds | `InsightsFoldBenchmarks` (by-role folds, `AgentRoles.Canonical`), `SettingsSearchBenchmarks` (per keystroke), `KnowledgeLayoutBenchmarks` | run per render / keystroke on the Blazor circuit |
 
