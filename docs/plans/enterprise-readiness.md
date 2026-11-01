@@ -49,8 +49,8 @@ real services:
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
-| E1.11 signed images + SBOM + provenance | #297 | `release.yml` passes actionlint; the dry-run path (SDK-container archive, syft image SBOM, CycloneDX solution SBOM) run locally; `cosign verify` + `gh attestation verify` on the first tag ([RELEASE.md](../RELEASE.md#verify-an-image)) |
-| E1.13 release policy + CHANGELOG | #297 | [RELEASE.md](../RELEASE.md) (SemVer, supported versions, migration notes) + [CHANGELOG.md](../../CHANGELOG.md); the release workflow refuses a tag without a CHANGELOG section |
+| E1.11 signed images + SBOM + provenance 🟡 | #297 | Shipped, not yet verified: `release.yml` passes actionlint and the CycloneDX solution SBOM was generated locally; the image build, signing and attestations only run on a tag. Acceptance: `cosign verify` + `gh attestation verify` on the first tag ([RELEASE.md](../RELEASE.md#verify-an-image)) |
+| E1.13 release policy + CHANGELOG 🟡 | #297 | Shipped, not yet verified: [RELEASE.md](../RELEASE.md) (SemVer, supported versions, migration notes) + [CHANGELOG.md](../../CHANGELOG.md); the release workflow refuses a tag without a CHANGELOG section. Acceptance: the first tagged release follows it |
 | (pre-E0) QA gate before PR, platform-only tenant endpoints, settings audit, isolation E2E, About | #191–#194 | Real-auth suite |
 
 Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machine's `claude -p` (#204). The full
@@ -88,11 +88,11 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 | 19 | Deployment | Azure (azd) ✅; on-prem Helm chart + docker compose; air-gapped bundle; upgrade path | 🟡 azd/ACA only | `DEPLOYMENT.md` | **E1.9** |
 | 20 | Availability | ≥2 replicas (backplane / sticky), HA Postgres, backups geo-redundant, executed DR drill | ❌ `minReplicas: 1`, geo backup off | `postgres.module.bicep:22-27` | **E2.3** |
 | 21 | Observability | dashboards, alerts, SLOs, live status | 🟡 OTel (export opt-in), About page (#191) | `ServiceDefaults` | **E1.10** |
-| 22 | Supply chain | SBOM, signed images + provenance, pinned deps, SAST | ✅ CodeQL 0, Dependabot, pinned actions; cosign-signed release images, CycloneDX SBOMs, SLSA provenance | `.github/workflows/release.yml`, `docs/RELEASE.md` | **E1.11** |
+| 22 | Supply chain | SBOM, signed images + provenance, pinned deps, SAST | 🟡 CodeQL 0, Dependabot, pinned actions; release workflow for cosign-signed images + CycloneDX SBOMs + SLSA provenance shipped, pending the first tag + `cosign verify` | `.github/workflows/release.yml`, `docs/RELEASE.md` | **E1.11** |
 | 23 | Compliance docs | threat model, data-flow + sub-processors (LLM vendors), DPA template, SOC 2 mapping, pen test | 🟡 SECURITY.md | — | **E1.12**, **E2.6** |
 | 24 | Admin console | tenants list/suspend/delete, quotas, usage per tenant, seats | 🟡 Platform settings + About | `PlatformSettingsApp` | **E2.7** |
 | 25 | Accessibility / i18n | WCAG 2.2 AA audit; localisable UI | 🟡 aria in 21 files; no i18n | — | **E2.8** |
-| 26 | Release policy | semver, changelog, migration notes, supported versions / LTS | ✅ SemVer tags, CHANGELOG, migration-notes convention, supported versions (LTS after 1.0) | `docs/RELEASE.md`, `CHANGELOG.md` | **E1.13** |
+| 26 | Release policy | semver, changelog, migration notes, supported versions / LTS | 🟡 SemVer tags, CHANGELOG, migration-notes convention, supported versions (LTS after 1.0) shipped, pending the first tagged release | `docs/RELEASE.md`, `CHANGELOG.md` | **E1.13** |
 
 ## 3. The track
 

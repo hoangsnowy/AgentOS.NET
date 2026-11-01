@@ -26,6 +26,10 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   criteria; failures already on the base branch get their own ticket), Discovery (New idea) and
   Retrospective (turns lessons into project practices every agent follows), alongside the original
   Requirement → Coding → Testing → QA pipeline. The Coding agent writes and updates the PR description.
+- **Design gate** ([ADR-0016](docs/adr/0016-design-gate.md)). An optional Autopilot step between Test and
+  Merge for UI tickets (`area:ui` by default once on): the Testing agent takes screenshots of the changed
+  screens at phone and desktop width, light and dark, and a Designer agent checks them before merge; requested
+  changes go back as a fix round, and the owner can approve or ask for changes on the task's Design panel.
 - **Run on your own computer.** Pair a developer machine with a one-time code or the VS Code extension; Board
   sessions run on the local Claude / Codex CLI with scoped autonomy (no API tokens on the server), keep the
   machine awake while working, can use local test data, and *Try the app* runs a project's latest version
@@ -77,6 +81,8 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   instead of the URL.
 - Tenant-listing / provisioning endpoints are platform-admin only; a QA gate runs before every pull request;
   third-party ticket text is fenced as untrusted data; `Path.Combine` is banned at build time.
+- VS Code runner extension: `@vscode/vsce` 4.1.0 brings `@azure/msal-node` to 7.1.2, past the advisory on
+  authorization-code-flow parameter disclosure (< 7.1.0; dev-only dependency).
 
 ### Migration notes
 

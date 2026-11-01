@@ -30,8 +30,10 @@ Before 1.0 the API is not frozen: a MINOR may carry breaking changes, and its CH
 under **Migration notes**. Prereleases (`-rc.N`, `-beta.N`) are published to GHCR and as GitHub prereleases
 but never move the `X.Y` or `latest` tags.
 
-Image tags per release: `X.Y.Z` always; `X.Y` and `latest` for stable releases only. Pin deployments to a
-**digest** (`…@sha256:…`), not a moving tag.
+Image tags per release: `X.Y.Z` always; `X.Y` for stable releases only; `latest` only for a stable release
+that is at least the highest stable `v*` tag — a patch to an older line (`v0.6.3` after `v0.7.0`) moves
+neither the `latest` image tag nor the GitHub "Latest release" badge. Pin deployments to a **digest**
+(`…@sha256:…`), not a moving tag.
 
 ## Supported versions
 
@@ -66,9 +68,10 @@ security fixes; this page and [SECURITY.md](../SECURITY.md) will say which.
    git push origin vX.Y.Z
    ```
 
-4. The workflow refuses a tag that is not SemVer, a tag whose core version differs from
-   `Directory.Build.props`, or a version with no CHANGELOG section. Then it builds, tests, pushes, signs,
-   attests and creates the GitHub Release with the CHANGELOG section as notes and the SBOMs attached.
+4. The workflow refuses a tag that does not point at a commit on `main`, a tag that is not SemVer, a tag
+   whose core version differs from `Directory.Build.props`, or a version with no CHANGELOG section. Then it
+   builds, tests, pushes, signs, attests and creates the GitHub Release with the CHANGELOG section as notes
+   and the SBOMs attached.
 5. **First release only:** GHCR packages start private. Under the repository's *Packages*, set
    `agentos-api` and `agentos-web` to **Public** (the images carry an `org.opencontainers.image.source`
    label, so they are already linked to the repository).
@@ -76,6 +79,15 @@ security fixes; this page and [SECURITY.md](../SECURITY.md) will say which.
 
 A bad release is never re-tagged: ship `X.Y.(Z+1)`. A tag that was pushed by mistake and has not
 produced a release can be deleted and the workflow re-run.
+
+### Who may tag (repository owner, one-time)
+
+The signing identity is "`release.yml` running for `refs/tags/v…`" — it says *which workflow* signed, not
+*who* pushed the tag or whether the commit was reviewed. The workflow already refuses a tag whose commit is
+not on `main` (so only merged, reviewed code is ever signed), but anyone with write access can still push a
+`v*` tag and trigger a release. Close that with a **tag ruleset**: repository *Settings → Rules → Rulesets →
+New tag ruleset*, target `v*`, enforcement *Active*, rules **Restrict creations**, **Restrict updates** and
+**Restrict deletions**, bypass list = the maintainers allowed to release.
 
 ## Verify an image
 
@@ -86,13 +98,17 @@ IMAGE=ghcr.io/hoangsnowy/agentos-api
 DIGEST=$(docker buildx imagetools inspect "$IMAGE:0.7.0" --format '{{json .Manifest}}' | jq -r .digest)
 ```
 
-**Signature** ([cosign](https://docs.sigstore.dev/cosign/system_config/installation/) v2.6+): the keyless
-certificate must name this repository's release workflow running for a tag.
+**Signature** ([cosign](https://docs.sigstore.dev/cosign/system_config/installation/) **v3+**): the keyless
+certificate must name this repository's release workflow, running for a tag push. The workflow signs with
+cosign v3, which writes the signature as a Sigstore bundle attached to the image as an OCI 1.1 referrer;
+cosign v3 reads that by default. cosign 2.6 can verify it too with `--new-bundle-format=true`; older cosign
+looks for the legacy `sha256-….sig` tag and reports no signatures.
 
 ```bash
 cosign verify "$IMAGE@$DIGEST" \
   --certificate-identity-regexp '^https://github\.com/hoangsnowy/AgentOS\.NET/\.github/workflows/release\.yml@refs/tags/v' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-trigger push
 ```
 
 **Provenance + SBOM** ([GitHub CLI](https://cli.github.com/) 2.49+):
@@ -104,6 +120,7 @@ gh attestation verify "oci://$IMAGE@$DIGEST" --repo hoangsnowy/AgentOS.NET \
 
 # CycloneDX SBOM attestation
 gh attestation verify "oci://$IMAGE@$DIGEST" --repo hoangsnowy/AgentOS.NET \
+  --signer-workflow hoangsnowy/AgentOS.NET/.github/workflows/release.yml \
   --predicate-type https://cyclonedx.org/bom
 ```
 
