@@ -2,6 +2,7 @@
 // Phase 4 — Extract JSON from an LLM response (handle markdown fence, prose wrapping).
 
 using System;
+using System.Buffers;
 using System.Text.Json;
 using AgentOs.Domain.Llm;
 
@@ -40,14 +41,14 @@ public static class JsonExtractor
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
 
         // 1. Direct parse
-        if (TryParse<T>(rawText, out var direct))
+        if (MayBeJson(rawText) && TryParse<T>(rawText, out var direct))
         {
             return direct!;
         }
 
         // 2. Strip markdown fence
         var stripped = StripFence(rawText);
-        if (stripped is not null && TryParse<T>(stripped, out var afterFence))
+        if (stripped is not null && MayBeJson(stripped) && TryParse<T>(stripped, out var afterFence))
         {
             return afterFence!;
         }
@@ -74,13 +75,13 @@ public static class JsonExtractor
         ArgumentNullException.ThrowIfNull(rawText);
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
 
-        if (TryParseJsonNode(rawText))
+        if (MayBeJson(rawText) && TryParseJsonNode(rawText))
         {
             return rawText;
         }
 
         var stripped = StripFence(rawText);
-        if (stripped is not null && TryParseJsonNode(stripped))
+        if (stripped is not null && MayBeJson(stripped) && TryParseJsonNode(stripped))
         {
             return stripped;
         }
@@ -94,6 +95,18 @@ public static class JsonExtractor
         throw new LlmException(
             $"{agentName}: response is not parseable JSON. Raw (truncated 500 chars): {Truncate(rawText, 500)}",
             agentName);
+    }
+
+    // Characters a JSON text can start with (after whitespace): a value, or a comment (Deserialize skips
+    // comments). A ```json fence or prose never does, and parsing it anyway throws and catches a JsonException —
+    // ~10–20 µs per attempt on a large reply — so those attempts are skipped. They could never have succeeded.
+    private static readonly SearchValues<char> JsonStart = SearchValues.Create(
+        ['{', '[', '"', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 't', 'f', 'n', '/']);
+
+    private static bool MayBeJson(string text)
+    {
+        var trimmed = text.AsSpan().TrimStart();
+        return !trimmed.IsEmpty && JsonStart.Contains(trimmed[0]);
     }
 
     private static bool TryParseJsonNode(string json)

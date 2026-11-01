@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentOs.Tests" />
+    <InternalsVisibleTo Include="AgentOs.Benchmarks" />
   </ItemGroup>
 
   <ItemGroup>

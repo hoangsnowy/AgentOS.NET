@@ -5,6 +5,7 @@
 // and the length is capped (token thrift + a bound on how much an attacker can inject).
 
 using System;
+using System.Buffers;
 using System.Text;
 
 namespace AgentOs.Domain.Llm;
@@ -29,57 +30,86 @@ public static class UntrustedText
 
     /// <summary>
     /// Fence <paramref name="text"/> as untrusted data of the given <paramref name="kind"/> (for example
-    /// <c>ticket-title</c>). Single pass, O(n) in the input length.
+    /// <c>ticket-title</c>). Single pass, O(n) in the input length, one builder for the whole block.
     /// </summary>
     public static string Wrap(string kind, string? text, int maxChars = DefaultMaxChars)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(kind);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChars);
 
-        var body = Sanitize(text, maxChars);
-        return $"<{Tag} kind=\"{SafeKind(kind)}\">\n{body}\n</{Tag}>";
+        var sb = new StringBuilder(Math.Min(text?.Length ?? 0, maxChars) + 96);
+        sb.Append('<').Append(Tag).Append(" kind=\"");
+        AppendSafeKind(sb, kind);
+        sb.Append("\">\n");
+        AppendSanitized(sb, text, maxChars);
+        sb.Append("\n</").Append(Tag).Append('>');
+        return sb.ToString();
     }
 
     /// <summary>Drop control characters (keeping newline/tab), neutralise any embedded
     /// <c>&lt;untrusted</c> / <c>&lt;/untrusted</c> so the text cannot close or forge the fence, and cap the length.</summary>
     internal static string Sanitize(string? text, int maxChars)
     {
+        var sb = new StringBuilder(Math.Min(text?.Length ?? 0, maxChars) + 32);
+        AppendSanitized(sb, text, maxChars);
+        return sb.ToString();
+    }
+
+    // The characters that need handling: '<' (a possible fence tag) and every control character except '\n' and '\t'
+    // (C0, DEL, C1 — exactly char.IsControl). Everything between two of them is copied as one run.
+    private static readonly SearchValues<char> Special = SearchValues.Create(BuildSpecial());
+
+    private static string BuildSpecial()
+    {
+        var chars = new StringBuilder("<");
+        for (var c = '\0'; c <= '\u009F'; c++)
+        {
+            if (char.IsControl(c) && c is not ('\n' or '\t')) { chars.Append(c); }
+        }
+        return chars.ToString();
+    }
+
+    private static void AppendSanitized(StringBuilder sb, string? text, int maxChars)
+    {
         if (string.IsNullOrWhiteSpace(text))
         {
-            return "(empty)";
+            sb.Append("(empty)");
+            return;
         }
 
         var source = text.AsSpan().Trim();
         var take = Math.Min(source.Length, maxChars);
-        var sb = new StringBuilder(take + 32);
-        for (var i = 0; i < take; i++)
+        var window = source[..take];
+        var i = 0;
+        while (i < take)
         {
-            var c = source[i];
-            if (c == '<' && StartsFenceTag(source, i))
+            var next = window[i..].IndexOfAny(Special);
+            if (next < 0)
             {
-                sb.Append("&lt;");   // "<untrusted" / "</untrusted" can no longer be parsed as the fence
-                continue;
+                sb.Append(window[i..]);
+                break;
             }
-            if (char.IsControl(c) && c is not ('\n' or '\t'))
+            sb.Append(window.Slice(i, next));
+            i += next;
+
+            var c = window[i];
+            if (c == '<')
             {
-                if (c == '\r' && i + 1 < take && source[i + 1] == '\n')
-                {
-                    continue;   // CRLF → LF
-                }
-                if (c == '\r')
-                {
-                    sb.Append('\n');
-                }
-                continue;   // drop other control chars (NUL, ESC, bidi-free C0/C1 controls)
+                // "<untrusted" / "</untrusted" can no longer be parsed as the fence
+                if (StartsFenceTag(source, i)) { sb.Append("&lt;"); } else { sb.Append('<'); }
             }
-            sb.Append(c);
+            else if (c == '\r' && !(i + 1 < take && window[i + 1] == '\n'))
+            {
+                sb.Append('\n');   // a lone CR → LF (the CR of a CRLF is simply dropped)
+            }
+            // other control chars (NUL, ESC, C0/C1 controls) are dropped
+            i++;
         }
 
         if (source.Length > take)
         {
             sb.Append("\n[… truncated ").Append(source.Length - take).Append(" chars]");
         }
-        return sb.ToString();
     }
 
     // True when source[i] == '<' begins "<untrusted" or "</untrusted" (case-insensitive).
@@ -93,22 +123,25 @@ public static class UntrustedText
         return rest.StartsWith(Tag, StringComparison.OrdinalIgnoreCase);
     }
 
-    // The kind lands inside an attribute; keep it to a safe identifier alphabet.
-    private static string SafeKind(string kind)
+    // The kind lands inside an attribute; keep it to a safe identifier alphabet (at most 40 characters).
+    private static void AppendSafeKind(StringBuilder sb, string kind)
     {
-        Span<char> buf = stackalloc char[Math.Min(kind.Length, 40)];
         var n = 0;
         foreach (var c in kind)
         {
-            if (n == buf.Length)
+            if (n == 40)
             {
                 break;
             }
             if (char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or ':' or '/' or '#')
             {
-                buf[n++] = c;
+                sb.Append(c);
+                n++;
             }
         }
-        return n == 0 ? "text" : new string(buf[..n]);
+        if (n == 0)
+        {
+            sb.Append("text");
+        }
     }
 }

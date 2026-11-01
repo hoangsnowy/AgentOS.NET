@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BenchmarkDotNet suite for the hot paths (plan 1.9, owner directive 2 "measure, then fix").
+       A console app, NOT a test project: `dotnet test` never runs it. How to run it and how the
+       baseline comparison works: docs/architecture.md section 8 and .github/workflows/perf.yml. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AgentOs.Benchmarks</RootNamespace>
+    <AssemblyName>AgentOs.Benchmarks</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <!-- BenchmarkDotNet wants an optimized, non-debuggable build; it refuses to run Debug builds. -->
+    <Optimize>true</Optimize>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentOs.Domain\AgentOs.Domain.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.Modules.AppConfig\AgentOs.Modules.AppConfig.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.Modules.Llm\AgentOs.Modules.Llm.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.Modules.Pipeline\AgentOs.Modules.Pipeline.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.Modules.Tools\AgentOs.Modules.Tools.csproj" />
+    <ProjectReference Include="..\..\src\AgentOs.Web\AgentOs.Web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="baseline\*.json" />
+  </ItemGroup>
+
+</Project>

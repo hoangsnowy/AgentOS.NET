@@ -1,0 +1,155 @@
+{
+   "Title":"AgentOs.Benchmarks.Web.KnowledgeLayoutBenchmarks-20261101-095046",
+   "HostEnvironmentInfo":{
+      "BenchmarkDotNetCaption":"BenchmarkDotNet",
+      "BenchmarkDotNetVersion":"0.15.8",
+      "OsVersion":"Linux Ubuntu 24.04.5 LTS (Noble Numbat)",
+      "ProcessorName":"Intel Xeon Processor 2.10GHz",
+      "PhysicalProcessorCount":1,
+      "PhysicalCoreCount":4,
+      "LogicalCoreCount":4,
+      "RuntimeVersion":".NET 10.0.14 (10.0.14, 10.0.1426.52326)",
+      "Architecture":"X64",
+      "HasAttachedDebugger":false,
+      "HasRyuJit":true,
+      "Configuration":"RELEASE",
+      "DotNetCliVersion":"10.0.403",
+      "ChronometerFrequency":{
+         "Hertz":1000000000
+      },
+      "HardwareTimerKind":"Unknown"
+   },
+   "Benchmarks":[
+      {
+         "DisplayInfo":"KnowledgeLayoutBenchmarks.Compute: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3) [Tickets=40]",
+         "Namespace":"AgentOs.Benchmarks.Web",
+         "Type":"KnowledgeLayoutBenchmarks",
+         "Method":"Compute",
+         "MethodTitle":"Compute",
+         "Parameters":"Tickets=40",
+         "FullName":"AgentOs.Benchmarks.Web.KnowledgeLayoutBenchmarks.Compute(Tickets: 40)",
+         "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
+         "Statistics":{
+            "OriginalValues":[
+               74481.34411621094,70597.16784667969,70644.55688476562
+            ],
+            "N":3,
+            "Min":70597.16784667969,
+            "LowerFence":67707.73016357422,
+            "Q1":70620.86236572266,
+            "Median":70644.55688476562,
+            "Mean":71907.68961588542,
+            "Q3":72562.95050048828,
+            "UpperFence":75476.08270263672,
+            "Max":74481.34411621094,
+            "InterquartileRange":1942.088134765625,
+            "LowerOutliers":[
+               
+            ],
+            "UpperOutliers":[
+               
+            ],
+            "AllOutliers":[
+               
+            ],
+            "StandardError":1286.899963156556,
+            "Variance":4968334.545517033,
+            "StandardDeviation":2228.976120445671,
+            "Skewness":0.38470446399572955,
+            "Kurtosis":0.6666666666666632,
+            "ConfidenceInterval":{
+               "N":3,
+               "Mean":71907.68961588542,
+               "StandardError":1286.899963156556,
+               "Level":12,
+               "Margin":40664.82200564894,
+               "Lower":31242.867610236484,
+               "Upper":112572.51162153436
+            },
+            "Percentiles":{
+               "P0":70597.16784667969,
+               "P25":70620.86236572266,
+               "P50":70644.55688476562,
+               "P67":71949.06454345703,
+               "P80":72946.62922363282,
+               "P85":73330.30794677735,
+               "P90":73713.98666992187,
+               "P95":74097.6653930664,
+               "P100":74481.34411621094
+            }
+         },
+         "Memory":{
+            "Gen0Collections":5,
+            "Gen1Collections":0,
+            "Gen2Collections":0,
+            "TotalOperations":8192,
+            "BytesAllocatedPerOperation":95384
+         }
+      },{
+         "DisplayInfo":"KnowledgeLayoutBenchmarks.Compute: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3) [Tickets=200]",
+         "Namespace":"AgentOs.Benchmarks.Web",
+         "Type":"KnowledgeLayoutBenchmarks",
+         "Method":"Compute",
+         "MethodTitle":"Compute",
+         "Parameters":"Tickets=200",
+         "FullName":"AgentOs.Benchmarks.Web.KnowledgeLayoutBenchmarks.Compute(Tickets: 200)",
+         "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
+         "Statistics":{
+            "OriginalValues":[
+               372596.03759765625,372227.95703125,396311.658203125
+            ],
+            "N":3,
+            "Min":372227.95703125,
+            "LowerFence":354349.2214355469,
+            "Q1":372411.9973144531,
+            "Median":372596.03759765625,
+            "Mean":380378.55094401044,
+            "Q3":384453.8479003906,
+            "UpperFence":402516.6237792969,
+            "Max":396311.658203125,
+            "InterquartileRange":12041.8505859375,
+            "LowerOutliers":[
+               
+            ],
+            "UpperOutliers":[
+               
+            ],
+            "AllOutliers":[
+               
+            ],
+            "StandardError":7967.262202782896,
+            "Variance":190431801.02367887,
+            "StandardDeviation":13799.702932443106,
+            "Skewness":0.3845921340438202,
+            "Kurtosis":0.6666666666666643,
+            "ConfidenceInterval":{
+               "N":3,
+               "Mean":380378.55094401044,
+               "StandardError":7967.262202782896,
+               "Level":12,
+               "Margin":251757.9521517841,
+               "Lower":128620.59879222634,
+               "Upper":632136.5030957945
+            },
+            "Percentiles":{
+               "P0":372227.95703125,
+               "P25":372411.9973144531,
+               "P50":372596.03759765625,
+               "P67":380659.34860351565,
+               "P80":386825.4099609375,
+               "P85":389196.9720214844,
+               "P90":391568.5340820312,
+               "P95":393940.0961425782,
+               "P100":396311.658203125
+            }
+         },
+         "Memory":{
+            "Gen0Collections":6,
+            "Gen1Collections":2,
+            "Gen2Collections":0,
+            "TotalOperations":2048,
+            "BytesAllocatedPerOperation":457712
+         }
+      }
+   ]
+}

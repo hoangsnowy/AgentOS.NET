@@ -213,6 +213,8 @@ The owner's standing instructions. They apply to every change; the execution pla
   - `cs/local-not-disposed`: CodeQL doesn't see `await using (x.ConfigureAwait(false))` → write `await using var x = …`.
   - `cs/catch-of-all-exceptions`: a "never throw" catch needs an explicit `when (ex is not OperationCanceledException)` filter.
   - `cs/dispose-not-called-on-throw`: disposables in tests go under `using`.
+  - `cs/missed-readonly-modifier`: enforced at build time via `IDE0044` (`.editorconfig`).
+  - `cs/loss-of-precision`: `97 * i` passed as a `double` is an int multiplication first — write `97.0 * i`.
 - **Row-level security (ADR-0012):** the dev/lab stack connects as the Postgres SUPERUSER, which bypasses RLS even
   when forced — every connection therefore `SET ROLE agentos_rls`. A new tenant table gets the policy by being
   added to `RowLevelSecurity.Tables`; its module context needs `.AddInterceptors(RowLevelSecurityInterceptor.Instance)`

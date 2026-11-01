@@ -64,6 +64,7 @@ dotnet_diagnostic.IDE0004.severity = warning   # unnecessary cast        -> cs/u
 dotnet_diagnostic.IDE0035.severity = warning   # unreachable code        -> cs/unreachable-code
 dotnet_diagnostic.IDE0059.severity = warning   # unused value assignment -> cs/useless-assignment-to-local
 dotnet_diagnostic.IDE0060.severity = warning   # unused parameter        -> cs/unused-parameter
+dotnet_diagnostic.IDE0044.severity = warning   # field can be readonly   -> cs/missed-readonly-modifier
 
 # EF Core migrations — auto-generated, exempt from style/analyzer enforcement (block-scoped namespace, etc.).
 [**/Migrations/*.cs]

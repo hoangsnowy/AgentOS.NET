@@ -69,6 +69,10 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunFiles.cs" Link="Linked\RunFiles.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunUploads.cs" Link="Linked\RunUploads.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunContinuation.cs" Link="Linked\RunContinuation.cs" />
+    <!-- The perf gate's comparer (tests/AgentOs.Benchmarks) is pure BCL: compiled in here so it is unit-tested
+         without pulling BenchmarkDotNet into the test run. -->
+    <Compile Include="..\AgentOs.Benchmarks\Comparison\BaselineComparer.cs" Link="Linked\BaselineComparer.cs" />
+    <Compile Include="..\AgentOs.Benchmarks\Comparison\ComparerArguments.cs" Link="Linked\ComparerArguments.cs" />
   </ItemGroup>
 
 </Project>

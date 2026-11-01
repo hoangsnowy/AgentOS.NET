@@ -60,6 +60,30 @@ public sealed class UntrustedTextTests
         => UntrustedText.Wrap("a\"><b", "x").ShouldStartWith("<untrusted kind=\"ab\">");
 
     [Fact]
+    public void Wrap_DelAndC1Controls_AreDropped_OtherCharactersKept()
+    {
+        var wrapped = UntrustedText.Wrap("t", "a\u007Fb\u0085c\u009Fd é ✓ <b>bold</b> a<untrusted");
+
+        wrapped.ShouldContain("abcd é ✓ <b>bold</b> a&lt;untrusted");
+    }
+
+    [Fact]
+    public void Wrap_CrAtTheCap_BecomesLf_EvenWhenItsLfIsCut()
+    {
+        var wrapped = UntrustedText.Wrap("t", "abc\r\ndef", maxChars: 4);
+
+        wrapped.ShouldContain("\nabc\n\n[… truncated 4 chars]");
+    }
+
+    [Fact]
+    public void Wrap_KindLongerThan40_IsCapped()
+        => UntrustedText.Wrap(new string('k', 60), "x").ShouldStartWith($"<untrusted kind=\"{new string('k', 40)}\">");
+
+    [Fact]
+    public void Wrap_KindWithNoSafeCharacters_FallsBackToText()
+        => UntrustedText.Wrap("\"<>", "x").ShouldStartWith("<untrusted kind=\"text\">");
+
+    [Fact]
     public void SystemRule_NamesTheFence()
         => UntrustedText.SystemRule.ShouldContain("<untrusted");
 

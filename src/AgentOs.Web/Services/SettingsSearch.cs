@@ -97,10 +97,23 @@ public static class SettingsSearch
             Access.Platform => isPlatformAdmin,
             _ => true,
         };
-        bool Matches(string haystack) => terms.All(t => haystack.Contains(t, StringComparison.OrdinalIgnoreCase));
+        // Every term must appear in one of the fields. Terms never contain a space, so matching each field on its own
+        // equals matching "first second" — without building that string per page and per descriptor on every keystroke.
+        bool Matches(string first, string? second = null)
+        {
+            foreach (var t in terms)
+            {
+                if (!first.Contains(t, StringComparison.OrdinalIgnoreCase)
+                    && (second is null || !second.Contains(t, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
 
         var hits = Pages
-            .Where(p => Allowed(p) && Matches(p.Title + " " + p.Keywords))
+            .Where(p => Allowed(p) && Matches(p.Title, p.Keywords))
             .OrderBy(p => p.Title.StartsWith(terms[0], StringComparison.OrdinalIgnoreCase) ? 0 : Matches(p.Title) ? 1 : 2)
             .Select(p => new SettingsHit(p.Title, p.Path, p.Target, p.Icon))
             .ToList();
@@ -110,7 +123,7 @@ public static class SettingsSearch
         {
             if (hits.Count >= max) { break; }
             if (TargetOf(d) is not { } target || !ByTarget.TryGetValue(target, out var page) || !Allowed(page)) { continue; }
-            if (!Matches(d.Label + " " + d.Key) || !seen.Add(d.Label)) { continue; }
+            if (!Matches(d.Label, d.Key) || !seen.Add(d.Label)) { continue; }
             hits.Add(new SettingsHit(d.Label, page.Path + " › " + page.Title, target, page.Icon));
         }
         return hits.Count > max ? hits.GetRange(0, max) : hits;
