@@ -255,6 +255,18 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
     /// come back (a lab update, a re-pairing, a crash + restart) and re-announce it.</summary>
     public static readonly TimeSpan PreviewReconnectGrace = TimeSpan.FromMinutes(15);
 
+    /// <summary>How long a Stop pressed while the computer was offline is remembered, counted from the moment Stop was
+    /// pressed: the app is closed whenever that computer comes back within it. In memory only — a Web restart forgets it
+    /// (then the returning runner re-announces the app, the Board shows it again and the person can press Stop again).</summary>
+    public static readonly TimeSpan StopOnReturnKeep = TimeSpan.FromDays(7);
+
+    /// <summary>What the Board says when a computer stayed away past <see cref="PreviewReconnectGrace"/>: the server stops
+    /// following the app, but nothing could close it — it may well still run there.</summary>
+    public const string OfflineMessage =
+        "Your computer has been offline for 15 minutes, so the Board stopped following this app — it may still be running "
+        + "there. To close it, start the AgentOS.NET runner on that computer again (the app shows up here and you can press "
+        + "Stop), or run \"AgentOs.RemoteAgent stop-previews\" on it.";
+
     private const int MaxAnnounced = 32;
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
@@ -264,12 +276,14 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
     // Preview id → who runs it: the connection (null while its computer is away — DetachedAt says since when), and the
     // tenant + member + runner it belongs to. A report from any other connection is ignored.
     private readonly ConcurrentDictionary<string, PreviewRoute> _previews = new(StringComparer.Ordinal);
-    // Previews stopped while their computer was away: stopped for real as soon as it re-announces them.
-    private readonly ConcurrentDictionary<string, PreviewRoute> _stopOnReturn = new(StringComparer.Ordinal);
+    // Previews stopped while their computer was away: stopped for real as soon as it re-announces them (kept for
+    // StopOnReturnKeep after Stop was pressed).
+    private readonly ConcurrentDictionary<string, StopRequest> _stopOnReturn = new(StringComparer.Ordinal);
     private readonly Lock _sweepLock = new();
     private ITimer? _sweep;
 
     private sealed record PreviewRoute(string? ConnectionId, string TenantId, string UserId, Guid RunnerId, DateTimeOffset? DetachedAt);
+    private sealed record StopRequest(string TenantId, string UserId, DateTimeOffset StoppedAt);
     // Request / tool-call id → the ticket files staged for it (ADR-0015).
     private readonly ConcurrentDictionary<string, StagedFiles> _staged = new(StringComparer.Ordinal);
 
@@ -453,7 +467,8 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
         // The computer is away: the Board stops showing it now, and the app is closed the moment the runner is back.
         if (_previews.TryRemove(new(previewId, route)))
         {
-            _stopOnReturn[previewId] = route;
+            _stopOnReturn[previewId] = new StopRequest(route.TenantId, route.UserId, _time.GetUtcNow());
+            EnsureSweep();
             PreviewReported?.Invoke(new PreviewStatus(previewId, PreviewStates.Stopped,
                 "Stopped. Your computer is offline — the app closes as soon as it reconnects."));
         }
@@ -478,7 +493,7 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
             seen.Add(preview.PreviewId);
             if (_stopOnReturn.TryGetValue(preview.PreviewId, out var stopped))
             {
-                if (SameMember(stopped, runner) && _stopOnReturn.TryRemove(preview.PreviewId, out _))
+                if (SameMember(stopped.TenantId, stopped.UserId, runner) && _stopOnReturn.TryRemove(new(preview.PreviewId, stopped)))
                 {
                     PreviewCommanded?.Invoke(new PreviewCommand(connectionId, null, preview.PreviewId));
                 }
@@ -503,22 +518,22 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
             var text = preview with { Command = Clip(preview.Command, 2000), Url = Clip(preview.Url, 2000) };
             PreviewReattached?.Invoke(new PreviewReattach(runner.TenantId, runner.OwnerUserId, text));
         }
-        foreach (var id in gone.Take(MaxAnnounced))
+        // Gone ones count only from the member's own computer — another member can't clear someone's preview or Stop.
+        foreach (var id in gone.Take(MaxAnnounced).Where(id => !string.IsNullOrEmpty(id)))
         {
-            if (!string.IsNullOrEmpty(id) && _previews.TryGetValue(id, out var route) && route.ConnectionId is null
-                && SameMember(route, runner))
+            if (_previews.TryGetValue(id, out var route) && route.ConnectionId is null && SameMember(route, runner))
             {
                 ForgetDetached(id, route, "The app had stopped while your computer was away.");
             }
-            if (!string.IsNullOrEmpty(id)) { _stopOnReturn.TryRemove(id, out _); }
+            if (_stopOnReturn.TryGetValue(id, out var stop) && SameMember(stop.TenantId, stop.UserId, runner))
+            {
+                _stopOnReturn.TryRemove(new(id, stop));
+            }
         }
         // The same runner came back without some of its previews: they are gone.
-        foreach (var (id, route) in _previews)
+        foreach (var (id, route) in _previews.Where(e => e.Value.ConnectionId is null && e.Value.RunnerId == runner.RunnerId && !seen.Contains(e.Key)))
         {
-            if (route.ConnectionId is null && route.RunnerId == runner.RunnerId && !seen.Contains(id))
-            {
-                ForgetDetached(id, route, "The app isn't running on your computer any more.");
-            }
+            ForgetDetached(id, route, "The app isn't running on your computer any more.");
         }
     }
 
@@ -526,16 +541,13 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
     public void SweepDetachedPreviews()
     {
         var now = _time.GetUtcNow();
-        foreach (var (id, route) in _previews)
+        foreach (var (id, route) in _previews.Where(e => e.Value.DetachedAt is { } since && now - since >= PreviewReconnectGrace))
         {
-            if (route.DetachedAt is { } since && now - since >= PreviewReconnectGrace)
-            {
-                ForgetDetached(id, route, "The computer disconnected.");
-            }
+            ForgetDetached(id, route, OfflineMessage);
         }
-        foreach (var (id, route) in _stopOnReturn)
+        foreach (var (id, stop) in _stopOnReturn.Where(e => now - e.Value.StoppedAt >= StopOnReturnKeep))
         {
-            if (route.DetachedAt is { } since && now - since >= PreviewReconnectGrace) { _stopOnReturn.TryRemove(id, out _); }
+            _stopOnReturn.TryRemove(new(id, stop));
         }
         lock (_sweepLock)
         {
@@ -563,9 +575,11 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
         }
     }
 
-    private static bool SameMember(PreviewRoute route, RunnerConnection runner) =>
-        string.Equals(route.TenantId, runner.TenantId, StringComparison.Ordinal)
-        && string.Equals(route.UserId, runner.OwnerUserId, StringComparison.Ordinal);
+    private static bool SameMember(PreviewRoute route, RunnerConnection runner) => SameMember(route.TenantId, route.UserId, runner);
+
+    private static bool SameMember(string tenantId, string userId, RunnerConnection runner) =>
+        string.Equals(tenantId, runner.TenantId, StringComparison.Ordinal)
+        && string.Equals(userId, runner.OwnerUserId, StringComparison.Ordinal);
 
     private static bool IsPreviewId(string? id) =>
         id is { Length: > 0 and <= 64 } && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
@@ -760,13 +774,9 @@ public sealed class InProcessRemoteAgentBroker(TimeProvider? time = null) : IRem
         // The runner went away, but its previews run on outside it (a restart, an update, a re-pairing): the Board keeps
         // showing them while the computer has PreviewReconnectGrace to come back and re-announce them.
         var detachedAny = false;
-        foreach (var (previewId, route) in _previews)
+        foreach (var (previewId, route) in _previews.Where(e => string.Equals(e.Value.ConnectionId, connectionId, StringComparison.Ordinal)))
         {
-            if (string.Equals(route.ConnectionId, connectionId, StringComparison.Ordinal)
-                && _previews.TryUpdate(previewId, route with { ConnectionId = null, DetachedAt = _time.GetUtcNow() }, route))
-            {
-                detachedAny = true;
-            }
+            detachedAny |= _previews.TryUpdate(previewId, route with { ConnectionId = null, DetachedAt = _time.GetUtcNow() }, route);
         }
         if (detachedAny) { EnsureSweep(); }
     }

@@ -130,6 +130,12 @@ showing it with the same URL. It ends when you press *Stop* — also after a res
 for *Stop an unused app after* (Settings › Autopilot, default 120 minutes). Testing on that project waits while the
 app runs (same ports, often the same data) unless the project is listed under *Test while trying the app* — safe
 when the app keeps its data separately for each copy. `REMOTE_AGENT_PREVIEWS=off` refuses previews on a computer.
+A computer that stays offline for more than 15 minutes drops off the card, which then says the app may still be running
+there; `AgentOs.RemoteAgent stop-previews` on that computer closes every preview (`AgentOs.RemoteAgent unpair` does that
+and forgets the pairing — run it before removing the runner). A *Stop* pressed while the computer is offline is kept for
+7 days (in memory: a Web restart forgets it) and closes the app when the computer reconnects. On macOS there is no
+`setsid`, so a Ctrl+C in the runner's terminal stops its previews too. The Board only opens an app at a `localhost`
+http(s) address, and only re-attaches a preview to a repo of that board in your own workspace.
 
 ### 4 — Build and test
 

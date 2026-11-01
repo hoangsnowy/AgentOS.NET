@@ -6,9 +6,13 @@
 //   3. Run the command in the checkout, in a process group of its own (PreviewProcess.cs) with its state on disk
 //      (PreviewStore); ready once something accepts connections on the url's port.
 //   4. The app outlives the runner: a restarted runner re-attaches every preview whose process is still the same one
-//      (pid + start time), announces it to the server, and reports the ones it found gone (Restore / Announcements).
+//      (pid + start time + still the shell it started), announces it to the server, and reports the ones it found gone
+//      (Restore / Announcements). A state file it can't use (unreadable, or a board/repo/url the Board can't place) is
+//      not left running unseen: its app is stopped — but only when that pid is still the preview's own process.
 //   5. Stop = kill the whole process tree — also of a re-attached preview. A preview nobody has had open for its idle
-//      time (Settings › Autopilot › Stop an unused app after, default 120 min) stops by itself.
+//      time (Settings › Autopilot › Stop an unused app after, default 120 min) stops by itself. `AgentOs.RemoteAgent
+//      stop-previews` (and `unpair`) stop every preview on this computer (StopAll).
+//   6. The app's log is rotated at PreviewStore.MaxLogBytes (one older part kept).
 //
 // One preview per repository: starting it again replaces the old one.
 
@@ -122,7 +126,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         {
             run.Stop.Cancel();
             run.Awake?.Dispose();
-            run.Group?.Dispose(); // Windows: the job has no kill-on-close; it lives on while the app runs
+            run.Group?.Dispose(); // Windows: no kill-on-close; the app's own processes keep the job (and its name) alive
         }
     }
 
@@ -132,12 +136,16 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
     public IReadOnlyList<string> Restore()
     {
         var gone = new List<string>();
-        foreach (var record in PreviewStore.Load(root))
+        var unreadable = new List<PreviewRecord>();
+        foreach (var record in PreviewStore.Load(root, unreadable))
         {
             if (_byId.ContainsKey(record.PreviewId)) { continue; }
             var repoKey = $"{record.Owner}/{record.Repo}";
-            if (!IsSafeName(record.Owner) || !IsSafeName(record.Repo) || !PreviewProcess.IsSame(record.Pid, record.ProcessStartTicks))
+            if (!CanReattach(record) || !PreviewProcess.IsSame(record.Pid, record.ProcessStartTicks))
             {
+                // Gone — or a state the Board can't place. Whatever of it still runs is stopped (Kill acts only on the
+                // preview's own process, group or job), so nothing keeps running unseen.
+                if (PreviewProcess.Kill(record)) { Console.WriteLine($"[agent] preview {PreviewProcess.Describe(record)} can't be shown on the Board — stopped"); }
                 PreviewStore.Delete(root, record.PreviewId);
                 gone.Add(record.PreviewId);
                 continue;
@@ -159,9 +167,40 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             Console.WriteLine($"[agent] preview {PreviewProcess.Describe(record)} is still running — re-attached");
             _ = Task.Run(() => WatchAsync(run, run.Stop.Token));
         }
+        foreach (var broken in unreadable)
+        {
+            var stopped = PreviewProcess.Kill(broken);
+            Console.WriteLine(stopped
+                ? $"[agent] a preview's state file was unreadable; its app (pid {broken.Pid}) was still running — stopped"
+                : "[agent] a preview's state file was unreadable and was removed");
+            if (PreviewStore.IsSafeId(broken.PreviewId)) { gone.Add(broken.PreviewId); }
+        }
         foreach (var id in gone) { _gone[id] = 0; }
         return gone;
     }
+
+    /// <summary>Stop every preview recorded on this computer — <c>AgentOs.RemoteAgent stop-previews</c> / <c>unpair</c>, for a
+    /// runner that is going away for good. Only processes that are still the previews' own are touched. Returns how many
+    /// were still running.</summary>
+    public static int StopAll(string root)
+    {
+        var unreadable = new List<PreviewRecord>();
+        var stopped = 0;
+        foreach (var record in PreviewStore.Load(root, unreadable).Concat(unreadable))
+        {
+            if (PreviewProcess.Kill(record))
+            {
+                stopped++;
+                Console.WriteLine($"[agent] stopped preview {PreviewProcess.Describe(record)}");
+            }
+            PreviewStore.Delete(root, record.PreviewId);
+        }
+        return stopped;
+    }
+
+    // A state file the Board can place: GitHub names, the board + repo it was started for, and a local http(s) url.
+    private static bool CanReattach(PreviewRecord r) =>
+        IsSafeName(r.Owner) && IsSafeName(r.Repo) && r.BoardId != Guid.Empty && r.RepoId != Guid.Empty && PreviewRecipe.IsLocalHttpUrl(r.Url);
 
     /// <summary>What to announce on (re)connect: every preview this runner runs (also one still preparing), and the ids
     /// <see cref="Restore"/> found gone.</summary>
@@ -250,20 +289,16 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             }
             await report(run.Id, "Starting", $"Running {recipe.Command}").ConfigureAwait(false);
             Console.WriteLine($"[agent] preview {run.RepoKey}: {recipe.Command} (in {run.Dir})");
-            Directory.CreateDirectory(PreviewStore.Folder(root));
-            var log = PreviewStore.LogPath(root, run.Id);
-            await File.WriteAllTextAsync(log, string.Empty, ct).ConfigureAwait(false);
-            var psi = PreviewProcess.ShellFor(recipe.Command, run.Dir, log);
+            PreviewStore.ResetLog(root, run.Id);
             // The test data this computer offers the agents (REMOTE_AGENT_DATA) reaches the app too: a project that loads
             // real data when it is there (e.g. TeacherHub's CHESS_LIBRARY_PATH library) shows it in Try the app.
-            foreach (var (name, path) in TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA"))) { psi.Environment[name] = path; }
-            var process = Process.Start(psi)
-                ?? throw new InvalidOperationException("The command didn't start.");
-            run.Process = process;
-            run.Group = PreviewProcess.Group(process, run.Id);
+            var launched = PreviewProcess.Launch(recipe.Command, run.Dir, PreviewStore.LogPath(root, run.Id), run.Id,
+                TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA")));
+            run.Process = launched.Process;
+            run.Group = launched.Group;
             var record = new PreviewRecord(run.Id, start.Owner, start.Repo, recipe.Command, recipe.Url.AbsoluteUri, recipe.Url.Port,
-                recipe.ReadyTimeoutSeconds, IdleMinutesFor(start.IdleMinutes), start.BoardId, start.RepoId, process.Id,
-                process.StartTime.ToUniversalTime().Ticks, PreviewProcess.StartsOwnGroup(psi), DateTimeOffset.UtcNow, Ready: false);
+                recipe.ReadyTimeoutSeconds, IdleMinutesFor(start.IdleMinutes), start.BoardId, start.RepoId, launched.Process.Id,
+                launched.StartTicks, launched.OwnGroup, DateTimeOffset.UtcNow, Ready: false, launched.OwnJob);
             run.Record = record;
             if (ct.IsCancellationRequested) { Kill(run); return; } // stopped while it was starting
             PreviewStore.Save(root, record);
@@ -287,6 +322,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             var deadline = record.StartedAt.AddSeconds(Math.Clamp(record.ReadyTimeoutSeconds, 10, 3600));
             var lastUsed = DateTimeOffset.UtcNow;
             var nextIdleCheck = lastUsed;
+            var nextLogCheck = lastUsed;
             while (!ct.IsCancellationRequested)
             {
                 if (!IsAlive(run))
@@ -295,6 +331,11 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
                     return;
                 }
                 var now = DateTimeOffset.UtcNow;
+                if (now >= nextLogCheck)
+                {
+                    nextLogCheck = now + IdleCheck;
+                    _ = PreviewStore.CapLog(root, run.Id); // a chatty app can't fill the disk over a long session
+                }
                 if (!record.Ready)
                 {
                     if (await IsListeningAsync(url, ct).ConfigureAwait(false))

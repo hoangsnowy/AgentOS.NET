@@ -40,6 +40,9 @@
 //                       Try the app after seeing the project's command); REMOTE_AGENT_PREVIEWROOT moves their folder.
 //                       A preview keeps running when this runner exits or restarts: the next runner re-attaches it
 //                       (state in <previews folder>/running) and the Board keeps showing it — see PreviewProcess.cs
+//                       (on macOS, without setsid, a Ctrl+C or closing the runner's terminal stops it too).
+//                       `AgentOs.RemoteAgent stop-previews` stops them all; `AgentOs.RemoteAgent unpair` does that and
+//                       forgets the saved pairing (run it before removing the runner from a computer).
 //
 // A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
 // 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
@@ -67,6 +70,24 @@ var approvalGate = new SemaphoreSlim(1, 1);
 // `AgentOs.RemoteAgent pair <server> <code>` — the Board › Computers flow: trade the one-time code for this runner's
 // credentials, remember them for this OS user, and connect. Later starts need no arguments and no environment.
 var credentialsPath = AgentOs.RemoteAgent.RunnerCredentials.DefaultPath();
+var previewRoot = Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWROOT") ?? AgentOs.RemoteAgent.PreviewHost.DefaultRoot();
+
+// `AgentOs.RemoteAgent stop-previews` / `unpair` — the runner is going away for good (lab.ps1 unpair / down, before
+// removing it): a "Try the app" preview outlives a runner restart on purpose, so these stop every preview this computer
+// still runs (only processes that are still the previews' own). `unpair` also forgets the saved credentials.
+if (args.Length > 0 && (string.Equals(args[0], "stop-previews", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(args[0], "unpair", StringComparison.OrdinalIgnoreCase)))
+{
+    var stoppedApps = AgentOs.RemoteAgent.PreviewHost.StopAll(previewRoot);
+    Console.WriteLine($"[agent] Stopped {stoppedApps} app(s) started by Try the app on this computer.");
+    if (string.Equals(args[0], "unpair", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.WriteLine(AgentOs.RemoteAgent.RunnerCredentials.Delete(credentialsPath)
+            ? $"[agent] Forgot this computer's pairing ({credentialsPath}). Disconnect it on Board › Computers to retire its token."
+            : "[agent] This computer had no saved pairing.");
+    }
+    Environment.Exit(0);
+}
 if (args.Length > 0 && string.Equals(args[0], "pair", StringComparison.OrdinalIgnoreCase))
 {
     if (args.Length < 3)
@@ -173,7 +194,6 @@ connection.On<string>("Cancel", requestId =>
 
 // "Try the app" — run a project's preview on this computer (PreviewHost.cs). The member saw the command first; the
 // host re-checks it against its own checkout before running it.
-var previewRoot = Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWROOT") ?? AgentOs.RemoteAgent.PreviewHost.DefaultRoot();
 var previewsOff = string.Equals(Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWS"), "off", StringComparison.OrdinalIgnoreCase);
 AgentOs.RemoteAgent.PreviewHost.KillLeftovers(previewRoot); // previews of a runner from before re-attaching existed
 var previews = new AgentOs.RemoteAgent.PreviewHost(previewRoot, ReportPreviewAsync, keepAwake);
