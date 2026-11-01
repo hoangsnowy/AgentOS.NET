@@ -2,11 +2,21 @@
 
 ## Reporting a vulnerability
 
-Please do **not** open a public issue for security vulnerabilities. Instead, report privately via
-[GitHub Security Advisories](https://github.com/hoangsnowy/AgentOS.NET/security/advisories/new)
-or email the maintainer. We aim to acknowledge reports within a few days.
+Please do **not** open a public issue, discussion or pull request for a security vulnerability. Report it
+privately through **GitHub private vulnerability reporting**: the repository's **Security** tab → **Report a
+vulnerability** ([direct link](https://github.com/hoangsnowy/AgentOS.NET/security/advisories/new)). If that is not
+possible, email the maintainer. We aim to acknowledge reports within a few days and to agree a disclosure date with
+you once a fix is available.
 
 When reporting, include: affected component, reproduction steps, and impact.
+
+## Security documentation
+
+- [Threat model](docs/security/threat-model.md) — STRIDE per trust boundary and module, mitigations with code
+  references, and the prioritised list of open gaps.
+- [Data flow](docs/security/data-flow.md) · [Sub-processors](docs/security/subprocessors.md) (what leaves the box) ·
+  [Production hardening checklist](docs/security/hardening.md) · [DPA template](docs/security/dpa-template.md)
+  (template, not legal advice).
 
 ## Scope notes
 
@@ -16,8 +26,10 @@ When reporting, include: affected component, reproduction steps, and impact.
 - **API auth** is Keycloak OIDC JWT bearer (RS256); tokens are signed by the Keycloak realm key
   and validated against its JWKS — rotate the signing key in Keycloak, not in AgentOS.NET.
 - The **remote dev-agent runtime** executes work on a developer machine — treat the pairing
-  credential as a secret. Remote execution needs a human approval; unattended auto-approve is a
-  platform setting that Production locks off.
+  credential as a secret. Remote execution is gated by the `RemoteAgent:AutoApprove` platform setting, which
+  Production locks off (a gate, not yet a per-run human approval — see the
+  [threat model](docs/security/threat-model.md#6-tb4--server--paired-runner)); server-driven shell commands outside
+  the allowlist additionally need approval at the runner console.
 
 ## Built-in safeguards
 
@@ -47,8 +59,8 @@ When reporting, include: affected component, reproduction steps, and impact.
 - **Paired runners** — a server-driven shell command runs on a developer's machine only if every segment of the
   chain starts with an allowlisted build/test/VCS program (`REMOTE_AGENT_ALLOW` to change); command
   substitution is refused; anything else needs approval at the runner console and is denied when nobody is
-  there. Each command has a timeout that kills the whole process tree. The pairing token travels in a header,
-  never in the URL.
+  there. Each command has a timeout that kills the whole process tree. The runner sends its pairing token in a
+  header, never in the URL (the hub still accepts a legacy query-string form — tracked as a gap).
 - **Supply chain / SAST** — Dependabot, dependency review, SHA-pinned actions, CodeQL with
   compiler-enforced twins for its query classes. Release images are cosign-signed (keyless), carry SLSA
   build provenance and a CycloneDX SBOM attestation, and every release attaches the SBOMs — verify an image

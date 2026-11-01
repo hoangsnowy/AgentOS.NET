@@ -51,6 +51,7 @@ with its own DI surface, EF Core context and Postgres schema, so any one can lat
 | Contribute / conventions | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Build UI | [docs/design/design-system.md](docs/design/design-system.md) |
 | See where it's going | [ROADMAP.md](ROADMAP.md) · [execution plan](docs/plans/agentic-sdlc-v2.md) |
+| Review security — threat model, data flow, sub-processors, hardening | [docs/security/](docs/security/README.md) |
 | Report a vulnerability | [SECURITY.md](SECURITY.md) |
 
 ## Quick start
