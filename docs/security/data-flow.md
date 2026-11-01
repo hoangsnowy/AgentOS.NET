@@ -132,7 +132,7 @@ sequenceDiagram
 
 | Class | Examples | Tenant-scoped | Encrypted by AgentOS.NET | Exported by tenant export | Retention today |
 |---|---|---|---|---|---|
-| Credentials | LLM keys, PATs, board tokens, OpenAI-compatible key | yes (platform rows under `__platform`) | DataProtection | ciphertext only (see threat model GAP-08) | until changed |
+| Credentials | LLM keys, PATs, board tokens, OpenAI-compatible key | yes (platform rows under `__platform`) | DataProtection | no (values and token hashes dropped — GAP-08) | until changed |
 | Identity | username, email, roles, `tenant` attribute | yes (Keycloak attribute) | Keycloak | no (Keycloak) | until member removed / tenant purged |
 | Customer content | tickets, code, test output, ticket files, memory | yes | no (storage-level only) | yes | **no policy** — until tenant purge |
 | Governance | tool evidence (full input/output), audit events, run metrics | yes | no | yes | **no policy** |
