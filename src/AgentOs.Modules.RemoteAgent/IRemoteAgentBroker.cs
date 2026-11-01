@@ -293,8 +293,9 @@ public interface IRemoteAgentBroker
     /// <summary>Raised when a runner reports the step a pending request is on.</summary>
     event Action<RemoteProgress>? Progressed;
 
-    /// <summary>Called by the hub when a runner sends <c>ReportProgress</c>; ignored for requests no one waits for.</summary>
-    void ReportProgress(string requestId, string stepKey);
+    /// <summary>Called by the hub when a runner sends <c>ReportProgress</c>; ignored for requests no one waits for and
+    /// for any connection other than the one the request was dispatched to (or that runner's reconnect, same tenant).</summary>
+    void ReportProgress(string connectionId, string requestId, string stepKey);
 
     Task<RemoteExecResult> DispatchAsync(RemoteExecRequest request, RunnerTarget target, TimeSpan timeout, CancellationToken cancellationToken = default);
 
@@ -304,7 +305,12 @@ public interface IRemoteAgentBroker
     /// (<see cref="AgentOs.Domain.Sessions.IRunnerDisconnector.Disconnect"/>, GAP-04).</summary>
     IDisposable RegisterRunner(string connectionId, RunnerConnection runner, Action? abort) => RegisterRunner(connectionId, runner);
 
+    /// <summary>Server-side completion (the transport's approval denial or delivery failure) — trusted, no owner check.</summary>
     void Complete(RemoteExecResult result);
+
+    /// <summary>Called by the hub when a runner sends <c>CompleteRequest</c>. Accepted only from the connection the request
+    /// was dispatched to (or a reconnect of that same runner in the same tenant); false when refused (counted and logged).</summary>
+    bool Complete(string connectionId, RemoteExecResult result);
 
     // ── M4: bidirectional tool-call protocol ──
 
@@ -318,8 +324,12 @@ public interface IRemoteAgentBroker
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Called by the hub when the runner sends a <c>CompleteToolCall</c> message.</summary>
+    /// <summary>Server-side completion of a tool call (approval denial, delivery failure) — trusted, no owner check.</summary>
     void CompleteToolCall(RunnerToolResult result);
+
+    /// <summary>Called by the hub when the runner sends a <c>CompleteToolCall</c> message. Accepted only from the connection
+    /// the call was dispatched to (or a reconnect of that same runner in the same tenant); false when refused.</summary>
+    bool CompleteToolCall(string connectionId, RunnerToolResult result);
 
     // ── Ticket files (ADR-0015) ──
 
@@ -391,8 +401,12 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private readonly ConcurrentDictionary<string, RunnerConnection> _connections = new(StringComparer.Ordinal);
     // Connection id → how the transport aborts it (GAP-04: a revoked runner is cut off at once).
     private readonly ConcurrentDictionary<string, Action> _aborts = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<RemoteExecResult>> _pending = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<RunnerToolResult>> _pendingToolCalls = new(StringComparer.Ordinal);
+    // Pending id → the waiting task + who it was dispatched to (GAP-06: only that runner may answer it).
+    private readonly ConcurrentDictionary<string, Pending<RemoteExecResult>> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Pending<RunnerToolResult>> _pendingToolCalls = new(StringComparer.Ordinal);
+
+    // A dispatched request or tool call: the task its caller awaits, and the connection (+ runner, tenant) it went to.
+    private sealed record Pending<T>(TaskCompletionSource<T> Task, string ConnectionId, RunnerConnection? Runner);
     // Preview id → who runs it: the connection (null while its computer is away — DetachedAt says since when), and the
     // tenant + member + runner it belongs to. A report from any other connection is ignored.
     private readonly ConcurrentDictionary<string, PreviewRoute> _previews = new(StringComparer.Ordinal);
@@ -423,6 +437,10 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private static readonly System.Diagnostics.Metrics.Meter EvidenceMeter = new("AgentOs.Tools");
     private static readonly System.Diagnostics.Metrics.Counter<long> RemoteRefused = EvidenceMeter.CreateCounter<long>(
         "agentos.evidence.remote_refused", description: "Tool calls a runner reported that the server refused to record (tag: reason).");
+
+    // GAP-06: a result or progress report from a connection the request was not dispatched to (tag: kind).
+    private static readonly System.Diagnostics.Metrics.Counter<long> ResultRefused = EvidenceMeter.CreateCounter<long>(
+        "agentos.remote.result_refused", description: "Runner results / progress refused because they came from a connection the request was not dispatched to (tag: kind).");
 
     private readonly Microsoft.Extensions.Logging.ILogger? _logger;
 
@@ -899,10 +917,13 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public event Action<RemoteCancel>? Cancelled;
     public event Action<RemoteProgress>? Progressed;
 
-    public void ReportProgress(string requestId, string stepKey)
+    public void ReportProgress(string connectionId, string requestId, string stepKey)
     {
         // Only for a request someone is waiting on: an unknown id is a late or forged report.
-        if (string.IsNullOrEmpty(requestId) || string.IsNullOrEmpty(stepKey) || stepKey.Length > 64 || !_pending.ContainsKey(requestId)) { return; }
+        if (string.IsNullOrEmpty(requestId) || string.IsNullOrEmpty(stepKey) || stepKey.Length > 64
+            || !_pending.TryGetValue(requestId, out var pending)) { return; }
+        // Only from the runner it was dispatched to: another runner (even in the same tenant) can't drive its Board steps.
+        if (!IsOwner(pending.ConnectionId, pending.Runner, connectionId)) { RefuseResult("progress", requestId); return; }
         Progressed?.Invoke(new RemoteProgress(requestId, stepKey));
     }
     public event Action<RunnerToolDispatch>? ToolCallDispatched;
@@ -928,7 +949,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         }
 
         var tcs = new TaskCompletionSource<RemoteExecResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending[request.Id] = tcs;
+        _pending[request.Id] = new Pending<RemoteExecResult>(tcs, connectionId, RunnerOf(connectionId));
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
@@ -940,11 +961,11 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
                 Cancelled?.Invoke(new RemoteCancel(request.Id, connectionId));
                 if (cancellationToken.IsCancellationRequested)
                 {
-                    pending.TrySetCanceled(cancellationToken);
+                    pending.Task.TrySetCanceled(cancellationToken);
                 }
                 else
                 {
-                    pending.TrySetException(new TimeoutException($"Remote runner did not respond within {timeout.TotalSeconds:0}s."));
+                    pending.Task.TrySetException(new TimeoutException($"Remote runner did not respond within {timeout.TotalSeconds:0}s."));
                 }
             }
         });
@@ -1007,10 +1028,20 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public void Complete(RemoteExecResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        if (_pending.TryRemove(result.Id, out var tcs))
+        if (_pending.TryRemove(result.Id, out var pending))
         {
-            tcs.TrySetResult(result);
+            pending.Task.TrySetResult(result);
         }
+    }
+
+    public bool Complete(string connectionId, RemoteExecResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        if (string.IsNullOrEmpty(result.Id) || !_pending.TryGetValue(result.Id, out var pending)) { return false; }
+        if (!IsOwner(pending.ConnectionId, pending.Runner, connectionId)) { RefuseResult("request", result.Id); return false; }
+        // Remove only the entry that was checked: a re-dispatch under the same id is not resolved by this answer.
+        if (!_pending.TryRemove(new System.Collections.Generic.KeyValuePair<string, Pending<RemoteExecResult>>(result.Id, pending))) { return false; }
+        return pending.Task.TrySetResult(result);
     }
 
     public async Task<RunnerToolResult> DispatchToolCallAsync(
@@ -1030,7 +1061,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         }
 
         var tcs = new TaskCompletionSource<RunnerToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingToolCalls[toolCall.ToolCallId] = tcs;
+        _pendingToolCalls[toolCall.ToolCallId] = new Pending<RunnerToolResult>(tcs, connectionId, RunnerOf(connectionId));
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
@@ -1040,11 +1071,11 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
-                    pending.TrySetCanceled(cancellationToken);
+                    pending.Task.TrySetCanceled(cancellationToken);
                 }
                 else
                 {
-                    pending.TrySetException(
+                    pending.Task.TrySetException(
                         new TimeoutException($"Runner tool call '{toolCall.ToolName}' timed out after {timeout.TotalSeconds:0}s."));
                 }
             }
@@ -1065,9 +1096,45 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public void CompleteToolCall(RunnerToolResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        if (_pendingToolCalls.TryRemove(result.ToolCallId, out var tcs))
+        if (_pendingToolCalls.TryRemove(result.ToolCallId, out var pending))
         {
-            tcs.TrySetResult(result);
+            pending.Task.TrySetResult(result);
+        }
+    }
+
+    public bool CompleteToolCall(string connectionId, RunnerToolResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        if (string.IsNullOrEmpty(result.ToolCallId) || !_pendingToolCalls.TryGetValue(result.ToolCallId, out var pending)) { return false; }
+        if (!IsOwner(pending.ConnectionId, pending.Runner, connectionId)) { RefuseResult("tool_call", result.ToolCallId); return false; }
+        if (!_pendingToolCalls.TryRemove(new System.Collections.Generic.KeyValuePair<string, Pending<RunnerToolResult>>(result.ToolCallId, pending))) { return false; }
+        return pending.Task.TrySetResult(result);
+    }
+
+    private RunnerConnection? RunnerOf(string connectionId) => _connections.TryGetValue(connectionId, out var runner) ? runner : null;
+
+    // The connection a pending id was dispatched to — or, after that runner's SignalR auto-reconnect gave it a new
+    // connection id, a live connection registered for the SAME runner in the SAME tenant (it authenticated with that
+    // runner's token). Any other runner, even one in the same tenant, is refused (GAP-06).
+    private bool IsOwner(string owner, RunnerConnection? runner, string? connectionId)
+    {
+        if (string.IsNullOrEmpty(connectionId)) { return false; }
+        if (string.Equals(owner, connectionId, StringComparison.Ordinal)) { return true; }
+        return runner is not null
+            && _connections.TryGetValue(connectionId, out var conn)
+            && conn.RunnerId == runner.RunnerId
+            && string.Equals(conn.TenantId, runner.TenantId, StringComparison.Ordinal);
+    }
+
+    // Counted (agentos.remote.result_refused{kind}) and logged — the id is runner-supplied, so it is scrubbed.
+    private void RefuseResult(string kind, string? id)
+    {
+        ResultRefused.Add(1, new System.Collections.Generic.KeyValuePair<string, object?>("kind", kind));
+        if (_logger is not null)
+        {
+            Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(_logger,
+                "Runner {Kind} for {Id} refused: it came from a connection the work was not dispatched to.",
+                kind, AgentOs.Domain.Tools.SecretRedactor.Bound(AgentOs.SharedKernel.Logging.LogSafe.Scrub(id), 80));
         }
     }
 

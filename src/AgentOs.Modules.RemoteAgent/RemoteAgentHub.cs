@@ -109,11 +109,13 @@ public sealed class RemoteAgentHub : Hub
         return base.OnDisconnectedAsync(exception);
     }
 
-    /// <summary>Invoked by the runner when it has a result for a dispatched request (M3).</summary>
-    public void CompleteRequest(RemoteExecResult result) => _broker.Complete(result);
+    /// <summary>Invoked by the runner when it has a result for a dispatched request (M3). Heard only from the connection
+    /// the request was dispatched to (or that runner's reconnect, same tenant) — GAP-06.</summary>
+    public void CompleteRequest(RemoteExecResult result) => _broker.Complete(Context.ConnectionId, result);
 
-    /// <summary>Runner → server: the plain step a running request is on (live progress on the Board).</summary>
-    public void ReportProgress(string requestId, string step) => _broker.ReportProgress(requestId, step);
+    /// <summary>Runner → server: the plain step a running request is on (live progress on the Board). Heard only from the
+    /// connection the request was dispatched to.</summary>
+    public void ReportProgress(string requestId, string step) => _broker.ReportProgress(Context.ConnectionId, requestId, step);
 
     /// <summary>Runner → server: where a "Try the app" preview it runs stands (Preparing / Starting / Ready / Failed / Stopped).</summary>
     public void ReportPreview(string previewId, string state, string? message) =>
@@ -150,6 +152,7 @@ public sealed class RemoteAgentHub : Hub
         }
     }
 
-    /// <summary>Invoked by the runner when it has finished executing a tool call (M4).</summary>
-    public void CompleteToolCall(RunnerToolResult result) => _broker.CompleteToolCall(result);
+    /// <summary>Invoked by the runner when it has finished executing a tool call (M4). Heard only from the connection the
+    /// call was dispatched to (or that runner's reconnect, same tenant) — GAP-06.</summary>
+    public void CompleteToolCall(RunnerToolResult result) => _broker.CompleteToolCall(Context.ConnectionId, result);
 }
