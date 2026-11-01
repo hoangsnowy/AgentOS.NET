@@ -438,20 +438,35 @@ app.MapGet("/cost/export", async (HttpContext http, AgentOs.Modules.Pipeline.Per
 }).RequireAuthorization();
 
 // Tenant data export (Settings → Data, E1.4): one JSON document of every row the tenant owns, secrets excluded,
-// streamed. A tenant admin exports their own tenant; ?tenant= another one needs platform-admin. Audited.
+// streamed. A tenant admin exports their own tenant; ?tenant= another one needs platform-admin. Audited only once the
+// export has been written — a refused export (a secret column it can't safely redact) is a 409, not an audited success.
 app.MapGet("/tenant/export", async (HttpContext http, AgentOs.Modules.Tenants.Data.ITenantDataService data,
-    AgentOs.Modules.Tenants.IAuditLog audit, string? tenant) =>
+    AgentOs.Modules.Tenants.IAuditLog audit, ILoggerFactory loggers, string? tenant) =>
 {
     if (!http.User.IsAdmin()) { return Results.Forbid(); }
     var own = http.User.GetTenantId() ?? "default";
     var target = string.IsNullOrWhiteSpace(tenant) ? own : tenant;
     if (!string.Equals(target, own, StringComparison.Ordinal) && !http.User.IsPlatformAdmin()) { return Results.Forbid(); }
     if (!data.IsAvailable) { return Results.NotFound("No database in this run — nothing to export."); }
-    await audit.WriteAsync(new AgentOs.Modules.Tenants.AuditEntry(Guid.NewGuid(), target, http.User.Identity?.Name,
-        AgentOs.Modules.Tenants.AuditActions.TenantExported, $"export of {target}", null, null, DateTimeOffset.UtcNow), http.RequestAborted);
     http.Response.ContentType = "application/json";
     http.Response.Headers.ContentDisposition = $"attachment; filename=\"agentos-{target}-{DateTime.UtcNow:yyyyMMdd}.json\"";
-    await data.ExportAsync(target, http.Response.Body, http.RequestAborted);
+    try
+    {
+        await data.ExportAsync(target, http.Response.Body, http.RequestAborted);
+    }
+    catch (AgentOs.Modules.Tenants.Data.TenantExportRefusedException ex) when (!http.Response.HasStarted)
+    {
+        // Fail closed: the redaction check runs before the first byte, so nothing was sent. Detail stays in the log.
+        loggers.CreateLogger("TenantExport").LogWarning(ex, "Tenant export refused");
+        http.Response.Headers.ContentDisposition = default;
+        return Results.Problem(
+            title: "Export stopped",
+            detail: "The export was stopped before anything was written: a table that holds secrets has changed and can't be "
+                + "safely redacted yet. Nothing was exported. Ask your operator to update AgentOS.NET, then try again.",
+            statusCode: StatusCodes.Status409Conflict);
+    }
+    await audit.WriteAsync(new AgentOs.Modules.Tenants.AuditEntry(Guid.NewGuid(), target, http.User.Identity?.Name,
+        AgentOs.Modules.Tenants.AuditActions.TenantExported, $"export of {target}", null, null, DateTimeOffset.UtcNow), CancellationToken.None);
     return Results.Empty;
 }).RequireAuthorization();
 

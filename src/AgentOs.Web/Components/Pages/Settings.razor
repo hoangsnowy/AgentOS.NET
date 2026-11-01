@@ -139,6 +139,10 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 <div class="prefs-actions">
                     <Btn Variant="Btn.ButtonVariant.Primary" OnClick="SaveGithub" Disabled="_savingGithub">@(_savingGithub ? "Saving…" : "Save")</Btn>
                     <Btn OnClick="TestGithub" Disabled="_ghTesting || _savingGithub">@(_ghTesting ? "Testing…" : "Test")</Btn>
+                    @if (_githubPatSaved is not null)
+                    {
+                        <Btn Variant="Btn.ButtonVariant.Danger" OnClick="@(() => _confirmRemovePat = true)" Disabled="_savingGithub || _removingPat">Remove saved token</Btn>
+                    }
                 </div>
                 @if (_saveErrorGithub is not null)
                 {
@@ -146,7 +150,11 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 }
                 else if (_savedGithub)
                 {
-                    <div class="prefs-saved"><Chip Variant="Chip.ChipVariant.Ok">Saved</Chip> "Open PR" on the pipeline will use these.</div>
+                    <div class="prefs-saved" role="status"><Chip Variant="Chip.ChipVariant.Ok">Saved</Chip> "Open PR" on the pipeline will use these.</div>
+                }
+                else if (_patRemoved)
+                {
+                    <div class="prefs-saved" role="status"><Chip Variant="Chip.ChipVariant.Ok">Removed</Chip> The saved token is gone. "Open PR" stays off until you save a new one.</div>
                 }
                 @if (_ghTestResult is not null)
                 {
@@ -167,6 +175,17 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
         }
     </div>
 </div>
+
+<Dialog Show="_confirmRemovePat" Title="Remove saved token" Width="380" Destructive="true" OnClose="@(() => _confirmRemovePat = false)">
+    <ChildContent>
+        <p>Remove the saved GitHub token <code>@_githubPatSaved</code> from this workspace?</p>
+        <p class="muted">The Pipeline can no longer open pull requests until a new token is saved. The repo owner, name and branch are kept. The removal is recorded in the audit log.</p>
+    </ChildContent>
+    <Footer>
+        <Btn OnClick="@(() => _confirmRemovePat = false)" Disabled="_removingPat">Cancel</Btn>
+        <Btn Variant="Btn.ButtonVariant.Danger" OnClick="RemoveGithubPat" Loading="_removingPat">Remove</Btn>
+    </Footer>
+</Dialog>
 }
 
 @code {
@@ -205,6 +224,9 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
     private bool _ghTesting;
     private bool _ghTestOk;
     private string? _ghTestResult;
+    private bool _confirmRemovePat;
+    private bool _removingPat;
+    private bool _patRemoved;
 
     // When Api:BaseUrl is set the Web is a thin client; settings live in the API's encrypted
     // app_config store. Blank → single-process, settings are the in-memory overrides.
@@ -369,6 +391,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
     private async Task SaveGithub()
     {
         _savedGithub = false;
+        _patRemoved = false;
         _saveErrorGithub = ValidateGithubFields();
         if (_saveErrorGithub is not null)
         {
@@ -412,25 +435,60 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
         _savingGithub = false;
     }
 
+    // Remove the saved Pipeline auto-PR token (a blank field keeps it, so this is the only way to clear it). Split mode
+    // DELETEs it through the API; in-process clears the override. Both write through AuditingAppConfigStore, which
+    // records the removal ("cleared", never the value) in the tenant audit log.
+    private async Task RemoveGithubPat()
+    {
+        _removingPat = true;
+        _savedGithub = false;
+        _saveErrorGithub = null;
+        _ghTestResult = null;
+        await CircuitSafe.RunAsync(
+            async () =>
+            {
+                if (Split)
+                {
+                    using var client = ApiClient();
+                    using var resp = await client.DeleteAsync($"settings/{Uri.EscapeDataString(AppConfigKeys.GithubPat)}");
+                    _saveErrorGithub = resp.IsSuccessStatusCode ? null : $"The token was not removed (HTTP {(int)resp.StatusCode}).";
+                }
+                else
+                {
+                    using var _ = TenantScope();
+                    Overrides.GitHubPat = null;
+                }
+                if (_saveErrorGithub is null)
+                {
+                    _githubPatSaved = null;
+                    _githubPat = "";
+                    _patRemoved = true;
+                }
+            },
+            ex => _saveErrorGithub = ex.Message);
+        _removingPat = false;
+        _confirmRemovePat = false;
+    }
+
     // Probe GitHub with the form's token + repo coordinates (nothing has to be saved first).
     // In-process: the same ISourceProvider.ValidateAsync the Board app's board-connect flow uses.
-    // Split mode: the API's token probe (POST /workspaces/repos) — validates the token's reach.
+    // Split mode: the API's POST /settings/Github/test — it uses the typed token, else the SAVED one server-side (the
+    // browser can't read a saved token any more, GAP-08), and the typed repo coordinates, else the saved ones.
     private async Task TestGithub()
     {
         _ghTestResult = null;
-        // In-process the saved token can be used server-side without ever reaching the browser; split mode needs it typed.
-        string? storedPat = null;
-        if (!Split && string.IsNullOrWhiteSpace(_githubPat))
+        string? token = null;
+        if (!Split)
         {
+            // In-process the saved token is used server-side without ever reaching the browser.
             using var _ = TenantScope();
-            storedPat = Overrides.GitHubPat;
-        }
-        var token = string.IsNullOrWhiteSpace(_githubPat) ? storedPat : _githubPat;
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            _ghTestOk = false;
-            _ghTestResult = "Enter a token first.";
-            return;
+            token = string.IsNullOrWhiteSpace(_githubPat) ? Overrides.GitHubPat : _githubPat;
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _ghTestOk = false;
+                _ghTestResult = "No token saved yet. Paste a personal access token, then Save or Test.";
+                return;
+            }
         }
         _ghTesting = true;
         // UI probe: surface ANY failure (HttpRequestException, Octokit ApiException/AuthorizationException,
@@ -441,12 +499,16 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                 if (Split)
                 {
                     using var client = ApiClient();
-                    using var resp = await client.PostAsJsonAsync("workspaces/repos",
-                        new { kind = "GitHub", accessToken = _githubPat, owner = _repoOwner });
-                    _ghTestOk = resp.IsSuccessStatusCode;
-                    _ghTestResult = _ghTestOk
-                        ? "Token OK — it can list repositories. (Repo itself not checked in split mode.)"
-                        : $"Token rejected (HTTP {(int)resp.StatusCode}).";
+                    using var resp = await client.PostAsJsonAsync("settings/Github/test", new
+                    {
+                        token = NullIfBlank(_githubPat),
+                        owner = NullIfBlank(_repoOwner),
+                        repo = NullIfBlank(_repoName),
+                        branch = NullIfBlank(_baseBranch),
+                    });
+                    var body = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<GhTestResult>() : null;
+                    _ghTestOk = body is { Ok: true };
+                    _ghTestResult = body?.Message ?? $"The test could not run (HTTP {(int)resp.StatusCode}).";
                 }
                 else if (string.IsNullOrWhiteSpace(_repoOwner) || string.IsNullOrWhiteSpace(_repoName))
                 {
@@ -461,7 +523,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                         SourceProviderKind.GitHub,
                         _repoOwner, _repoName, null,
                         string.IsNullOrWhiteSpace(_baseBranch) ? "main" : _baseBranch,
-                        token);
+                        token!);
                     var result = await SourceProviders.Resolve(SourceProviderKind.GitHub).ValidateAsync(descriptor);
                     _ghTestOk = result.Ok;
                     _ghTestResult = result.Ok
@@ -506,6 +568,11 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
     }
 
     private sealed record LlmTestResult(bool Ok, string? Provider, string? Model, string? Sample, string? Error);
+
+    // Shape of POST /settings/Github/test (Modules.AppConfig) — a plain-language message, never the token.
+    private sealed record GhTestResult(bool Ok, string? Message);
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     private static string ForceLabel(LlmEffectiveConfig cfg) => cfg.ForceSource switch
     {
