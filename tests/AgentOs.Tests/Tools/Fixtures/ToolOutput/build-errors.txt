@@ -1,0 +1,23 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+/work/bad/Class1.cs(4,35): error CS0029: Cannot implicitly convert type 'string' to 'int' [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(4,50): error CS0103: The name 'y' does not exist in the current context [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(5,29): error CS0103: The name 'Missing' does not exist in the current context [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(6,32): warning CS0219: The variable 'unused' is assigned but its value is never used [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(7,37): error CS0029: Cannot implicitly convert type 'int' to 'string' [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(7,49): error CS1061: 'string' does not contain a definition for 'Lenght' and no accessible extension method 'Lenght' accepting a first argument of type 'string' could be found (are you missing a using directive or an assembly reference?) [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(9,38): warning SYSLIB0014: 'WebClient.WebClient()' is obsolete: 'WebRequest, HttpWebRequest, ServicePoint, and WebClient are obsolete. Use HttpClient instead.' (https://aka.ms/dotnet-warnings/SYSLIB0014) [/work/bad/Sample.Bad.csproj]
+
+Build FAILED.
+
+/work/bad/Class1.cs(6,32): warning CS0219: The variable 'unused' is assigned but its value is never used [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(9,38): warning SYSLIB0014: 'WebClient.WebClient()' is obsolete: 'WebRequest, HttpWebRequest, ServicePoint, and WebClient are obsolete. Use HttpClient instead.' (https://aka.ms/dotnet-warnings/SYSLIB0014) [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(4,35): error CS0029: Cannot implicitly convert type 'string' to 'int' [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(4,50): error CS0103: The name 'y' does not exist in the current context [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(5,29): error CS0103: The name 'Missing' does not exist in the current context [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(7,37): error CS0029: Cannot implicitly convert type 'int' to 'string' [/work/bad/Sample.Bad.csproj]
+/work/bad/Class1.cs(7,49): error CS1061: 'string' does not contain a definition for 'Lenght' and no accessible extension method 'Lenght' accepting a first argument of type 'string' could be found (are you missing a using directive or an assembly reference?) [/work/bad/Sample.Bad.csproj]
+    2 Warning(s)
+    5 Error(s)
+
+Time Elapsed 00:00:01.55

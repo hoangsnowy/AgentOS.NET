@@ -17,7 +17,7 @@
 
 @if (_view == Tools)
 {
-    <EvidenceApp />
+    <EvidenceApp Origin="@Origin" SessionId="@SessionId" />
 }
 else
 {
@@ -33,6 +33,12 @@ else
 
     /// <summary>The view to open on (the hub passes "tools" for an <c>evidence</c> deep link).</summary>
     [Parameter] public string View { get; set; } = Changes;
+
+    /// <summary>Passed to the tool-call view: open on one origin (a member's computer).</summary>
+    [Parameter] public string? Origin { get; set; }
+
+    /// <summary>Passed to the tool-call view: open on one task's calls.</summary>
+    [Parameter] public string? SessionId { get; set; }
 
     private string _view = Changes;
     private string? _appliedView;

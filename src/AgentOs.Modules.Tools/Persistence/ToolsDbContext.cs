@@ -32,7 +32,14 @@ public sealed class ToolsDbContext : DbContext
             e.Property(x => x.IsError).IsRequired();
             e.Property(x => x.StartedUtc).IsRequired();
             e.Property(x => x.FinishedUtc).IsRequired();
+            e.Property(x => x.Origin).HasMaxLength(32);
+            e.Property(x => x.AgentRole).HasMaxLength(64);
+            e.Property(x => x.RunnerId).HasMaxLength(64);
+            e.Property(x => x.PolicySource).HasMaxLength(64);
+            e.Property(x => x.Denied).IsRequired().HasDefaultValue(false);
             e.HasIndex(x => new { x.TenantId, x.StartedUtc });
+            // Settings › Activity log › "On a member's computer" and the Insights per-role fold read by origin.
+            e.HasIndex(x => new { x.TenantId, x.Origin, x.StartedUtc });
         });
     }
 }

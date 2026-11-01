@@ -1,0 +1,86 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Sample.Tests -> /work/tst/bin/Release/net10.0/Sample.Tests.dll
+Test run for /work/tst/bin/Release/net10.0/Sample.Tests.dll (.NETCoreApp,Version=v10.0)
+VSTest version 18.0.2 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)
+[xUnit.net 00:00:00.14]   Discovering: Sample.Tests
+[xUnit.net 00:00:00.24]   Discovered:  Sample.Tests
+[xUnit.net 00:00:00.28]   Starting:    Sample.Tests
+  Passed Sample.Tests.T9.Passes_9 [5 ms]
+  Passed Sample.Tests.T2.Passes_2 [5 ms]
+  Passed Sample.Tests.T13.Passes_13 [< 1 ms]
+  Passed Sample.Tests.T28.Passes_28 [< 1 ms]
+  Passed Sample.Tests.T23.Passes_23 [< 1 ms]
+  Passed Sample.Tests.T16.Passes_16 [< 1 ms]
+  Passed Sample.Tests.T17.Passes_17 [< 1 ms]
+  Passed Sample.Tests.T26.Passes_26 [< 1 ms]
+  Passed Sample.Tests.T6.Passes_6 [< 1 ms]
+  Passed Sample.Tests.T15.Passes_15 [< 1 ms]
+  Passed Sample.Tests.T19.Passes_19 [< 1 ms]
+  Passed Sample.Tests.T5.Passes_5 [< 1 ms]
+  Passed Sample.Tests.T7.Passes_7 [< 1 ms]
+  Passed Sample.Tests.T12.Passes_12 [< 1 ms]
+  Passed Sample.Tests.T11.Passes_11 [< 1 ms]
+  Passed Sample.Tests.T30.Passes_30 [< 1 ms]
+  Passed Sample.Tests.T14.Passes_14 [< 1 ms]
+  Passed Sample.Tests.T8.Passes_8 [< 1 ms]
+  Passed Sample.Tests.T22.Passes_22 [< 1 ms]
+  Passed Sample.Tests.T24.Passes_24 [< 1 ms]
+  Passed Sample.Tests.T29.Passes_29 [< 1 ms]
+  Passed Sample.Tests.T20.Passes_20 [< 1 ms]
+  Passed Sample.Tests.T27.Passes_27 [< 1 ms]
+  Passed Sample.Tests.T21.Passes_21 [< 1 ms]
+  Passed Sample.Tests.T4.Passes_4 [< 1 ms]
+  Passed Sample.Tests.T1.Passes_1 [< 1 ms]
+  Passed Sample.Tests.T10.Passes_10 [< 1 ms]
+[xUnit.net 00:00:00.43]     Sample.Tests.CalculatorTests.Compare_Values_AreEqual(a: 1, b: 2) [FAIL]
+[xUnit.net 00:00:00.43]       Assert.Equal() Failure: Values differ
+[xUnit.net 00:00:00.43]       Expected: 1
+[xUnit.net 00:00:00.43]       Actual:   2
+[xUnit.net 00:00:00.43]       Stack Trace:
+[xUnit.net 00:00:00.43]         /work/tst/UnitTest1.cs(10,0): at Sample.Tests.CalculatorTests.Compare_Values_AreEqual(Int32 a, Int32 b)
+[xUnit.net 00:00:00.43]            at InvokeStub_CalculatorTests.Compare_Values_AreEqual(Object, Span`1)
+[xUnit.net 00:00:00.43]            at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 00:00:00.43]     Sample.Tests.CalculatorTests.Divide_ByZero_Throws [FAIL]
+[xUnit.net 00:00:00.43]       System.DivideByZeroException : Attempted to divide by zero.
+[xUnit.net 00:00:00.43]       Stack Trace:
+[xUnit.net 00:00:00.43]         /work/tst/UnitTest1.cs(13,0): at Sample.Tests.Helper.Deep(Int32 a, Int32 b)
+[xUnit.net 00:00:00.43]         /work/tst/UnitTest1.cs(13,0): at Sample.Tests.Helper.Divide(Int32 a, Int32 b)
+[xUnit.net 00:00:00.43]         /work/tst/UnitTest1.cs(6,0): at Sample.Tests.CalculatorTests.Divide_ByZero_Throws()
+[xUnit.net 00:00:00.43]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+[xUnit.net 00:00:00.43]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.44]   Finished:    Sample.Tests
+  Passed Sample.Tests.T25.Passes_25 [< 1 ms]
+  Passed Sample.Tests.T3.Passes_3 [< 1 ms]
+  Passed Sample.Tests.T18.Passes_18 [< 1 ms]
+  Passed Sample.Tests.CalculatorTests.Compare_Values_AreEqual(a: 3, b: 3) [5 ms]
+  Failed Sample.Tests.CalculatorTests.Compare_Values_AreEqual(a: 1, b: 2) [3 ms]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: 1
+Actual:   2
+  Stack Trace:
+     at Sample.Tests.CalculatorTests.Compare_Values_AreEqual(Int32 a, Int32 b) in /work/tst/UnitTest1.cs:line 10
+   at InvokeStub_CalculatorTests.Compare_Values_AreEqual(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Passed Sample.Tests.CalculatorTests.Add_TwoNumbers_ReturnsSum [< 1 ms]
+  Passed Sample.Tests.CalculatorTests.Multiply_Works [< 1 ms]
+  Failed Sample.Tests.CalculatorTests.Divide_ByZero_Throws [< 1 ms]
+  Error Message:
+   System.DivideByZeroException : Attempted to divide by zero.
+  Stack Trace:
+     at Sample.Tests.Helper.Deep(Int32 a, Int32 b) in /work/tst/UnitTest1.cs:line 13
+   at Sample.Tests.Helper.Divide(Int32 a, Int32 b) in /work/tst/UnitTest1.cs:line 13
+   at Sample.Tests.CalculatorTests.Divide_ByZero_Throws() in /work/tst/UnitTest1.cs:line 6
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+
+Test Run Failed.
+Total tests: 35
+     Passed: 33
+     Failed: 2
+ Total time: 1.0950 Seconds

@@ -267,8 +267,12 @@ public sealed partial class ProjectOrchestrator(
             var runners = await sp.GetRequiredService<IRunnerRepository>().ListForTenantAsync(tenant, ct).ConfigureAwait(false);
             var canTest = runners.Any(r => r.OwnerUserId == member && broker.IsConnected(r.Id));
             // Someone is trying the app on a computer: its ports are taken, and a test run would start a second copy of
-            // the same app on them. Testing waits; coding and merging go on.
-            if (previews.IsActiveOnBoard(tenant, board.Id))
+            // the same app on them (and, unless the app keeps its data per checkout, on the same data). Testing waits;
+            // coding and merging go on — unless the project is listed under Settings › Autopilot › Test while trying.
+            if (previews.IsActiveOnBoard(tenant, board.Id)
+                && AutopilotSettings.HoldsTestingWhileTrying(
+                    await sp.GetRequiredService<ISettings>().GetStringAsync(AutopilotSettings.TestWhileTryingKey, tenant, null, ct).ConfigureAwait(false),
+                    board.Name, board.Id))
             {
                 canTest = false;
                 if (_heldForPreview.TryAdd(board.Id, true)) { log.Add(tenant, board.Id, "Testing waits while the app is being tried — it resumes when the preview stops."); }

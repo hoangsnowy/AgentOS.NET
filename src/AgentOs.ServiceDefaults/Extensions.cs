@@ -88,7 +88,7 @@ public static class Extensions
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
                 .AddMeter("AgentOs.Llm") // SharedKernel.Telemetry.LlmTelemetry.SourceName — kept literal to avoid coupling this Aspire-shared project.
-                .AddMeter("AgentOs.Tools") // evidence health: inline writes + lost rows (BufferedToolInvocationLog.MeterName)
+                .AddMeter("AgentOs.Tools") // evidence health (inline writes, lost rows, runner-reported refusals) + tool-output savings (ToolTelemetry.MeterName)
                 .AddMeter("AgentOs.Pipeline") // runs by outcome, run duration, budget refusals + utilization (PipelineTelemetry.MeterName)
                 .AddMeter(HealthMetricsPublisher.MeterName) // health check status per check (agentos.health.status)
                 .AddMeter("Npgsql")) // connection pool + command duration (db.client.*) — the Postgres side of the run SLOs

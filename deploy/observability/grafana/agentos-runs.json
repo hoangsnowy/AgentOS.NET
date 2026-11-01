@@ -848,7 +848,7 @@
       "gridPos": {
         "x": 0,
         "y": 32,
-        "w": 24,
+        "w": 12,
         "h": 8
       },
       "targets": [
@@ -879,6 +879,63 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Evidence refused by reason (paired runners)",
+      "description": "agentos.evidence.remote_refused: tool calls a paired runner reported that the server refused to record, by reason (unknown_run, not_dispatched, wrong_connection, grace_passed, run_cap, batch_cap). Caps are expected on very long runs; sustained unknown_run / wrong_connection means a runner is out of step or misbehaving.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (reason) (increase(agentos_evidence_remote_refused_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
           }
         },
         "overrides": []

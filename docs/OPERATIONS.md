@@ -53,6 +53,8 @@ dashboard or rule references a series no instrument emits.
 | | `agentos.budget.enforced` (`agentos_budget_enforced`) | observable gauge `{flag}` | `agentos.tenant.id` | 1 when the tenant's cap is enforced (over-cap runs refused), else 0. Same lifetime as utilization; a separate series (not a label) so toggling enforcement never strands an old series. |
 | `AgentOs.Tools` | `agentos.evidence.inline_writes` (`agentos_evidence_inline_writes_total`) | counter | — | Evidence queue full → row written on the caller's path (slower, lossless). |
 | | `agentos.evidence.lost` (`agentos_evidence_lost_total`) | counter | — | Evidence row lost after every retry. **Must stay 0** (E0.3). |
+| | `agentos.evidence.remote_refused` (`agentos_evidence_remote_refused_total`) | counter | `reason` = `unknown_run` · `not_dispatched` · `wrong_connection` · `grace_passed` · `run_cap` · `batch_cap` | Tool calls a paired runner reported that the server refused to record (each refusal is also logged). Cap hits on very long runs are expected; the rest mean a runner is out of step. |
+| | `agentos.tools.output.saved_chars` (`agentos_tools_output_saved_chars_total`) | counter `{char}` | `kind` = `builtin` · `mcp` · `remote` | Tool-output characters the gateway kept away from the model (log shaping + size cap). Dashboards show **≈ tokens = chars ÷ 4** — an estimate of tokens not sent, never billed usage. |
 | `AgentOs.Health` | `agentos.health.status` (`agentos_health_status`) | gauge | `agentos.health.check` = `self` · `postgres` · `keycloak` · `overall` | 1 healthy · 0.5 degraded · 0 unhealthy, published every 60 s (each publish runs every check, so not more often). |
 
 Traces: the `AgentOs.Llm` ActivitySource emits one `chat {model}` client span per provider attempt (attributes
@@ -125,8 +127,8 @@ The recording rules `agentos:http_error_ratio:rate{5m,30m,1h,6h}`, `agentos:run_
 
 | Dashboard | uid | What it answers |
 |---|---|---|
-| AgentOS.NET — LLM tokens, cost & latency | `agentos-llm` | Tokens per billing class and per agent, cache hit ratio, cost by agent / model (charts + tables), latency p50/p95 per model and agent, errors by type, 429s per provider. |
-| AgentOS.NET — Runs, budget & evidence | `agentos-runs` | Run-reliability SLO, QA convergence, runs by outcome / kind, run time p50/p95, budget used per tenant, refusals, evidence lost / inline. |
+| AgentOS.NET — LLM tokens, cost & latency | `agentos-llm` | Tokens per billing class and per agent, cache hit ratio, cost by agent / model (charts + tables), latency p50/p95 per model and agent, errors by type, 429s per provider, ≈ tokens saved by tool-output shaping (by tool kind, chart + table). |
+| AgentOS.NET — Runs, budget & evidence | `agentos-runs` | Run-reliability SLO, QA convergence, runs by outcome / kind, run time p50/p95, budget used per tenant, refusals, evidence lost / inline, runner-reported evidence refused by reason. |
 | AgentOS.NET — HTTP, SignalR & runtime | `agentos-http` | Availability + latency SLOs, requests by status class, slowest routes, Kestrel, Blazor circuits, SignalR, outbound HTTP, Postgres pool, health checks, CPU / memory / GC / thread pool. |
 
 Validate after editing:
@@ -149,7 +151,7 @@ azd provision && azd deploy
 
 This deploys workspace-based Application Insights on the existing Log Analytics workspace, the **AgentOS.NET —
 operations** workbook (Azure portal → Application Insights → Workbooks), an e-mail action group, log-search alerts
-(`AgentOsBudgetOverCap`, `AgentOsFailedRunSpike`, `AgentOsEvidenceLost`, `AgentOsHealthCheckUnhealthy`,
+(`AgentOsBudgetOverCap`, `AgentOsFailedRunSpike`, `AgentOsEvidenceLost`, `AgentOsEvidenceRemoteRefused`, `AgentOsHealthCheckUnhealthy`,
 `AgentOsHigh5xxRate`, `AgentOsLlmRateLimitStorm`), a server-exceptions metric alert and, with a probe URL, a
 3-region availability test + `AgentOsHealthProbeDown` metric alert. `azd` passes the connection string to both
 container apps as `APPLICATIONINSIGHTS_CONNECTION_STRING` (empty when observability is off, which disables export).
@@ -224,6 +226,21 @@ Tool-call evidence rows were dropped after every persistence retry — the gover
 
 The evidence queue has been full for 15 minutes, so rows are written inline on the tool-call path: nothing is lost,
 but tool calls are slower. Look for a tool-call flood (a looping agent) or slow Postgres writes.
+
+<a id="runbook-agentosevidenceremoterefused"></a>
+### AgentOsEvidenceRemoteRefused (warning)
+
+For 15 minutes the server kept refusing tool calls a paired runner reported, so those calls are not in the evidence
+trail (they are only in the runner's own log). The `reason` label says why:
+- `run_cap` / `batch_cap` — a very long run reported more calls than are itemised (2000 per run, 200 per batch).
+  Expected now and then; sustained means an agent is looping — stop the run from the Board.
+- `grace_passed` — batches arriving more than 2 minutes after the run ended: the runner's connection is lagging.
+- `unknown_run` / `not_dispatched` — the runner reports runs this server never dispatched (an Api/Web restart forgot
+  them, or the batch reached a different replica than the one that dispatched the run — run tracking is in memory).
+- `wrong_connection` — a batch came from a connection that is neither the run's runner nor a reconnect of it (another
+  computer or tenant reported a run it was never sent): a bug in an outdated runner build, or a forged report. Check
+  the warning log (`Tool-call evidence refused`, request id scrubbed) and the runners connected at that time; revoke
+  and re-pair a runner you do not trust.
 
 <a id="runbook-agentoshealthprobedown"></a>
 ### AgentOsHealthProbeDown (critical)

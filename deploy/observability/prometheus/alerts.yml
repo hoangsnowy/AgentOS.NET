@@ -168,6 +168,18 @@ groups:
           summary: "The evidence queue on {{ $labels.instance }} has been full for 15 minutes (writes are going inline)"
           runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidencequeuesaturated"
 
+      # Tool calls a paired runner reported that the server refused to record (#299). A one-off cap hit on a very
+      # long run is expected; refusals that keep coming for 15 minutes mean a runner is out of step or misbehaving.
+      - alert: AgentOsEvidenceRemoteRefused
+        expr: sum by (job, instance, reason) (increase(agentos_evidence_remote_refused_total[10m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanize }} runner-reported tool call(s) refused ({{ $labels.reason }}) on {{ $labels.instance }} in 10 min, for 15 minutes"
+          description: The server is not recording tool calls a paired runner reports; the evidence for those calls exists only in the runner's logs.
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidenceremoterefused"
+
   # ---------------------------------------------------------------------------------------------------
   # Health — outside-in probe (blackbox exporter on /health) + the in-process health-status gauge.
   # ---------------------------------------------------------------------------------------------------

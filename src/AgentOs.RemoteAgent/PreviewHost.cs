@@ -3,44 +3,63 @@
 //
 //   1. Get the latest version into a per-repo checkout under the previews folder (reused, so restores stay warm).
 //   2. Re-read the recipe from that checkout: it must be exactly the command + url the person was shown, else refuse.
-//   3. Run the command in the checkout; ready once something accepts connections on the url's port.
-//   4. Stop = kill the whole process tree. The runner stops every preview when it exits, and on start kills any it left
-//      behind after a hard kill (a pid file with the process start time, so a recycled pid is never touched).
+//   3. Run the command in the checkout, in a process group of its own (PreviewProcess.cs) with its state on disk
+//      (PreviewStore); ready once something accepts connections on the url's port.
+//   4. The app outlives the runner: a restarted runner re-attaches every preview whose process is still the same one
+//      (pid + start time + still the shell it started), announces it to the server, and reports the ones it found gone
+//      (Restore / Announcements). A state file it can't use (unreadable, or a board/repo/url the Board can't place) is
+//      not left running unseen: its app is stopped — but only when that pid is still the preview's own process.
+//   5. Stop = kill the whole process tree — also of a re-attached preview. A preview nobody has had open for its idle
+//      time (Settings › Autopilot › Stop an unused app after, default 120 min) stops by itself. `AgentOs.RemoteAgent
+//      stop-previews` (and `unpair`) stop every preview on this computer (StopAll).
+//   6. The app's log is rotated at PreviewStore.MaxLogBytes (one older part kept).
 //
 // One preview per repository: starting it again replaces the old one.
 
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using AgentOs.Domain.Preview;
 
 namespace AgentOs.RemoteAgent;
 
 /// <summary>A preview the server asked for — mirrors the server's <c>PreviewStart</c>.</summary>
-internal sealed record PreviewStart(string PreviewId, string Owner, string Repo, string Branch, string Command, string Url, int ReadyTimeoutSeconds);
+internal sealed record PreviewStart(string PreviewId, string Owner, string Repo, string Branch, string Command, string Url, int ReadyTimeoutSeconds,
+    int IdleMinutes = 0, Guid BoardId = default, Guid RepoId = default);
 
 /// <summary>Runs "Try the app" previews on this computer.</summary>
-internal sealed class PreviewHost(string root, Func<string, string, string?, Task> report, KeepAwake? awake = null)
+/// <param name="root">The previews folder (checkouts + the <c>running</c> state folder).</param>
+/// <param name="report">Progress to the server: preview id, state, message.</param>
+/// <param name="awake">Keeps the computer from idle-sleeping while a preview runs.</param>
+/// <param name="inUse">True while something is connected to the port (a browser) — the idle clock; null = the OS's TCP table.</param>
+internal sealed class PreviewHost(string root, Func<string, string, string?, Task> report, KeepAwake? awake = null, Func<int, bool>? inUse = null)
 {
+    /// <summary>The idle stop when the server didn't send one (minutes).</summary>
+    internal const int DefaultIdleMinutes = 120;
+
     private const int TailLines = 30;
     private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(5);
-    private static readonly System.Text.Encoding Utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+    private static readonly TimeSpan IdleCheck = TimeSpan.FromSeconds(30);
 
     private readonly ConcurrentDictionary<string, Running> _byId = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _idByRepo = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _gone = new(StringComparer.Ordinal);
+    private readonly Func<int, bool> _inUse = inUse ?? HasClientOn;
 
-    private sealed class Running(string id, string repoKey, string dir)
+    private sealed class Running(string id, string repoKey, string dir, PreviewStart? start)
     {
         public string Id { get; } = id;
         public string RepoKey { get; } = repoKey;
         public string Dir { get; } = dir;
+        public PreviewStart? Start { get; } = start;
+        public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
         public Process? Process { get; set; }
-        public ProcessJob Job { get; } = ProcessJob.Create();
+        public volatile PreviewRecord? Record;
+        public IDisposable? Group { get; set; }
         public IDisposable? Awake { get; set; }
         public CancellationTokenSource Stop { get; } = new();
-        public Queue<string> Tail { get; } = new();
     }
 
     /// <summary>The previews folder next to the runs folder (%LOCALAPPDATA%\AgentOS.NET\previews on Windows).</summary>
@@ -57,9 +76,21 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         branch.Length is > 0 and <= 200 && branch[0] != '-' && !branch.Contains("..", StringComparison.Ordinal)
         && branch.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or '/');
 
+    /// <summary>The idle stop to apply: the server's value when it is in range, else <see cref="DefaultIdleMinutes"/>.</summary>
+    internal static int IdleMinutesFor(int fromServer) => fromServer is >= 10 and <= 1440 ? fromServer : DefaultIdleMinutes;
+
+    /// <summary>True once a preview nobody uses has been idle for its idle time.</summary>
+    internal static bool IsIdle(DateTimeOffset lastUsed, DateTimeOffset now, int idleMinutes) =>
+        now - lastUsed >= TimeSpan.FromMinutes(IdleMinutesFor(idleMinutes));
+
     /// <summary>Start (or restart) a preview. Returns at once; progress goes through the report callback.</summary>
     public void Start(PreviewStart start)
     {
+        ArgumentNullException.ThrowIfNull(start);
+        if (!PreviewStore.IsSafeId(start.PreviewId))
+        {
+            return; // not an id the server makes — nothing to report it under
+        }
         if (!IsSafeName(start.Owner) || !IsSafeName(start.Repo) || !IsSafeBranch(start.Branch))
         {
             _ = report(start.PreviewId, "Failed", "That repository or branch name can't be used.");
@@ -67,7 +98,7 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         }
         var repoKey = $"{start.Owner}/{start.Repo}";
         if (_idByRepo.TryGetValue(repoKey, out var previous)) { Stop(previous); }
-        var run = new Running(start.PreviewId, repoKey, Path.Join(Path.GetFullPath(root), $"{start.Owner}-{start.Repo}"))
+        var run = new Running(start.PreviewId, repoKey, Path.Join(Path.GetFullPath(root), $"{start.Owner}-{start.Repo}"), start)
         {
             Awake = awake?.Hold(), // a running preview keeps the computer from idle-sleeping (KeepAwake.cs)
         };
@@ -76,23 +107,123 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         _ = Task.Run(() => RunAsync(run, start));
     }
 
-    /// <summary>Stop a preview and everything it started. Unknown id = already gone.</summary>
+    /// <summary>Stop a preview and everything it started — also one re-attached after a runner restart. Unknown id = already gone.</summary>
     public void Stop(string previewId)
     {
         if (!_byId.TryRemove(previewId, out var run)) { return; }
         _idByRepo.TryRemove(new KeyValuePair<string, string>(run.RepoKey, run.Id));
         run.Stop.Cancel();
         Kill(run);
+        Forget(run);
         _ = report(run.Id, "Stopped", null);
     }
 
-    /// <summary>Stop everything (the runner is exiting).</summary>
-    public void StopAll()
+    /// <summary>The runner is exiting: let go of the previews WITHOUT stopping them — they keep running, and the next
+    /// runner re-attaches them from their state files (<see cref="Restore"/>).</summary>
+    public void Detach()
     {
-        foreach (var id in _byId.Keys.ToList()) { Stop(id); }
+        foreach (var run in _byId.Values)
+        {
+            run.Stop.Cancel();
+            run.Awake?.Dispose();
+            run.Group?.Dispose(); // Windows: no kill-on-close; the app's own processes keep the job (and its name) alive
+        }
     }
 
-    /// <summary>Kill previews a previous runner left running when it was killed outright (no chance to stop them).</summary>
+    /// <summary>Re-attach the previews an earlier runner left running (their state files). A preview whose process is gone
+    /// — or whose pid now belongs to another program (start time differs) — is forgotten without touching that process.
+    /// Returns the ids found gone; they are also reported in <see cref="Announcements"/>.</summary>
+    public IReadOnlyList<string> Restore()
+    {
+        var gone = new List<string>();
+        var unreadable = new List<PreviewRecord>();
+        foreach (var record in PreviewStore.Load(root, unreadable))
+        {
+            if (_byId.ContainsKey(record.PreviewId)) { continue; }
+            var repoKey = $"{record.Owner}/{record.Repo}";
+            if (!CanReattach(record) || !PreviewProcess.IsSame(record.Pid, record.ProcessStartTicks))
+            {
+                // Gone — or a state the Board can't place. Whatever of it still runs is stopped (Kill acts only on the
+                // preview's own process, group or job), so nothing keeps running unseen.
+                if (PreviewProcess.Kill(record)) { Console.WriteLine($"[agent] preview {PreviewProcess.Describe(record)} can't be shown on the Board — stopped"); }
+                PreviewStore.Delete(root, record.PreviewId);
+                gone.Add(record.PreviewId);
+                continue;
+            }
+            var run = new Running(record.PreviewId, repoKey, Path.Join(Path.GetFullPath(root), $"{record.Owner}-{record.Repo}"), null)
+            {
+                Record = record,
+                Awake = awake?.Hold(),
+            };
+            if (!_idByRepo.TryAdd(repoKey, run.Id))
+            {
+                // Two state files for one repo can't both be the app on its port: keep the first, stop this one.
+                Kill(run);
+                Forget(run);
+                gone.Add(record.PreviewId);
+                continue;
+            }
+            _byId[run.Id] = run;
+            Console.WriteLine($"[agent] preview {PreviewProcess.Describe(record)} is still running — re-attached");
+            _ = Task.Run(() => WatchAsync(run, run.Stop.Token));
+        }
+        foreach (var broken in unreadable)
+        {
+            var stopped = PreviewProcess.Kill(broken);
+            Console.WriteLine(stopped
+                ? $"[agent] a preview's state file was unreadable; its app (pid {broken.Pid}) was still running — stopped"
+                : "[agent] a preview's state file was unreadable and was removed");
+            if (PreviewStore.IsSafeId(broken.PreviewId)) { gone.Add(broken.PreviewId); }
+        }
+        foreach (var id in gone) { _gone[id] = 0; }
+        return gone;
+    }
+
+    /// <summary>Stop every preview recorded on this computer — <c>AgentOs.RemoteAgent stop-previews</c> / <c>unpair</c>, for a
+    /// runner that is going away for good. Only processes that are still the previews' own are touched. Returns how many
+    /// were still running.</summary>
+    public static int StopAll(string root)
+    {
+        var unreadable = new List<PreviewRecord>();
+        var stopped = 0;
+        foreach (var record in PreviewStore.Load(root, unreadable).Concat(unreadable))
+        {
+            if (PreviewProcess.Kill(record))
+            {
+                stopped++;
+                Console.WriteLine($"[agent] stopped preview {PreviewProcess.Describe(record)}");
+            }
+            PreviewStore.Delete(root, record.PreviewId);
+        }
+        return stopped;
+    }
+
+    // A state file the Board can place: GitHub names, the board + repo it was started for, and a local http(s) url.
+    private static bool CanReattach(PreviewRecord r) =>
+        IsSafeName(r.Owner) && IsSafeName(r.Repo) && r.BoardId != Guid.Empty && r.RepoId != Guid.Empty && PreviewRecipe.IsLocalHttpUrl(r.Url);
+
+    /// <summary>What to announce on (re)connect: every preview this runner runs (also one still preparing), and the ids
+    /// <see cref="Restore"/> found gone.</summary>
+    public (PreviewAnnouncement[] Running, string[] Gone) Announcements()
+    {
+        var running = new List<PreviewAnnouncement>();
+        foreach (var run in _byId.Values)
+        {
+            if (run.Record is { } r)
+            {
+                running.Add(new PreviewAnnouncement(r.PreviewId, r.Owner, r.Repo, r.Command, r.Url, r.StartedAt, r.BoardId, r.RepoId,
+                    r.Ready ? "Ready" : "Starting"));
+            }
+            else if (run.Start is { } s)
+            {
+                running.Add(new PreviewAnnouncement(s.PreviewId, s.Owner, s.Repo, s.Command, s.Url, run.CreatedAt, s.BoardId, s.RepoId, "Preparing"));
+            }
+        }
+        return ([.. running], [.. _gone.Keys]);
+    }
+
+    /// <summary>Previews that left their state behind under the old scheme (a <c>preview.pid</c> in the checkout, from a
+    /// runner before re-attaching existed) — kill them when they are still the same process.</summary>
     public static void KillLeftovers(string root)
     {
         if (!Directory.Exists(root)) { return; }
@@ -115,7 +246,8 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             }
             finally
             {
-                TryDeleteFile(pidFile);
+                try { File.Delete(pidFile); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _ = ex; }
             }
         }
     }
@@ -157,49 +289,22 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
             }
             await report(run.Id, "Starting", $"Running {recipe.Command}").ConfigureAwait(false);
             Console.WriteLine($"[agent] preview {run.RepoKey}: {recipe.Command} (in {run.Dir})");
-            var psi = ShellFor(recipe.Command, run.Dir);
+            PreviewStore.ResetLog(root, run.Id);
             // The test data this computer offers the agents (REMOTE_AGENT_DATA) reaches the app too: a project that loads
             // real data when it is there (e.g. TeacherHub's CHESS_LIBRARY_PATH library) shows it in Try the app.
-            foreach (var (name, path) in TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA"))) { psi.Environment[name] = path; }
-            var process = Process.Start(psi)
-                ?? throw new InvalidOperationException("The command didn't start.");
-            run.Process = process;
-            run.Job.Add(process);
-            WritePidFile(run.Dir, process);
-            process.OutputDataReceived += (_, e) => Remember(run, e.Data);
-            process.ErrorDataReceived += (_, e) => Remember(run, e.Data);
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            var deadline = DateTime.UtcNow.AddSeconds(Math.Clamp(recipe.ReadyTimeoutSeconds, 10, 3600));
-            while (!ct.IsCancellationRequested)
-            {
-                if (process.HasExited)
-                {
-                    await FailAsync(run, $"The app stopped (exit {process.ExitCode}).\n{TailOf(run)}").ConfigureAwait(false);
-                    return;
-                }
-                if (await IsListeningAsync(recipe.Url, ct).ConfigureAwait(false)) { break; }
-                if (DateTime.UtcNow > deadline)
-                {
-                    await FailAsync(run, $"Nothing answered at {recipe.Url} after {recipe.ReadyTimeoutSeconds} s.\n{TailOf(run)}").ConfigureAwait(false);
-                    return;
-                }
-                await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
-            }
-            if (ct.IsCancellationRequested) { return; }
-            await report(run.Id, "Ready", recipe.Url.AbsoluteUri).ConfigureAwait(false);
-
-            await process.WaitForExitAsync(ct).ConfigureAwait(false);
-            // Ended on its own (crashed, or someone closed it) — not via Stop.
-            if (_byId.TryRemove(run.Id, out _))
-            {
-                _idByRepo.TryRemove(new KeyValuePair<string, string>(run.RepoKey, run.Id));
-                Kill(run); // whatever it left running in the background goes with it
-                await report(run.Id, "Stopped", $"The app ended (exit {process.ExitCode}).\n{TailOf(run)}").ConfigureAwait(false);
-            }
+            var launched = PreviewProcess.Launch(recipe.Command, run.Dir, PreviewStore.LogPath(root, run.Id), run.Id,
+                TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA")));
+            run.Process = launched.Process;
+            run.Group = launched.Group;
+            var record = new PreviewRecord(run.Id, start.Owner, start.Repo, recipe.Command, recipe.Url.AbsoluteUri, recipe.Url.Port,
+                recipe.ReadyTimeoutSeconds, IdleMinutesFor(start.IdleMinutes), start.BoardId, start.RepoId, launched.Process.Id,
+                launched.StartTicks, launched.OwnGroup, DateTimeOffset.UtcNow, Ready: false, launched.OwnJob);
+            run.Record = record;
+            if (ct.IsCancellationRequested) { Kill(run); return; } // stopped while it was starting
+            PreviewStore.Save(root, record);
+            await WatchAsync(run, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { /* stopped */ }
+        catch (OperationCanceledException) { /* stopped (or the runner is exiting — the app runs on) */ }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException
             or UnauthorizedAccessException or UriFormatException)
         {
@@ -207,13 +312,130 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         }
     }
 
+    // Watch a started (or re-attached) preview until it is ready, then until it ends, is stopped, or sits unused too long.
+    private async Task WatchAsync(Running run, CancellationToken ct)
+    {
+        try
+        {
+            var record = run.Record!;
+            var url = new Uri(record.Url);
+            var deadline = record.StartedAt.AddSeconds(Math.Clamp(record.ReadyTimeoutSeconds, 10, 3600));
+            var lastUsed = DateTimeOffset.UtcNow;
+            var nextIdleCheck = lastUsed;
+            var nextLogCheck = lastUsed;
+            while (!ct.IsCancellationRequested)
+            {
+                if (!IsAlive(run))
+                {
+                    await EndedAsync(run, record).ConfigureAwait(false);
+                    return;
+                }
+                var now = DateTimeOffset.UtcNow;
+                if (now >= nextLogCheck)
+                {
+                    nextLogCheck = now + IdleCheck;
+                    _ = PreviewStore.CapLog(root, run.Id); // a chatty app can't fill the disk over a long session
+                }
+                if (!record.Ready)
+                {
+                    if (await IsListeningAsync(url, ct).ConfigureAwait(false))
+                    {
+                        record = record with { Ready = true };
+                        run.Record = record;
+                        TrySave(record);
+                        lastUsed = now;
+                        await report(run.Id, "Ready", url.AbsoluteUri).ConfigureAwait(false);
+                    }
+                    else if (now > deadline)
+                    {
+                        await FailAsync(run, $"Nothing answered at {url} after {record.ReadyTimeoutSeconds} s.\n{PreviewStore.Tail(root, run.Id, TailLines)}").ConfigureAwait(false);
+                        return;
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+                    continue;
+                }
+                if (now >= nextIdleCheck)
+                {
+                    nextIdleCheck = now + IdleCheck;
+                    if (_inUse(record.Port)) { lastUsed = now; }
+                    else if (IsIdle(lastUsed, now, record.IdleMinutes) && _byId.TryRemove(run.Id, out _))
+                    {
+                        _idByRepo.TryRemove(new KeyValuePair<string, string>(run.RepoKey, run.Id));
+                        Kill(run);
+                        Forget(run);
+                        Console.WriteLine($"[agent] preview {run.RepoKey} stopped: unused for {record.IdleMinutes} min");
+                        await report(run.Id, "Stopped", $"Stopped after {record.IdleMinutes} minutes without anyone using it.").ConfigureAwait(false);
+                        return;
+                    }
+                }
+                await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { /* stopped (or the runner is exiting — the app runs on) */ }
+    }
+
+    // Ended on its own (crashed, or someone closed it) — not via Stop.
+    private async Task EndedAsync(Running run, PreviewRecord record)
+    {
+        if (!_byId.TryRemove(run.Id, out _)) { return; }
+        _idByRepo.TryRemove(new KeyValuePair<string, string>(run.RepoKey, run.Id));
+        var exit = run.Process is { } p && TryExitCode(p) is { } code ? string.Create(CultureInfo.InvariantCulture, $" (exit {code})") : "";
+        var tail = PreviewStore.Tail(root, run.Id, TailLines);
+        Kill(run); // whatever it left running in the background goes with it
+        Forget(run);
+        await (record.Ready
+            ? report(run.Id, "Stopped", $"The app ended{exit}.\n{tail}".Trim())
+            : report(run.Id, "Failed", $"The app stopped{exit}.\n{tail}".Trim())).ConfigureAwait(false);
+    }
+
     private async Task FailAsync(Running run, string message)
     {
         if (!_byId.TryRemove(run.Id, out _)) { return; } // stopped meanwhile — that report already went out
         _idByRepo.TryRemove(new KeyValuePair<string, string>(run.RepoKey, run.Id));
         Kill(run);
+        Forget(run);
         Console.WriteLine($"[agent] preview {run.RepoKey} failed: {message.Split('\n')[0]}");
         await report(run.Id, "Failed", message.Trim()).ConfigureAwait(false);
+    }
+
+    private static bool IsAlive(Running run)
+    {
+        if (run.Process is { } p)
+        {
+            try { return !p.HasExited; }
+            catch (InvalidOperationException) { return false; }
+        }
+        return run.Record is { } r && PreviewProcess.IsSame(r.Pid, r.ProcessStartTicks);
+    }
+
+    private static int? TryExitCode(Process p)
+    {
+        try { return p.HasExited ? p.ExitCode : null; }
+        catch (InvalidOperationException) { return null; }
+    }
+
+    private void TrySave(PreviewRecord record)
+    {
+        try { PreviewStore.Save(root, record); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _ = ex; // the app runs on; only a re-attach after a restart would miss the newer state
+        }
+    }
+
+    // True while a client (a browser tab, its live-reload socket) is connected to the app's port.
+    private static bool HasClientOn(int port)
+    {
+        try
+        {
+            return IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpConnections()
+                .Any(c => c.State == TcpState.Established && c.LocalEndPoint.Port == port);
+        }
+        catch (Exception ex) when (ex is NetworkInformationException or PlatformNotSupportedException or IOException or UnauthorizedAccessException)
+        {
+            _ = ex;
+            return true; // can't tell: never stop an app on a guess
+        }
     }
 
     // Clone once, then fetch + hard reset to the branch tip (this folder is AgentOS's own; nobody edits it).
@@ -262,33 +484,6 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         return lines.Length > 0 ? lines[^1] : $"git exited {process.ExitCode}.";
     }
 
-    /// <summary>The OS shell running one recipe line in <paramref name="dir"/>.</summary>
-    internal static ProcessStartInfo ShellFor(string command, string dir)
-    {
-        var windows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-        var psi = new ProcessStartInfo(windows ? "cmd.exe" : "/bin/sh")
-        {
-            WorkingDirectory = dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            StandardOutputEncoding = Utf8NoBom,
-            StandardErrorEncoding = Utf8NoBom,
-        };
-        if (windows)
-        {
-            // /s: strip exactly the outer quotes and keep the line as written (quotes inside it included).
-            psi.Arguments = "/d /s /c \"" + command + "\"";
-        }
-        else
-        {
-            psi.ArgumentList.Add("-c");
-            psi.ArgumentList.Add(command);
-        }
-        return psi;
-    }
-
     /// <summary>True once something accepts a TCP connection on the url's host and port.</summary>
     internal static async Task<bool> IsListeningAsync(Uri url, CancellationToken ct)
     {
@@ -317,48 +512,19 @@ internal sealed class PreviewHost(string root, Func<string, string, string?, Tas
         }
     }
 
-    private static void TryDeleteFile(string path)
-    {
-        try { File.Delete(path); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _ = ex; // still held by a process — the next sweep retries
-        }
-    }
-
-    private static void WritePidFile(string dir, Process process)
-    {
-        try
-        {
-            File.WriteAllText(Path.Join(dir, "preview.pid"),
-                string.Create(CultureInfo.InvariantCulture, $"{process.Id} {process.StartTime.ToUniversalTime().Ticks}"));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            _ = ex; // only the leftover sweep needs it
-        }
-    }
-
+    // Kill the preview's whole tree (its group / job too) and let go of what the runner held for it.
     private static void Kill(Running run)
     {
-        run.Job.Dispose(); // the app's whole tree, background children included
-        run.Awake?.Dispose();
-        try { File.Delete(Path.Join(run.Dir, "preview.pid")); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _ = ex; }
-    }
-
-    private static void Remember(Running run, string? line)
-    {
-        if (line is null) { return; }
-        lock (run.Tail)
+        if (run.Record is { } record) { PreviewProcess.Kill(record, run.Process); }
+        else if (run.Process is { } p)
         {
-            run.Tail.Enqueue(line.Length > 300 ? line[..300] : line);
-            while (run.Tail.Count > TailLines) { run.Tail.Dequeue(); }
+            try { p.Kill(entireProcessTree: true); }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { _ = ex; }
         }
+        run.Group?.Dispose();
+        run.Awake?.Dispose();
+        run.Process?.Dispose();
     }
 
-    private static string TailOf(Running run)
-    {
-        lock (run.Tail) { return string.Join('\n', run.Tail); }
-    }
+    private void Forget(Running run) => PreviewStore.Delete(root, run.Id);
 }

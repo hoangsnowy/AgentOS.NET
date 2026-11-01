@@ -10,6 +10,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Real MSBuild / dotnet test output captured for the tool-output shaping tests (2.7). -->
+    <EmbeddedResource Include="Tools\Fixtures\ToolOutput\*.txt" LogicalName="ToolOutput.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AgentOs.Domain\AgentOs.Domain.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.SharedKernel\AgentOs.SharedKernel.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.Modules.AppConfig\AgentOs.Modules.AppConfig.csproj" />
@@ -55,12 +60,15 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ScopedAutonomy.cs" Link="Linked\ScopedAutonomy.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunnerCredentials.cs" Link="Linked\RunnerCredentials.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\CliProgress.cs" Link="Linked\CliProgress.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\CliToolCalls.cs" Link="Linked\CliToolCalls.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\PreviewHost.cs" Link="Linked\PreviewHost.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ProcessJob.cs" Link="Linked\ProcessJob.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\PreviewProcess.cs" Link="Linked\PreviewProcess.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\KeepAwake.cs" Link="Linked\KeepAwake.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\CliModel.cs" Link="Linked\CliModel.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunFiles.cs" Link="Linked\RunFiles.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunUploads.cs" Link="Linked\RunUploads.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\RunContinuation.cs" Link="Linked\RunContinuation.cs" />
   </ItemGroup>
 
 </Project>

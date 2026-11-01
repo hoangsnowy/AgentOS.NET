@@ -19,6 +19,8 @@ using AgentOs.Modules.Pipeline.Agents;
 using AgentOs.Modules.Pipeline.GraphExecution;
 using AgentOs.Modules.Pipeline.Metrics;
 using AgentOs.Modules.Pipeline.Persistence;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -367,6 +369,56 @@ public sealed class GraphExecutorTests
         seen.TenantId.ShouldBe("acme");
         // A non-denied, non-error invocation reports "ok" on the node.
         done.ShouldContain(e => e.NodeId == "t" && e.Meta == "ok");
+    }
+
+    [Fact]
+    public async Task RunAsync_ToolNode_GetsTheFullOutput_NeverAModelShapedCopy()
+    {
+        // 2.7: tool-output shaping is for the MODEL. A workflow Tool node feeds its result to ${…} / ExtractJson as
+        // DATA, so the gateway the host registers (ToolsModule) must hand it the full result — here a JSON payload
+        // far over the default 16 000-char shaping budget, piped into a second tool node through ${big}.
+        var services = new ServiceCollection();
+        new AgentOs.Modules.Tools.ToolsModule().AddServices(services, new ConfigurationBuilder().Build());
+        await using var provider = services.BuildServiceProvider();
+        var gateway = provider.GetRequiredService<IToolGateway>();
+
+        var bigJson = "[" + string.Join(",", Enumerable.Range(0, 2000).Select(i => $"{{\"id\":{i},\"name\":\"file{i}.cs\"}}")) + "]";
+        bigJson.Length.ShouldBeGreaterThan(ToolOutputShaper.DefaultMaxOutputTokens * ToolOutputShaper.CharsPerToken);
+        var source = new RecordingTool("big", bigJson);
+        var sink = new RecordingTool("sink", "done");
+        var registry = Substitute.For<IToolRegistry>();
+        registry.Resolve("big").Returns(source);
+        registry.Resolve("sink").Returns(sink);
+        var (exec, _) = Build(toolRegistry: registry, toolGateway: gateway);
+
+        var graph = new PlanGraph("g", "tool-data",
+            [
+                N("t", "Tool", start: true, desc: """{"tool":"big","input":{}}""", output: "big"),
+                N("s", "Tool", desc: """{"tool":"sink","input":{"rows":"${big}"}}"""),
+                N("end", "End"),
+            ],
+            [E("t", "s"), E("s", "end")]);
+
+        var result = await exec.RunAsync(graph, "go", 3, "acme", null, _ => Task.CompletedTask);
+
+        result.FailureMessage.ShouldBeNull();
+        result.Completed.ShouldBeTrue();
+        // Interpolation is textual: the full payload lands verbatim inside the second node's input.
+        sink.LastInput.ShouldBe("{\"rows\":\"" + bigJson + "\"}");
+    }
+
+    // A hand-written tool (no substitute on the Task member) that records the input it was given.
+    private sealed class RecordingTool(string name, string output) : ITool
+    {
+        public string? LastInput { get; private set; }
+
+        public ToolDefinition Definition { get; } = new(name, "records its input", """{"type":"object"}""");
+
+        public Task<ToolInvocationResult> InvokeAsync(ToolInvocationRequest request, CancellationToken cancellationToken = default)
+        {
+            LastInput = request.Input;
+            return Task.FromResult(ToolInvocationResult.Success(request.CallId, output));
+        }
     }
 
     [Fact]

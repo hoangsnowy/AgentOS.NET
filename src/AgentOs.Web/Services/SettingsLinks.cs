@@ -22,6 +22,35 @@ public static class SettingsLinks
     /// <summary>Settings → AI → Autopilot: where Board › Autopilot points for how Autopilot runs.</summary>
     public const string Autopilot = "autopilot";
 
+    /// <summary>Settings → Governance → Activity log → Tool calls.</summary>
+    public const string ToolCalls = "evidence";
+
+    /// <summary>The tool-call view filtered to the calls made on a member's computer, optionally for one task
+    /// (<paramref name="sessionId"/>): what a Board task's activity panel links to.</summary>
+    public static string MemberComputerToolCalls(Guid? sessionId = null) =>
+        ToolCalls + "?origin=" + AgentOs.Domain.Tools.ToolEvidenceOrigins.MemberComputer
+        + (sessionId is { } id ? "&session=" + id.ToString("D") : string.Empty);
+
+    /// <summary>Split a target into its page key and, for the tool-call view, its origin and task filter. Anything
+    /// unexpected in the query is dropped (only the member-computer origin and a Guid session id are kept).</summary>
+    public static (string Key, string? Origin, string? SessionId) ParseToolCalls(string target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var q = target.IndexOf('?', StringComparison.Ordinal);
+        if (q < 0) { return (target, null, null); }
+        var key = target[..q];
+        string? origin = null, session = null;
+        foreach (var pair in target[(q + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=', StringComparison.Ordinal);
+            if (eq <= 0) { continue; }
+            var (name, value) = (pair[..eq], pair[(eq + 1)..]);
+            if (name == "origin" && value == AgentOs.Domain.Tools.ToolEvidenceOrigins.MemberComputer) { origin = value; }
+            else if (name == "session" && Guid.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var id)) { session = id.ToString("D"); }
+        }
+        return key == ToolCalls ? (key, origin, session) : (key, null, null);
+    }
+
     // The old two-level targets → the flat page keys.
     private static readonly FrozenDictionary<string, string> Legacy = new Dictionary<string, string>(StringComparer.Ordinal)
     {

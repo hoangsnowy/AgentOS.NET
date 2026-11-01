@@ -83,7 +83,7 @@ the lab can never overspend.
 ```powershell
 pwsh infra/lab/lab.ps1 pair     # pair THIS machine as a runner; lab agents run on your local `claude -p`
 pwsh infra/lab/lab.ps1 pair -Data "CHESS_LIBRARY_PATH=D:\Chess"   # also lets the agents read test data (read-only env vars)
-pwsh infra/lab/lab.ps1 unpair   # stop it (disconnect it in Board → Computers to retire the token)
+pwsh infra/lab/lab.ps1 unpair   # stop it and its Try-the-app previews (disconnect it in Board → Computers to retire the token)
 ```
 
 `pair` signs in to the lab as the seeded operator, registers a runner, sets **Force provider = RemoteAgent**
@@ -111,9 +111,24 @@ the screen never queues behind Autopilot's coding. Specialist answers get a 5-mi
 
 With the runner paired, Board → VNChessAcademy → **Try the app** on a repository runs its latest default branch on
 this machine from `%LOCALAPPDATA%\AgentOS.NET\previews\<owner>-<repo>` (a reused checkout, so restores stay warm)
-and shows *Open the app* once the recipe's url accepts connections. *Stop* kills the whole process tree; the runner
-also stops its previews when it exits and kills leftovers from a hard kill on its next start (`preview.pid`).
-Autopilot holds acceptance testing on that board while a preview runs and says so in the Autopilot log.
+and shows *Open the app* once the recipe's url accepts connections. The app runs outside the runner's process tree
+(on Windows the runner starts `cmd.exe` suspended inside a named job that the app's own processes keep alive; on Linux
+its own session via `setsid`; output in `previews\running\<id>.log`, rotated at 10 MB with one older part kept), so
+`lab.ps1 update`, `lab.ps1 pair` or a runner crash no longer kills it: the state file next to the log (pid, process
+start time, port, recipe, board/repo) lets the next runner re-attach it — only if that pid is still the same process
+(start time, and still the `cmd`/`sh` it started) — and announce it, and the Board card keeps showing *running* with
+the same URL. The server rebuilds a card it forgot (a Web restart) only for a repo of that board in the tenant's own
+workspace store and a `localhost` url; anything else is stopped. A preview whose process is gone is reported stopped;
+a state file the runner can't use has its app stopped (only when it is still the preview's own process). While the
+runner is away the server keeps the card for 15 minutes, then says the app may still be running. *Stop* kills the whole
+process tree (also after a restart; pressed while the runner is away, it is kept for 7 days and applied when the runner
+is back); a preview nobody has had open for `Preview:IdleMinutes` (Settings › Autopilot, default 120) stops by itself.
+`lab.ps1 unpair` and `lab.ps1 down` stop the previews too (`AgentOs.RemoteAgent stop-previews`). To check by hand:
+start a preview, `lab.ps1 update` (or restart the runner), and the card stays *Ready* with the same *Open the app*;
+*Stop* still closes it.
+Autopilot holds acceptance testing on that board while a preview runs and says so in the Autopilot log — unless the
+project is listed in Settings › Autopilot › *Test while trying the app* (only when the app keeps its data separately
+for each checkout).
 The test data the runner was paired with (`-Data`, e.g. `CHESS_LIBRARY_PATH`) reaches the app too, so a project that loads
 real data when it is there shows it.
 

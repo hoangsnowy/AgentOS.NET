@@ -16,6 +16,7 @@ using AgentOs.Domain.Pipeline;
 using AgentOs.Domain.Llm;
 using AgentOs.Domain.Sessions;
 using AgentOs.Modules.Pipeline.Prompts;
+using AgentOs.SharedKernel.Logging;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -305,8 +306,18 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
 
         try
         {
+            // A revision of an existing pull request pushes onto its branch, which is always there: whether the run pushed
+            // anything shows only in the head moving. Recorded now, read only if the reply has to be asked for again.
+            var headBefore = cliMode && IsRevision(request, repo) ? await BranchHeadAsync(request, repo, repo.ExistingBranch!, _logger, ct).ConfigureAwait(false) : null;
             var response = await llm.SendAsync(req, ct).ConfigureAwait(false);
-            return ParseOutcome(response.Content ?? "", request, repo);
+            var content = response.Content ?? "";
+            // No JSON summary — often a run that ran out of turns or context AFTER doing the work: ask once for it.
+            if (!ReplyRecovery.HasJson(content, nameof(IssueWorkAgent))
+                && await RecoverAsync(llm, req, response, headBefore, request, repo, ct).ConfigureAwait(false) is { } recovered)
+            {
+                return recovered;
+            }
+            return ParseOutcome(content, request, repo);
         }
         catch (LlmException ex) { return LlmCallFailed(ex); }
         catch (System.Net.Http.HttpRequestException ex) { return LlmCallFailed(ex); }
@@ -320,6 +331,127 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
             _logger.LogError(ex, "IssueWorkAgent: LLM call failed for session {SessionId} repo {Owner}/{Repo}",
                 request.SessionId, repo.Owner, repo.Repo);
             return new RepoWorkOutcome(repo.SessionRepoId, false, repo.Owner, repo.Repo, "", "", $"LLM call failed: {ex.Message}");
+        }
+    }
+
+    // The run ended without its JSON summary (VNChess #102 lost a 20-minute migration that way): ask it once for the
+    // summary of what it already did, then make sure a reported branch really reached the remote. Null = asking is
+    // switched off (Settings › Autopilot) or the run can't be continued (a server-side provider) — the original "no
+    // JSON" failure stands.
+    private async Task<RepoWorkOutcome?> RecoverAsync(ILlmClient llm, LlmRequest original, LlmResponse response, string? headBefore,
+        IssueWorkRequest request, WorkRepo repo, CancellationToken ct)
+    {
+        if (!await ReplyRecovery.ShouldAskAsync(_profiles, response, ct).ConfigureAwait(false)) { return null; }
+        var repoLabel = $"{repo.Owner}/{repo.Repo}";
+        Emit(request, SessionRunEventKind.Step, $"{repoLabel} — the run ended without its summary; asking the agent once for it.", repoLabel);
+        var followUp = ReplyRecovery.FollowUp(original, response, IssueWorkPrompt.RecoverySystem, IssueWorkPrompt.RecoveryAsk(request, repo));
+        var answer = await ReplyRecovery.AskAsync(llm, followUp, _logger, nameof(IssueWorkAgent), ct).ConfigureAwait(false);
+        if (answer.Reply is not { } reply || !ReplyRecovery.HasJson(reply, nameof(IssueWorkAgent)))
+        {
+            Emit(request, SessionRunEventKind.ReplyRecovered, $"{repoLabel} — asked again, but the agent still gave no summary.", repoLabel);
+            var content = response.Content ?? "";
+            return new RepoWorkOutcome(repo.SessionRepoId, false, repo.Owner, repo.Repo, "",
+                content.Length > 200 ? content[..200] : content, NoSummaryAfterAskingAgain + answer.Why);
+        }
+
+        var outcome = await VerifyRecoveredAsync(ParseOutcome(reply, request, repo), Pushed(reply), answer.Resumed, headBefore,
+            request, repo, _logger, ct).ConfigureAwait(false);
+        Emit(request, SessionRunEventKind.ReplyRecovered, outcome.Ok
+            ? $"{repoLabel} — summary recovered: the run had pushed branch {outcome.BranchName}."
+            : $"{repoLabel} — summary recovered: {outcome.Error}", repoLabel);
+        _logger.LogInformation("IssueWorkAgent: recovered the missing summary for session {SessionId} repo {Owner}/{Repo} (ok={Ok})",
+            request.SessionId, repo.Owner, repo.Repo, outcome.Ok);
+        return outcome;
+    }
+
+    /// <summary>The failure when the run gave no JSON summary and asking once more gave none either.</summary>
+    internal const string NoSummaryAfterAskingAgain = "Agent did not return a JSON summary (asked once more; still none).";
+
+    /// <summary>The failure when a recovered summary names a branch that never reached the remote — worded so the
+    /// Orchestrator agent's retry guidance tells the next run to push.</summary>
+    internal static string NotPushed(string branch) => string.IsNullOrWhiteSpace(branch)
+        ? "The work was done but not pushed — the run's commits never reached the remote. The next run must commit and push its branch."
+        : $"The work was done but not pushed — branch {branch} is not on the remote (its commits stayed on the computer). "
+          + $"The next run must commit and push it: git push -u origin {branch}";
+
+    /// <summary>The failure when a recovered summary can't be trusted: the follow-up couldn't continue the run's own session
+    /// and the remote couldn't confirm the work either.</summary>
+    internal static string Unconfirmed(string branch) =>
+        $"Agent did not return a JSON summary (asked once more, but {ReplyRecovery.NotResumedNote}, and the remote couldn't confirm "
+        + (string.IsNullOrWhiteSpace(branch) ? "the work)." : $"that branch {branch} holds it).");
+
+    /// <summary>A recovered summary counts only when the work is on the remote. The agent's own "pushed": false, a branch
+    /// the remote doesn't have, or — for a revision of an existing pull request, whose branch is always there — a head that
+    /// didn't move since before the run (<paramref name="headBefore"/>) is "done but not pushed". The remote confirms the
+    /// work when the new branch is there, or the revision's head moved. When it can't tell (Azure DevOps, an API failure),
+    /// the agent's word stands only if the follow-up continued the run's own session (<paramref name="resumed"/>); a fresh
+    /// conversation has no memory of the run, so its unconfirmed summary is rejected.</summary>
+    internal static async Task<RepoWorkOutcome> VerifyRecoveredAsync(RepoWorkOutcome outcome, bool? pushed, bool resumed, string? headBefore,
+        IssueWorkRequest request, WorkRepo repo, ILogger logger, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(repo);
+        if (!outcome.Ok) { return outcome; }
+        if (pushed == false) { return outcome with { Ok = false, Error = NotPushed(outcome.BranchName) }; }
+        bool? exists = null;
+        if (request.BranchExists is { } check)
+        {
+            try
+            {
+                exists = await check(repo, outcome.BranchName, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "IssueWorkAgent: could not check branch {Branch} on the remote", LogSafe.Scrub(outcome.BranchName));
+            }
+        }
+        if (exists == false) { return outcome with { Ok = false, Error = NotPushed(outcome.BranchName) }; }
+
+        var confirmed = exists;
+        if (IsRevision(request, repo))
+        {
+            // The branch always exists for a revision: only a moved head shows a push.
+            var headAfter = headBefore is null ? null : await BranchHeadAsync(request, repo, outcome.BranchName, logger, ct).ConfigureAwait(false);
+            confirmed = headBefore is null || headAfter is null ? null : !string.Equals(headBefore, headAfter, StringComparison.OrdinalIgnoreCase);
+            if (confirmed == false) { return outcome with { Ok = false, Error = NotPushed(outcome.BranchName) }; }
+        }
+        return confirmed == true || resumed ? outcome : outcome with { Ok = false, Error = Unconfirmed(outcome.BranchName) };
+    }
+
+    // A follow-up round on an existing pull request: the run pushes onto that pull request's branch.
+    private static bool IsRevision(IssueWorkRequest request, WorkRepo repo) =>
+        !string.IsNullOrWhiteSpace(repo.ExistingBranch) && !string.IsNullOrWhiteSpace(request.ChangeRequest);
+
+    // The remote head of a branch, through the caller's IPrCreationService (the board's credentials stay there); null when
+    // unknown. Never throws (cancellation aside).
+    private static async Task<string?> BranchHeadAsync(IssueWorkRequest request, WorkRepo repo, string branch, ILogger logger, CancellationToken ct)
+    {
+        if (request.BranchHead is not { } head || string.IsNullOrWhiteSpace(branch)) { return null; }
+        try
+        {
+            return await head(repo, branch, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "IssueWorkAgent: could not read the head of branch {Branch} on the remote", LogSafe.Scrub(branch));
+            return null;
+        }
+    }
+
+    // The recovered summary's "pushed" flag (the follow-up's schema adds it); null when absent.
+    private static bool? Pushed(string reply)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonExtractor.ExtractJson(reply, nameof(IssueWorkAgent)));
+            return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("pushed", out var p)
+                ? p.ValueKind switch { JsonValueKind.True => true, JsonValueKind.False => false, _ => null }
+                : null;
+        }
+        catch (Exception ex) when (ex is LlmException or JsonException)
+        {
+            return null;
         }
     }
 

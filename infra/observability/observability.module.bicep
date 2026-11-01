@@ -98,6 +98,15 @@ var logAlerts = [
     query: 'customMetrics | where name == "agentos.evidence.lost" | summarize Lost = sum(valueSum) by cloud_RoleInstance | where Lost > 0'
   }
   {
+    name: 'AgentOsEvidenceRemoteRefused'
+    severity: 2
+    window: 'PT20M'
+    frequency: 'PT5M'
+    description: 'Tool calls a paired runner reported kept being refused (not recorded) for 15 minutes.'
+    // Sustained, like the Prometheus rule's for: 15m — refusals in at least 3 of the window's 5-minute bins.
+    query: 'customMetrics | where name == "agentos.evidence.remote_refused" | summarize Refused = sum(valueSum) by bin(timestamp, 5m), Reason = tostring(customDimensions["reason"]), cloud_RoleInstance | where Refused > 0 | summarize Bins = count(), Refused = sum(Refused) by Reason, cloud_RoleInstance | where Bins >= 3'
+  }
+  {
     name: 'AgentOsHealthCheckUnhealthy'
     severity: 1
     window: 'PT10M'

@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentOs.Domain.Tools;
 using AgentOs.Modules.Pipeline.Metrics;
 using AgentOs.ServiceDefaults;
 using AgentOs.SharedKernel.Telemetry;
@@ -37,7 +38,13 @@ public sealed partial class ObservabilityAssetsTests
         (HealthMetricsPublisher.InstrumentName, ["agentos_health_status"]),
         ("agentos.evidence.inline_writes", ["agentos_evidence_inline_writes_total"]),
         ("agentos.evidence.lost", ["agentos_evidence_lost_total"]),
+        ("agentos.evidence.remote_refused", ["agentos_evidence_remote_refused_total"]), // InProcessRemoteAgentBroker
+        (ToolTelemetry.SavedCharsName, ["agentos_tools_output_saved_chars_total"]), // "{char}" unit: annotation dropped
     ];
+
+    // Emitted but deliberately on no dashboard: the semconv token histogram is superseded there by agentos.llm.tokens
+    // (which splits the billing classes); it stays for generic GenAI tooling.
+    private static readonly HashSet<string> NotVisualised = new(StringComparer.Ordinal) { LlmTelemetry.Instruments.TokenUsage };
 
     private static string[] Histogram(string name) => [$"{name}_bucket", $"{name}_sum", $"{name}_count"];
 
@@ -118,6 +125,23 @@ public sealed partial class ObservabilityAssetsTests
             {
                 KnownInstruments.ShouldContain(m.Groups[1].Value, $"query references unknown instrument {m.Groups[1].Value}");
             }
+        }
+    }
+
+    [Fact]
+    public void EveryEmittedInstrument_IsOnADashboardOrAlert()
+    {
+        // The reverse drift: a new instrument (e.g. #299 evidence refused, #300 output savings) that no operator asset
+        // queries is invisible in production. A Grafana dashboard or a Prometheus rule must use one of its series.
+        var root = RepoRoot();
+        var assets = string.Concat(
+            Directory.GetFiles(Path.Join(root, "deploy", "observability", "grafana"), "*.json").Select(File.ReadAllText)
+                .Append(File.ReadAllText(Path.Join(root, "deploy", "observability", "prometheus", "alerts.yml"))));
+        var used = OwnSeries().Matches(assets).Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var (instrument, series) in Emitted.Where(e => !NotVisualised.Contains(e.Instrument)))
+        {
+            series.Any(used.Contains).ShouldBeTrue($"{instrument} is emitted but no dashboard or alert rule queries it");
         }
     }
 

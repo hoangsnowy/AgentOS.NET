@@ -135,6 +135,10 @@ public sealed record InsightsExtra(
 {
     /// <summary>The zero result — no metrics recorded (or no database wired).</summary>
     public static InsightsExtra Empty { get; } = new([], [], []);
+
+    /// <summary>How many times a Board agent run ended without its JSON reply and was asked once for it (the follow-up
+    /// calls tagged <see cref="AgentOs.Domain.Llm.LlmCallPurposes.ReplyRecovery"/>).</summary>
+    public int RepliesAskedAgain { get; init; }
 }
 
 /// <summary>Average wall-clock latency (ms) for one agent across its LLM calls.</summary>

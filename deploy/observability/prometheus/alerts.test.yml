@@ -131,6 +131,26 @@ tests:
               summary: "The evidence queue on web-1 has been full for 15 minutes (writes are going inline)"
               runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidencequeuesaturated"
 
+  # Runner-reported tool calls refused: sustained wrong_connection fires after 15 min; a one-off run_cap burst does not.
+  - interval: 1m
+    input_series:
+      - series: 'agentos_evidence_remote_refused_total{job="web", instance="web-1", reason="wrong_connection"}'
+        values: '0+1x40'
+      - series: 'agentos_evidence_remote_refused_total{job="web", instance="web-1", reason="run_cap"}'
+        values: '0 0 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50 50'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentOsEvidenceRemoteRefused
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AgentOsEvidenceRemoteRefused
+        exp_alerts:
+          - exp_labels: { severity: warning, job: web, instance: web-1, reason: wrong_connection }
+            exp_annotations:
+              summary: "10 runner-reported tool call(s) refused (wrong_connection) on web-1 in 10 min, for 15 minutes"
+              description: The server is not recording tool calls a paired runner reports; the evidence for those calls exists only in the runner's logs.
+              runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidenceremoterefused"
+
   # Health: blackbox probe failing + the in-process gauge reporting postgres Unhealthy.
   - interval: 1m
     input_series:
