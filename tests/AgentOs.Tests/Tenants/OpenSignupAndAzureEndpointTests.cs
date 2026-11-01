@@ -9,6 +9,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Configuration;
@@ -16,10 +19,17 @@ using AgentOs.Domain.Llm;
 using AgentOs.Modules.AppConfig.Endpoints;
 using AgentOs.Modules.Llm;
 using AgentOs.Modules.Tenants;
+using AgentOs.Modules.Tenants.Email;
+using AgentOs.Modules.Tenants.Endpoints;
 using AgentOs.Modules.Tenants.Keycloak;
 using AgentOs.Modules.Tenants.Settings;
+using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Security;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Shouldly;
@@ -92,6 +102,55 @@ public sealed class OpenSignupAndAzureEndpointTests
         outcome.Mode.ShouldBe(SignupMode.Slug);
     }
 
+    // Login.razor / Signup.razor ask this on load: a settings-store outage must close signup, not break the page.
+    [Fact]
+    public async Task IsOpenSignupEnabled_SettingsStoreThrows_ReturnsFalse()
+    {
+        var (service, _) = Service(new ThrowingSettings(new InvalidOperationException("store down")));
+        (await service.IsOpenSignupEnabledAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task IsOpenSignupEnabled_Cancelled_StillPropagates()
+    {
+        var (service, _) = Service(new ThrowingSettings(new OperationCanceledException()));
+        await Should.ThrowAsync<OperationCanceledException>(() => service.IsOpenSignupEnabledAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task RegisterEndpoint_SignupClosed_Returns403_AndCreatesNoUser()
+    {
+        var (service, kc) = Service(new FixedSettings("false"));
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.Services.AddSingleton(Substitute.For<ITenantsRepository>());
+        builder.Services.AddSingleton(kc);
+        builder.Services.AddSingleton(Substitute.For<IAuditLog>());
+        builder.Services.AddSingleton(Substitute.For<IEmailSender>());
+        builder.Services.AddSingleton(Substitute.For<ITenantContext>());
+        builder.Services.AddSingleton<ITenantSignupService>(service);
+        await using var app = builder.Build();
+        app.MapTenantEndpoints();
+        var register = ((IEndpointRouteBuilder)app).DataSources.SelectMany(d => d.Endpoints).OfType<RouteEndpoint>()
+            .Single(e => e.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "TenantsRegister");
+
+        var body = JsonSerializer.SerializeToUtf8Bytes(new RegisterTenantRequest("acme", "Acme", "alice", null, Password, null));
+        using var requestBody = new MemoryStream(body);
+        using var responseBody = new MemoryStream();
+        var http = new DefaultHttpContext { RequestServices = app.Services };
+        http.Request.Method = "POST";
+        http.Request.ContentType = "application/json";
+        http.Request.ContentLength = body.Length;
+        http.Request.Body = requestBody;
+        http.Response.Body = responseBody;
+        // Kestrel sets this; a bare DefaultHttpContext doesn't, and minimal APIs then treat the body as absent (400).
+        http.Features.Set<Microsoft.AspNetCore.Http.Features.IHttpRequestBodyDetectionFeature>(new HasBody());
+
+        await register.RequestDelegate!(http);
+
+        http.Response.StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
+        await kc.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default!, default!, default, default, default);
+    }
+
     // ── Azure OpenAI endpoint allowlist ──
 
     [Theory]
@@ -161,6 +220,26 @@ public sealed class OpenSignupAndAzureEndpointTests
         var service = new TenantSignupService(repo, kc, Substitute.For<IAuditLog>(), new EphemeralDataProtectionProvider(),
             NullLogger<TenantSignupService>.Instance, settings);
         return (service, kc);
+    }
+
+    private sealed class HasBody : Microsoft.AspNetCore.Http.Features.IHttpRequestBodyDetectionFeature
+    {
+        public bool CanHaveBody => true;
+    }
+
+    private sealed class ThrowingSettings(Exception error) : ISettings
+    {
+        public long Version => 0;
+
+        public ValueTask<SettingValue> GetAsync(string key, string? tenantId, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<SettingValue>(error);
+
+        public ValueTask<IReadOnlyList<SettingView>> ListAsync(string? tenantId, string? category = null, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<IReadOnlyList<SettingView>>(error);
+
+        public ValueTask<SettingWriteResult> SetAsync(
+            string key, string? value, SettingScope scope, string? tenantId, string actor, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<SettingWriteResult>(error);
     }
 
     // ISettings is ValueTask-returning — a hand-written fake, never substituted.

@@ -69,21 +69,10 @@ public sealed class MafChatClient : ILlmClient
         // and per-tenant isolation requires using THEIR key/endpoint, not the shared platform one. Resolved
         // per-call (this is keyed-transient): IRuntimeOverrides reads the ambient tenant, never at ctor time.
         var configuredPricingModel = await PricingModelAsync(cancellationToken).ConfigureAwait(false);
-        var tenantKeys = await _overrides.GetAzureApiKeysAsync(cancellationToken).ConfigureAwait(false);
-        var apiKey = tenantKeys.Count > 0 ? tenantKeys[0] : _options.ApiKey;
-        var endpoint = !string.IsNullOrWhiteSpace(_overrides.AzureEndpoint) ? _overrides.AzureEndpoint! : _options.Endpoint;
-
-        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(endpoint))
-        {
-            throw new LlmException(
-                "Azure OpenAI not configured for the MAF client. Set your Azure key + endpoint in Settings "
-                + "(per-tenant) or 'Llm:AzureOpenAi:ApiKey' + 'Llm:AzureOpenAi:Endpoint' (user-secrets or env).",
-                Provider);
-        }
+        var (endpoint, apiKey) = await ResolveCredentialsAsync(cancellationToken).ConfigureAwait(false);
 
         var deployment = string.IsNullOrWhiteSpace(_options.Model) ? request.Model : _options.Model;
-        // GAP-01: a Settings endpoint must be an Azure host and is called through SsrfGuard.
-        var azure = GetOrCreateClient(AzureEndpoints.Resolve(_overrides.AzureEndpoint, _options.Endpoint), apiKey);
+        var azure = GetOrCreateClient(endpoint, apiKey);
         IChatClient chat = azure.GetChatClient(deployment).AsIChatClient();
 
         var messages = LlmMessages.For(request);
@@ -164,6 +153,26 @@ public sealed class MafChatClient : ILlmClient
 
     // Returns a cached AzureOpenAIClient for the (endpoint, key) pair, building one on first use. Internal
     // for the reuse test (InternalsVisibleTo "AgentOs.Tests"); callers must validate endpoint/key first.
+    /// <summary>The endpoint + key for this call. GAP-01: a Settings endpoint must be an Azure host, is called through
+    /// SsrfGuard, and runs on the tenant's own key only — the platform key is used solely with the platform endpoint.
+    /// Throws <see cref="LlmException"/> (before any request) when nothing usable is configured.</summary>
+    internal async ValueTask<(AzureEndpoints.Resolved Endpoint, string ApiKey)> ResolveCredentialsAsync(CancellationToken cancellationToken)
+    {
+        var tenantKeys = await _overrides.GetAzureApiKeysAsync(cancellationToken).ConfigureAwait(false);
+        var endpoint = AzureEndpoints.Resolve(_overrides.AzureEndpoint, _options.Endpoint);
+        IReadOnlyList<string> platformKeys = string.IsNullOrWhiteSpace(_options.ApiKey) ? [] : [_options.ApiKey];
+        var keys = AzureEndpoints.KeysFor(endpoint, tenantKeys, platformKeys, Provider);
+
+        if (keys.Count == 0 || string.IsNullOrWhiteSpace(keys[0]) || string.IsNullOrWhiteSpace(endpoint.Endpoint))
+        {
+            throw new LlmException(
+                "Azure OpenAI not configured for the MAF client. Set your Azure key + endpoint in Settings "
+                + "(per-tenant) or 'Llm:AzureOpenAi:ApiKey' + 'Llm:AzureOpenAi:Endpoint' (user-secrets or env).",
+                Provider);
+        }
+        return (endpoint, keys[0]);
+    }
+
     internal static AzureOpenAIClient GetOrCreateClient(string endpoint, string apiKey) =>
         GetOrCreateClient(new AzureEndpoints.Resolved(endpoint, Untrusted: false), apiKey);
 

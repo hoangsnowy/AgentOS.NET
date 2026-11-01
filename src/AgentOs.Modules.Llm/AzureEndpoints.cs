@@ -2,10 +2,14 @@
 // tenant- or platform-admin-set at runtime) must pass the AzureOpenAiEndpoint allowlist — re-checked here at call time,
 // so a value saved before the check existed is refused — and is called through SsrfGuard's connect-time handler. The
 // operator's bootstrap endpoint (LlmOptions, from env / user-secrets) is trusted and uses the default transport.
+// The platform's own Azure key only ever goes to that bootstrap endpoint: a Settings endpoint runs on the tenant's keys
+// alone (KeysFor / EnsureKeyMayGoTo), so a tenant can't point the platform key at a host it controls.
 
 using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using AgentOs.Domain.Llm;
 using AgentOs.SharedKernel.Security;
@@ -37,6 +41,43 @@ internal static class AzureEndpoints
             throw new LlmException($"The Azure OpenAI endpoint set in Settings was refused: {error}", "AzureOpenAI");
         }
         return new Resolved(fromSettings, Untrusted: true);
+    }
+
+    /// <summary>What a workspace is told when it points Azure OpenAI at its own endpoint without its own key.</summary>
+    internal const string TenantEndpointNeedsTenantKey =
+        "This workspace sends Azure OpenAI calls to its own endpoint but has no Azure OpenAI key of its own. "
+        + "Set your own Azure OpenAI key together with your own endpoint, or remove the endpoint to use the platform's.";
+
+    /// <summary>The key pool for a call to <paramref name="endpoint"/>: the tenant's own keys when it set any; otherwise
+    /// the platform's keys, but ONLY when the endpoint is the platform's own (bootstrap) endpoint. A Settings endpoint
+    /// with no tenant key is refused with <see cref="LlmException"/> before any request — the platform's key is never
+    /// sent to a host a tenant chose (GAP-01).</summary>
+    public static IReadOnlyList<string> KeysFor(Resolved endpoint, IReadOnlyList<string> tenantKeys, IReadOnlyList<string> platformKeys, string provider)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(tenantKeys);
+        ArgumentNullException.ThrowIfNull(platformKeys);
+        if (tenantKeys.Count > 0)
+        {
+            return tenantKeys;
+        }
+        if (endpoint.Untrusted)
+        {
+            throw new LlmException(TenantEndpointNeedsTenantKey, provider);
+        }
+        return platformKeys;
+    }
+
+    /// <summary>Last line of defence where the SDK client is built: a platform key never goes to a Settings endpoint,
+    /// even if the endpoint changed between choosing the key and building the client.</summary>
+    public static void EnsureKeyMayGoTo(Resolved endpoint, string apiKey, IReadOnlyCollection<string> platformKeys, string provider)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(platformKeys);
+        if (endpoint.Untrusted && platformKeys.Contains(apiKey, StringComparer.Ordinal))
+        {
+            throw new LlmException(TenantEndpointNeedsTenantKey, provider);
+        }
     }
 
     /// <summary>The SDK client for <paramref name="endpoint"/> — over the SSRF-hardened transport when untrusted.</summary>

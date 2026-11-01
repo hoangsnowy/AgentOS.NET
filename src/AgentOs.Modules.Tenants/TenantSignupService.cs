@@ -49,8 +49,18 @@ internal sealed partial class TenantSignupService : ITenantSignupService
     {
         // Fail closed: no settings registry (or an unreadable value) means no open signup.
         if (_settings is null) { return false; }
-        var value = await _settings.GetAsync(Settings.TenantsSettings.OpenSignupKey, tenantId: null, ct).ConfigureAwait(false);
-        return bool.TryParse(value.Value, out var open) && open;
+        try
+        {
+            var value = await _settings.GetAsync(Settings.TenantsSettings.OpenSignupKey, tenantId: null, ct).ConfigureAwait(false);
+            return bool.TryParse(value.Value, out var open) && open;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The login and signup pages ask this on load — a settings-store outage must not take them down. Closed
+            // is the safe answer: invitations still work, and a new workspace waits until the store is back.
+            _logger.LogWarning(ex, "Could not read {Setting}; treating open self-signup as off.", Settings.TenantsSettings.OpenSignupKey);
+            return false;
+        }
     }
 
     public async Task<TenantSignupOutcome> SignupAsync(TenantSignupRequest request, CancellationToken ct = default)

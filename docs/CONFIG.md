@@ -63,7 +63,9 @@ tenant key wins over the platform seed. Never commit them.
 resource host: `https://<resource>.openai.azure.com`, `.cognitiveservices.azure.com` or `.services.ai.azure.com`
 (or the US Gov / China equivalents), on the default port. The server calls it through `SsrfGuard`. Any other host,
 such as a Private Link name, an APIM gateway or a custom domain, can only be configured by the operator in bootstrap
-configuration (`Llm__AzureOpenAi__Endpoint`, user-secrets or Key Vault), which is trusted as-is.
+configuration (`Llm__AzureOpenAi__Endpoint`, user-secrets or Key Vault), which is trusted as-is. An endpoint set in
+Settings also needs an Azure OpenAI key set in Settings: the platform's seeded key is only ever sent to the platform's
+own endpoint, so without a key of its own the workspace's Azure calls are refused (Azure OpenAI and MAF alike).
 
 ### Production locks (`appsettings.Production.json`, Api + Web)
 
