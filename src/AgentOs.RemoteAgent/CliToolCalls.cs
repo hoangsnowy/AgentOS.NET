@@ -8,6 +8,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AgentOs.RemoteAgent;
 
@@ -51,17 +52,15 @@ internal sealed class CliToolCalls
     internal void Observe(CliProgress.Event e, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(e);
-        foreach (var use in e.ToolUses)
+        foreach (var use in e.ToolUses.Where(u => !_finished.Contains(u.Id)))
         {
-            if (!_finished.Contains(use.Id)) { _open.TryAdd(use.Id, (use.Tool, use.Summary, now)); }
+            _open.TryAdd(use.Id, (use.Tool, use.Summary, now));
         }
-        foreach (var outcome in e.Outcomes)
+        foreach (var outcome in e.Outcomes.Where(o => _open.ContainsKey(o.ToolUseId)))
         {
-            if (_open.Remove(outcome.ToolUseId, out var call))
-            {
-                Finish(new RunnerToolEvent(outcome.ToolUseId, call.Tool, call.Summary, !outcome.IsError, outcome.Denied, call.Started,
-                    Math.Max(0, (long)(now - call.Started).TotalMilliseconds)));
-            }
+            _open.Remove(outcome.ToolUseId, out var call);
+            Finish(new RunnerToolEvent(outcome.ToolUseId, call.Tool, call.Summary, !outcome.IsError, outcome.Denied, call.Started,
+                Math.Max(0, (long)(now - call.Started).TotalMilliseconds)));
         }
         if (e.Final?.PermissionDenials is { } denials)
         {
