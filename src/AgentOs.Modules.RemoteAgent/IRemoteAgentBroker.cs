@@ -168,6 +168,24 @@ public static class RunnerToolRefusals
     public const string BatchCap = "batch_cap";
 }
 
+/// <summary>What a refused runner result / progress report was — the low-cardinality <c>kind</c> tag of
+/// <c>agentos.remote.result_refused</c> (GAP-06). Never a runner-supplied value.</summary>
+public static class RemoteResultRefusals
+{
+    /// <summary>A request's result (<c>CompleteRequest</c>) from a connection that is not the request's runner.</summary>
+    public const string Request = "request";
+
+    /// <summary>A tool call's result (<c>CompleteToolCall</c>) from a connection that is not the call's runner.</summary>
+    public const string ToolCall = "tool_call";
+
+    /// <summary>A progress step (<c>ReportProgress</c>) from a connection that is not the request's runner.</summary>
+    public const string Progress = "progress";
+
+    /// <summary>A result or progress step for an id no one waits for: a late answer after a timeout or a Stop, a duplicate,
+    /// an id this replica never dispatched (a restart, a different replica) — or a guessed one.</summary>
+    public const string Unknown = "unknown";
+}
+
 /// <summary>What decided which tools a CLI run could use, as the runner reports it with each batch.</summary>
 public static class RunnerPermissions
 {
@@ -300,11 +318,14 @@ public interface IRemoteAgentBroker
 
     IDisposable RegisterRunner(string connectionId, RunnerConnection runner);
 
-    /// <summary>Server-side completion (the transport's approval denial or delivery failure) — trusted, no owner check.</summary>
-    void Complete(RemoteExecResult result);
+    /// <summary>TRUSTED server-side completion — no owner check, so it must never carry anything a runner sent. Only the
+    /// server's own outcomes use it: the transport's approval denial or delivery failure (and test doubles). A runner's
+    /// answer goes through <see cref="Complete(string, RemoteExecResult)"/>.</summary>
+    void CompleteFromServer(RemoteExecResult result);
 
     /// <summary>Called by the hub when a runner sends <c>CompleteRequest</c>. Accepted only from the connection the request
-    /// was dispatched to (or a reconnect of that same runner in the same tenant); false when refused (counted and logged).</summary>
+    /// was dispatched to (or a reconnect of that same runner in the same tenant); false when refused (counted and logged)
+    /// or when no one waits for the id any more (a late answer after a timeout — counted as <c>kind=unknown</c>).</summary>
     bool Complete(string connectionId, RemoteExecResult result);
 
     // ── M4: bidirectional tool-call protocol ──
@@ -319,11 +340,14 @@ public interface IRemoteAgentBroker
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Server-side completion of a tool call (approval denial, delivery failure) — trusted, no owner check.</summary>
-    void CompleteToolCall(RunnerToolResult result);
+    /// <summary>TRUSTED server-side completion of a tool call — no owner check, so it must never carry anything a runner
+    /// sent. Only the server's own outcomes use it: the transport's approval denial or delivery failure (and test
+    /// doubles). A runner's answer goes through <see cref="CompleteToolCall(string, RunnerToolResult)"/>.</summary>
+    void CompleteToolCallFromServer(RunnerToolResult result);
 
     /// <summary>Called by the hub when the runner sends a <c>CompleteToolCall</c> message. Accepted only from the connection
-    /// the call was dispatched to (or a reconnect of that same runner in the same tenant); false when refused.</summary>
+    /// the call was dispatched to (or a reconnect of that same runner in the same tenant); false when refused, or when no
+    /// one waits for the id any more.</summary>
     bool CompleteToolCall(string connectionId, RunnerToolResult result);
 
     // ── Ticket files (ADR-0015) ──
@@ -333,7 +357,8 @@ public interface IRemoteAgentBroker
     void StageFiles(string id, System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile> files) { }
 
     /// <summary>Called by the hub: a piece of staged file <paramref name="index"/> from <paramref name="offset"/> — only for
-    /// the connection the request was dispatched to; null for anything else.</summary>
+    /// the connection the request was dispatched to, or that runner's reconnect (same runner id, same tenant); null for
+    /// anything else.</summary>
     RunFileChunk? ReadRunFile(string connectionId, string id, int index, long offset) => null;
 
     /// <summary>Drop what was staged for <paramref name="id"/>; returns how many files its runner fetched to the end.</summary>
@@ -348,7 +373,8 @@ public interface IRemoteAgentBroker
     bool ExpectUploads(string id, AgentOs.Domain.Files.RunCollect limits) => false;
 
     /// <summary>Called by the hub: one piece of a file sent back. Null when accepted, else why it was refused (the file is
-    /// then dropped). Only the connection the request was dispatched to is heard.</summary>
+    /// then dropped). Only the connection the request was dispatched to — or that runner's reconnect (same runner id,
+    /// same tenant), so the Design gate's end-of-run screenshots survive an auto-reconnect — is heard.</summary>
     string? UploadRunFile(string connectionId, string id, AgentOs.Domain.Files.RunUploadChunk chunk) => "This server takes no files back.";
 
     /// <summary>The complete files sent back for <paramref name="id"/>, and forget the request.</summary>
@@ -398,8 +424,12 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     private readonly ConcurrentDictionary<string, Pending<RemoteExecResult>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Pending<RunnerToolResult>> _pendingToolCalls = new(StringComparer.Ordinal);
 
-    // A dispatched request or tool call: the task its caller awaits, and the connection (+ runner, tenant) it went to.
-    private sealed record Pending<T>(TaskCompletionSource<T> Task, string ConnectionId, RunnerConnection? Runner);
+    // Who a dispatch went to: the connection, and the runner behind it (id + tenant) — so that runner's own reconnect is
+    // still heard (IsRunnersConnection). One immutable record, published by a single reference write.
+    private sealed record DispatchOwner(string ConnectionId, RunnerConnection Runner);
+
+    // A dispatched request or tool call: the task its caller awaits, and who it went to.
+    private sealed record Pending<T>(TaskCompletionSource<T> Task, DispatchOwner Owner);
     // Preview id → who runs it: the connection (null while its computer is away — DetachedAt says since when), and the
     // tenant + member + runner it belongs to. A report from any other connection is ignored.
     private readonly ConcurrentDictionary<string, PreviewRoute> _previews = new(StringComparer.Ordinal);
@@ -449,8 +479,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     {
         public readonly RemoteRunContext Context = context;
         public readonly DateTimeOffset TrackedAt = trackedAt;
-        public volatile string? ConnectionId;
-        public Guid RunnerId;
+        public volatile DispatchOwner? Owner; // null until dispatched
         public long EndedAtUnixMs; // 0 = still running
         public int Accepted;
         public int Denials;
@@ -474,8 +503,8 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         {
             return Refuse(RunnerToolRefusals.UnknownRun, requestId, calls.Count);
         }
-        if (run.ConnectionId is not { } owner) { return Refuse(RunnerToolRefusals.NotDispatched, requestId, calls.Count); }
-        if (!IsRunnersConnection(run, owner, connectionId)) { return Refuse(RunnerToolRefusals.WrongConnection, requestId, calls.Count); }
+        if (run.Owner is not { } owner) { return Refuse(RunnerToolRefusals.NotDispatched, requestId, calls.Count); }
+        if (!IsRunnersConnection(owner, connectionId)) { return Refuse(RunnerToolRefusals.WrongConnection, requestId, calls.Count); }
         var now = _time.GetUtcNow();
         var ended = Interlocked.Read(ref run.EndedAtUnixMs);
         if (ended != 0 && now.ToUnixTimeMilliseconds() - ended > (long)ToolCallGrace.TotalMilliseconds)
@@ -498,18 +527,20 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         // The computer's own report of its permissions is pinned on the first batch: an altered runner can't turn a
         // run's evidence from "scoped" into something else halfway through.
         Interlocked.CompareExchange(ref run.Permissions, RunnerPermissions.Normalize(permissions), null);
-        return new RunnerToolCallBatch(requestId, run.Context, run.RunnerId, run.Permissions!, accepted);
+        return new RunnerToolCallBatch(requestId, run.Context, owner.Runner.RunnerId, run.Permissions!, accepted);
     }
 
-    // The run's own connection, or — after the runner's SignalR auto-reconnect gave it a new connection id — any live
-    // connection registered for the SAME runner in the SAME tenant (it authenticated with that runner's token).
-    private bool IsRunnersConnection(TrackedRun run, string owner, string connectionId)
+    // The ONE owner rule for everything a runner sends about work it was given (results, progress, tool-call evidence,
+    // ticket-file reads, files sent back): the connection the work was dispatched to — or, after that runner's SignalR
+    // auto-reconnect gave it a new connection id, a live connection registered for the SAME runner in the SAME tenant (it
+    // authenticated with that runner's token). Any other runner, even one in the same tenant, is refused (GAP-06).
+    private bool IsRunnersConnection(DispatchOwner? owner, string? connectionId)
     {
-        if (string.Equals(owner, connectionId, StringComparison.Ordinal)) { return true; }
-        return run.RunnerId != Guid.Empty
-            && _connections.TryGetValue(connectionId, out var conn)
-            && conn.RunnerId == run.RunnerId
-            && string.Equals(conn.TenantId, run.Context.TenantId, StringComparison.Ordinal);
+        if (owner is null || string.IsNullOrEmpty(connectionId)) { return false; }
+        if (string.Equals(owner.ConnectionId, connectionId, StringComparison.Ordinal)) { return true; }
+        return _connections.TryGetValue(connectionId, out var conn)
+            && conn.RunnerId == owner.Runner.RunnerId
+            && string.Equals(conn.TenantId, owner.Runner.TenantId, StringComparison.Ordinal);
     }
 
     // Counted (agentos.evidence.remote_refused{reason}) and logged — the request id is runner-supplied, so it is scrubbed.
@@ -552,14 +583,10 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         return t.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '_' or '.' or ':' or '-' or '(' or ')') ? t : "unknown";
     }
 
-    // The run went to this connection: only it may report the run's tool calls.
-    private void BindRun(string requestId, string connectionId)
+    // The run went to this runner: only it (that connection, or its reconnect) may report the run's tool calls.
+    private void BindRun(string requestId, DispatchOwner owner)
     {
-        if (_runs.TryGetValue(requestId, out var run))
-        {
-            run.ConnectionId = connectionId;
-            if (_connections.TryGetValue(connectionId, out var runner)) { run.RunnerId = runner.RunnerId; }
-        }
+        if (_runs.TryGetValue(requestId, out var run)) { run.Owner = owner; }
     }
 
     private void EndRun(string requestId)
@@ -584,14 +611,14 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     {
         var ended = Interlocked.Read(ref run.EndedAtUnixMs);
         return (ended != 0 && now.ToUnixTimeMilliseconds() - ended > (long)ToolCallGrace.TotalMilliseconds)
-            || (ended == 0 && run.ConnectionId is null && now - run.TrackedAt > TimeSpan.FromDays(1));
+            || (ended == 0 && run.Owner is null && now - run.TrackedAt > TimeSpan.FromDays(1));
     }
 
     // The ticket files of one dispatch. A file's bytes are released as soon as its runner has fetched the last piece.
     private sealed class StagedFiles(System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile> files)
     {
         public readonly byte[]?[] Contents = files.Select(f => (byte[]?)f.Content).ToArray();
-        public volatile string? ConnectionId;
+        public volatile DispatchOwner? Owner; // null until dispatched
         public int Delivered;
     }
 
@@ -604,8 +631,9 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
 
     public RunFileChunk? ReadRunFile(string connectionId, string id, int index, long offset)
     {
-        if (string.IsNullOrEmpty(id) || !_staged.TryGetValue(id, out var staged) || staged.ConnectionId is not { } owner
-            || !string.Equals(owner, connectionId, StringComparison.Ordinal) || index < 0 || index >= staged.Contents.Length)
+        // Only the runner the request went to — also after its auto-reconnect mid-run (N4: it fetched with the old id).
+        if (string.IsNullOrEmpty(id) || !_staged.TryGetValue(id, out var staged) || !IsRunnersConnection(staged.Owner, connectionId)
+            || index < 0 || index >= staged.Contents.Length)
         {
             return null;
         }
@@ -624,11 +652,12 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public int UnstageFiles(string id) =>
         !string.IsNullOrEmpty(id) && _staged.TryRemove(id, out var staged) ? Volatile.Read(ref staged.Delivered) : 0;
 
-    // A dispatch's files can be fetched only by the connection it went to — and files come back only from it.
-    private void BindStaged(string id, string connectionId)
+    // A dispatch's files can be fetched only by the runner it went to — and files come back only from it (its
+    // connection, or its reconnect).
+    private void BindStaged(string id, DispatchOwner owner)
     {
-        if (_staged.TryGetValue(id, out var staged)) { staged.ConnectionId = connectionId; }
-        if (_uploads.TryGetValue(id, out var uploads)) { uploads.ConnectionId = connectionId; }
+        if (_staged.TryGetValue(id, out var staged)) { staged.Owner = owner; }
+        if (_uploads.TryGetValue(id, out var uploads)) { uploads.Owner = owner; }
     }
 
     // ── Files sent back (Design gate, ADR-0016) ──
@@ -640,7 +669,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     {
         public readonly AgentOs.Domain.Files.RunCollect Limits = limits;
         public readonly object Gate = new();
-        public volatile string? ConnectionId;
+        public volatile DispatchOwner? Owner; // null until dispatched
         public readonly System.Collections.Generic.Dictionary<string, System.IO.MemoryStream> Open = new(StringComparer.OrdinalIgnoreCase);
         public readonly System.Collections.Generic.List<RunUpload> Done = [];
         public long Total;
@@ -681,8 +710,9 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
 
     public string? UploadRunFile(string connectionId, string id, AgentOs.Domain.Files.RunUploadChunk chunk)
     {
-        if (chunk is null || string.IsNullOrEmpty(id) || !_uploads.TryGetValue(id, out var slot) || slot.ConnectionId is not { } owner
-            || !string.Equals(owner, connectionId, StringComparison.Ordinal))
+        // Only the runner the request went to — also after its auto-reconnect mid-run (N4: the Design gate's screenshots
+        // are sent at the very end of a long run, exactly when a reconnect has had the most time to happen).
+        if (chunk is null || string.IsNullOrEmpty(id) || !_uploads.TryGetValue(id, out var slot) || !IsRunnersConnection(slot.Owner, connectionId))
         {
             return "Nothing is expected back for this request.";
         }
@@ -750,9 +780,10 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     {
         ArgumentNullException.ThrowIfNull(start);
         ArgumentNullException.ThrowIfNull(target);
-        if (!TryResolveConnection(target, out var connectionId) || !_connections.TryGetValue(connectionId, out var runner)) { return false; }
-        _previews[start.PreviewId] = new PreviewRoute(connectionId, runner.TenantId, runner.OwnerUserId, runner.RunnerId, null);
-        PreviewCommanded?.Invoke(new PreviewCommand(connectionId, start, null));
+        if (ResolveRunner(target) is not { } owner) { return false; }
+        var runner = owner.Runner;
+        _previews[start.PreviewId] = new PreviewRoute(owner.ConnectionId, runner.TenantId, runner.OwnerUserId, runner.RunnerId, null);
+        PreviewCommanded?.Invoke(new PreviewCommand(owner.ConnectionId, start, null));
         return true;
     }
 
@@ -912,11 +943,15 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
 
     public void ReportProgress(string connectionId, string requestId, string stepKey)
     {
+        if (string.IsNullOrEmpty(stepKey) || stepKey.Length > 64) { return; }
         // Only for a request someone is waiting on: an unknown id is a late or forged report.
-        if (string.IsNullOrEmpty(requestId) || string.IsNullOrEmpty(stepKey) || stepKey.Length > 64
-            || !_pending.TryGetValue(requestId, out var pending)) { return; }
+        if (string.IsNullOrEmpty(requestId) || !_pending.TryGetValue(requestId, out var pending))
+        {
+            RefuseResult(RemoteResultRefusals.Unknown, requestId);
+            return;
+        }
         // Only from the runner it was dispatched to: another runner (even in the same tenant) can't drive its Board steps.
-        if (!IsOwner(pending.ConnectionId, pending.Runner, connectionId)) { RefuseResult("progress", requestId); return; }
+        if (!IsRunnersConnection(pending.Owner, connectionId)) { RefuseResult(RemoteResultRefusals.Progress, requestId); return; }
         Progressed?.Invoke(new RemoteProgress(requestId, stepKey));
     }
     public event Action<RunnerToolDispatch>? ToolCallDispatched;
@@ -926,7 +961,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public bool HasRunnerFor(RunnerTarget target)
     {
         ArgumentNullException.ThrowIfNull(target);
-        return TryResolveConnection(target, out _);
+        return ResolveRunner(target) is not null;
     }
 
     public async Task<RemoteExecResult> DispatchAsync(RemoteExecRequest request, RunnerTarget target, TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -934,15 +969,11 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(target);
 
-        if (!TryResolveConnection(target, out var connectionId))
-        {
-            throw new InvalidOperationException(
-                string.Create(CultureInfo.InvariantCulture,
-                    $"No paired runner connected for member '{target.MemberUserId}' in tenant '{target.TenantId}'."));
-        }
+        var owner = ResolveRunner(target) ?? throw NoRunner(target);
+        var connectionId = owner.ConnectionId;
 
         var tcs = new TaskCompletionSource<RemoteExecResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending[request.Id] = new Pending<RemoteExecResult>(tcs, connectionId, RunnerOf(connectionId));
+        _pending[request.Id] = new Pending<RemoteExecResult>(tcs, owner);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
@@ -963,8 +994,8 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             }
         });
 
-        BindStaged(request.Id, connectionId);
-        BindRun(request.Id, connectionId);
+        BindStaged(request.Id, owner);
+        BindRun(request.Id, owner);
         try
         {
             Dispatched?.Invoke(new RemoteDispatch(request, connectionId));
@@ -986,7 +1017,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         return new Registration(this, connectionId);
     }
 
-    public void Complete(RemoteExecResult result)
+    public void CompleteFromServer(RemoteExecResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
         if (_pending.TryRemove(result.Id, out var pending))
@@ -998,11 +1029,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public bool Complete(string connectionId, RemoteExecResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        if (string.IsNullOrEmpty(result.Id) || !_pending.TryGetValue(result.Id, out var pending)) { return false; }
-        if (!IsOwner(pending.ConnectionId, pending.Runner, connectionId)) { RefuseResult("request", result.Id); return false; }
-        // Remove only the entry that was checked: a re-dispatch under the same id is not resolved by this answer.
-        if (!_pending.TryRemove(new System.Collections.Generic.KeyValuePair<string, Pending<RemoteExecResult>>(result.Id, pending))) { return false; }
-        return pending.Task.TrySetResult(result);
+        return Resolve(_pending, result.Id, connectionId, RemoteResultRefusals.Request, result);
     }
 
     public async Task<RunnerToolResult> DispatchToolCallAsync(
@@ -1014,15 +1041,10 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         ArgumentNullException.ThrowIfNull(toolCall);
         ArgumentNullException.ThrowIfNull(target);
 
-        if (!TryResolveConnection(target, out var connectionId))
-        {
-            throw new InvalidOperationException(
-                string.Create(CultureInfo.InvariantCulture,
-                    $"No paired runner connected for member '{target.MemberUserId}' in tenant '{target.TenantId}'."));
-        }
+        var owner = ResolveRunner(target) ?? throw NoRunner(target);
 
         var tcs = new TaskCompletionSource<RunnerToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingToolCalls[toolCall.ToolCallId] = new Pending<RunnerToolResult>(tcs, connectionId, RunnerOf(connectionId));
+        _pendingToolCalls[toolCall.ToolCallId] = new Pending<RunnerToolResult>(tcs, owner);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
@@ -1042,10 +1064,10 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             }
         });
 
-        BindStaged(toolCall.ToolCallId, connectionId);
+        BindStaged(toolCall.ToolCallId, owner);
         try
         {
-            ToolCallDispatched?.Invoke(new RunnerToolDispatch(toolCall, connectionId));
+            ToolCallDispatched?.Invoke(new RunnerToolDispatch(toolCall, owner.ConnectionId));
             return await tcs.Task.ConfigureAwait(false);
         }
         finally
@@ -1054,7 +1076,7 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
         }
     }
 
-    public void CompleteToolCall(RunnerToolResult result)
+    public void CompleteToolCallFromServer(RunnerToolResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
         if (_pendingToolCalls.TryRemove(result.ToolCallId, out var pending))
@@ -1066,44 +1088,55 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public bool CompleteToolCall(string connectionId, RunnerToolResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        if (string.IsNullOrEmpty(result.ToolCallId) || !_pendingToolCalls.TryGetValue(result.ToolCallId, out var pending)) { return false; }
-        if (!IsOwner(pending.ConnectionId, pending.Runner, connectionId)) { RefuseResult("tool_call", result.ToolCallId); return false; }
-        if (!_pendingToolCalls.TryRemove(new System.Collections.Generic.KeyValuePair<string, Pending<RunnerToolResult>>(result.ToolCallId, pending))) { return false; }
-        return pending.Task.TrySetResult(result);
+        return Resolve(_pendingToolCalls, result.ToolCallId, connectionId, RemoteResultRefusals.ToolCall, result);
     }
 
-    private RunnerConnection? RunnerOf(string connectionId) => _connections.TryGetValue(connectionId, out var runner) ? runner : null;
-
-    // The connection a pending id was dispatched to — or, after that runner's SignalR auto-reconnect gave it a new
-    // connection id, a live connection registered for the SAME runner in the SAME tenant (it authenticated with that
-    // runner's token). Any other runner, even one in the same tenant, is refused (GAP-06).
-    private bool IsOwner(string owner, RunnerConnection? runner, string? connectionId)
+    // A runner's answer for a pending id: heard only from the runner it was dispatched to, resolved at most once. False
+    // (counted + logged, never thrown) for anything else — a late answer after a timeout included.
+    private bool Resolve<T>(ConcurrentDictionary<string, Pending<T>> pending, string? id, string? connectionId, string kind, T result)
     {
-        if (string.IsNullOrEmpty(connectionId)) { return false; }
-        if (string.Equals(owner, connectionId, StringComparison.Ordinal)) { return true; }
-        return runner is not null
-            && _connections.TryGetValue(connectionId, out var conn)
-            && conn.RunnerId == runner.RunnerId
-            && string.Equals(conn.TenantId, runner.TenantId, StringComparison.Ordinal);
+        if (string.IsNullOrEmpty(id) || !pending.TryGetValue(id, out var entry))
+        {
+            RefuseResult(RemoteResultRefusals.Unknown, id);
+            return false;
+        }
+        if (!IsRunnersConnection(entry.Owner, connectionId)) { RefuseResult(kind, id); return false; }
+        // Remove only the entry that was checked: a re-dispatch under the same id is not resolved by this answer, and an
+        // answer that lost the race with the timeout (or a duplicate) is a late one.
+        if (!pending.TryRemove(new System.Collections.Generic.KeyValuePair<string, Pending<T>>(id, entry)))
+        {
+            RefuseResult(RemoteResultRefusals.Unknown, id);
+            return false;
+        }
+        return entry.Task.TrySetResult(result);
     }
 
-    // Counted (agentos.remote.result_refused{kind}) and logged — the id is runner-supplied, so it is scrubbed.
+    // Counted (agentos.remote.result_refused{kind}, a bounded RemoteResultRefusals value) and logged — the id is
+    // runner-supplied, so it is scrubbed. A late / unknown id is routine (a runner finishing after the timeout), so it is
+    // logged at Information; one from the wrong connection is a warning.
     private void RefuseResult(string kind, string? id)
     {
         ResultRefused.Add(1, new System.Collections.Generic.KeyValuePair<string, object?>("kind", kind));
-        if (_logger is not null)
+        if (_logger is null) { return; }
+        var safeId = AgentOs.Domain.Tools.SecretRedactor.Bound(AgentOs.SharedKernel.Logging.LogSafe.Scrub(id), 80);
+        if (string.Equals(kind, RemoteResultRefusals.Unknown, StringComparison.Ordinal))
+        {
+            Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(_logger,
+                "Runner report for {Id} ignored: no one waits for it any more (late, duplicate or unknown).", safeId);
+        }
+        else
         {
             Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(_logger,
-                "Runner {Kind} for {Id} refused: it came from a connection the work was not dispatched to.",
-                kind, AgentOs.Domain.Tools.SecretRedactor.Bound(AgentOs.SharedKernel.Logging.LogSafe.Scrub(id), 80));
+                "Runner {Kind} for {Id} refused: it came from a connection the work was not dispatched to.", kind, safeId);
         }
     }
 
-    private bool TryResolveConnection(RunnerTarget target, out string connectionId)
+    // The runner a target resolves to: its connection and identity together, from one enumeration — so the owner recorded
+    // for a dispatch is exactly the connection it is sent to (no second lookup that a disconnect could miss).
+    private DispatchOwner? ResolveRunner(RunnerTarget target)
     {
-        foreach (var kvp in _connections)
+        foreach (var (connectionId, conn) in _connections)
         {
-            var conn = kvp.Value;
             if (!string.Equals(conn.TenantId, target.TenantId, StringComparison.Ordinal))
             {
                 continue;
@@ -1113,12 +1146,14 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
             {
                 continue;
             }
-            connectionId = kvp.Key;
-            return true;
+            return new DispatchOwner(connectionId, conn);
         }
-        connectionId = string.Empty;
-        return false;
+        return null;
     }
+
+    private static InvalidOperationException NoRunner(RunnerTarget target) =>
+        new(string.Create(CultureInfo.InvariantCulture,
+            $"No paired runner connected for member '{target.MemberUserId}' in tenant '{target.TenantId}'."));
 
     private void Unregister(string connectionId)
     {

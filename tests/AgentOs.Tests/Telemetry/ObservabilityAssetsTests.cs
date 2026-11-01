@@ -39,6 +39,7 @@ public sealed partial class ObservabilityAssetsTests
         ("agentos.evidence.inline_writes", ["agentos_evidence_inline_writes_total"]),
         ("agentos.evidence.lost", ["agentos_evidence_lost_total"]),
         ("agentos.evidence.remote_refused", ["agentos_evidence_remote_refused_total"]), // InProcessRemoteAgentBroker
+        ("agentos.remote.result_refused", ["agentos_remote_result_refused_total"]),     // InProcessRemoteAgentBroker (GAP-06)
         (ToolTelemetry.SavedCharsName, ["agentos_tools_output_saved_chars_total"]), // "{char}" unit: annotation dropped
     ];
 

@@ -175,7 +175,7 @@ public sealed class PlanLimitTests
     {
         var broker = new InProcessRemoteAgentBroker();
         using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "t1", "alice"));
-        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, false, "",
+        broker.Dispatched += d => broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, false, "",
             "You've hit your session limit · resets 11:50pm (UTC)"));
         var limits = new PlanLimitTracker(TimeProvider.System);
         var ctx = Substitute.For<ITenantContext>();

@@ -222,7 +222,7 @@ public sealed class RunContinuationTests
         var broker = new InProcessRemoteAgentBroker();
         using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "default", "member-1"));
         var resumed = true;
-        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, true, "{}", null) { Resumed = resumed });
+        broker.Dispatched += d => broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "{}", null) { Resumed = resumed });
         var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
 
         (await client.SendAsync(new LlmRequest("s", "u", "m") { Autonomy = WorkspaceAutonomy.Scoped, ResumeOf = "req-1" })).Resumed.ShouldBeTrue();
@@ -250,7 +250,7 @@ public sealed class RunContinuationTests
         broker.Dispatched += d =>
         {
             last = d.Request;
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, "no json here", null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "no json here", null));
         };
         var client = new RemoteAgentLlmClient(broker, Tenant(), NullLogger<RemoteAgentLlmClient>.Instance);
 

@@ -54,6 +54,7 @@ dashboard or rule references a series no instrument emits.
 | `AgentOs.Tools` | `agentos.evidence.inline_writes` (`agentos_evidence_inline_writes_total`) | counter | — | Evidence queue full → row written on the caller's path (slower, lossless). |
 | | `agentos.evidence.lost` (`agentos_evidence_lost_total`) | counter | — | Evidence row lost after every retry. **Must stay 0** (E0.3). |
 | | `agentos.evidence.remote_refused` (`agentos_evidence_remote_refused_total`) | counter | `reason` = `unknown_run` · `not_dispatched` · `wrong_connection` · `grace_passed` · `run_cap` · `batch_cap` | Tool calls a paired runner reported that the server refused to record (each refusal is also logged). Cap hits on very long runs are expected; the rest mean a runner is out of step. |
+| | `agentos.remote.result_refused` (`agentos_remote_result_refused_total`) | counter | `kind` = `request` · `tool_call` · `progress` · `unknown` | Runner results (`CompleteRequest`, `CompleteToolCall`) and progress steps (`ReportProgress`) the server refused (GAP-06). `request` / `tool_call` / `progress`: it came from a connection the work was not dispatched to — neither that runner nor its own reconnect (same runner id, same tenant); each is also logged as a warning. `unknown`: no one waits for that id any more — a runner finishing after the timeout or a Stop, a duplicate, or an id this replica never dispatched (logged at Information). |
 | | `agentos.tools.output.saved_chars` (`agentos_tools_output_saved_chars_total`) | counter `{char}` | `kind` = `builtin` · `mcp` · `remote` | Tool-output characters the gateway kept away from the model (log shaping + size cap). Dashboards show **≈ tokens = chars ÷ 4** — an estimate of tokens not sent, never billed usage. |
 | `AgentOs.Health` | `agentos.health.status` (`agentos_health_status`) | gauge | `agentos.health.check` = `self` · `postgres` · `keycloak` · `overall` | 1 healthy · 0.5 degraded · 0 unhealthy, published every 60 s (each publish runs every check, so not more often). |
 
@@ -128,7 +129,7 @@ The recording rules `agentos:http_error_ratio:rate{5m,30m,1h,6h}`, `agentos:run_
 | Dashboard | uid | What it answers |
 |---|---|---|
 | AgentOS.NET — LLM tokens, cost & latency | `agentos-llm` | Tokens per billing class and per agent, cache hit ratio, cost by agent / model (charts + tables), latency p50/p95 per model and agent, errors by type, 429s per provider, ≈ tokens saved by tool-output shaping (by tool kind, chart + table). |
-| AgentOS.NET — Runs, budget & evidence | `agentos-runs` | Run-reliability SLO, QA convergence, runs by outcome / kind, run time p50/p95, budget used per tenant, refusals, evidence lost / inline, runner-reported evidence refused by reason. |
+| AgentOS.NET — Runs, budget & evidence | `agentos-runs` | Run-reliability SLO, QA convergence, runs by outcome / kind, run time p50/p95, budget used per tenant, refusals, evidence lost / inline, runner-reported evidence refused by reason, runner results refused by kind. |
 | AgentOS.NET — HTTP, SignalR & runtime | `agentos-http` | Availability + latency SLOs, requests by status class, slowest routes, Kestrel, Blazor circuits, SignalR, outbound HTTP, Postgres pool, health checks, CPU / memory / GC / thread pool. |
 
 Validate after editing:
@@ -151,7 +152,7 @@ azd provision && azd deploy
 
 This deploys workspace-based Application Insights on the existing Log Analytics workspace, the **AgentOS.NET —
 operations** workbook (Azure portal → Application Insights → Workbooks), an e-mail action group, log-search alerts
-(`AgentOsBudgetOverCap`, `AgentOsFailedRunSpike`, `AgentOsEvidenceLost`, `AgentOsEvidenceRemoteRefused`, `AgentOsHealthCheckUnhealthy`,
+(`AgentOsBudgetOverCap`, `AgentOsFailedRunSpike`, `AgentOsEvidenceLost`, `AgentOsEvidenceRemoteRefused`, `AgentOsRemoteResultRefused`, `AgentOsHealthCheckUnhealthy`,
 `AgentOsHigh5xxRate`, `AgentOsLlmRateLimitStorm`), a server-exceptions metric alert and, with a probe URL, a
 3-region availability test + `AgentOsHealthProbeDown` metric alert. `azd` passes the connection string to both
 container apps as `APPLICATIONINSIGHTS_CONNECTION_STRING` (empty when observability is off, which disables export).
@@ -241,6 +242,26 @@ trail (they are only in the runner's own log). The `reason` label says why:
   computer or tenant reported a run it was never sent): a bug in an outdated runner build, or a forged report. Check
   the warning log (`Tool-call evidence refused`, request id scrubbed) and the runners connected at that time; revoke
   and re-pair a runner you do not trust.
+
+<a id="runbook-agentosremoteresultrefused"></a>
+### AgentOsRemoteResultRefused (warning)
+
+A paired runner sent a result, a tool-call result or a progress step for work that was dispatched to a **different**
+runner (GAP-06), and the server refused it — the `kind` label says which (`request`, `tool_call`, `progress`). A
+runner's own reconnect (same runner id, same tenant) is accepted, so this is never a flaky connection: it is an
+outdated or modified runner build, or a runner replaying ids it should not know. Nothing was applied — the run still
+waits for its own runner — but treat it as a security signal:
+1. Runs dashboard → *Runner results refused by kind* for the window; find the warning log line
+   `Runner <kind> for <id> refused` (id scrubbed) at the alert's start time, and the runners connected then
+   (Board › Computers).
+2. Match the id to its run and tenant; the refused report came from another computer — another member's, or another
+   tenant's.
+3. Revoke and re-pair any runner you do not trust; update runners still on an old build.
+
+`kind="unknown"` is not alerted: a runner that finishes after the server stopped waiting (timeout, Stop), a duplicate,
+or an id this replica never dispatched (a restart, or a result that reached another replica) is routine. Sustained
+`unknown` together with runs failing by timeout points at broken replica affinity for the runner hub — see
+AgentOsFailedRunSpike.
 
 <a id="runbook-agentoshealthprobedown"></a>
 ### AgentOsHealthProbeDown (critical)
