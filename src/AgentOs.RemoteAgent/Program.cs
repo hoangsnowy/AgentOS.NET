@@ -41,6 +41,11 @@
 //   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks
 //                       Try the app after seeing the project's command); REMOTE_AGENT_PREVIEWROOT moves their folder
 //
+// Governance: every tool call a streaming CLI run makes (Bash, Edit, Write, Read…) is reported to the server
+// (ReportToolCalls, in batches during the run and once more before CompleteRequest) and recorded there as evidence —
+// Settings › Activity log › On a member's computer. Only a bounded, redacted summary of each call leaves this machine
+// (the command, the file's path — never file contents or output; see CliToolCalls.cs and SecretRedactor.cs).
+//
 // A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
 // 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
 // never in the URL (URLs end up in proxy and server logs).
@@ -138,7 +143,7 @@ connection.On<RemoteExecRequest>("Execute", request =>
             // Stopped while it waited for a slot: never start it.
             var result = CancelledBeforeStart.TryRemove(request.Id, out _)
                 ? new RemoteExecResult(request.Id, false, string.Empty, "Stopped before it started.")
-                : await RunLlmAsync(request, ReportProgressAsync, ReadRunFileAsync, UploadRunFileAsync).ConfigureAwait(false);
+                : await RunLlmAsync(request, ReportProgressAsync, ReadRunFileAsync, UploadRunFileAsync, ReportToolCallsAsync).ConfigureAwait(false);
             await connection.SendAsync("CompleteRequest", result).ConfigureAwait(false);
             // Print WHY on failure. Logging only ok=False made every distinct failure — CLI not on PATH, CLI not
             // logged in, non-zero exit — look identical from the runner console, which is the one place an
@@ -249,7 +254,8 @@ await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
 
 static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<string, string, Task> report,
     Func<string, int, long, Task<AgentOs.RemoteAgent.RunFiles.Chunk?>> readFile,
-    Func<string, AgentOs.Domain.Files.RunUploadChunk, Task<string?>> upload)
+    Func<string, AgentOs.Domain.Files.RunUploadChunk, Task<string?>> upload,
+    Func<string, string, IReadOnlyList<AgentOs.RemoteAgent.RunnerToolEvent>, Task> reportTools)
 {
     // Pick the CLI-agent profile: per-request hint (server-chosen), else REMOTE_AGENT_CLI, else claude.
     var cli = (request.Cli ?? Environment.GetEnvironmentVariable("REMOTE_AGENT_CLI") ?? "claude").Trim();
@@ -273,6 +279,8 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     // A custom REMOTE_AGENT_ARGS keeps exactly what the operator asked for.
     var streaming = argsEnv is null && string.Equals(profile.Command, "claude", StringComparison.OrdinalIgnoreCase);
     if (streaming) { args = [.. args, "--output-format", "stream-json", "--verbose"]; }
+    // What decided which tools the CLI could use — recorded with every tool call as the evidence's policy source.
+    var permissions = argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt";
 
     // Only a run the server asked to have hands may be kept for a follow-up or reported as "stopped short" — the
     // per-request value: on a machine with REMOTE_AGENT_AUTONOMY=scoped every request gets hands, answer-only ones too.
@@ -343,7 +351,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             psi.ArgumentList.Add(prompt);
         }
 
-        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")} autonomy={(argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt")} model={(modelFlags.Length > 0 ? modelFlags[^1] : "cli default")} dir={runDir}");
+        Console.WriteLine($"[agent] cli={cli} cmd={cmd} prompt={(profile.PromptViaStdin ? "stdin" : "arg")} autonomy={permissions} model={(modelFlags.Length > 0 ? modelFlags[^1] : "cli default")} dir={runDir}");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{cmd}'. Is the {cli} CLI installed and on PATH?");
@@ -363,19 +371,38 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         string stdout;
         if (streaming)
         {
-            // One JSON event per line: report each new plain step as it happens, keep the closing result.
+            // One JSON event per line: report each new plain step as it happens, ship the tool calls in batches (evidence),
+            // keep the closing result.
             AgentOs.RemoteAgent.CliProgress.Result? final = null;
             string? lastStep = null;
             var raw = new System.Text.StringBuilder();
-            while (await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
+            var toolCalls = new AgentOs.RemoteAgent.CliToolCalls(DateTimeOffset.UtcNow);
+            try
             {
-                var (step, result) = AgentOs.RemoteAgent.CliProgress.Parse(line);
-                if (result is not null) { final = result; }
-                else if (raw.Length < 64 * 1024) { raw.AppendLine(line); }
-                if (step is not null && step != lastStep)
+                while (await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
                 {
-                    lastStep = step;
-                    await report(request.Id, step).ConfigureAwait(false);
+                    var ev = AgentOs.RemoteAgent.CliProgress.Read(line);
+                    var now = DateTimeOffset.UtcNow;
+                    toolCalls.Observe(ev, now);
+                    if (ev.Final is { } result) { final = result; }
+                    else if (raw.Length < 64 * 1024) { raw.AppendLine(line); }
+                    if (ev.Step is { } step && step != lastStep)
+                    {
+                        lastStep = step;
+                        await report(request.Id, step).ConfigureAwait(false);
+                    }
+                    if (toolCalls.ShouldFlush(now))
+                    {
+                        await reportTools(request.Id, permissions, toolCalls.Take(now)).ConfigureAwait(false);
+                    }
+                }
+            }
+            finally
+            {
+                // Before CompleteRequest — and after a Stop, which ends the stream: whatever the CLI did is reported.
+                if (toolCalls.Complete(DateTimeOffset.UtcNow) is { Count: > 0 } last)
+                {
+                    await reportTools(request.Id, permissions, last).ConfigureAwait(false);
                 }
             }
             var streamErr = await stderrTask.ConfigureAwait(false);
@@ -685,6 +712,23 @@ async Task ReportProgressAsync(string requestId, string step)
 {
     try { await connection.SendAsync("ReportProgress", requestId, step).ConfigureAwait(false); }
     catch (Exception ex) when (ex is InvalidOperationException or IOException) { _ = ex; }
+}
+
+// Evidence of the tool calls a CLI run made (the server records them). Best effort for the run — a lost batch never fails
+// the work, and NO send failure may end the caller's stdout read loop (the CLI would block on a full pipe) — but never
+// silent: the console says how many calls could not be reported. Sent in messages of at most 200 calls, the most the
+// server accepts in one batch, so a closing line with hundreds of permission_denials is not cut.
+async Task ReportToolCallsAsync(string requestId, string permissions, IReadOnlyList<AgentOs.RemoteAgent.RunnerToolEvent> calls)
+{
+    if (calls.Count == 0) { return; }
+    foreach (var message in AgentOs.RemoteAgent.CliToolCalls.Messages(calls))
+    {
+        try { await connection.SendAsync("ReportToolCalls", requestId, permissions, message).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.WriteLine($"[agent] {requestId}: {message.Count} tool call(s) could not be reported to the server: {ex.Message}");
+        }
+    }
 }
 
 // Best effort as well: a lost preview report leaves the Board on the previous state until the next one.

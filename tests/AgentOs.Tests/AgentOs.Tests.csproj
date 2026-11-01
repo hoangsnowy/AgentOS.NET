@@ -55,6 +55,7 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ScopedAutonomy.cs" Link="Linked\ScopedAutonomy.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunnerCredentials.cs" Link="Linked\RunnerCredentials.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\CliProgress.cs" Link="Linked\CliProgress.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\CliToolCalls.cs" Link="Linked\CliToolCalls.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\PreviewHost.cs" Link="Linked\PreviewHost.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ProcessJob.cs" Link="Linked\ProcessJob.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\KeepAwake.cs" Link="Linked\KeepAwake.cs" />

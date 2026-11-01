@@ -45,7 +45,8 @@
             case "plugins":  <PluginsApp />;  break;
             case "policy":   <PolicyApp />;   break;
             case "audit" or "evidence":
-                <ActivityLog View="@(_tab == "evidence" ? ActivityLog.Tools : ActivityLog.Changes)" />
+                <ActivityLog View="@(_tab == "evidence" ? ActivityLog.Tools : ActivityLog.Changes)"
+                             Origin="@_evidenceOrigin" SessionId="@_evidenceSession" />
                 break;
             case "users":    <UsersApp />;    break;
             case "tokens":   <ApiTokensApp />; break;
@@ -62,6 +63,9 @@
     private bool _isAdmin;
     private bool _isPlatformAdmin;
     private string _tab = "general";
+    // The tool-call view's filter from a deep link (SettingsLinks.MemberComputerToolCalls).
+    private string? _evidenceOrigin;
+    private string? _evidenceSession;
     private string _filter = string.Empty;
     private int _filterGeneration;
 
@@ -121,9 +125,11 @@
     private void Apply(string? target)
     {
         if (string.IsNullOrWhiteSpace(target)) { return; }
-        var key = SettingsLinks.Normalize(target);
+        var (key, origin, session) = SettingsLinks.ParseToolCalls(SettingsLinks.Normalize(target));
         if (!Allowed().Any(i => i.Key == key)) { return; }
         _tab = key;
+        _evidenceOrigin = origin;
+        _evidenceSession = session;
         if (_filter.Length > 0) { _filter = string.Empty; _filterGeneration++; }
     }
 

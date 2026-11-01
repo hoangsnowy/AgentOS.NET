@@ -20,4 +20,13 @@ public sealed class ToolInvocationEvidenceEntity
     public bool IsError { get; set; }
     public DateTimeOffset StartedUtc { get; set; }
     public DateTimeOffset FinishedUtc { get; set; }
+
+    /// <summary>Null = on the server; "member-computer" = the CLI on a member's paired computer ran it.</summary>
+    public string? Origin { get; set; }
+    public string? AgentRole { get; set; }
+    public string? RunnerId { get; set; }
+
+    /// <summary>Null = the server's tool policy; "cli-scoped-permissions" = the CLI's own scoped permissions.</summary>
+    public string? PolicySource { get; set; }
+    public bool Denied { get; set; }
 }
