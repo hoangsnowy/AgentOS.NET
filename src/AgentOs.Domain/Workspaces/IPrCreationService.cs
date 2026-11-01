@@ -94,6 +94,11 @@ public interface IPrCreationService
     Task<bool?> BranchExistsAsync(WorkspaceDescriptor workspace, string branch, CancellationToken ct = default) =>
         Task.FromResult<bool?>(null);
 
+    /// <summary>The commit SHA <paramref name="branch"/> points at on the remote. Null when the branch doesn't exist or it
+    /// couldn't be checked (a provider that can't tell, e.g. Azure DevOps). Never throws.</summary>
+    Task<string?> GetBranchHeadAsync(WorkspaceDescriptor workspace, string branch, CancellationToken ct = default) =>
+        Task.FromResult<string?>(null);
+
     /// <summary>Replace pull request <paramref name="number"/>'s description — a fix round's updated description from the
     /// Coding agent. Never throws; false when it couldn't (or the provider can't).</summary>
     Task<bool> UpdateBodyAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default) =>

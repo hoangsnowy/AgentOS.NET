@@ -1,7 +1,11 @@
 @* EvidenceApp — admin view of the tool-invocation evidence trail (governance). Every governed tool
    call (success, error, or policy denial) is recorded by IToolGateway; this lists the recent entries
    for the current tenant. Admin-gated (AdminOnly in AppCatalog + a re-check here). Tenant is read from
-   AuthenticationState — a circuit has no HttpContext — and passed to the tenant-explicit ListRecentAsync. *@
+   AuthenticationState — a circuit has no HttpContext — and passed to the tenant-explicit ListRecentAsync.
+   "On a member's computer" narrows it to the tool calls a CLI run made on a paired computer (Bash, Edit, Write…),
+   reported by its runner — their policy is the CLI's scoped permissions there (as the computer reports it; the "Where"
+   tooltip shows it next to what the server asked for), not the server's tool policy. A task's
+   activity panel on the Board opens this view filtered to that task (Origin + SessionId parameters). *@
 
 @using System.Security.Claims
 @using Microsoft.AspNetCore.Components.Authorization
@@ -22,35 +26,61 @@ else
     <header class="page-head">
         <div>
             <h1 class="page-title">Evidence · <code>@_tenantId</code></h1>
-            <p class="page-sub">@(_rows?.Count ?? 0) recent tool invocation(s) — every governed side-effect is recorded.</p>
+            <p class="page-sub">@(_rows?.Count ?? 0) recent tool invocation(s) — every governed side-effect is recorded@(OnComputer ? ", here only those made on a member's computer" : "").</p>
         </div>
         <Btn OnClick="Reload" Disabled="_loading">
             <Icon Name="arrow-clockwise" Size="14" /> Refresh
         </Btn>
     </header>
 
+    <div class="ev-filter">
+        <div class="seg" role="group" aria-label="Where the tool ran" data-testid="evidence-origin">
+            <button class="seg-btn @(OnComputer ? "" : "on")" aria-pressed="@(OnComputer ? "false" : "true")"
+                    data-testid="evidence-origin-all" @onclick="@(() => SetOrigin(null))">All tool calls</button>
+            <button class="seg-btn @(OnComputer ? "on" : "")" aria-pressed="@(OnComputer ? "true" : "false")"
+                    data-testid="evidence-origin-computer" @onclick="@(() => SetOrigin(ToolEvidenceOrigins.MemberComputer))">On a member's computer</button>
+        </div>
+        @if (_sessionId is not null)
+        {
+            <span class="chip" data-testid="evidence-session-filter">Task <code>@Short(_sessionId)</code></span>
+            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="ClearSession">Every task</Btn>
+        }
+    </div>
+    @if (OnComputer)
+    {
+        <p class="muted ins-note ev-note">Tools the AI used on a paired computer (Bash, Edit, Write, Read…), reported by the AgentOS.NET helper there. What allowed or refused each one was that computer's scoped permissions — the server's tool policy never sees them. Only a short, redacted summary is kept: never file contents or output.</p>
+    }
+
     @if (_rows is null) { <Spinner /> }
     else if (_rows.Count == 0)
     {
         <EmptyState Icon="lock"
-                    Title="No tool invocations recorded yet"
-                    Hint="Evidence appears here once an agent calls a tool through the gateway." />
+                    Title="@(OnComputer ? "No tool calls from a member's computer yet" : "No tool invocations recorded yet")"
+                    Hint="@(OnComputer ? "They appear here once an agent works on a paired computer (Board › Run on my machine)." : "Evidence appears here once an agent calls a tool through the gateway.")" />
     }
     else
     {
         <Panel Title="Tool invocations">
-            <table class="data-table">
+            <table class="data-table" data-testid="evidence-table">
                 <thead>
-                    <tr><th>Tool</th><th>Status</th><th>Run</th><th>Session</th><th>Started (UTC)</th><th class="num">Duration</th></tr>
+                    <tr><th>Tool</th><th>Where</th><th>What</th><th>Agent</th><th>Status</th><th>Run</th><th>Task</th><th>Started (UTC)</th><th class="num">Duration</th></tr>
                 </thead>
                 <tbody>
-                    @foreach (var e in _rows)
+                    @foreach (var row in _rows)
                     {
-                        <tr>
+                        var e = row.Entry;
+                        <tr data-origin="@(e.Origin ?? "server")">
                             <td><code>@e.ToolName</code></td>
-                            <td>@if (e.IsError) { <Badge>error</Badge> } else { <Badge>ok</Badge> }</td>
-                            <td>@(string.IsNullOrEmpty(e.RunId) ? "—" : e.RunId)</td>
-                            <td>@(string.IsNullOrEmpty(e.SessionId) ? "—" : e.SessionId)</td>
+                            <td title="@row.WhereTip">@(row.OnComputer ? "Member's computer" : "Server")</td>
+                            <td class="ev-what">@(row.What.Length > 0 ? row.What : "—")</td>
+                            <td>@(string.IsNullOrEmpty(e.AgentRole) ? "—" : e.AgentRole)</td>
+                            <td title="@row.OutcomeTip">
+                                @if (e.Denied) { <Badge Variant="Badge.BadgeVariant.Warn">refused</Badge> }
+                                else if (e.IsError) { <Badge Variant="Badge.BadgeVariant.Err">error</Badge> }
+                                else { <Badge Variant="Badge.BadgeVariant.Ok">ok</Badge> }
+                            </td>
+                            <td>@(string.IsNullOrEmpty(e.RunId) ? "—" : Short(e.RunId))</td>
+                            <td>@(string.IsNullOrEmpty(e.SessionId) ? "—" : Short(e.SessionId))</td>
                             <td>@e.StartedUtc.ToString("u")</td>
                             <td class="num">@($"{e.Duration.TotalMilliseconds:0} ms")</td>
                         </tr>
@@ -64,11 +94,35 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
+    /// <summary>Open on one origin (<see cref="ToolEvidenceOrigins.MemberComputer"/>); null = every tool call.</summary>
+    [Parameter] public string? Origin { get; set; }
+
+    /// <summary>Open on one task's (session's) calls; null = every task.</summary>
+    [Parameter] public string? SessionId { get; set; }
+
+    private string? _origin;
+    private string? _sessionId;
+    private (string?, string?) _appliedParameters;
+    private bool OnComputer => _origin == ToolEvidenceOrigins.MemberComputer;
     private bool _resolved;
     private bool _isAdmin;
     private bool _loading;
     private string _tenantId = "default";
-    private IReadOnlyList<ToolInvocationEvidence>? _rows;
+    private IReadOnlyList<EvidenceRow>? _rows;
+
+    // One row as shown, computed once per load (JSON + redaction are not free — never per render). The outcome tooltip
+    // is a bounded, redacted summary of the tool's output, never the raw (unbounded) server output.
+    private sealed record EvidenceRow(ToolInvocationEvidence Entry, bool OnComputer, string What, string WhereTip, string OutcomeTip)
+    {
+        public static EvidenceRow From(ToolInvocationEvidence e)
+        {
+            var onComputer = e.Origin == ToolEvidenceOrigins.MemberComputer;
+            var where = onComputer
+                ? $"Computer {e.RunnerId ?? "unknown"} · permissions as reported by the computer: {e.PolicySource ?? "unknown"} · the server asked for: {e.RequestedAutonomy ?? "answer only"}"
+                : "On the server, through the tool gateway";
+            return new EvidenceRow(e, onComputer, e.InputSummary, where, SecretRedactor.Summary(e.Output, 300));
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -82,12 +136,39 @@ else
         if (_isAdmin && _tenantId.Length > 0) { await LoadAsync(); }
     }
 
+    // A deep link (a task's activity panel) arrives as new parameters — also while this view is already open.
+    protected override async Task OnParametersSetAsync()
+    {
+        if ((Origin, SessionId) == _appliedParameters) { return; }
+        _appliedParameters = (Origin, SessionId);
+        _origin = Origin == ToolEvidenceOrigins.MemberComputer ? Origin : null;
+        _sessionId = string.IsNullOrWhiteSpace(SessionId) ? null : SessionId;
+        if (_resolved && _isAdmin && _tenantId.Length > 0) { await LoadAsync(); }
+    }
+
+    private async Task SetOrigin(string? origin)
+    {
+        _origin = origin;
+        await LoadAsync();
+    }
+
+    private async Task ClearSession()
+    {
+        _sessionId = null;
+        await LoadAsync();
+    }
+
+    private static string Short(string id) => id.Length > 8 ? id[..8] : id;
+
     private async Task LoadAsync()
     {
         _loading = true;
         try
         {
-            _rows = await Evidence.ListRecentAsync(_tenantId, 100);
+            var entries = _origin is null && _sessionId is null
+                ? await Evidence.ListRecentAsync(_tenantId, 100)
+                : await Evidence.ListRecentAsync(_tenantId, new ToolEvidenceFilter(_origin, _sessionId), 200);
+            _rows = [.. entries.Select(EvidenceRow.From)];
         }
         catch (System.InvalidOperationException ex)
         {

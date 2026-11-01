@@ -75,7 +75,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
                     <p class="prefs-sub">Which provider answers. Each agent's own choice lives in <strong>Agent profiles</strong>; <strong>Force provider</strong> overrides them all — pick <em>RemoteAgent</em> to run on a paired dev machine with no server tokens. Applied to the next call, no restart.</p>
                 </div>
                 <SettingsFields Area="LLM" TenantId="@_tenantId" Actor="@(_userId ?? "admin")"
-                                Keys="@(new[] { AppConfigKeys.LlmForceProvider, LlmSettings.Provider, LlmSettings.OfflineFallback })" />
+                                Keys="@(new[] { AppConfigKeys.LlmForceProvider, LlmSettings.Provider, LlmSettings.OfflineFallback, AgentOs.Modules.Tools.ToolsSettings.MaxOutputTokens })" />
                 break;
 
             case "keys":

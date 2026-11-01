@@ -28,11 +28,11 @@ namespace AgentOs.Modules.Tools.Evidence;
 internal sealed partial class BufferedToolInvocationLog : IToolInvocationLog, IAsyncDisposable
 {
     /// <summary>Meter for evidence health (exported with the host's OTel metrics).</summary>
-    public const string MeterName = "AgentOs.Tools";
+    public const string MeterName = ToolTelemetry.MeterName;
 
     internal const int Capacity = 4096;
 
-    private static readonly Meter Meter = new(MeterName);
+    private static readonly Meter Meter = ToolTelemetry.Meter;
     private static readonly Counter<long> InlineWrites = Meter.CreateCounter<long>("agentos.evidence.inline_writes", description: "Evidence rows persisted inline because the queue was full.");
     private static readonly Counter<long> Lost = Meter.CreateCounter<long>("agentos.evidence.lost", description: "Evidence rows lost after every persistence attempt failed.");
 
@@ -90,6 +90,16 @@ internal sealed partial class BufferedToolInvocationLog : IToolInvocationLog, IA
     public Task<IReadOnlyList<ToolInvocationEvidence>> ListRecentAsync(
         string tenantId, int limit = 50, CancellationToken cancellationToken = default) =>
         _inner.ListRecentAsync(tenantId, limit, cancellationToken);
+
+    /// <summary>Filtered reads delegate to the inner sink (its own query, not the default window filter).</summary>
+    public Task<IReadOnlyList<ToolInvocationEvidence>> ListRecentAsync(
+        string tenantId, ToolEvidenceFilter filter, int limit = 50, CancellationToken cancellationToken = default) =>
+        _inner.ListRecentAsync(tenantId, filter, limit, cancellationToken);
+
+    /// <summary>Per-role totals delegate to the inner sink.</summary>
+    public Task<IReadOnlyList<ToolCallsByRole>> SummarizeMemberComputerAsync(
+        string tenantId, DateTimeOffset? sinceUtc, CancellationToken cancellationToken = default) =>
+        _inner.SummarizeMemberComputerAsync(tenantId, sinceUtc, cancellationToken);
 
     /// <summary>Start the single background drain loop. Called once at module init (NOT in tests, which
     /// drive <see cref="DrainPendingAsync"/> as the sole reader for determinism).</summary>

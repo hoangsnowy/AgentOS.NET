@@ -23,13 +23,13 @@ internal sealed class ObservedLlmClient(ILlmClient inner, LlmCallScope scope) : 
             var r = await inner.SendAsync(request, cancellationToken).ConfigureAwait(false);
             scope.Add(new LlmCallRecord(request.AgentRole, r.Model, r.Provider, r.InputTokens, r.OutputTokens,
                 r.CacheReadTokens, r.CacheWriteTokens, r.ReasoningTokens, r.CostUsd,
-                r.Latency > TimeSpan.Zero ? r.Latency : watch.Elapsed, true, null, DateTimeOffset.UtcNow));
+                r.Latency > TimeSpan.Zero ? r.Latency : watch.Elapsed, true, null, DateTimeOffset.UtcNow) { Purpose = request.Purpose });
             return r;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             scope.Add(new LlmCallRecord(request.AgentRole, request.Model, inner.Provider, 0, 0, 0, 0, 0, 0m, watch.Elapsed,
-                false, ex.Message.Length > 500 ? ex.Message[..500] : ex.Message, DateTimeOffset.UtcNow));
+                false, ex.Message.Length > 500 ? ex.Message[..500] : ex.Message, DateTimeOffset.UtcNow) { Purpose = request.Purpose });
             throw;
         }
     }

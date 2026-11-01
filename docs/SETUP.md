@@ -133,6 +133,9 @@ with `RUN_AGENTOS_E2E_REAL=true`. Playwright browsers install on first run.
 
 - **CI** (`ci.yml`) — build, tests, coverage floor, dev-auth UI E2E. Needs **no secrets**.
 - **CodeQL** and **dependency review** run on every PR.
+- **Release** (`release.yml`, on a `vX.Y.Z` tag) — builds, tests, pushes the signed Api / Web images to
+  GHCR with SBOM + provenance and creates the GitHub Release; `workflow_dispatch` is a dry run that pushes
+  nothing. Needs **no secrets** (`GITHUB_TOKEN` + OIDC). See [RELEASE.md](RELEASE.md).
 - **Deploy** (`azd-deploy.yml`, manual `workflow_dispatch`) — needs Azure OIDC credentials plus the
   Keycloak secrets listed in [DEPLOYMENT.md](DEPLOYMENT.md). `LLM__CLAUDE__APIKEY` is optional (a
   platform fallback key for a demo deploy); real deployments use per-tenant keys set in the desktop.

@@ -18,7 +18,7 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("tools")
-                .HasAnnotation("ProductVersion", "10.0.8")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -29,10 +29,19 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AgentRole")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("CallId")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<bool>("Denied")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<DateTimeOffset>("FinishedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -44,17 +53,38 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                     b.Property<bool>("IsError")
                         .HasColumnType("boolean");
 
+                    b.Property<int?>("MaxOutputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Origin")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("Output")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<int?>("OutputChars")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PolicySource")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("RunId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("RunnerId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("SessionId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<int?>("ShapedOutputChars")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("StartedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -72,6 +102,8 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId", "StartedUtc");
+
+                    b.HasIndex("TenantId", "Origin", "StartedUtc");
 
                     b.ToTable("tool_invocations", "tools");
                 });

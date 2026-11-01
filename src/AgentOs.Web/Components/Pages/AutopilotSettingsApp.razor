@@ -43,6 +43,16 @@ else
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@RunKeys" />
     </Panel>
 
+    <Panel Title="Try the app">
+        <p class="muted platform-hint">Board › Projects › Try the app runs a project on the member's own computer. The app keeps running when that computer's AgentOS.NET connection restarts (an update, a re-pairing), until the member presses Stop or nobody has used it for a while. By default the Testing agent waits while an app is being tried, because both would share the app's ports and data.</p>
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@PreviewKeys" />
+    </Panel>
+
+    <Panel Title="When a run ends without its answer">
+        <p class="muted platform-hint">A run can run out of turns or context after doing the work. Asked again, it answers in a couple of minutes from what it already did — its folder and session on your computer, when still there. Insights counts how often it happens.</p>
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@RecoveryKeys" />
+    </Panel>
+
     <Panel Title="Files for the AI">
         <p class="muted platform-hint">What a person may attach to a ticket (Board › Tasks › Files, or the New idea steps). The files are copied into the agent's working folder for every run of the ticket — the only way files reach an agent, which can't download anything.</p>
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@FileKeys" />
@@ -73,10 +83,14 @@ else
 
     private static readonly string[] CheckKeys = [AutopilotSettings.ChecksTimeoutMinutesKey, AutopilotSettings.ChecksPollSecondsKey];
 
+    private static readonly string[] PreviewKeys = [AutopilotSettings.TestWhileTryingKey, AutopilotSettings.PreviewIdleMinutesKey];
+
     private static readonly IReadOnlyList<string> FileKeys = AgentOs.Modules.Sessions.Files.TicketFileSettings.Keys;
 
     private static readonly string[] RunKeys =
         [AutopilotSettings.CodingRunMinutesKey, AutopilotSettings.ReviewRunMinutesKey, AutopilotSettings.TestingRunMinutesKey];
+
+    private static readonly string[] RecoveryKeys = [AutopilotSettings.RecoverMissingReplyKey];
 
     private bool _resolved;
     private bool _isAdmin;

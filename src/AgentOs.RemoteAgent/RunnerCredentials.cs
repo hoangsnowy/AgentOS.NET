@@ -49,6 +49,14 @@ internal sealed record RunnerCredentials(string HubUrl, string RunnerId, string 
         }
     }
 
+    /// <summary>Forget the saved credentials (<c>AgentOs.RemoteAgent unpair</c>). True when there were any.</summary>
+    internal static bool Delete(string path)
+    {
+        if (!File.Exists(path)) { return false; }
+        File.Delete(path);
+        return true;
+    }
+
     /// <summary>Save for this OS user only (0600 off Windows).</summary>
     internal void Save(string path)
     {

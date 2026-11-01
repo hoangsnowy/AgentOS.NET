@@ -79,6 +79,7 @@ Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant
 |---|---|---|---|
 | `Llm:Provider` | `Claude` | Tenant | Used by any agent whose profile names no provider. `Anthropic` is an alias of `Claude`. |
 | `Llm:ForceProvider` | empty | Tenant | Route every agent to one provider. |
+| `Tools:MaxOutputTokens` | `4000` (500–50000) | Tenant | Budget for one tool result sent back to the model (≈ chars / 4), on the **Routing** page. See *Tool-output shaping* below. |
 | `Llm:OfflineFallback` | **`true` in Development, else `false`** | Platform | Keyless provider → canned, schema-valid output, labelled Offline everywhere (runs, Workflow chip, PR refusal). Lets a fresh checkout run with no secrets. Locked off in Production. Never applies to Board agent runs (New idea, Coding, Reviewer, Testing, the Autopilot lead, Retrospective): those act on a real project, so they fail with the real reason (e.g. a plan limit) instead of getting canned text. |
 | `Llm:Claude:ApiKey` / `ApiKeys` | empty | Tenant | Secret, write-only in the UI. Pool = round-robin with 429 failover. |
 | `Llm:AzureOpenAi:Endpoint` / `ApiKey` / `ApiKeys` | empty | Tenant | Endpoint must be absolute `https://`. |
@@ -96,6 +97,26 @@ Code-only (no UI yet; seed via env if you must): `Llm:Claude:Endpoint` (`https:/
 `Llm:Claude:ApiVersion` (`2023-06-01`), `Llm:*:TimeoutSeconds` (60), `Llm:Fallbacks`
 (inter-provider failover map). Resilience today is key-pool cooldown + failover; `Llm:*:MaxRetries`
 exists on the options type but is not honoured yet.
+
+**Tool-output shaping** — a tool result headed back to the **model** (the LLM tool loop: `AIToolFunction` builds a
+model-facing `DefaultToolGateway`) is shaped there; data consumers such as a workflow Tool node (whose result feeds
+`${…}`, ExtractJson, Transform) always get the full output (`ToolGatewayResult.Output`; the shaped text is
+`ModelOutput`). A result within `Tools:MaxOutputTokens` × 4 chars is passed through **unchanged**. A larger one:
+build/test logs (MSBuild, `dotnet build`/`test`, VSTest, xUnit / Microsoft.Testing.Platform — recognised by lines
+only a build/test tool prints, not by a keyword anywhere; LF, CRLF or mixed line endings) keep their
+`error`/`warning` lines (`error CS…`, analyzer ids), failed-test blocks with their first 5 stack frames, summary lines
+and a short head/tail window; restore/progress noise is dropped and repeated lines collapse to one with a `(×N)`
+count. JSON results (objects or arrays, at any depth — `build_verifier`'s `output`, MCP `content[].text`) are shaped
+in place and stay valid JSON: long string values get the log pass and a share of the budget, over-long arrays keep
+their first elements plus a `"[… N more items omitted …]"` marker element. Whatever is still over the budget is cut
+as text, head + tail around an explicit `[… N lines omitted …]` marker (never inside a surrogate pair) — so errors
+are kept by the log pass, but this final cut may still drop some (it says so), and JSON that could not be fitted
+structurally (e.g. an object with thousands of keys) is then no longer valid JSON. A shaping failure never fails the
+call: it falls back to that plain cut. The evidence log (`tools.tool_invocations`) still stores the **full** output
+plus `OutputChars`, `ShapedOutputChars` (= `OutputChars` when nothing was shaped) and the `MaxOutputTokens` budget
+used (null for non-model callers), and the `AgentOs.Tools` meter counts the difference as
+`agentos.tools.output.saved_chars` (tag `kind` = `builtin` | `mcp` | `remote`; ≈ chars / 4 tokens — an estimate,
+not billed usage).
 
 ### Settings → Agent profiles
 
@@ -168,6 +189,9 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:CodingRunMinutes` | `60` | 10–240 | The longest one Coding (tickets) run may take on a computer — clone, change, build, test, push (was a fixed 20 minutes). |
 | `Autopilot:ReviewRunMinutes` | `30` | 5–120 | The longest one Reviewer run may take (was a fixed 20). The Designer (Design gate) runs under the same limit. |
 | `Autopilot:TestingRunMinutes` | `45` | 10–180 | The longest one Testing (tickets) run may take (was a fixed 30). |
+| `Autopilot:TestWhileTrying` | *(empty)* | project names or ids, comma-separated | *Try the app* panel. Projects whose acceptance testing keeps running while someone tries the app — only safe when the app keeps its data separately for each copy (e.g. a database volume per checkout). Empty = every project holds testing while a preview runs, as before. |
+| `Preview:IdleMinutes` | `120` | 10–1440 | *Try the app* panel. A preview nobody has had open (no connection to its port) for this long is stopped by the computer. Sent with each start; a preview keeps its value across a runner restart. |
+| `Autopilot:RecoverMissingReply` | `true` | on / off | *Ask again for a missing reply* — a Coding, Reviewer or Testing run that ends without its JSON reply is asked once for it instead of discarded (below). |
 | `TicketFiles:MaxFileMegabytes` | `10` | 1–100 | *Files for the AI* — the largest single file a person can attach to a ticket ([ADR-0015](adr/0015-ticket-files.md)). |
 | `TicketFiles:MaxTotalMegabytes` | `50` | 1–500 | All files of one ticket together. They are copied to the computer for every run of the ticket. |
 | `TicketFiles:MaxFiles` | `500` | 1–2000 | Files per ticket (an uploaded folder counts each file in it). |
@@ -185,6 +209,41 @@ then starts nothing, retries nothing and spends no fix round until the reset (+1
 no time), logs one line in the Autopilot activity, shows it on Board › Autopilot and Board › Computers, and picks the
 cut-short work up again afterwards. The wait is in memory: after a restart the next run meets the limit again (an
 immediate answer) and the wait is back.
+
+**A run that ends without its reply** (`Autopilot:RecoverMissingReply`, on by default). A Board agent run on a member's
+computer sometimes ends without the JSON its prompt asks for — the CLI ran out of turns or context after doing real
+work (VNChess #102 lost a 20-minute migration that way). Instead of failing the run, the agent asks **once**, with its
+own 2-minute deadline, for the reply: the Coding agent for its summary (`branch`, `pushed`, `summary`, `description`),
+the Reviewer and Testing agents for their verdict. The runner keeps the folder of a scoped run whose reply holds no
+JSON (or that stopped at its turn / context limit) for 15 minutes, and the follow-up works in it — for Claude Code it
+resumes the same session (`claude -p --resume <session id>`) unless the context was full; otherwise the follow-up is
+a fresh short prompt with the scrubbed tail (1,500 characters, credentials masked) of what the run said, asking it
+to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). The follow-up never carries the
+ticket, its files or the original instructions again. Only a run on a member's computer is asked (a server-side
+provider's run has no folder or session left to look at); a Testing run's screenshot target (Design gate) carries
+over, so the screenshots the run already saved in the kept folder are sent back with the recovered verdict.
+
+What a recovered reply may decide is limited by what the model answering can know:
+
+- **Approve / pass only from the run's own session.** A Reviewer approval or a Testing pass counts only when the
+  follow-up really resumed the run's Claude Code session (the runner reports `Resumed`). A fresh conversation — the
+  context was full, the CLI was Codex, the 15 minutes had passed, another computer took it — may report changes /
+  a failure, never vouch for the work: its approval or pass is set aside and the step stays *not run*.
+- **A recovered pass checks every criterion.** It names at least one criterion, each with evidence, none
+  `not-checked`; otherwise the step stays *not run* (never a pass).
+- **A recovered Coding summary is checked against the remote.** Its branch must be there
+  (`IPrCreationService.BranchExistsAsync`); for a revision of an existing pull request — whose branch is always
+  there — the branch head must have moved since before the run (`GetBranchHeadAsync`). Otherwise the run fails with
+  *"The work was done but not pushed — …"*, so the Orchestrator agent's retry tells the next run to push. When the
+  remote can't tell — **on Azure DevOps it never can** (no branch or head lookup there yet) — the agent's word stands
+  only if the follow-up resumed the run's own session; from a fresh conversation the summary is rejected.
+
+The follow-up is metered like any call (the agent's run, tagged `reply-recovery`), each attempt shows in the task's
+live feed, and Insights › Delivery counts them (*Replies asked again*). On the computer, a follow-up runs in its own
+lane (one at a time) so its 2 minutes aren't spent queued behind long coding runs; a kept folder that is never asked
+for is deleted within a minute of its 15 minutes, every kept folder is deleted when the runner stops, and the next
+start deletes those a crashed runner left. `REMOTE_AGENT_KEEP_RUNS` (keep every run folder, for debugging) turns
+keeping-for-a-follow-up off: a follow-up then starts in a fresh folder.
 
 ### Workflow › Ticket flow
 

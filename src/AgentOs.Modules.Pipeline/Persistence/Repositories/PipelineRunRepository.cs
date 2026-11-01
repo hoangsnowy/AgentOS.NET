@@ -102,7 +102,8 @@ internal sealed class PipelineRunRepository(
             {
                 RunId = record.Id,
                 TenantId = tenantId,
-                KcId = "board",
+                // Why the call was made: "board" for the agent's own work, else its purpose (e.g. "reply-recovery").
+                KcId = string.IsNullOrWhiteSpace(c.Purpose) ? "board" : c.Purpose.Length > 32 ? c.Purpose[..32] : c.Purpose,
                 Iteration = 0,
                 AgentName = string.IsNullOrWhiteSpace(c.AgentRole) ? record.Agent : c.AgentRole,
                 Model = c.Model,
@@ -371,14 +372,16 @@ internal sealed class PipelineRunRepository(
         }
 
         var latSum = new Dictionary<string, double>(StringComparer.Ordinal);
+        var askedAgain = 0;
         var latCalls = new Dictionary<string, int>(StringComparer.Ordinal);
         var iterCalls = new Dictionary<int, int>();
         var iterRuns = new Dictionary<int, HashSet<Guid>>();
 
         await foreach (var m in metrics
-            .Select(m => new { m.RunId, m.AgentName, m.LatencyMs, m.Iteration })
+            .Select(m => new { m.RunId, m.AgentName, m.LatencyMs, m.Iteration, m.KcId })
             .AsAsyncEnumerable().WithCancellation(ct).ConfigureAwait(false))
         {
+            if (m.KcId == AgentOs.Domain.Llm.LlmCallPurposes.ReplyRecovery) { askedAgain++; }
             latSum[m.AgentName] = latSum.GetValueOrDefault(m.AgentName) + m.LatencyMs;
             latCalls[m.AgentName] = latCalls.GetValueOrDefault(m.AgentName) + 1;
             iterCalls[m.Iteration] = iterCalls.GetValueOrDefault(m.Iteration) + 1;
@@ -411,7 +414,10 @@ internal sealed class PipelineRunRepository(
                     kv.Key, iterRuns.TryGetValue(kv.Key, out var s) ? s.Count : 0, kv.Value))
                 .OrderBy(b => b.Iteration)],
             [.. runsByDay.Select(kv => new DayRunsBucket(kv.Key, kv.Value))
-                .OrderBy(b => b.Day, StringComparer.Ordinal)]);
+                .OrderBy(b => b.Day, StringComparer.Ordinal)])
+        {
+            RepliesAskedAgain = askedAgain,
+        };
     }
 
     private static void Bump(Dictionary<string, Acc> map, string key, decimal cost, int tokensIn, int tokensOut, int cacheRead, int cacheWrite)
@@ -585,19 +591,23 @@ internal sealed class PipelineRunRepository(
     private async Task<InsightsExtra> GetInsightsExtraViaDapperAsync(
         string tenantId, DateTimeOffset? since, CancellationToken ct)
     {
-        var parms = new { tenantId, since };
+        var parms = new { tenantId, since, purpose = AgentOs.Domain.Llm.LlmCallPurposes.ReplyRecovery };
         await using var conn = await connectionFactory!.OpenWithTenantAsync(ct).ConfigureAwait(false);
 
+        // The same pass counts the runs that ended without their JSON reply and were asked once for it (ReplyRecovery
+        // tags that follow-up call's KcId) — no extra round-trip.
         var latencySql = $"""
-            SELECT "AgentName" AS Agent, AVG("LatencyMs") AS AvgLatencyMs, COUNT(*)::int AS Calls
+            SELECT "AgentName" AS Agent, AVG("LatencyMs") AS AvgLatencyMs, COUNT(*)::int AS Calls,
+                   (COUNT(*) FILTER (WHERE "KcId" = @purpose))::int AS AskedAgain
             FROM pipeline.run_metrics
             {CostWhere}
             GROUP BY "AgentName"
             ORDER BY COUNT(*) DESC, "AgentName"
             """;
-        var latency = (await conn.QueryAsync<AgentLatencyRow>(
-                new CommandDefinition(latencySql, parms, cancellationToken: ct)).ConfigureAwait(false))
-            .Select(r => new AgentLatencyBucket(r.Agent, r.AvgLatencyMs, r.Calls)).ToList();
+        var latencyRows = (await conn.QueryAsync<AgentLatencyRow>(
+                new CommandDefinition(latencySql, parms, cancellationToken: ct)).ConfigureAwait(false)).AsList();
+        var latency = latencyRows.Select(r => new AgentLatencyBucket(r.Agent, r.AvgLatencyMs, r.Calls)).ToList();
+        var askedAgain = latencyRows.Sum(r => r.AskedAgain);
 
         var iterSql = $"""
             SELECT "Iteration" AS Iteration, COUNT(DISTINCT "RunId")::int AS Runs, COUNT(*)::int AS Calls
@@ -622,7 +632,7 @@ internal sealed class PipelineRunRepository(
                 new CommandDefinition(runsSql, parms, cancellationToken: ct)).ConfigureAwait(false))
             .Select(r => new DayRunsBucket(r.Day, r.Runs)).ToList();
 
-        return new InsightsExtra(latency, iterations, runsByDay);
+        return new InsightsExtra(latency, iterations, runsByDay) { RepliesAskedAgain = askedAgain };
     }
 
     private sealed class AgentLatencyRow
@@ -630,6 +640,7 @@ internal sealed class PipelineRunRepository(
         public string Agent { get; init; } = string.Empty;
         public double AvgLatencyMs { get; init; }
         public int Calls { get; init; }
+        public int AskedAgain { get; init; }
     }
 
     private sealed class IterationRow

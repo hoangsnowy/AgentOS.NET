@@ -259,6 +259,8 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         }
 
         var tenantId = AgentOs.SharedKernel.Identity.AmbientIdentity.Current?.TenantId ?? ResolveFallbackTenant() ?? "anonymous";
+        // Tools:MaxOutputTokens is read per tool call by the gateway; ISettings is a root singleton.
+        var settings = _tenantProvider?.GetService(typeof(AgentOs.Domain.Configuration.ISettings)) as AgentOs.Domain.Configuration.ISettings;
         foreach (var name in requested)
         {
             if (string.IsNullOrWhiteSpace(name))
@@ -271,7 +273,7 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                 _logger.LogWarning("[{Provider}] tool '{Tool}' requested but not registered — dropped.", Provider, name);
                 continue;
             }
-            resolved.Add(new AIToolFunction(tool, tenantId, runId: null, policy: _toolPolicy, log: _toolInvocationLog));
+            resolved.Add(new AIToolFunction(tool, tenantId, runId: null, policy: _toolPolicy, log: _toolInvocationLog, settings));
         }
         return resolved;
     }
