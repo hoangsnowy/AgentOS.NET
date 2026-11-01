@@ -39,16 +39,24 @@ ingress:
 
 # ---------------------------------------------------------------------------------------------------------
 # Secrets. Production: create ONE Secret yourself and name it here (see docs/ONPREM.md) — keys:
-#   postgres-password, keycloak-admin-password, keycloak-web-client-secret, operator-password,
-#   [member-password], [smtp-password], [dataprotection-certificate-password]
+#   postgres-password, keycloak-admin-password, keycloak-web-client-secret, keycloak-admin-client-secret,
+#   operator-password, [member-password], [smtp-password], [dataprotection-certificate-password]
 # Without existingSecret the chart creates one from the values below; empty values are generated randomly
-# once and kept on upgrade (read them back with kubectl — NOTES.txt shows how).
+# once and kept on upgrade (read them back with kubectl — NOTES.txt shows how). Generation reads the live
+# Secret with `lookup`, which offline renders (helm template, ArgoCD, Flux) cannot do: GitOps installs MUST
+# use existingSecret.
 # ---------------------------------------------------------------------------------------------------------
 secrets:
   existingSecret: ""
+  # false = never generate: every key must come from existingSecret or a value below, else the render fails.
+  # Set it in GitOps pipelines so a missing secret fails the sync instead of rotating credentials.
+  generate: true
   postgresPassword: ""
+  # Master-realm bootstrap admin — used only by Keycloak itself and the realm Job, never by the hosts.
   keycloakAdminPassword: ""
   keycloakWebClientSecret: ""
+  # Secret of the agentos-admin service-account client the hosts use for member management.
+  keycloakAdminClientSecret: ""
   # First AgentOS.NET admin: user `operator` (tenant admin + platform-admin).
   operatorPassword: ""
   # Optional demo user `member`; empty = the seed user is disabled.
@@ -121,11 +129,18 @@ keycloak:
   # Back channel from the pods — default the bundled Service (http), else publicUrl.
   internalUrl: ""
   realm: agentic
+  # Master-realm bootstrap admin (Keycloak's KC_BOOTSTRAP_ADMIN_* + the realm Job). Rotate or disable it
+  # after the first install — the hosts never use it (docs/ONPREM.md → Keycloak admin access).
   adminUsername: admin
+  # Confidential service-account client in the realm that the Api/Web use (client_credentials) for member
+  # management; the realm Job creates it with only realm-management manage-users, view-users, query-users,
+  # view-realm.
+  adminClientId: agentos-admin
   # Plain-HTTP discovery is only acceptable inside the cluster; default: https required unless the back
   # channel is the bundled in-cluster Service.
   requireHttpsMetadata: ""
-  # Post-install/upgrade Job: point the realm at web's URL, rotate the client secret + seed passwords.
+  # Post-install/upgrade Job: point the realm at web's URL, set the client secrets + the agentos-admin service
+  # account; seed passwords on the first run only.
   configureRealm: true
   service:
     port: 8080
@@ -201,6 +216,8 @@ podSecurityContext:
 # Optional local LLM server. Point the platform at it in the desktop: Settings → LLM providers →
 # OpenAI-compatible endpoint = http://<release>-agentos-net-ollama:11434/v1 (NOTES.txt prints it).
 # ---------------------------------------------------------------------------------------------------------
+# Runs as uid/gid 1000 (non-root) with HOME + the model store on the volume (/data); the upstream image
+# defaults to root with /root/.ollama.
 ollama:
   enabled: false
   image:

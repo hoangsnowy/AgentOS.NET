@@ -14,6 +14,7 @@
 # Options: --version <v> (default: <Version> in Directory.Build.props, or the bundle's VERSION file),
 #          --out <dir> (save; default dist/), --keycloak-image <ref> (build; a mirror of quay.io/keycloak/keycloak).
 # Third-party image tags are read from compose/docker-compose.yml — the single source the Helm values match.
+# Needs bash >= 4.4 and GNU coreutils/sed (Linux; on macOS install bash + gnu-sed, or run it in a container).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,8 +35,13 @@ while [[ $# -gt 0 ]]; do
     --out) out="$2"; shift 2 ;;
     --with-ollama) with_ollama=true; shift ;;
     --keycloak-image) keycloak_image="$2"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    *) registry="${registry:-$1}"; shift ;;
+    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -*) echo "Unknown option: $1 (see --help)" >&2; exit 1 ;;
+    *)
+      # The only positional argument is push's registry.
+      if [[ "$cmd" == push && -z "${registry:-}" ]]; then registry="$1"; shift
+      else echo "Unexpected argument: $1 (see --help)" >&2; exit 1; fi
+      ;;
   esac
 done
 
@@ -94,7 +100,9 @@ case "$cmd" in
     # Compose mounts the shared scripts from the chart directory — keep the same relative layout.
     mkdir -p "$stage/helm/agentos-net/files"
     cp "$here/helm/agentos-net/files/"*.sh "$stage/helm/agentos-net/files/"
-    helm package "$here/helm/agentos-net" --app-version "$version" -d "$stage/helm" >/dev/null
+    # Chart version = app version, so the file is helm/agentos-net-<version>.tgz (docs/ONPREM.md). Needs semver.
+    helm package "$here/helm/agentos-net" --version "$version" --app-version "$version" -d "$stage/helm" >/dev/null
+    [[ -f "$stage/helm/agentos-net-$version.tgz" ]] || { echo "helm package did not produce agentos-net-$version.tgz" >&2; exit 1; }
     cp "$repo/docs/ONPREM.md" "$repo/docs/dataprotection-dr-runbook.md" "$stage/docs/"
     # The air-gapped compose host has no build context: pin the images to the bundled tag.
     sed -i "s/^AGENTOS_VERSION=.*/AGENTOS_VERSION=$version/" "$stage/compose/.env.example"
@@ -108,7 +116,8 @@ case "$cmd" in
   load)
     archive="$here/images.tar.gz"
     [[ -f "$archive" ]] || { echo "No images.tar.gz next to bundle.sh — run load from an extracted bundle." >&2; exit 1; }
-    if [[ -f "$here/SHA256SUMS" ]]; then (cd "$here" && sha256sum -c SHA256SUMS); fi
+    [[ -f "$here/SHA256SUMS" ]] || { echo "No SHA256SUMS next to bundle.sh — refusing to load an unverifiable bundle." >&2; exit 1; }
+    (cd "$here" && sha256sum -c SHA256SUMS)
     gunzip -c "$archive" | docker load
     ;;
 
@@ -124,7 +133,7 @@ case "$cmd" in
     ;;
 
   *)
-    sed -n '2,19p' "${BASH_SOURCE[0]}"
+    sed -n '2,17p' "${BASH_SOURCE[0]}"
     exit 1
     ;;
 esac

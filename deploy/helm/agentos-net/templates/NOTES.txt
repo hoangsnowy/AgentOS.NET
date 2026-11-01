@@ -19,6 +19,8 @@ Api:       {{ include "agentos.scheme" . }}://{{ .Values.ingress.hosts.api }}  (
        -o jsonpath='{.data.operator-password}' | base64 -d; echo
 
    Keycloak admin console ({{ include "agentos.keycloakUrl" . }}/admin): user "{{ .Values.keycloak.adminUsername }}", key keycloak-admin-password.
+   The hosts manage members through the "{{ .Values.keycloak.adminClientId }}" service account, not this admin — rotate or
+   disable the bootstrap admin once you have your own (docs/ONPREM.md → Keycloak admin access).
 {{- if not .Values.secrets.existingSecret }}
 
    NOTE: the chart generated the credentials into Secret {{ include "agentos.secretName" . }} (kept on uninstall).

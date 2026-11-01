@@ -22,7 +22,8 @@ browser ──► Web (Blazor desktop, :8080) ──┐                      ┌
 - **Keycloak** is the AgentOS.NET image built from `infra/keycloak` — Keycloak 26.6 with the Postgres driver,
   health endpoints, the `agentic` realm and the AgentOS.NET login theme baked in. The realm is imported on the
   first start only; a one-shot step ([`configure-realm.sh`](../deploy/helm/agentos-net/files/configure-realm.sh))
-  then points it at your install on every start/upgrade: redirect URIs, client secret, seed passwords.
+  then points it at your install on every start/upgrade: redirect URIs, client secrets, the `agentos-admin`
+  service account the hosts use for member management, and — on the first run only — the seed passwords.
 - **Api + Web** run in `Production`, apply every module's EF migrations at boot (serialised by a Postgres
   advisory lock), and bootstrap row-level security (the `agentos_rls` role + policies, [ADR-0012](adr/0012-postgres-row-level-security.md)).
 - **DataProtection** keys (they encrypt every tenant secret) are stored in Postgres and **wrapped with a
@@ -37,8 +38,9 @@ browser ──► Web (Blazor desktop, :8080) ──┐                      ┌
 
 ## 1. docker compose — cold install
 
-**Needs:** Docker Engine 24+ with the compose plugin, `openssl`, 4 vCPU / 8 GB RAM / 20 GB disk (more with
-Ollama). From a clone of the repository (or an extracted [offline bundle](#3-air-gapped-install)):
+**Needs:** Docker Engine 24+ with the compose plugin, `openssl`, bash ≥ 4.4 and GNU coreutils/sed (any Linux;
+on macOS install `bash` + `gnu-sed` or run the scripts in a container), 4 vCPU / 8 GB RAM / 20 GB disk (more
+with Ollama). From a clone of the repository (or an extracted [offline bundle](#3-air-gapped-install)):
 
 ```bash
 cd deploy/compose
@@ -50,14 +52,18 @@ docker compose up -d --wait       # Postgres → Keycloak → realm config → A
 
 `init-secrets.sh` replaces every `CHANGE_ME` in `.env` (mode 600) with a random value and writes
 `dataprotection/dataprotection.pfx`. Both are git-ignored. **Back them up** — see [Backup](#5-backup--restore).
+A value left at `CHANGE_ME` is refused, never applied: `keycloak-config` exits with an error, and the Api/Web
+refuse to start in Production while any setting still contains it.
 
 Open **http://localhost:8080** and [sign in as the first admin](#first-admin-login).
 
 What `up` does, in order: Postgres creates the `agentos` and `keycloak` databases on first boot → Keycloak
 imports the realm → `keycloak-config` (one-shot) rotates the client secret to `KEYCLOAK_WEB_CLIENT_SECRET`,
-sets the redirect URIs to `WEB_PUBLIC_URL`, sets `operator`'s password, disables the demo `member` (unless
-`MEMBER_PASSWORD` is set) and turns email verification off unless `SMTP_HOST` is set → Api + Web migrate the
-database and turn healthy. `docker compose ps` shows the state; `docker compose logs -f web` the details.
+sets the redirect URIs to `WEB_PUBLIC_URL`, creates/updates the `agentos-admin` service account
+(`KEYCLOAK_ADMIN_CLIENT_SECRET`, see [Keycloak admin access](#keycloak-admin-access)), turns email verification
+off unless `SMTP_HOST` is set and — **on the first run only** — sets `operator`'s password and disables the
+demo `member` (unless `MEMBER_PASSWORD` is set) → Api + Web migrate the database and turn healthy. Later runs
+never touch the seed users again: change their passwords in Keycloak, not in `.env`. `docker compose ps` shows the state; `docker compose logs -f web` the details.
 
 ### On a server: TLS in front
 
@@ -74,6 +80,15 @@ sso.agentos.corp.example { reverse_proxy 127.0.0.1:8081 }
 Then in `.env`: `WEB_PUBLIC_URL=https://agentos.corp.example`,
 `KEYCLOAK_PUBLIC_URL=https://sso.agentos.corp.example`, and `docker compose up -d --wait` again (the realm
 step re-runs and rewrites the redirect URIs).
+
+**Proxy headers.** Keycloak runs with `KC_PROXY_HEADERS=xforwarded`: it **trusts** `X-Forwarded-Proto`,
+`-Host`, `-Port` and `-For` to build its URLs and record client IPs. So (1) keep Keycloak reachable only through
+the proxy (`BIND_ADDRESS=127.0.0.1`, or a firewall) — anyone who can reach port 8081 directly can spoof those
+headers; (2) the proxy must **set/overwrite** them, never pass client-supplied values through (Caddy does by
+default; nginx: `proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Host $host;`); (3) a proxy that speaks the RFC 7239 `Forwarded` header instead
+needs `KC_PROXY_HEADERS=forwarded`. On Kubernetes the same applies to the ingress controller (ingress-nginx
+sets them; with `use-forwarded-headers: "true"` only behind another trusted L7 hop).
 
 ### Local LLMs with Ollama (optional)
 
@@ -98,7 +113,9 @@ relay (`Email:*`).
 ## 2. Kubernetes with Helm
 
 **Needs:** Kubernetes ≥ 1.29, Helm 3.14+ or 4, a default StorageClass (bundled Postgres), and for a real
-deploy an ingress controller + TLS certificates. The chart deploys Api, Web, Keycloak (bundled or yours),
+deploy an ingress controller + TLS certificates. Api/Web pods run non-root on a read-only root filesystem
+(writable `/tmp` emptyDir) without a service-account token; Ollama runs as uid 1000 with its models on the
+volume. The chart deploys Api, Web, Keycloak (bundled or yours),
 Postgres (bundled or yours) and optionally Ollama.
 
 ### Try it on kind
@@ -142,6 +159,7 @@ install` prints how to read them (NOTES).
      --from-literal=postgres-password="$(openssl rand -hex 24)" \
      --from-literal=keycloak-admin-password="$(openssl rand -hex 24)" \
      --from-literal=keycloak-web-client-secret="$(openssl rand -hex 32)" \
+     --from-literal=keycloak-admin-client-secret="$(openssl rand -hex 32)" \
      --from-literal=operator-password='<first admin password>' \
      --from-literal=dataprotection-certificate-password="$DP_PASSWORD"
      # optional: member-password, smtp-password
@@ -164,6 +182,18 @@ install` prints how to read them (NOTES).
 
 5. `helm install agentos deploy/helm/agentos-net -n agentos -f my-values.yaml --wait --timeout 15m`
 
+### GitOps (Argo CD, Flux) and `helm template`
+
+Without `secrets.existingSecret` the chart generates missing credentials and reads them back on upgrade with
+Helm's `lookup` — which returns nothing when there is no live cluster to ask: `helm template`, Argo CD and
+Flux renders, `--dry-run=client`, helm-diff. Such a render would mint **new** random passwords on every sync
+(Postgres keeps the one from its first boot, so the app breaks). Therefore:
+
+- **GitOps installs must use `secrets.existingSecret`** (created out of band — Sealed Secrets, External
+  Secrets, SOPS — with the keys listed above), and should set `secrets.generate=false` so a missing secret
+  fails the sync instead of generating one.
+- An **upgrade** whose release Secret cannot be found fails at render time rather than rotating credentials.
+
 Every value is documented in [`values.yaml`](../deploy/helm/agentos-net/values.yaml). The chart fails at render
 time — not at runtime — on configurations that cannot work (key wrapping required but unconfigured, an
 external Keycloak without its URL, several Web replicas without sticky sessions).
@@ -178,11 +208,14 @@ external Keycloak without its URL, several Web replicas without sticky sessions)
 - **External Keycloak** — `keycloak.enabled=false`, `keycloak.publicUrl=https://sso.corp.example`. Import
   [`infra/keycloak/agentic-realm.json`](../infra/keycloak/agentic-realm.json) and copy
   [`infra/keycloak/themes/agentos`](../infra/keycloak/themes/agentos) into its themes directory first; the realm
-  Job then configures the client against `keycloak.internalUrl` (default: the public URL) with the master-realm
-  admin from the secret. Set `keycloak.configureRealm=false` to manage the realm yourself (redirect URI
-  `<web>/*`, client secret = `keycloak-web-client-secret`).
+  Job then configures the clients against `keycloak.internalUrl` (default: the public URL) with the master-realm
+  admin from the secret. Set `keycloak.configureRealm=false` to manage the realm yourself: `agentic-web`
+  redirect URI `<web>/*` with client secret = `keycloak-web-client-secret`, and a confidential client
+  `agentos-admin` (service accounts on, every login flow off, secret = `keycloak-admin-client-secret`) whose
+  service account holds the `realm-management` roles `manage-users`, `view-users`, `query-users`, `view-realm`.
 - **Azure Key Vault** wrapping instead of a certificate: `dataProtection.keyVaultKeyId` (pods need a workload
-  identity with *Key Vault Crypto User*).
+  identity with *Key Vault Crypto User*). When it is set the certificate Secret is neither mounted nor
+  required.
 
 ### Scaling
 
@@ -194,7 +227,7 @@ Keycloak and Postgres are single instances — for HA use your own clustered Key
 
 ## 3. Air-gapped install
 
-On a connected machine with the repository, Docker and Helm:
+On a connected machine with the repository, Docker, Helm and bash ≥ 4.4 + GNU sed (Linux):
 
 ```bash
 deploy/bundle.sh build                      # agentos-net/{api,web,keycloak}:<version>
@@ -202,7 +235,8 @@ deploy/bundle.sh save [--with-ollama]       # → dist/agentos-net-<version>.tar
 ```
 
 The bundle holds every image (`docker save`: Api, Web, Keycloak, Postgres[, Ollama]) with a `SHA256SUMS`, the
-compose files, the packaged Helm chart, these docs and `bundle.sh` itself. Behind a registry mirror, build
+compose files, the packaged Helm chart (`helm/agentos-net-<version>.tgz` — chart version = app version, so
+`<version>` must be semver), these docs and `bundle.sh` itself. Behind a registry mirror, build
 Keycloak from it: `deploy/bundle.sh build --keycloak-image registry.corp/keycloak/keycloak:26.6`.
 
 Carry it over, verify and load:
@@ -210,7 +244,7 @@ Carry it over, verify and load:
 ```bash
 sha256sum -c agentos-net-<version>.tar.gz.sha256
 tar -xzf agentos-net-<version>.tar.gz && cd agentos-net-<version>
-./bundle.sh load                            # checks SHA256SUMS, then docker load
+./bundle.sh load                            # checks SHA256SUMS (refuses without it), then docker load
 ```
 
 - **compose:** `cd compose && cp .env.example .env && ./init-secrets.sh && docker compose up -d --wait --no-build`
@@ -233,7 +267,8 @@ Nothing in the stack calls the internet at runtime except the LLM providers you 
    - compose: set `AGENTOS_VERSION` in `.env` (bundle installs) → `docker compose up -d --wait`
    - Helm: `helm upgrade agentos <chart> -n agentos -f my-values.yaml --wait --timeout 15m`
 4. Database migrations run at boot, per module, serialised by an advisory lock — rolling several replicas is
-   safe. The realm step re-runs (idempotent). Verify with `/health` and a sign-in.
+   safe. The realm step re-runs (idempotent; seed passwords are never re-applied). Verify with `/health` and a
+   sign-in.
 
 Notes:
 
@@ -303,8 +338,28 @@ After the first sign-in:
 2. **System → About** — every service Up, and **Key ring: Certificate** (Degraded = unwrapped).
 3. Invite people (**Settings → Users**) or let them sign up; give admins the `admin` role and only platform
    operators `platform-admin` in the Keycloak admin console (`<keycloak>/admin`, master-realm user
-   `KEYCLOAK_ADMIN_USERNAME`). Keycloak 26 marks that bootstrap admin as temporary — create a permanent
-   admin there and delete the bootstrap one.
+   `KEYCLOAK_ADMIN_USERNAME`).
+4. Retire the bootstrap admin — see [Keycloak admin access](#keycloak-admin-access).
+
+### Keycloak admin access
+
+Two different identities talk to Keycloak's admin API:
+
+| Who | Identity | Rights | Used for |
+|---|---|---|---|
+| Api + Web | `agentos-admin` client in realm `agentic` (client_credentials, `KEYCLOAK_ADMIN_CLIENT_SECRET` / `keycloak-admin-client-secret`) | `realm-management`: `manage-users`, `view-users`, `query-users`, `view-realm` — nothing in other realms, no client or realm settings | member lifecycle: invite/create users, role mappings, password-reset / invitation e-mails, tenant lookups |
+| `configure-realm.sh` (`keycloak-config` / the Helm realm Job) | master-realm bootstrap admin (`KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD`) | full | creating the clients and the service account, realm settings |
+
+Keycloak 26 flags the bootstrap admin as **temporary**. After the first successful `up` / install, create a
+permanent admin of your own in the master realm (ideally bound to your corporate IdP) and **disable or delete
+the bootstrap admin** (or at least rotate its password in Keycloak). The hosts keep working — they never use
+it. From then on the realm step finds the bootstrap admin unusable but the service account working, logs
+*"the realm was configured before. Nothing changed."* and exits 0, so `docker compose up` and `helm upgrade`
+keep working. To re-apply a changed `WEB_PUBLIC_URL` or rotate a client secret later, put a working
+master-realm admin into `KEYCLOAK_ADMIN_USERNAME`/`KEYCLOAK_ADMIN_PASSWORD` (compose `.env`; Helm
+`keycloak.adminUsername` + `keycloak-admin-password`) for that run.
+Keycloak shows its server version only to master-realm admins, so **System → About** lists the Keycloak
+card without a version under the service account.
 
 ---
 
@@ -312,7 +367,9 @@ After the first sign-in:
 
 | Symptom | Cause → fix |
 |---|---|
-| `docker compose config`: *required variable … is missing* | `.env` missing a secret — run `./init-secrets.sh`. |
+| `docker compose config`: *required variable … is missing* | `.env` missing a secret — run `./init-secrets.sh` (it fills new `CHANGE_ME` keys added by an upgrade too; copy them from `.env.example` first). |
+| `keycloak-config` / realm Job: *still holds the CHANGE_ME placeholder*; Api/Web: *Refusing to start … CHANGE_ME* | A secret was never filled in. Run `./init-secrets.sh` or set the value. |
+| Settings → Users: *Keycloak admin token request failed (401)* | `KEYCLOAK_ADMIN_CLIENT_SECRET` / `keycloak-admin-client-secret` differs from the `agentos-admin` client's secret — re-run the realm step with a working master admin, or copy the secret from the client's *Credentials* tab. |
 | Keycloak: *HTTPS required* / browser drops the session | Plain http on a non-localhost name. Put TLS in front ([§1](#on-a-server-tls-in-front)) and use https public URLs. |
 | *invalid redirect_uri* at sign-in | `WEB_PUBLIC_URL` / `web.publicUrl` differs from the URL in the browser. Fix it and re-run `docker compose up -d` / `helm upgrade` (the realm step rewrites the redirect URIs). |
 | Sign-in loops, *IDX10205 issuer invalid* | `KEYCLOAK_PUBLIC_URL` differs from how browsers reach Keycloak — the issuer is fixed to it. |

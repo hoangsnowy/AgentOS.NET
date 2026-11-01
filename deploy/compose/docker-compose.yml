@@ -25,11 +25,12 @@ x-app-env: &app-env
   Auth__Keycloak__MetadataAddress: "http://keycloak:8080/realms/agentic/.well-known/openid-configuration"
   Auth__Keycloak__RequireHttpsMetadata: "false"
   Auth__Keycloak__Audience: agentic-api
+  # Member management: the realm's `agentos-admin` service account (client_credentials, only realm-management
+  # manage-users/view-users/query-users/view-realm — created by keycloak-config), never the master admin.
   Auth__Keycloak__Admin__BaseUrl: "http://keycloak:8080"
   Auth__Keycloak__Admin__Realm: agentic
-  Auth__Keycloak__Admin__ClientId: admin-cli
-  Auth__Keycloak__Admin__Username: "${KEYCLOAK_ADMIN_USERNAME:-admin}"
-  Auth__Keycloak__Admin__Password: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}"
+  Auth__Keycloak__Admin__ClientId: agentos-admin
+  Auth__Keycloak__Admin__ClientSecret: "${KEYCLOAK_ADMIN_CLIENT_SECRET:?set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}"
   Email__From: "${SMTP_FROM:-noreply@agentos.local}"
   Email__FromName: AgentOS.NET
   Email__SmtpHost: "${SMTP_HOST:-}"
@@ -127,8 +128,10 @@ services:
       retries: 30
       start_period: 60s
 
-  # One-shot: point the realm at this install (redirect URIs, client secret, seed passwords). Same script the
-  # Helm chart runs as a post-install/post-upgrade Job; uses kcadm.sh from the Keycloak image (air-gap safe).
+  # One-shot: point the realm at this install (redirect URIs, client secrets, the agentos-admin service account;
+  # seed passwords on the first run only). Same script the Helm chart runs as a post-install/post-upgrade Job;
+  # uses kcadm.sh from the Keycloak image (air-gap safe). Exits 0 without changes once the bootstrap admin has
+  # been retired (docs/ONPREM.md → Keycloak admin access).
   keycloak-config:
     image: "${AGENTOS_REGISTRY:-agentos-net}/keycloak:${AGENTOS_VERSION:-local}"
     restart: "no"
@@ -139,6 +142,7 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}"
       WEB_PUBLIC_URL: "${WEB_PUBLIC_URL:-http://localhost:8080}"
       KEYCLOAK_WEB_CLIENT_SECRET: "${KEYCLOAK_WEB_CLIENT_SECRET:?set KEYCLOAK_WEB_CLIENT_SECRET in .env}"
+      KEYCLOAK_ADMIN_CLIENT_SECRET: "${KEYCLOAK_ADMIN_CLIENT_SECRET:?set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}"
       OPERATOR_PASSWORD: "${OPERATOR_PASSWORD:?set OPERATOR_PASSWORD in .env}"
       MEMBER_PASSWORD: "${MEMBER_PASSWORD:-}"
       KC_SMTP_HOST: "${SMTP_HOST:-}"
@@ -165,6 +169,8 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      keycloak-config:
+        condition: service_completed_successfully
     healthcheck: *app-healthcheck
 
   web:
@@ -199,6 +205,12 @@ services:
     image: ollama/ollama:0.40.13
     profiles: ["ollama"]
     restart: unless-stopped
+    # Runs as the image default (root): a fresh named volume is root-owned and compose cannot chown it. The
+    # Helm chart runs Ollama as uid 1000 on a read-only root filesystem. To do the same here, chown the volume
+    # once (`docker run --rm -v agentos-net_ollama-data:/d busybox chown -R 1000:1000 /d`), then add
+    # `user: "1000:1000"`, `read_only: true`, `tmpfs: [/tmp]` and
+    # `environment: { HOME: /root/.ollama, OLLAMA_MODELS: /root/.ollama/models }`.
+    security_opt: ["no-new-privileges:true"]
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:

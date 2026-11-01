@@ -145,7 +145,12 @@ imagePullSecrets:
 {{- end -}}
 
 {{/* (dict "root" $ "key" "postgres-password" "value" .Values.secrets.postgresPassword) → the explicit value, else
-     the value already in the release's Secret (upgrades keep it), else a fresh random one. */}}
+     the value already in the release's Secret (upgrades keep it), else a fresh random one.
+     Generation needs `lookup`, which returns nothing when there is no cluster to ask: `helm template`, ArgoCD,
+     Flux, `--dry-run=client`, helm-diff. Rendering there would mint NEW random passwords on every sync (and
+     Postgres keeps the one baked at initdb) — so GitOps installs use secrets.existingSecret, or set
+     secrets.generate=false to make the chart fail instead of generating. An upgrade whose release Secret
+     cannot be found fails for the same reason rather than rotating every credential. */}}
 {{- define "agentos.secretValue" -}}
 {{- if .value -}}
 {{- .value -}}
@@ -153,9 +158,21 @@ imagePullSecrets:
 {{- $existing := lookup "v1" "Secret" .root.Release.Namespace (include "agentos.secretName" .root) -}}
 {{- if and $existing (hasKey $existing.data .key) -}}
 {{- index $existing.data .key | b64dec -}}
+{{- else if not .root.Values.secrets.generate -}}
+{{- fail (printf "secrets.generate=false: no value for Secret key %q — set secrets.existingSecret (required for GitOps / helm template renders) or the matching secrets.* value. See docs/ONPREM.md." .key) -}}
+{{- else if and .root.Release.IsUpgrade (not $existing) -}}
+{{- fail (printf "Upgrade of release %q: its Secret %s was not found (lookup returned nothing — an offline render such as --dry-run=client / helm-diff, or the Secret was deleted). Refusing to generate new credentials over the data they protect; restore the Secret or set secrets.existingSecret." .root.Release.Name (include "agentos.secretName" .root)) -}}
 {{- else -}}
 {{- randAlphaNum 32 -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The DataProtection certificate Secret to mount — empty when Azure Key Vault wraps the key ring instead
+     (dataProtection.keyVaultKeyId), so a Key Vault install never waits on the default certificate Secret. */}}
+{{- define "agentos.dpCertificateSecret" -}}
+{{- if not .Values.dataProtection.keyVaultKeyId -}}
+{{- .Values.dataProtection.certificate.existingSecret -}}
 {{- end -}}
 {{- end -}}
 

@@ -68,6 +68,13 @@ jobs:
           expect_fail --set keycloak.enabled=false
           expect_fail --set web.replicaCount=2
           expect_fail --set ingress.enabled=false
+          # GitOps/offline renders must never mint fresh credentials (lookup returns nothing there).
+          expect_fail --set secrets.generate=false
+          expect_fail --is-upgrade
+          # Key Vault wrapping must not mount (and wait on) the default certificate Secret.
+          if helm template agentos "$CHART" --set dataProtection.keyVaultKeyId=https://kv.example/keys/dp | grep -q 'secretName: agentos-dataprotection'; then
+            echo "::error::keyVaultKeyId still mounts the certificate Secret"; exit 1
+          fi
 
       - name: docker compose config
         working-directory: deploy/compose
@@ -152,6 +159,17 @@ jobs:
           [ "$wrapped" = "t" ] || { echo "::error::DataProtection key ring is not wrapped ($wrapped)"; exit 1; }
           kubectl -n agentos logs deploy/agentos-agentos-net-web | grep -q 'Row-level security enabled' \
             || { echo "::error::row-level security was not enabled"; exit 1; }
+          # The hosts' agentos-admin service account: member management works, nothing beyond it does.
+          sa_secret=$(kubectl -n agentos get secret agentos-agentos-net-secrets -o jsonpath='{.data.keycloak-admin-client-secret}' | base64 -d)
+          echo "::add-mask::$sa_secret"
+          token=$(curl -sf -d grant_type=client_credentials -d client_id=agentos-admin --data-urlencode "client_secret=$sa_secret" \
+            http://localhost:8081/realms/agentic/protocol/openid-connect/token | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          echo "::add-mask::$token"
+          status() { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://localhost:8081/admin/realms/$1"; }
+          for check in "agentic/users?max=1 200" "agentic/roles/admin 200" "agentic/clients 403" "master/users 403"; do
+            set -- $check; got=$(status "$1"); echo "service account GET $1 → $got"
+            [ "$got" = "$2" ] || { echo "::error::service account GET $1 returned $got, expected $2"; exit 1; }
+          done
 
       - name: helm upgrade (idempotent re-run of migrations + realm config)
         run: |

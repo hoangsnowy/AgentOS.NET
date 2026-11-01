@@ -7,6 +7,7 @@ Call with (dict "root" $ "name" "web" "values" .Values.web "extraEnv" (list ...)
 {{- $v := .values -}}
 {{- $selector := dict "root" $root "name" .name -}}
 {{- $secret := include "agentos.secretName" $root -}}
+{{- $dpSecret := include "agentos.dpCertificateSecret" $root -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,6 +32,8 @@ spec:
         {{- end }}
     spec:
       {{- include "agentos.imagePullSecrets" $root | nindent 6 }}
+      # The hosts never call the Kubernetes API — no service-account token in the pod.
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
       {{- if $root.Values.postgresql.enabled }}
@@ -71,9 +74,9 @@ spec:
                 secretKeyRef: { name: {{ $secret }}, key: postgres-password }
             - name: ConnectionStrings__DefaultConnection
               value: {{ include "agentos.db.connectionString" $root | quote }}
-            - name: Auth__Keycloak__Admin__Password
+            - name: Auth__Keycloak__Admin__ClientSecret
               valueFrom:
-                secretKeyRef: { name: {{ $secret }}, key: keycloak-admin-password }
+                secretKeyRef: { name: {{ $secret }}, key: keycloak-admin-client-secret }
             - name: DataProtection__CertificatePassword
               valueFrom:
                 secretKeyRef: { name: {{ $secret }}, key: dataprotection-certificate-password, optional: true }
@@ -98,23 +101,31 @@ spec:
             timeoutSeconds: 12
           securityContext:
             {{- include "agentos.containerSecurityContext" $root | nindent 12 }}
+            # Immutable image; the only writable path is /tmp (an emptyDir) — the runtime's diagnostics socket
+            # and temp files. Persistent state lives in Postgres.
+            readOnlyRootFilesystem: true
           resources:
             {{- toYaml $v.resources | nindent 12 }}
-          {{- if $root.Values.dataProtection.certificate.existingSecret }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if $dpSecret }}
             - name: dataprotection
               mountPath: /app/dataprotection
               readOnly: true
-          {{- end }}
-      {{- if $root.Values.dataProtection.certificate.existingSecret }}
+            {{- end }}
       volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        {{- if $dpSecret }}
         - name: dataprotection
           secret:
-            secretName: {{ $root.Values.dataProtection.certificate.existingSecret }}
+            secretName: {{ $dpSecret }}
             items:
               - key: {{ $root.Values.dataProtection.certificate.key }}
                 path: {{ $root.Values.dataProtection.certificate.key }}
-      {{- end }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

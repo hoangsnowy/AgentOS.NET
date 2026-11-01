@@ -37,10 +37,23 @@ spec:
         {{- include "agentos.selectorLabels" $selector | nindent 8 }}
     spec:
       {{- include "agentos.imagePullSecrets" . | nindent 6 }}
+      automountServiceAccountToken: false
+      # The upstream image runs as root by default; it works as any uid when HOME (its ed25519 identity key)
+      # and the model store point at a writable volume.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: ollama
           image: {{ include "agentos.image" (dict "root" . "image" $o.image) }}
           imagePullPolicy: {{ $o.image.pullPolicy }}
+          env:
+            - name: HOME
+              value: /data
+            - name: OLLAMA_MODELS
+              value: /data/models
           ports:
             - name: http
               containerPort: 11434
@@ -51,18 +64,21 @@ spec:
             httpGet: { path: /api/version, port: http }
             periodSeconds: 30
           securityContext:
-            allowPrivilegeEscalation: false
-            seccompProfile:
-              type: RuntimeDefault
+            {{- include "agentos.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
           resources:
             {{- toYaml $o.resources | nindent 12 }}
           volumeMounts:
             - name: models
-              mountPath: /root/.ollama
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: models
           persistentVolumeClaim:
             claimName: {{ include "agentos.component" $selector }}
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

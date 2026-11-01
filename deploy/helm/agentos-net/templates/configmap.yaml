@@ -25,8 +25,9 @@ data:
   Auth__Keycloak__ClientId: agentic-web
   Auth__Keycloak__Admin__BaseUrl: {{ $kcInternal | quote }}
   Auth__Keycloak__Admin__Realm: {{ .Values.keycloak.realm | quote }}
-  Auth__Keycloak__Admin__ClientId: admin-cli
-  Auth__Keycloak__Admin__Username: {{ .Values.keycloak.adminUsername | quote }}
+  # Member management signs in as the realm's agentos-admin service account (client_credentials, least
+  # privilege — created by the realm Job), never as the master-realm bootstrap admin.
+  Auth__Keycloak__Admin__ClientId: {{ .Values.keycloak.adminClientId | quote }}
   Auth__CookiePrefix: {{ .Values.web.cookiePrefix | quote }}
   Email__From: {{ .Values.email.from | quote }}
   Email__FromName: AgentOS.NET
@@ -37,7 +38,7 @@ data:
   {{- if .Values.dataProtection.keyVaultKeyId }}
   DataProtection__KeyVaultKeyId: {{ .Values.dataProtection.keyVaultKeyId | quote }}
   {{- end }}
-  {{- if .Values.dataProtection.certificate.existingSecret }}
+  {{- if include "agentos.dpCertificateSecret" . }}
   DataProtection__CertificatePath: {{ printf "/app/dataprotection/%s" .Values.dataProtection.certificate.key | quote }}
   {{- end }}
   {{- if .Values.otlpEndpoint }}

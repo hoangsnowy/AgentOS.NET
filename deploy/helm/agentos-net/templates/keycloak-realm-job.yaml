@@ -1,7 +1,8 @@
 {{- if .Values.keycloak.configureRealm }}
 {{- $secret := include "agentos.secretName" . -}}
 # Points the `agentic` realm at this install after every install/upgrade (files/configure-realm.sh — the
-# same script docker compose runs): redirect URIs, client secret, verifyEmail, platform-admin, seed users.
+# same script docker compose runs): redirect URIs, client secrets, the agentos-admin service account,
+# verifyEmail, platform-admin, and (first run only) the seed users.
 # Runs kcadm.sh from the AgentOS.NET Keycloak image, so it needs nothing from the internet.
 apiVersion: batch/v1
 kind: Job
@@ -25,6 +26,7 @@ spec:
         app.kubernetes.io/component: realm-config
     spec:
       restartPolicy: OnFailure
+      automountServiceAccountToken: false
       {{- include "agentos.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
@@ -50,6 +52,11 @@ spec:
             - name: KEYCLOAK_WEB_CLIENT_SECRET
               valueFrom:
                 secretKeyRef: { name: {{ $secret }}, key: keycloak-web-client-secret }
+            - name: ADMIN_CLIENT_ID
+              value: {{ .Values.keycloak.adminClientId | quote }}
+            - name: KEYCLOAK_ADMIN_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: keycloak-admin-client-secret }
             - name: OPERATOR_PASSWORD
               valueFrom:
                 secretKeyRef: { name: {{ $secret }}, key: operator-password }
