@@ -22,6 +22,7 @@ public sealed class DefaultToolGateway : IToolGateway
     private readonly IToolInvocationLog? _log;
     private readonly ISettings? _settings;
 
+    /// <summary>Creates a gateway; every dependency is optional so stateless hosts and tests degrade gracefully.</summary>
     /// <param name="policy">Optional policy gate (null = no gating).</param>
     /// <param name="log">Optional evidence sink (null = no evidence).</param>
     /// <param name="settings">Optional settings for <see cref="ToolOutputShaper.MaxOutputTokensKey"/>; null = the default cap.</param>
