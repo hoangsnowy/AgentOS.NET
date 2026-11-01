@@ -87,6 +87,11 @@ public static class AgentRoles
     private static readonly FrozenDictionary<string, AgentRoleInfo> ByKey =
         All.ToFrozenDictionary(r => r.Key, StringComparer.OrdinalIgnoreCase);
 
+    // Span lookup into ByKey, so "CodingAgent" → "Coding" does not allocate the stripped name (Insights canonicalises
+    // every stored agent name on every render).
+    private static readonly FrozenDictionary<string, AgentRoleInfo>.AlternateLookup<ReadOnlySpan<char>> ByKeySpan =
+        ByKey.GetAlternateLookup<ReadOnlySpan<char>>();
+
     // Names stored before the registry existed, mapped to today's key: the pipeline agents file metrics under their type
     // name ("CodingAgent"), the decomposer used its own name, and the Board's Testing runs were labelled "Testing".
     private static readonly FrozenDictionary<string, string> Aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -115,8 +120,9 @@ public static class AgentRoles
         if (name.Length == 0) { return name; }
         if (Aliases.TryGetValue(name, out var alias)) { return alias; }
         if (ByKey.TryGetValue(name, out var exact)) { return exact.Key; }
-        var stripped = name.EndsWith("Agent", StringComparison.Ordinal) && name.Length > "Agent".Length ? name[..^"Agent".Length].Trim() : name;
-        return ByKey.TryGetValue(stripped, out var info) ? info.Key : stripped;
+        if (!name.EndsWith("Agent", StringComparison.Ordinal) || name.Length <= "Agent".Length) { return name; }
+        var stripped = name.AsSpan(0, name.Length - "Agent".Length).Trim();
+        return ByKeySpan.TryGetValue(stripped, out var info) ? info.Key : stripped.ToString();
     }
 
     /// <summary>The name people see for a stored agent name (the registry label, or the name itself).</summary>

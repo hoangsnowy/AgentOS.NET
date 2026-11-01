@@ -123,6 +123,10 @@ public sealed class BoardAgentRegistryTests
     [InlineData("AutopilotOrchestrator", AgentRoles.AutopilotOrchestrator, "Autopilot lead")]
     [InlineData("QaAgent", AgentRoles.Qa, "QA (Workflow pipeline)")]
     [InlineData("SomethingNew", "SomethingNew", "SomethingNew")]
+    [InlineData("  reviewer  ", AgentRoles.Reviewer, "Reviewer")]
+    [InlineData("Qa Agent", AgentRoles.Qa, "QA (Workflow pipeline)")]
+    [InlineData("SomethingNewAgent", "SomethingNew", "SomethingNew")]
+    [InlineData("Agent", "Agent", "Agent")]
     public void Insights_NamesMatchAgentProfiles(string stored, string key, string label)
     {
         AgentRoles.Canonical(stored).ShouldBe(key);

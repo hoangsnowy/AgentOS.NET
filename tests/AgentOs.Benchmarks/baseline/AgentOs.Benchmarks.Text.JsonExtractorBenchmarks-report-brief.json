@@ -1,5 +1,5 @@
 {
-   "Title":"AgentOs.Benchmarks.Text.JsonExtractorBenchmarks-20261101-094836",
+   "Title":"AgentOs.Benchmarks.Text.JsonExtractorBenchmarks-20261101-095512",
    "HostEnvironmentInfo":{
       "BenchmarkDotNetCaption":"BenchmarkDotNet",
       "BenchmarkDotNetVersion":"0.15.8",
@@ -31,18 +31,18 @@
          "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
          "Statistics":{
             "OriginalValues":[
-               222801.5546875,213500.62670898438,215375.49829101562
+               219051.59106445312,226168.28149414062,213678.28393554688
             ],
             "N":3,
-            "Min":213500.62670898438,
-            "LowerFence":207462.36651611328,
-            "Q1":214438.0625,
-            "Median":215375.49829101562,
-            "Mean":217225.89322916666,
-            "Q3":219088.5264892578,
-            "UpperFence":226064.22247314453,
-            "Max":222801.5546875,
-            "InterquartileRange":4650.4639892578125,
+            "Min":213678.28393554688,
+            "LowerFence":206997.4393310547,
+            "Q1":216364.9375,
+            "Median":219051.59106445312,
+            "Mean":219632.71883138022,
+            "Q3":222609.93627929688,
+            "UpperFence":231977.4344482422,
+            "Max":226168.28149414062,
+            "InterquartileRange":6244.998779296875,
             "LowerOutliers":[
                
             ],
@@ -52,30 +52,30 @@
             "AllOutliers":[
                
             ],
-            "StandardError":2839.881827690191,
-            "Variance":24194786.385734934,
-            "StandardDeviation":4918.819613050974,
-            "Skewness":0.32295014911553244,
-            "Kurtosis":0.6666666666666693,
+            "StandardError":3617.240746966289,
+            "Variance":39253291.8645397,
+            "StandardDeviation":6265.244756954009,
+            "Skewness":0.09195620419395792,
+            "Kurtosis":0.6666666666666663,
             "ConfidenceInterval":{
                "N":3,
-               "Mean":217225.89322916666,
-               "StandardError":2839.881827690191,
+               "Mean":219632.71883138022,
+               "StandardError":3617.240746966289,
                "Level":12,
-               "Margin":89737.58050069169,
-               "Lower":127488.31272847496,
-               "Upper":306963.47372985835
+               "Margin":114301.38731697996,
+               "Lower":105331.33151440026,
+               "Upper":333934.1061483602
             },
             "Percentiles":{
-               "P0":213500.62670898438,
-               "P25":214438.0625,
-               "P50":215375.49829101562,
-               "P67":217900.35746582033,
-               "P80":219831.13212890626,
-               "P85":220573.73776855468,
-               "P90":221316.34340820313,
-               "P95":222058.94904785155,
-               "P100":222801.5546875
+               "P0":213678.28393554688,
+               "P25":216364.9375,
+               "P50":219051.59106445312,
+               "P67":221471.26581054687,
+               "P80":223321.6053222656,
+               "P85":224033.27436523436,
+               "P90":224744.94340820314,
+               "P95":225456.61245117188,
+               "P100":226168.28149414062
             }
          },
          "Memory":{
@@ -96,18 +96,18 @@
          "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
          "Statistics":{
             "OriginalValues":[
-               321922.978515625,282634.376953125,288815.841796875
+               277495.4453125,271975.005859375,269643.47265625
             ],
             "N":3,
-            "Min":282634.376953125,
-            "LowerFence":256258.658203125,
-            "Q1":285725.109375,
-            "Median":288815.841796875,
-            "Mean":297791.0657552083,
-            "Q3":305369.41015625,
-            "UpperFence":334835.861328125,
-            "Max":321922.978515625,
-            "InterquartileRange":19644.30078125,
+            "Min":269643.47265625,
+            "LowerFence":264920.259765625,
+            "Q1":270809.2392578125,
+            "Median":271975.005859375,
+            "Mean":273037.974609375,
+            "Q3":274735.2255859375,
+            "UpperFence":280624.205078125,
+            "Max":277495.4453125,
+            "InterquartileRange":3925.986328125,
             "LowerOutliers":[
                
             ],
@@ -117,30 +117,30 @@
             "AllOutliers":[
                
             ],
-            "StandardError":12197.192805599436,
-            "Variance":446314537.01089984,
-            "StandardDeviation":21126.157649011802,
-            "Skewness":0.3481607633028047,
-            "Kurtosis":0.6666666666666681,
+            "StandardError":2328.1462991853873,
+            "Variance":16260795.571231842,
+            "StandardDeviation":4032.4676776425426,
+            "Skewness":0.2452857805018753,
+            "Kurtosis":0.6666666666666667,
             "ConfidenceInterval":{
                "N":3,
-               "Mean":297791.0657552083,
-               "StandardError":12197.192805599436,
+               "Mean":273037.974609375,
+               "StandardError":2328.1462991853873,
                "Level":12,
-               "Margin":385419.7595838637,
-               "Lower":-87628.6938286554,
-               "Upper":683210.825339072
+               "Margin":73567.22167219978,
+               "Lower":199470.75293717522,
+               "Upper":346605.1962815748
             },
             "Percentiles":{
-               "P0":282634.376953125,
-               "P25":285725.109375,
-               "P50":288815.841796875,
-               "P67":300072.26828125,
-               "P80":308680.123828125,
-               "P85":311990.8375,
-               "P90":315301.551171875,
-               "P95":318612.26484375005,
-               "P100":321922.978515625
+               "P0":269643.47265625,
+               "P25":270809.2392578125,
+               "P50":271975.005859375,
+               "P67":273851.9552734375,
+               "P80":275287.26953125,
+               "P85":275839.3134765625,
+               "P90":276391.357421875,
+               "P95":276943.4013671875,
+               "P100":277495.4453125
             }
          },
          "Memory":{
@@ -148,7 +148,7 @@
             "Gen1Collections":63,
             "Gen2Collections":63,
             "TotalOperations":512,
-            "BytesAllocatedPerOperation":407932
+            "BytesAllocatedPerOperation":406644
          }
       },{
          "DisplayInfo":"JsonExtractorBenchmarks.ExtractProseWrapped: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)",
@@ -161,18 +161,18 @@
          "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
          "Statistics":{
             "OriginalValues":[
-               363939.240234375,358288.587890625,385085.740234375
+               348774.5703125,353475.90625,320903.783203125
             ],
             "N":3,
-            "Min":358288.587890625,
-            "LowerFence":341016.0498046875,
-            "Q1":361113.9140625,
-            "Median":363939.240234375,
-            "Mean":369104.5227864583,
-            "Q3":374512.490234375,
-            "UpperFence":394610.3544921875,
-            "Max":385085.740234375,
-            "InterquartileRange":13398.576171875,
+            "Min":320903.783203125,
+            "LowerFence":310410.08447265625,
+            "Q1":334839.1767578125,
+            "Median":348774.5703125,
+            "Mean":341051.419921875,
+            "Q3":351125.23828125,
+            "UpperFence":375554.33056640625,
+            "Max":353475.90625,
+            "InterquartileRange":16286.0615234375,
             "LowerOutliers":[
                
             ],
@@ -182,30 +182,30 @@
             "AllOutliers":[
                
             ],
-            "StandardError":8155.406209292069,
-            "Variance":199531951.3156789,
-            "StandardDeviation":14125.577910856564,
-            "Skewness":0.3167738580292164,
-            "Kurtosis":0.6666666666666684,
+            "StandardError":10164.826427643346,
+            "Variance":309971088.9123497,
+            "StandardDeviation":17605.995822797122,
+            "Skewness":-0.35425440759507093,
+            "Kurtosis":0.6666666666666666,
             "ConfidenceInterval":{
                "N":3,
-               "Mean":369104.5227864583,
-               "StandardError":8155.406209292069,
+               "Mean":341051.419921875,
+               "StandardError":10164.826427643346,
                "Level":12,
-               "Margin":257703.12485763992,
-               "Lower":111401.39792881839,
-               "Upper":626807.6476440983
+               "Margin":321198.90374738275,
+               "Lower":19852.51617449225,
+               "Upper":662250.3236692578
             },
             "Percentiles":{
-               "P0":358288.587890625,
-               "P25":361113.9140625,
-               "P50":363939.240234375,
-               "P67":371129.050234375,
-               "P80":376627.140234375,
-               "P85":378741.79023437505,
-               "P90":380856.44023437495,
-               "P95":382971.09023437503,
-               "P100":385085.740234375
+               "P0":320903.783203125,
+               "P25":334839.1767578125,
+               "P50":348774.5703125,
+               "P67":350373.02453125,
+               "P80":351595.371875,
+               "P85":352065.50546875,
+               "P90":352535.6390625,
+               "P95":353005.77265625005,
+               "P100":353475.90625
             }
          },
          "Memory":{
@@ -213,7 +213,7 @@
             "Gen1Collections":31,
             "Gen2Collections":31,
             "TotalOperations":512,
-            "BytesAllocatedPerOperation":204645
+            "BytesAllocatedPerOperation":203357
          }
       },{
          "DisplayInfo":"JsonExtractorBenchmarks.AgentPathFenced: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)",
@@ -226,18 +226,18 @@
          "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
          "Statistics":{
             "OriginalValues":[
-               853410.02734375,846036.55078125,791095.875
+               763783.19140625,742918.60546875,864533.33203125
             ],
             "N":3,
-            "Min":791095.875,
-            "LowerFence":771830.5986328125,
-            "Q1":818566.212890625,
-            "Median":846036.55078125,
-            "Mean":830180.8177083334,
-            "Q3":849723.2890625,
-            "UpperFence":896458.9033203125,
-            "Max":853410.02734375,
-            "InterquartileRange":31157.076171875,
+            "Min":742918.60546875,
+            "LowerFence":662139.853515625,
+            "Q1":753350.8984375,
+            "Median":763783.19140625,
+            "Mean":790411.7096354166,
+            "Q3":814158.26171875,
+            "UpperFence":905369.306640625,
+            "Max":864533.33203125,
+            "InterquartileRange":60807.36328125,
             "LowerOutliers":[
                
             ],
@@ -247,30 +247,30 @@
             "AllOutliers":[
                
             ],
-            "StandardError":19658.04838600642,
-            "Variance":1159316599.0397086,
-            "StandardDeviation":34048.738582210484,
-            "Skewness":-0.3646927736042834,
-            "Kurtosis":0.6666666666666681,
+            "StandardError":37547.05455171642,
+            "Variance":4229343916.528707,
+            "StandardDeviation":65033.40615813312,
+            "Skewness":0.3408105029703081,
+            "Kurtosis":0.6666666666666674,
             "ConfidenceInterval":{
                "N":3,
-               "Mean":830180.8177083334,
-               "StandardError":19658.04838600642,
+               "Mean":790411.7096354166,
+               "StandardError":37547.05455171642,
                "Level":12,
-               "Margin":621175.741302074,
-               "Lower":209005.07640625932,
-               "Upper":1451356.5590104074
+               "Margin":1186451.4211631794,
+               "Lower":-396039.7115277628,
+               "Upper":1976863.130798596
             },
             "Percentiles":{
-               "P0":791095.875,
-               "P25":818566.212890625,
-               "P50":846036.55078125,
-               "P67":848543.5328125,
-               "P80":850460.63671875,
-               "P85":851197.984375,
-               "P90":851935.33203125,
-               "P95":852672.6796875,
-               "P100":853410.02734375
+               "P0":742918.60546875,
+               "P25":753350.8984375,
+               "P50":763783.19140625,
+               "P67":798038.23921875,
+               "P80":824233.2757812501,
+               "P85":834308.2898437501,
+               "P90":844383.3039062499,
+               "P95":854458.31796875,
+               "P100":864533.33203125
             }
          },
          "Memory":{
@@ -278,7 +278,7 @@
             "Gen1Collections":31,
             "Gen2Collections":31,
             "TotalOperations":256,
-            "BytesAllocatedPerOperation":566466
+            "BytesAllocatedPerOperation":565178
          }
       },{
          "DisplayInfo":"JsonExtractorBenchmarks.DeserializeFenced: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)",
@@ -291,18 +291,18 @@
          "HardwareIntrinsics":"AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256",
          "Statistics":{
             "OriginalValues":[
-               554930.681640625,585762.818359375,587120.587890625
+               557366.2998046875,546986.658203125,525422.8603515625
             ],
             "N":3,
-            "Min":554930.681640625,
-            "LowerFence":546204.3203125,
-            "Q1":570346.75,
-            "Median":585762.818359375,
-            "Mean":575938.029296875,
-            "Q3":586441.703125,
-            "UpperFence":610584.1328125,
-            "Max":587120.587890625,
-            "InterquartileRange":16094.953125,
+            "Min":525422.8603515625,
+            "LowerFence":512247.1796875,
+            "Q1":536204.7592773438,
+            "Median":546986.658203125,
+            "Mean":543258.6061197916,
+            "Q3":552176.4790039062,
+            "UpperFence":576134.05859375,
+            "Max":557366.2998046875,
+            "InterquartileRange":15971.7197265625,
             "LowerOutliers":[
                
             ],
@@ -312,38 +312,38 @@
             "AllOutliers":[
                
             ],
-            "StandardError":10510.984352696818,
-            "Variance":331442376.187912,
-            "StandardDeviation":18205.558936432357,
-            "Skewness":-0.38249308608213745,
-            "Kurtosis":0.6666666666666669,
+            "StandardError":9407.79127949985,
+            "Variance":265519610.2759002,
+            "StandardDeviation":16294.772483097155,
+            "Skewness":-0.21681252280170796,
+            "Kurtosis":0.6666666666666647,
             "ConfidenceInterval":{
                "N":3,
-               "Mean":575938.029296875,
-               "StandardError":10510.984352696818,
+               "Mean":543258.6061197916,
+               "StandardError":9407.79127949985,
                "Level":12,
-               "Margin":332137.16686895204,
-               "Lower":243800.86242792296,
-               "Upper":908075.1961658271
+               "Margin":297277.3088817139,
+               "Lower":245981.29723807774,
+               "Upper":840535.9150015055
             },
             "Percentiles":{
-               "P0":554930.681640625,
-               "P25":570346.75,
-               "P50":585762.818359375,
-               "P67":586224.46,
-               "P80":586577.480078125,
-               "P85":586713.25703125,
-               "P90":586849.033984375,
-               "P95":586984.8109375,
-               "P100":587120.587890625
+               "P0":525422.8603515625,
+               "P25":536204.7592773438,
+               "P50":546986.658203125,
+               "P67":550515.7363476562,
+               "P80":553214.4431640625,
+               "P85":554252.4073242188,
+               "P90":555290.371484375,
+               "P95":556328.3356445313,
+               "P100":557366.2998046875
             }
          },
          "Memory":{
-            "Gen0Collections":63,
-            "Gen1Collections":63,
-            "Gen2Collections":63,
-            "TotalOperations":512,
-            "BytesAllocatedPerOperation":567412
+            "Gen0Collections":127,
+            "Gen1Collections":127,
+            "Gen2Collections":127,
+            "TotalOperations":1024,
+            "BytesAllocatedPerOperation":565109
          }
       }
    ]

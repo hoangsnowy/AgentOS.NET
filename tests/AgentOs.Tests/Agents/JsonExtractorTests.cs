@@ -76,6 +76,41 @@ public class JsonExtractorTests
     }
 
     [Fact]
+    public void Deserialize_LeadingWhitespaceAndComment_ParsedDirectly()
+    {
+        var raw = "\n  // the agent's note\n{\"name\":\"commented\",\"value\":7}";
+        var result = JsonExtractor.Deserialize<Probe>(raw, "Test");
+        result.Name.ShouldBe("commented");
+    }
+
+    [Fact]
+    public void ExtractJson_ByteOrderMark_ReturnsTheObjectWithoutIt()
+    {
+        var raw = "\uFEFF{\"name\":\"bom\",\"value\":1}";
+        JsonExtractor.ExtractJson(raw, "Test").ShouldBe("{\"name\":\"bom\",\"value\":1}");
+    }
+
+    [Theory]
+    [InlineData("[1,2,3]")]
+    [InlineData("  {\"a\":1}  ")]
+    public void ExtractJson_DirectJsonValue_ReturnsRawText(string raw) =>
+        JsonExtractor.ExtractJson(raw, "Test").ShouldBe(raw);
+
+    [Fact]
+    public void ExtractJson_FencedReply_ReturnsTheFencedObject()
+    {
+        var raw = "Here you go:\n```json\n{\"name\":\"fenced\"}\n```\nDone.";
+        JsonExtractor.ExtractJson(raw, "Test").ShouldBe("{\"name\":\"fenced\"}");
+    }
+
+    [Fact]
+    public void ExtractJson_FenceAroundProse_FallsBackToBraces()
+    {
+        var raw = "```\nnot json here\n```\nresult: {\"name\":\"braced\"}";
+        JsonExtractor.ExtractJson(raw, "Test").ShouldBe("{\"name\":\"braced\"}");
+    }
+
+    [Fact]
     public void Deserialize_NotJson_ThrowsLlmException()
     {
         var raw = "I don't know how to do that.";

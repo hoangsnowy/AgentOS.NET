@@ -27,7 +27,9 @@ public sealed class EfAppConfigStore : IAppConfigStore
     private readonly IServiceProvider _rootProvider;
     private readonly IDataProtector _protector;
     private readonly ILogger<EfAppConfigStore> _logger;
-    private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
+    // Keyed by (tenant, key) — a tuple, not a "tenant:key" string, so a cache hit allocates nothing and two pairs can
+    // never collide on the separator ("a:b"+"c" vs "a"+"b:c").
+    private readonly ConcurrentDictionary<(string Tenant, string Key), CacheEntry> _cache = new();
 
     public EfAppConfigStore(IServiceProvider rootProvider, IDataProtectionProvider dp, ILogger<EfAppConfigStore> logger)
     {
@@ -156,7 +158,7 @@ public sealed class EfAppConfigStore : IAppConfigStore
         return keys;
     }
 
-    private static string CacheKey(string tenantId, string key) => $"{tenantId}:{key}";
+    private static (string Tenant, string Key) CacheKey(string tenantId, string key) => (tenantId, key);
 
     private string? TryUnprotect(string cipher)
     {

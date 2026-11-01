@@ -259,7 +259,7 @@ Every UI change round-trips through Claude Design (CLAUDE.md design workflow).
 | **1.7** `feat(web)` | **Insights v2**: north-star tiles (cost per accepted change, first-pass acceptance), funnel (runs → green → PR → merged), efficiency (tokens/success, cache hit, $ by stage/model), quality, human, failure mix; CSV/JSON export; Claude Design round-trip | Screenshot light+dark; numbers match SQL spot checks |
 | **1.8** `test(evals)` | `tests/AgentOs.Evals` + `evals.yml` workflow (manual + nightly, `$` cap); suite `greenfield-csharp` with hidden tests; **record the baseline** | Baseline report committed to `docs/evals/baseline-2026-xx.md` |
 
-| **1.9** `perf(bench)` | `tests/AgentOs.Benchmarks` (BenchmarkDotNet) for the sink, ledger KPI queries, pricing/settings lookups; `perf.yml` (manual + nightly) compares against the stored baseline and fails on > 15% regression of a §2.7 budget | Baseline committed; a deliberate O(n²) regression fails the job |
+| **1.9** `perf(bench)` | ✅ **Shipped** — 52 BenchmarkDotNet benchmarks over the LLM-call, settings, prompt-text, queue and desktop-fold hot paths; `perf.yml` gates > 20 % Mean / new allocations (the sink + ledger KPI benchmarks follow the Metrics module, 1.2). Original scope: `tests/AgentOs.Benchmarks` (BenchmarkDotNet) for the sink, ledger KPI queries, pricing/settings lookups; `perf.yml` (manual + nightly) compares against the stored baseline and fails on > 15% regression of a §2.7 budget | Baseline committed; a deliberate O(n²) regression fails the job |
 
 **Exit:** a single dashboard answers "what does an accepted change cost, how often is it accepted
 first time, and where do tokens go" — with a recorded baseline that every later phase is compared to.
