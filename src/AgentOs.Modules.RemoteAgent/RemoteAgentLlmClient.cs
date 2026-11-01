@@ -97,6 +97,9 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             files is null ? null : RunFileEvidence.Manifest(files), uploads?.Limits);
         if (files is not null) { _broker.StageFiles(id, files); }
         IReadOnlyList<RunUpload> sentBack = [];
+        // Governance: the tool calls the CLI makes on that computer are reported back and recorded under this run.
+        var sessionId = amb?.SessionId?.ToString("D");
+        _broker.TrackRun(id, new RemoteRunContext(target.TenantId, sessionId, request.AgentRole, request.Autonomy));
         var dispatchedAt = DateTimeOffset.UtcNow;
 
         // A single full-prompt dispatch (M3) caps at 120s, but an agentic issue-work run on the local
@@ -126,6 +129,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
                     await RunFileEvidence.RecordAsync(_services, target.TenantId, id, files, _broker.UnstageFiles(id),
                         "the run's working folder on the member's computer", null, dispatchedAt).ConfigureAwait(false);
                 }
+                PublishToolCallTotals(target.TenantId, amb?.SessionId, _broker.ToolCallTotals(id));
             }
         }
         catch (TimeoutException ex)
@@ -218,6 +222,20 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             _logger.LogWarning(ex, "[RemoteAgent] request {Id}: couldn't store the files the runner sent back.", requestId);
         }
         return stored;
+    }
+
+    // One line on the task's feed: what the agent did on the computer, and where every call is listed.
+    private void PublishToolCallTotals(string tenantId, Guid? sessionId, (int ToolCalls, int Denials) totals)
+    {
+        if (sessionId is not { } id || totals.ToolCalls == 0
+            || _services.GetService<AgentOs.Domain.Sessions.ISessionRunFeed>() is not { } feed)
+        {
+            return;
+        }
+        var refused = totals.Denials == 0 ? string.Empty : $" ({totals.Denials} refused by its permissions)";
+        feed.Publish(new AgentOs.Domain.Sessions.SessionRunEvent(tenantId, id, AgentOs.Domain.Sessions.SessionRunEventKind.Step,
+            $"The agent used {totals.ToolCalls} tool call(s) on the computer{refused} — each one is in Settings › Activity log › Tool calls.",
+            DateTimeOffset.UtcNow));
     }
 
     // Rough token estimate for text the CLI produced no usage numbers for: ~4 characters per token, the

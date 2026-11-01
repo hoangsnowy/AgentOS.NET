@@ -57,6 +57,11 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
                 OutputChars = entry.OutputChars,
                 ShapedOutputChars = entry.ShapedOutputChars,
                 MaxOutputTokens = entry.MaxOutputTokens,
+                Origin = entry.Origin,
+                AgentRole = entry.AgentRole,
+                RunnerId = entry.RunnerId,
+                PolicySource = entry.PolicySource,
+                Denied = entry.Denied,
             });
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -92,9 +97,7 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return rows.Select(x => new ToolInvocationEvidence(
-            x.CallId, x.ToolName, x.TenantId, x.RunId, x.Input, x.Output, x.IsError,
-            x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars, x.MaxOutputTokens)).ToList();
+        return rows.Select(ToEvidence).ToList();
     }
 
     // Dapper fast-path: tool_invocations under the "tools" schema; PascalCase columns are quoted and
@@ -106,7 +109,8 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
         const string sql = """
             SELECT "CallId", "ToolName", "TenantId", "RunId", "SessionId",
                    "Input", "Output", "IsError", "StartedUtc", "FinishedUtc",
-                   "OutputChars", "ShapedOutputChars", "MaxOutputTokens"
+                   "OutputChars", "ShapedOutputChars", "MaxOutputTokens",
+                   "Origin", "AgentRole", "RunnerId", "PolicySource", "Denied"
             FROM tools.tool_invocations
             WHERE "TenantId" = @tenantId
             ORDER BY "StartedUtc" DESC
@@ -118,8 +122,69 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
             new CommandDefinition(sql, new { tenantId, limit = Math.Max(1, limit) }, cancellationToken: cancellationToken))
             .ConfigureAwait(false);
 
-        return rows.Select(x => new ToolInvocationEvidence(
-            x.CallId, x.ToolName, x.TenantId, x.RunId, x.Input, x.Output, x.IsError,
-            x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars, x.MaxOutputTokens)).ToList();
+        return rows.Select(ToEvidence).ToList();
     }
+
+    /// <summary>EF LINQ (its RLS interceptor applies): the recent rows of one origin and/or one session.</summary>
+    public async Task<IReadOnlyList<ToolInvocationEvidence>> ListRecentAsync(
+        string tenantId, ToolEvidenceFilter filter, int limit = 50, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return Array.Empty<ToolInvocationEvidence>();
+        }
+        await using var scope = _rootProvider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ToolsDbContext>();
+        var query = db.ToolInvocations.AsNoTracking().Where(x => x.TenantId == tenantId);
+        if (filter.Origin is { } origin) { query = query.Where(x => x.Origin == origin); }
+        if (filter.SessionId is { } sessionId) { query = query.Where(x => x.SessionId == sessionId); }
+        var rows = await query
+            .OrderByDescending(x => x.StartedUtc)
+            .Take(Math.Max(1, limit))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return rows.Select(ToEvidence).ToList();
+    }
+
+    /// <summary>One grouped query: per agent role, the distinct runs, the calls and the denials made on members' computers.</summary>
+    public async Task<IReadOnlyList<ToolCallsByRole>> SummarizeMemberComputerAsync(
+        string tenantId, DateTimeOffset? sinceUtc, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return Array.Empty<ToolCallsByRole>();
+        }
+        await using var scope = _rootProvider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ToolsDbContext>();
+        var query = db.ToolInvocations.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.Origin == ToolEvidenceOrigins.MemberComputer);
+        if (sinceUtc is { } since) { query = query.Where(x => x.StartedUtc >= since); }
+        var groups = await query
+            .GroupBy(x => x.AgentRole ?? string.Empty)
+            .Select(g => new
+            {
+                Role = g.Key,
+                Runs = g.Select(x => x.RunId ?? x.CallId).Distinct().Count(),
+                Calls = g.Count(),
+                Denials = g.Count(x => x.Denied),
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return groups
+            .Select(g => new ToolCallsByRole(g.Role, g.Runs, g.Calls, g.Denials))
+            .OrderByDescending(g => g.ToolCalls).ThenBy(g => g.AgentRole, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static ToolInvocationEvidence ToEvidence(ToolInvocationEvidenceEntity x) => new(
+        x.CallId, x.ToolName, x.TenantId, x.RunId, x.Input, x.Output, x.IsError,
+        x.StartedUtc, x.FinishedUtc, x.SessionId, x.OutputChars, x.ShapedOutputChars, x.MaxOutputTokens)
+    {
+        Origin = x.Origin,
+        AgentRole = x.AgentRole,
+        RunnerId = x.RunnerId,
+        PolicySource = x.PolicySource,
+        Denied = x.Denied,
+    };
 }

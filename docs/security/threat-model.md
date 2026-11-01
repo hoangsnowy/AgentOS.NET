@@ -1,0 +1,235 @@
+# AgentOS.NET — Threat model (STRIDE)
+
+> **Status:** baseline · 2026-11-01 · against `main` @ `28b05ed` · enterprise-readiness **E1.12**
+> ([plan](../plans/enterprise-readiness.md)). Companion docs: [data-flow.md](data-flow.md) ·
+> [subprocessors.md](subprocessors.md) · [hardening.md](hardening.md) · [dpa-template.md](dpa-template.md) ·
+> [SECURITY.md](../../SECURITY.md).
+
+This document lists, per trust boundary and per module, what can go wrong (STRIDE), what the code does about it
+today **with a file reference**, and what is left. A mitigation is listed only if it exists in the code; anything
+missing is a **gap** (marked **GAP-nn** and collected, ranked, in [§ 15](#15-top-gaps-prioritised)). Paths are
+repo-relative; line numbers are as of the commit above and drift, so search for the symbol if a line moved.
+
+STRIDE letters: **S**poofing · **T**ampering · **R**epudiation · **I**nformation disclosure · **D**enial of
+service · **E**levation of privilege. Severity of a residual risk: **High** (exploitable from a low-privilege or
+anonymous position, or breaks tenant isolation) · **Medium** (needs a privileged or adjacent position, or weakens a
+control) · **Low** (defence in depth, hygiene, documentation drift).
+
+## 1. System and assets
+
+AgentOS.NET is a modular monolith with two hosts that share one Postgres database and one Keycloak realm:
+
+- **Web** (`src/AgentOs.Web`) — the Blazor Server desktop. It runs the agent engine **in-process**, hosts the
+  runner SignalR hub, and is the only host most users touch.
+- **Api** (`src/AgentOs.Api`) — minimal REST API, `/mcp` server, and the same runner hub.
+- **Paired runner** (`src/AgentOs.RemoteAgent`) — an executable on a member's own machine that runs the member's
+  logged-in `claude` / `codex` CLI against work the server dispatches.
+- **External services** — Keycloak (identity), Postgres, LLM vendors, GitHub / Azure DevOps, SMTP, optional MCP
+  servers, optional OTLP / Application Insights.
+
+| Asset | Where it lives | Why it matters |
+|---|---|---|
+| Tenant secrets (LLM keys, GitHub / ADO PATs, board tokens) | `config.app_config`, DataProtection-encrypted (`src/AgentOs.Modules.AppConfig/EfAppConfigStore.cs:35,91`) | Spend + write access to customer repos |
+| DataProtection key ring | `config.data_protection_keys` (`src/AgentOs.Modules.AppConfig/DataProtectionExtensions.cs:57-64`) | Decrypts every secret above and the auth cookies |
+| Customer source code + tickets | Transient in prompts; ticket files in `sessions.ticket_files`; memory in `memory.nodes` | Confidential IP |
+| Run history, metrics, tool evidence | `pipeline.*`, `tools.tool_invocations` | Governance evidence; contains prompts' tool inputs/outputs |
+| Audit trail | `tenants.audit_events` | Accountability |
+| Runner pairing tokens | Hash in `sessions.runners`; plaintext in `runner.json` on the member's machine | Lets a machine receive and execute work |
+| Member machine | Out of the server's control | Arbitrary code runs there under the member's account |
+| Keycloak realm (users, roles, `tenant` attribute) | Keycloak DB | Authority for identity, role and tenant |
+
+## 2. Trust boundaries
+
+| # | Boundary | Section |
+|---|---|---|
+| TB1 | Browser ↔ Web (HTTPS + Blazor circuit over WebSocket) | [§ 3](#3-tb1--browser--web-blazor-circuit) |
+| TB2 | Web / Api ↔ Keycloak (OIDC code + PKCE, RS256 JWT) | [§ 4](#4-tb2--web--api--keycloak) |
+| TB3 | Api / Web ↔ Postgres (EF filters, RLS, `agentos_rls`) | [§ 5](#5-tb3--api--web--postgres) |
+| TB4 | Server ↔ paired runner (SignalR hub, pairing, run folders, ticket files) | [§ 6](#6-tb4--server--paired-runner) |
+| TB5 | Agents ↔ LLM vendors | [§ 7](#7-tb5--agents--llm-vendors) |
+| TB6 | Agents ↔ GitHub / Azure DevOps | [§ 8](#8-tb6--agents--github--azure-devops) |
+| TB7 | Upstream MCP servers and the `/mcp` endpoint | [§ 9](#9-tb7--mcp-upstream-servers-and-the-mcp-endpoint) |
+| TB8 | Untrusted text → prompts (tickets, repo instruction files, memory) | [§ 10](#10-tb8--untrusted-text--prompts-prompt-injection) |
+| — | Tool policy + evidence (`IToolGateway`) | [§ 11](#11-tool-policy-and-evidence-itoolgateway) |
+| — | DataProtection-encrypted secrets | [§ 12](#12-dataprotection-encrypted-secrets) |
+| — | Multi-tenancy (cross-cutting) | [§ 13](#13-multi-tenancy) |
+| — | Per-module summary | [§ 14](#14-stride-per-module-summary) |
+
+Diagrams of these boundaries and the data that crosses them are in [data-flow.md](data-flow.md).
+
+---
+
+## 3. TB1 — Browser ↔ Web (Blazor circuit)
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| W-1 | S | Session theft via cookie | Auth cookie `HttpOnly`, `SameSite=Lax`, `Secure=Always` outside Development, 8 h sliding (`src/AgentOs.Web/Program.cs:139-151`); per-instance cookie names via `Auth:CookiePrefix`, validated by regex (`src/AgentOs.Web/Auth/AuthCookies.cs:24-40,128`) | OIDC correlation/nonce cookies use `SameAsRequest` everywhere (`Program.cs:182-187`) — fine behind TLS-only ingress. Low |
+| W-2 | S | Dev auto-login reachable in production | `Auth:DevAutoLogin` throws if enabled outside Development (`src/AgentOs.Web/Program.cs:73-78`); AppHost forces it off (`infra/AgentOs.AppHost/Program.cs:181`); committed dev secrets refused outside Development by `DevSecretGuard` (`src/AgentOs.SharedKernel/Security/DevSecretGuard.cs:19-29`, called `src/AgentOs.Web/Program.cs:82`, `src/AgentOs.Api/Program.cs:34`) | None known |
+| W-3 | T | CSRF on cookie-authenticated endpoints | `UseAntiforgery` (`src/AgentOs.Web/Program.cs:348`); Blazor events travel over the circuit, not form posts; ticket-file upload is a raw-body `PUT` ([ADR-0015](../adr/0015-ticket-files.md)) | `POST /pair/vscode` disables antiforgery and relies on `Member` + `SameSite=Lax` (`src/AgentOs.Modules.Sessions/Endpoints/PairingEndpoints.cs:38`). `GET /account/logout` allows sign-out CSRF (`Program.cs:542-545`). Low — **GAP-19** |
+| W-4 | T / E | Clickjacking, content sniffing, missing transport headers | TLS terminates at the Container Apps ingress, `allowInsecure: false` (`infra/AgentOs.AppHost/infra/web.tmpl.yaml:15-19`) | **No** `UseHsts`, `UseHttpsRedirection`, CSP / `frame-ancestors`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy` in either host (searched `src/`). Medium — **GAP-12** |
+| W-5 | S | Open redirect after login | `SafeLocalReturn` on `/account/login` (`src/AgentOs.Web/Program.cs:496-500,533-536`); return URL limited to local paths on callback failure (`src/AgentOs.Web/Auth/AuthCookies.cs:122-126`) | None known |
+| W-6 | I | Circuit runs without tenant → RLS and settings resolve the wrong tenant | `CircuitIdentityHandler` pushes the signed-in tenant/user as ambient identity for every inbound circuit activity (`src/AgentOs.Web/Services/CircuitIdentityHandler.cs:15-28`, registered `Program.cs:285`) | Several Web paths fall back to `"default"` when the claim is missing (`src/AgentOs.Web/Program.cs:433,446,467`; `ApiTokensApp.razor:121`, `AuditLogApp.razor:102`, `DataApp.razor:112`) instead of failing closed like `HttpTenantContext`. Low — **GAP-17** |
+| W-7 | D | Circuit / request flooding | Kestrel header cap (`src/AgentOs.ServiceDefaults/Extensions.cs:51-52`); per-tenant run admission — concurrency 4, 30 runs/min (`src/AgentOs.Modules.Pipeline/Limits/RunAdmission.cs:25-41,79-81`); pairing exchange limited to 10/min/IP (`src/AgentOs.Web/Program.cs:294-306`) | **No global rate limiter on the Web host** (only `pairing-exchange`); anonymous `/signup` circuit is not rate-limited. Circuit options left at defaults. Medium — **GAP-02** |
+| W-8 | E | Desktop app reachable by a non-admin | Pages default to `[Authorize]` (`src/AgentOs.Web/Components/_Imports.razor:33`); Settings is admin-gated in the component (see [DEPLOYMENT.md](../DEPLOYMENT.md#per-tenant-llm-keys)); tenant purge checks platform-admin + typed confirmation in `DataApp.razor:119-121` | `TenantDataService.PurgeAsync` has **no authorization of its own** (`src/AgentOs.Modules.Tenants/Data/TenantDataService.cs:88`) — the check lives only in the UI. Low today (no HTTP route), Medium if a route is added — **GAP-17** |
+| W-9 | S / I | Forwarded headers spoofed | Forwarded headers are processed so the ingress' scheme and client IP are seen | `KnownIPNetworks` / `KnownProxies` are **cleared** (`src/AgentOs.ServiceDefaults/Extensions.cs:37-42`): any peer can set `X-Forwarded-For/Proto`. The Api has `AllowedHosts: "*"` (`src/AgentOs.Api/appsettings.json:10`). Invitation and pairing URLs are built from `Request.Scheme/Host` (`src/AgentOs.Modules.Tenants/Endpoints/TenantEndpoints.cs:153-154`; `src/AgentOs.Modules.Sessions/Endpoints/PairingEndpoints.cs:89`) → host-header link poisoning, spoofable IP rate-limit partition and audit IPs. High — **GAP-05** |
+
+## 4. TB2 — Web / Api ↔ Keycloak
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| K-1 | S | Forged or replayed bearer token at the Api | `AddJwtAuth`: authority required outside Development, issuer + audience (`agentic-api`) + lifetime validated, 2 min skew, keys from the realm JWKS via discovery, `RequireHttpsMetadata` on by default; non-access tokens (`typ` ≠ `Bearer`) rejected (`src/AgentOs.Modules.Identity/Auth/JwtAuthExtensions.cs:29-84,111-116`) | Signing algorithm is **not pinned** (`ValidAlgorithms` not set — the realm decides, RS256 by default). A missing `typ` is accepted. Low — **GAP-13** |
+| K-2 | S | Authorization-code interception | Code flow + PKCE (`src/AgentOs.Web/Program.cs:164-165`); confidential client secret required outside Development (`Program.cs:109-115`) | **PAR is explicitly disabled** (`Program.cs:166-173`, reason in the comment): CLAUDE.md's "PAR succeeded" probe no longer applies. Acceptable with PKCE + confidential client. Low (doc drift) — **GAP-20** |
+| K-3 | I | Tokens leaked from the browser | `SaveTokens=true` stores access/ID/refresh tokens inside the encrypted, `HttpOnly` auth cookie (`src/AgentOs.Web/Program.cs:139-151,174`) | Cookie size grows with tokens (see 431 landmine in CLAUDE.md). Low |
+| K-4 | E | Role or tenant claim forged / mis-mapped | Roles flattened from `realm_access.roles` (`JwtAuthExtensions.cs:119-148`); tenant from the `tenant` claim, authenticated user without the claim gets `""` (fail-closed), anonymous gets `default` (`src/AgentOs.Modules.Identity/HttpTenantContext.cs:36-37`); the `tenant` user attribute is admin-editable only (`infra/keycloak/agentic-realm.json:35`); policies `Admin` / `Member` / `PlatformAdmin` (`src/AgentOs.Modules.Identity/IdentityModule.cs:23-25`) | **No fallback authorization policy**: an endpoint that forgets `RequireAuthorization` is anonymous (searched `FallbackPolicy`). Medium — **GAP-13** |
+| K-5 | S / E | Account takeover at the IdP | Keycloak handles credentials; `verifyEmail: true`, `sslRequired: external`, direct access grants off for the web client (`infra/keycloak/agentic-realm.json:11,14,81`) | Realm has **no brute-force protection, no password policy, no MFA / OTP policy, no identity providers** (keys absent from `infra/keycloak/agentic-realm.json`); `registrationAllowed: true` (`:7`); seeded `operator`/`operator` (admin + platform-admin) and `member`/`member` (`:147-171`) — the [Keycloak runbook](../keycloak-prod-runbook.md) strips them, nothing enforces it. High — **GAP-03** |
+| K-6 | E | Anyone on the internet creates a tenant and becomes its admin | Password ≥ 12 chars, 4 classes (`src/AgentOs.Modules.Tenants/SignupValidation.cs:30-49`); Keycloak user rolled back if the DB write fails (`TenantSignupService.cs:111-142`); signup audited | `POST /tenants/register` and the Web `/signup` page are **anonymous**, no CAPTCHA, no email required (no email ⇒ `emailVerified=true`, `src/AgentOs.Modules.Tenants/Keycloak/KeycloakAdminClient.cs:62-66`), and slug / auto-create modes make the caller **admin** of a new tenant (`TenantSignupService.cs:77-96`). Combined with K-7 / L-3 this makes tenant-admin a near-anonymous position. High — **GAP-01** |
+| K-7 | S / E | Invitation token reuse | Stateless `ITimeLimitedDataProtector` token, purpose-scoped, TTL 1-168 h (default 24) (`TenantSignupService.cs:22,42,159-169`; `TenantEndpoints.cs:146-151`) | Tokens are **not single-use, not revocable** and **not bound to the invited email** (`TenantSignupService.cs:66-75`); preview is anonymous. Medium — **GAP-11** |
+| K-8 | R | Sign-in not attributable | Sign-in and member lifecycle land in the audit log (SECURITY.md "Audit trail") | Signup audit has no IP / user agent (`TenantSignupService.cs:144-154`). Low |
+
+## 5. TB3 — Api / Web ↔ Postgres
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| D-1 | I / T | A query or write reaches another tenant's rows | Three layers: EF global query filters (`PipelineDbContext.cs:54-99`, `SessionsDbContext.cs:51-114`, `WorkspacesDbContext.cs:55-112`, `MemoryDbContext.cs:83,94`); explicit `TenantId` predicates; **Postgres RLS** forced on 16 tables (`src/AgentOs.SharedKernel/Persistence/RowLevelSecurity.cs:39-47`) with every connection `SET ROLE agentos_rls` + `app.tenant_id` (`:88`) via `RowLevelSecurityInterceptor` / `OpenWithTenantAsync`. Proven by `tests/AgentOs.E2E.Tests/AgentOsUi/RowLevelSecurityRealDbTests.cs` ([ADR-0012](../adr/0012-postgres-row-level-security.md)) | Policy is still **"no tenant ⇒ visible"** (`RowLevelSecurity.cs:161`) — stage 2 pending. `config.app_config` and `tenants.audit_events` are **not** under RLS (`tests/AgentOs.Tests/Persistence/RowLevelSecurityTests.cs:37-40`). The real-DB test lists 11 of the 16 tables (missing `pipeline.scheduled_runs`, `workspaces.autopilot_events`, `memory.nodes`, `memory.edges`, `sessions.design_reviews`). Most repository reads use `IgnoreQueryFilters()` + explicit predicates, so RLS is the real backstop. Medium — **GAP-14** |
+| D-2 | E | RLS silently off | Bootstrap under an advisory lock, idempotent (`RowLevelSecurity.cs:120-178`) | Bootstrap failure **logs an error and keeps running with RLS off** (`:131-135`); `Persistence:RowLevelSecurity=false` disables it (`src/AgentOs.Api/Program.cs:146`, `src/AgentOs.Web/Program.cs:319`). No health signal fails the deployment. Medium — **GAP-14** |
+| D-3 | E | Cross-tenant bypass misused | One explicit `RowLevelSecurity.Bypass()` call, for the autopilot cross-tenant scan (`src/AgentOs.Modules.Workspaces/Persistence/Repositories/WorkspaceRepository.cs:125`); tenant export/purge use explicit `TenantId` parameters on catalog-quoted identifiers (`src/AgentOs.Modules.Tenants/Data/TenantDataService.cs:55-157`) | Bypass is not audited. Low |
+| D-4 | I | Database credentials / traffic exposed | Connection strings stored as Key Vault secrets (`infra/postgres/postgres.module.bicep:67-89`); Keycloak JDBC uses `sslmode=require` (`infra/AgentOs.AppHost/Program.cs:248`) | App connection strings carry **no `SslMode`** (relies on the Azure server default); the app connects as the **server administrator** (`postgres.module.bicep:78`); firewall `AllowAllAzureIps` (`:44-51`); password also stored as a plain ACA secret (`web.tmpl.yaml:28-31`). Medium — **GAP-15** |
+| D-5 | D / R | Data loss, no recovery | Azure Flexible Server automated backups, 7-day retention (`postgres.module.bicep:22-25`); [DataProtection DR runbook](../dataprotection-dr-runbook.md) | `geoRedundantBackup: 'Disabled'`, HA disabled, single replica (`minReplicas: 1`, `web.tmpl.yaml:103`); no retention policy for runs / evidence / audit (searched `retention|Prune|Purge`). Medium — **GAP-16** |
+| D-6 | I | Tenant export leaks secrets | Export is admin-only for the own tenant, platform-admin for another, audited (`src/AgentOs.Web/Program.cs:442-456`); `sessions.runners.TokenHash` removed | The redaction map names column **`Value`** for `config.app_config`, but the column is `EncryptedValue` (`TenantDataService.cs:47-51` vs `EfAppConfigStore.cs:97`) → **DataProtection ciphertext is exported**; `tenants.api_tokens.TokenHash` is exported too. Useless without the key ring, but contradicts "secrets excluded". Medium — **GAP-08** |
+
+## 6. TB4 — Server ↔ paired runner
+
+The runner executes, on a member's computer, work that the server sends. The server is trusted by the runner; the
+runner is **not** trusted by the server.
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| R-1 | S | Pairing code guessed or replayed | Codes single-use (`TryRemove`), 60 s (VS Code flow, 128-bit) / 10 min (typed, ~39 bits), exchange limited to 10/min/IP (`src/AgentOs.Modules.Sessions/Pairing/PairingCodeStore.cs:38-103`; `src/AgentOs.Web/Program.cs:294-306`); approve requires `Member` (`PairingEndpoints.cs:37-38`); callback schemes allowlisted, code not token in the redirect (`PairingEndpoints.cs:27-28,92-93,115-123`) | Rate limit keyed on a spoofable IP (W-9). Low |
+| R-2 | S / I | Runner token stolen | 256-bit CSPRNG token; server stores `sha256$salt$hash` only, constant-time compare (`src/AgentOs.Domain/Sessions/RunnerPairingService.cs:15-66`); runner sends it in `X-AgentOS-Runner-*` headers (`src/AgentOs.RemoteAgent/Program.cs:99-105`); runner file `0600` off Windows (`src/AgentOs.RemoteAgent/RunnerCredentials.cs:52-61`) | Hub **still accepts `?runnerId=&token=` in the query string** (`src/AgentOs.Modules.RemoteAgent/RemoteAgentHub.cs:44-58`) — "never in the URL" holds for our runner only. `REMOTE_AGENT_TOKEN` is **inherited by every child process** (the CLI and the repo's build) (`src/AgentOs.RemoteAgent/Program.cs:282-302`). No Windows ACL on `runner.json`. Medium — **GAP-07** |
+| R-3 | E | Revoked runner / removed member keeps receiving work | Revoke endpoint (owner or admin) (`src/AgentOs.Modules.Sessions/Endpoints/SessionEndpoints.cs:152-169`); revoked rows rejected on connect (`RemoteAgentHub.cs:67-74`) | Token checked **only at connect** — revoke does not abort a live connection, and `WithAutomaticReconnect` keeps it; **no token expiry / rotation**; **removing a member does not revoke their runners** (`TenantEndpoints.cs:284-324`). High — **GAP-04** |
+| R-4 | T / I | A runner forges another run's result | Tenant + member come from the DB row, not the client (`RemoteAgentHub.cs:76-78`); dispatch matches tenant and targets one connection (`src/AgentOs.Modules.RemoteAgent/IRemoteAgentBroker.cs:581-600`; `RemoteAgentTransport.cs:70-151`); `ReadRunFile` / `ReportPreview` are checked against the dispatched connection (`IRemoteAgentBroker.cs:258-275,420-434`); `UploadRunFile` (Design-gate screenshots sent back, [ADR-0016](../adr/0016-design-gate.md)) accepts pieces only from the dispatched connection, path- and size-checked (`IRemoteAgentBroker.cs:335-347`) | `CompleteRequest`, `CompleteToolCall` and `ReportProgress` **do not check that the caller is the connection the request was sent to** (`IRemoteAgentBroker.cs:444-449,514-521,572-579`). Request ids are random GUIDs, so exploitation needs a leaked id, but the check is missing. Operator-mode dispatch with an empty member picks the first runner of the tenant (`:67-69`). High (isolation) — **GAP-06** |
+| R-5 | E | Server (or a compromised server) runs arbitrary commands on the machine | Scoped autonomy for Board runs: `claude -p` + `--permission-mode acceptEdits`, allowlisted Bash rules, `WebFetch`/`WebSearch` denied, credential folders read-denied (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs:34-113`; tests assert no skip-permissions flag, `tests/AgentOs.Tests/Sessions/ScopedAutonomyTests.cs:30-31`); server-driven `shell` commands pass `RunnerCommandPolicy` (allowlisted programs per segment, `$(` / backticks refused) and console approval that **denies when nobody is there** (`src/AgentOs.RemoteAgent/RunnerCommandPolicy.cs:20-80`; `Program.cs:462-488`); timeouts kill the process tree (`Program.cs:544-556`; `ProcessJob.cs`); `REMOTE_AGENT_AUTONOMY=off` refuses scoped runs | The server-supplied **`Cli` string is used as the executable when it is not `claude`/`codex`** (`src/AgentOs.RemoteAgent/Program.cs:455`) with no server-side allowlist. `REMOTE_AGENT_YOLO` (set by the VS Code extension's `agentos.runOnMyMachine`, `tools/agentos-vscode/src/extension.ts:120`) adds `--dangerously-skip-permissions`. The shell allowlist includes interpreters (`node`, `python`, `pip`) and `cp`/`mv`; output redirection is **not** checked despite the header comment (`RunnerCommandPolicy.cs:2-4`); `working_dir` unvalidated. Codex scoped mode allows network (`ScopedAutonomy.cs:96-101`). Build tools run repository code — "not a sandbox" (`ScopedAutonomy.cs:32-33`). On a tool-call timeout the server sends no `Cancel` (`IRemoteAgentBroker.cs:542-558`). High — **GAP-07** |
+| R-6 | E | Remote execution without a human | `ConfigGatedRemoteExecApprover`: allow only if `RemoteAgent:AutoApprove`, default = Development (`src/AgentOs.Modules.RemoteAgent/ConfigGatedRemoteExecApprover.cs:42-58`); locked `false` in Production (`src/AgentOs.Api/appsettings.Production.json`, `src/AgentOs.Web/appsettings.Production.json`) | This is a **boolean gate, not a human approval** — no per-run approver exists (`IRemoteExecApprover.cs:3-4`), so SECURITY.md / CONFIG.md "needs a human approval" overstates it. `ApproveToolCallAsync` uses the value captured at construction, not the live setting (`ConfigGatedRemoteExecApprover.cs:70-72`). Medium — **GAP-20** |
+| R-7 | T | Ticket files escape the run folder | Path rules shared server + runner (`src/AgentOs.Domain/Files/TicketFilePath.cs:36-122`); runner re-checks, refuses reparse points, create-exclusive writes, size + SHA-256 verified, 512 MB cap, run fails before the CLI starts (`src/AgentOs.RemoteAgent/RunFiles.cs:23-211`); copy only via the constant `copy-in` helper (`RunFiles.cs:115-190`; [ADR-0015](../adr/0015-ticket-files.md)) | Per-tenant aggregate quota across tickets absent (limits are per ticket, `src/AgentOs.Modules.Sessions/Files/TicketFileSettings.cs:21-60`). Low |
+| R-8 | I | Secrets in runner output | Output capped (tool 32 KB, raw stream 64 KB) (`Program.cs:58,337`) | Runner output is stored (`SessionRepoEntity.Error`, `RemoteSessionEntity.Error`) and broadcast to **every subscriber in the tenant** with no redaction (`src/AgentOs.Domain/Sessions/InMemorySessionRunFeed.cs:24-55`). Medium — **GAP-10** |
+| R-9 | S / I | Runner talks to an impostor server | Certificate validation is not overridden (searched `ServerCertificateCustomValidationCallback`) | The runner accepts `http://` hub URLs and trusts the `HubUrl` returned by the exchange (`RunnerCredentials.cs:64-81`); that URL is built from the request Host header (W-9). Medium — **GAP-05** |
+| R-10 | D | Hub flood | Runner hub accepts messages up to 1 MB (`RemoteAgentHub.cs:29`; `RemoteAgentModule.cs:45`), Blazor circuits keep the 32 KB default; ticket files chunked at 256 KB; `runner_shell` 4 concurrent per tenant (`RunnerShellTool.cs:29-33`) | In-process broker, no backplane → single replica (GAP-16). Low |
+
+## 7. TB5 — Agents ↔ LLM vendors
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| L-1 | I | Customer code / tickets sent to a vendor | By design: prompts carry ticket text, workspace rules, repo guidance and code. Tenants pick the provider per agent; **RemoteAgent** keeps model traffic on the member's own CLI subscription; **OpenAI-compatible** allows a self-hosted model (`src/AgentOs.Modules.Llm/LlmModule.cs:146-170`). See [subprocessors.md](subprocessors.md) | No zero-data-retention or region settings in code (searched `retention|zdr|region`) — that is a vendor-contract matter. No prompt caching headers are sent. Low |
+| L-2 | E / I | One tenant spends another's key | A tenant with its own key uses **only** that key; platform key is fallback only (`LlmModule.cs:176-190`; `RuntimeOverrides.cs:74-98`) | None known |
+| L-3 | I / E | SSRF through a configurable LLM endpoint | OpenAI / Gemini / xAI endpoints are **fixed** (`src/AgentOs.Modules.Llm/VendorProviders.cs:1-3,40-48`); OpenAI-compatible endpoint is **platform-scope** only (`LlmSettings.cs:99-108`) | **Azure OpenAI endpoint is tenant-scoped**, validated only as an absolute `https://` URL, and called without `SsrfGuard` (`src/AgentOs.Modules.Llm/LlmSettings.cs:70-73`; `LlmModule.cs:92`; `MafChatClient.cs:74`) — any tenant admin (see K-6: anyone) can make the server send requests, with the tenant's key, to an internal host. High — **GAP-01** |
+| L-4 | D | Runaway spend | `BudgetGuard` per tenant (`src/AgentOs.Modules.Pipeline/Cost/BudgetGuard.cs:38-63`) checked per run and per agent call (`PersistingOrchestratorAgent.cs:55-71`; `AgentBudgetGate.cs:41-70`; REST `PipelineEndpoints.cs:210-231`); unknown models priced fail-closed at $15/$75 (`CostCalculator.cs:31-43`); run admission (W-7); key-pool 429 failover | Budget **blocks only when `budget/enforce=true`** (off by default); the gate **fails open** on DB/IO/timeout errors (`AgentBudgetGate.cs:54-69`; `PersistingOrchestratorAgent.cs:57-66`); it is post-hoc (does not bound one burst); `/llm/test` makes real calls without the gate (`src/AgentOs.Api/Program.cs:243-314`). Medium — **GAP-09** |
+| L-5 | I | LLM content in logs / traces | No prompt or completion bodies are logged; LLM spans carry model, tenant, tokens, cost only (`src/AgentOs.SharedKernel/Telemetry/LlmTelemetry.cs:51-82`) | None known |
+| L-6 | T | Offline canned output mistaken for real work | `Llm:OfflineFallback` locked off in Production; never used for Board runs (`LlmClientFactory.cs:64-70`); PR gate refuses offline output (`src/AgentOs.Domain/Pipeline/PrGate.cs:21-51`) | None known |
+
+## 8. TB6 — Agents ↔ GitHub / Azure DevOps
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| G-1 | I | PAT exposure | PATs stored encrypted in AppConfig; workspace rows hold only a `CredentialRef` (`src/AgentOs.Modules.Workspaces/Persistence/Entities/WorkspaceEntity.cs:43-44`; `IWorkspaceConnector.cs:130-131`); the server never sends a PAT to the runner — the CLI uses the member's own git/gh credentials (`src/AgentOs.Domain/Sessions/IIssueWorkAgent.cs:50-62`; `IssueWorkPrompt.cs:113-117`) | **`GET /settings/{prefix}` returns decrypted values** for the `Llm` and `Github` prefixes (incl. `Llm:Claude:ApiKey`, `Github:Pat`) to any tenant admin (`src/AgentOs.Modules.AppConfig/Endpoints/SettingsEndpoints.cs:19-38`) — the desktop treats secrets as write-only. Medium — **GAP-08** |
+| G-2 | I / E | SSRF / token sent to a look-alike host | Host allowlist `github.com`, `dev.azure.com`, `visualstudio.com` + platform-set extras (`src/AgentOs.Modules.Workspaces/Security/WorkspaceHostPolicy.cs:36-108`); `SsrfGuard` connect-time IP filter on GitHub, ADO and Projects clients (`src/AgentOs.SharedKernel/Security/SsrfGuard.cs:25-103`; `GitHubClientFactory.cs:25`; `IntegrationModule.cs:69-70`) | `SsrfGuard` misses 198.18/15, 192.0.0/24, NAT64 and 6to4 ranges; legacy `Github:BaseUrl` is not host-policy checked (still `SsrfGuard`ed). Low |
+| G-3 | T | Unreviewed or failing code reaches the repo | Server path pushes to a new `agentos/<timestamp>` branch and opens a PR, never the default branch (`src/AgentOs.Modules.Integration/GitHubPrService.cs:127-170`); `PrGate` blocks failed / offline / below-threshold runs (`GitHubPrService.cs:64-68`; `BoardTaskService.cs:982`); runner deny rules on force-push, `:main`, `--mirror`, `git config/remote`, `gh auth/api` (`ScopedAutonomy.cs:57-67`) | PRs are **not drafts** (`GitHubPrService.cs:167-170`); `GitHubPrCreationService` does not evaluate `PrGate` itself (callers must); branch protection / CODEOWNERS not consulted (E1.5). Medium — **GAP-18** |
+
+## 9. TB7 — MCP upstream servers and the `/mcp` endpoint
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| M-1 | E | A tenant adds a malicious MCP server | Upstream servers are **operator config only** (`Mcp:Servers`, read at startup — `src/AgentOs.Modules.Mcp/Configuration/McpOptions.cs:1-40`); status endpoint needs `Admin` (`McpModule.cs:100-104`) | `stdio` servers run a host subprocess with the operator-given command (`McpClientHost.cs:204-212`) — trust equals host config. Low |
+| M-2 | T / I | Upstream MCP tool output injects instructions or exfiltrates | MCP tools are registered as `{server}.{tool}` and go through `IToolGateway` (policy + evidence) like any tool (`McpToolAdapter.cs:1-5`; `AIToolFunction.cs:42-76`); output capped at 64 KB, 60 s timeout (`McpClientHost.cs:53-59,140-150`); http/sse transports use `SsrfGuard` (`:171-192`) | Tool output is not fenced as untrusted text before it returns to the model. Medium — **GAP-10** |
+| M-3 | E | Unauthenticated use of `/mcp` | `app.MapMcp("/mcp").RequireAuthorization()` (`src/AgentOs.Api/Program.cs:236-239`); tenant from the token (`src/AgentOs.Api/Mcp/PipelineMcpTools.cs:2-4`); iterations clamped 1-10, list max 100 | Any authenticated principal (no role) can `run_pipeline`, which spends the tenant's budget. Low |
+
+## 10. TB8 — Untrusted text → prompts (prompt injection)
+
+Ticket titles/bodies, review comments, ticket file names, memory "practices", autopilot board state and target-repo
+instruction files are written by people (or agents) other than the operator.
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| P-1 | T / E | Ticket text instructs the agent to exfiltrate or misbehave | `UntrustedText.Wrap` fences third-party text as `<untrusted kind="…">`, neutralises nested fence tags, drops control chars, caps 16 000 chars (`src/AgentOs.Domain/Llm/UntrustedText.cs:16-113`); used for tickets, review requests, ticket files, memory, autopilot (`IssueWorkPrompt.cs:174-232`, `AcceptanceAgent.cs:169-170`, `TicketFilesPrompt.cs:75`, `ProjectMemory.cs:91,113`, `AutopilotOrchestratorAgent.cs:121-143`); a `SystemRule` is appended by code so tenant prompt overrides cannot remove it (`IssueWorkPrompt.cs:7-9,156`) | Fencing is a mitigation, not a guarantee. Unicode format characters (bidi, zero-width) are not stripped; **no injection detection** (searched `injection|jailbreak|ContentSafety`). The real bound is what the agent can *do*: tool policy, runner scoped autonomy, no network fetch. Medium — **GAP-10** |
+| P-2 | T | Repo instruction files (`AGENTS.md`, `CLAUDE.md`, …) steer the agent | Read only from the target repo, 8 000 chars/file, 16 000 total, fenced as `<repo_guidance path=…>` (`src/AgentOs.Domain/Workspaces/RepoInstructions.cs:27-77`); ADO reads none (`AzureDevOpsSourceProvider.cs:57-58`) | Repo guidance lands in the **system** prompt; only the exact closing tag is escaped and the `path` attribute is not escaped; same exact-match escaping for `<workspace_rules>` (`src/AgentOs.Modules.Pipeline/Prompts/WorkspaceRules.cs:26-37`). Medium — **GAP-10** |
+| P-3 | T | Persistent injection through memory | Memory is per tenant (EF filter + RLS + explicit tenant, `src/AgentOs.Modules.Memory/Persistence/EfMemoryStore.cs`); practices fenced as data, ≤ 5 repos (`ProjectPractices.cs:1-38`) | A poisoned lesson is replayed into every later run of the project until forgotten; "forget" retracts but keeps rows (`EfMemoryStore.cs:121-130`). Low |
+
+## 11. Tool policy and evidence (`IToolGateway`)
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| T-1 | E | Agent calls a tool the tenant did not allow | Every LLM tool call goes through `DefaultToolGateway`: policy → invoke → evidence (`src/AgentOs.Domain/Tools/DefaultToolGateway.cs:39-101`; `src/AgentOs.Modules.Llm/AIToolFunction.cs:44,76`); `AppConfigToolPolicy` per-tenant allowlist, blank tenant denied when enforcing (`src/AgentOs.Modules.Tools/Policy/AppConfigToolPolicy.cs:48-83`); `Tools:EnforceByDefault` locked `true` in Production | Allows everything when no config store is wired, and default-permissive outside Production (`ToolsModule.cs:37`). Low |
+| T-2 | R | Tool use not provable | Denials, results and exceptions all recorded (`DefaultToolGateway.cs:45,62,72`); bounded queue of 4096 writes inline when full; lost counter `agentos.evidence.lost` (`src/AgentOs.Modules.Tools/Evidence/BufferedToolInvocationLog.cs:33-179`) | `EfToolInvocationLog.AppendAsync` **swallows DB exceptions** itself (`EfToolInvocationLog.cs:60-66`) → typical DB failures bypass the retry and the lost counter. Up to 5 s of queue may be lost at shutdown. Medium — **GAP-09** |
+| T-3 | I | Evidence stores secrets | — | Tool `Input` / `Output` stored **in full, untruncated, unredacted** (`EfToolInvocationLog.cs:44-57`; `ToolsDbContext.cs:23-36`) and exported with the tenant. Medium — **GAP-10** |
+| T-4 | E | Generated code escapes the build sandbox | Container mode: `--network none --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges`, CPU/memory/PID quotas (`src/AgentOs.Modules.Integration/Sandbox/ContainerCommand.cs:26-55`); input sanitizer drops project/props/targets/nuget.config (`BuildInputSanitizer.cs:17-53`); `Sandbox=Container` locked in Production; verifier disabled by default in Production (`IntegrationModule.cs:27`) ([ADR-0005](../adr/0005-build-verifier-sandbox.md)) | `InProcess` is the code default outside Production (host child process, not isolated, `InProcessBuildRunner.cs:1-4`). Low |
+| T-5 | E | A plugin subverts governance | Plugins are an operator decision (files in `Plugins:Path`) | Loaded with **full trust** into the default load context, no signature / hash allowlist (`src/AgentOs.SharedKernel/Plugins/PluginLoader.cs:39-126`). Low — **GAP-19** |
+
+## 12. DataProtection-encrypted secrets
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| X-1 | I | A database copy decrypts its own secrets | Every `app_config` value encrypted (purpose `AgentOs.AppConfig.v1`, `EfAppConfigStore.cs:35,91`); key ring can be wrapped by Key Vault, a PFX or a cert thumbprint (`src/AgentOs.Modules.AppConfig/DataProtectionExtensions.cs:80-105`); About shows the protection (`src/AgentOs.Web/Services/About/ServiceProbes.cs:161`) | Wrapping is **opt-in**: `DataProtection:RequireKeyWrapping` defaults to `false` (`DataProtectionExtensions.cs:67-74`) and the shipped infra sets no wrapping key (no Key Vault key resource; searched `infra/`). A default Azure deployment keeps an unwrapped ring next to the ciphertext. High — **GAP-03b** (see § 15 #4) |
+| X-2 | D | Key ring lost → every secret unrecoverable | [DR runbook](../dataprotection-dr-runbook.md): whole-DB point-in-time backup, separate backup of the wrapping key, restore drill | Drill not executed on record (E2.3). Medium — **GAP-16** |
+| X-3 | I | Secrets in logs | `LogSafe.MaskSecrets` (`sk-`, `ghp_`/`gho_`/`ghs_`/`github_pat_`, `Bearer`, `Password=`) (`src/AgentOs.SharedKernel/Logging/LogSafe.cs:29-55`); `SecretMaskingLogProcessor` on OTel log records (`src/AgentOs.ServiceDefaults/SecretMaskingLogProcessor.cs:13-28`); audit records secrets as set/cleared, never the value (`AuditingAppConfigStore.cs:55-58`) | Masking covers only the formatted message / body of **OTel** records; the Production JSON console logs (shipped to Log Analytics) and Application Insights are unmasked; no pattern for Azure OpenAI keys or Keycloak client secrets; `NullEmailSender` logs the invitation link incl. token (`src/AgentOs.Modules.Tenants/Email/NullEmailSender.cs:21-26`). Medium — **GAP-15** |
+
+## 13. Multi-tenancy
+
+| ID | S T R I D E | Threat | Existing mitigation | Residual risk / gap |
+|---|---|---|---|---|
+| MT-1 | E | Tenant admin acts on another tenant | Route `tenantId` must equal the caller's tenant on every tenant-admin route, target user's tenant attribute verified (`src/AgentOs.Modules.Tenants/Endpoints/TenantEndpoints.cs:142-455`); cross-tenant list / provision require `PlatformAdmin` (`:37-94`); tenant-scope writes to platform settings refused (`src/AgentOs.Modules.AppConfig/Settings/SettingsService.cs:92-95`) | None known |
+| MT-2 | I | Cache or feed bleeds across tenants | AppConfig cache keyed `tenant:key` (`EfAppConfigStore.cs:25,159`); session feed per tenant (`InMemorySessionRunFeed.cs`); per-circuit services are scoped | Session feed is per tenant, not per member (R-8). Low |
+| MT-3 | R | Audit trail altered | Append-only by API (`src/AgentOs.Modules.Tenants/IAuditLog.cs:13-20`); formula-safe CSV export (`AuditCsv.cs:34-46`); platform-scope rows visible to platform admins only | **No DB-level protection** (the `agentos_rls` role has `UPDATE/DELETE` on `tenants`), **no hash chain**, writes are best-effort (exceptions swallowed, `AuditLog.cs:42-53`), tenant purge deletes the tenant's audit rows (`TenantDataService.cs:99-105`). Medium — **GAP-11b** (E2.2) |
+
+## 14. STRIDE per module (summary)
+
+One line per module: the dominant threat and where § 3-13 treats it.
+
+| Module | S | T | R | I | D | E | Notes |
+|---|---|---|---|---|---|---|---|
+| `Web` | W-1, W-2 | W-3 | — | W-6, W-9 | W-7 | W-4, W-8 | Runs the engine in-process; no global rate limit, no security headers |
+| `Api` | K-1 | — | — | K-4 (`/health/llm` anonymous discloses provider + key-configured flags, `src/AgentOs.Api/Program.cs:212-232`) | rate limit 120/min/tenant (`Program.cs:51-76`) | K-4 | Scalar/OpenAPI only when not Production (`Program.cs:174-183`) |
+| `Modules.Identity` | K-1, K-4 | — | — | — | — | K-4 | No fallback policy |
+| `Modules.Tenants` | K-6, K-7 | MT-3 | K-8, MT-3 | D-6 | — | K-6, W-8 | Signup, invitations, audit, export/purge |
+| `Modules.AppConfig` | — | — | X-3 | G-1, X-1 | X-2 | — | Secrets + key ring |
+| `Modules.Llm` | — | — | — | L-1 | L-4 | L-3 | Azure endpoint SSRF |
+| `Modules.Pipeline` | — | P-1, P-2 | — | — | L-4, W-7 | — | Budget, admission, prompts |
+| `Modules.Tools` | — | — | T-2 | T-3 | — | T-1 | Gateway + evidence |
+| `Modules.Integration` | — | G-3 | — | G-1 | — | G-2, T-4 | GitHub/ADO, build sandbox |
+| `Modules.Workspaces` | — | — | — | G-1 | — | G-2 | Host allowlist |
+| `Modules.Sessions` | R-1 | R-7 | — | R-8 | — | R-3 | Pairing, ticket files, feed |
+| `Modules.RemoteAgent` | R-2 | R-4 | — | R-8 | R-10 | R-5, R-6 | Hub + approver |
+| `Modules.Mcp` / Api `/mcp` | — | M-2 | — | M-2 | — | M-1, M-3 | |
+| `Modules.Memory` | — | P-3 | — | D-1 | — | — | Persistent injection |
+| `RemoteAgent` (runner exe) | R-9 | R-7 | — | R-2 | — | R-5 | Runs on the member's machine |
+| `SharedKernel` (RLS, SsrfGuard, plugins) | — | — | — | D-1 | — | D-2, T-5 | |
+
+## 15. Top gaps (prioritised)
+
+Ranked by impact × reachability. Each is a gap in code or configuration found while writing this model; none is
+mitigated today beyond what the tables above list. Several are newly found and **should be fixed before any
+internet-facing pilot**.
+
+| # | Gap | Sev. | Where | Suggested fix |
+|---|---|---|---|---|
+| 1 | **GAP-01** Anonymous self-signup creates a tenant and makes the caller its **admin**, with no CAPTCHA or Web rate limit; a tenant admin can then point the **tenant-scoped Azure OpenAI endpoint** at any `https://` host (no `SsrfGuard`) | High | `TenantSignupService.cs:77-96`; `LlmSettings.cs:70-73`; `LlmModule.cs:92` | Make open signup a platform setting, off by default in Production; rate-limit + CAPTCHA; route Azure/MAF clients through `SsrfGuard` or make the endpoint platform-scope / allowlist `*.openai.azure.com` |
+| 2 | **GAP-04** Revoking a runner does not drop its live connection; tokens never expire; removing a member leaves their runners paired | High | `RemoteAgentHub.cs:67-74`; `TenantEndpoints.cs:284-324` | Abort the connection on revoke; revoke runners on member removal (and SCIM deprovision, E2.1); token expiry + rotation |
+| 3 | **GAP-06** `CompleteRequest` / `CompleteToolCall` / `ReportProgress` accept results from any authenticated runner | High | `IRemoteAgentBroker.cs:444-449,514-521,572-579` | Record the dispatched connection per pending id and refuse others (as `ReadRunFile` already does) |
+| 4 | **GAP-03 / 03b** Identity + key hygiene off by default: realm has no brute-force protection, password policy or MFA, `registrationAllowed: true`, seeded `operator` platform-admin; DataProtection wrapping is opt-in and the shipped infra sets none | High | `infra/keycloak/agentic-realm.json`; `DataProtectionExtensions.cs:67-74`; `infra/` | Ship a production realm overlay (brute force, password policy, OTP required for admins, registration off); default `RequireKeyWrapping=true` outside Development and add a Key Vault key to the bicep |
+| 5 | **GAP-05** Forwarded headers trusted from any peer; `AllowedHosts: *`; invitation / pairing / hub URLs built from the request Host; runner accepts `http://` | High | `ServiceDefaults/Extensions.cs:37-42`; `TenantEndpoints.cs:153-154`; `PairingEndpoints.cs:89`; `RunnerCredentials.cs:64-81` | Restrict `KnownNetworks` to the ingress; set `AllowedHosts`; build links from a configured public base URL; require `https://` hub URLs outside loopback |
+| 6 | **GAP-07** Runner hardening: server-chosen `Cli` becomes the executable; runner token inherited by child processes; interpreters in the shell allowlist, redirection unchecked, `working_dir` unvalidated; token accepted in the query string; no `Cancel` on tool timeout | Medium | `src/AgentOs.RemoteAgent/Program.cs:282-302,455`; `RunnerCommandPolicy.cs`; `RemoteAgentHub.cs:44-58` | Allowlist `Cli` (claude/codex) on both sides; scrub `REMOTE_AGENT_*` from child env; drop interpreters from defaults or require approval; enforce headers only |
+| 7 | **GAP-08** Secrets readable or exported: `GET /settings/{prefix}` returns decrypted LLM keys / PAT to tenant admins; tenant export redacts the wrong column (`Value` vs `EncryptedValue`) and exports API-token hashes | Medium | `SettingsEndpoints.cs:19-38`; `TenantDataService.cs:47-51` | Mask secret kinds in the endpoint (or remove it); fix the redaction map + add `tenants.api_tokens.TokenHash`; a test that exports a seeded secret and asserts absence |
+| 8 | **GAP-02 / GAP-12** Web host: no global per-tenant rate limit; no HSTS / CSP / `frame-ancestors` / `nosniff` on either host | Medium | `src/AgentOs.Web/Program.cs`; `src/AgentOs.Api/Program.cs` | Mirror the Api limiter on Web; add a security-headers middleware in `ServiceDefaults` |
+| 9 | **GAP-09** Governance fails open: budget gate proceeds on store errors and blocks only with `budget/enforce=true`; evidence DB failures swallowed before the lost counter | Medium | `AgentBudgetGate.cs:54-69`; `EfToolInvocationLog.cs:60-66` | Fail closed (configurable) on budget errors; let `EfToolInvocationLog` throw so the buffered retry + lost metric see it |
+| 10 | **GAP-10** Untrusted content handling: exact-match fence escaping for `repo_guidance` / `workspace_rules`, bidi / zero-width chars kept, MCP output not fenced, tool evidence and runner output stored unredacted and broadcast tenant-wide | Medium | `RepoInstructions.cs`; `WorkspaceRules.cs`; `UntrustedText.cs`; `EfToolInvocationLog.cs:44-57`; `InMemorySessionRunFeed.cs` | Reuse `UntrustedText` neutralisation for every fence; strip Unicode `Cf`; fence MCP output; apply `LogSafe.MaskSecrets` before storing evidence / feed text |
+| 11 | **GAP-11 / 11b** Invitation tokens reusable, unbound to the email, unrevocable; audit trail not tamper-evident and deletable | Medium | `TenantSignupService.cs:66-75`; `AuditLog.cs`; `RowLevelSecurity.cs:153` | Single-use invitation ids with revocation; bind to email; `REVOKE UPDATE, DELETE` on `audit_events` for the app role + hash chain (E2.2) |
+| 12 | **GAP-13** No fallback authorization policy; JWT algorithm not pinned; `/health/llm` anonymous | Medium | `IdentityModule.cs`; `JwtAuthExtensions.cs:63-70`; `Api/Program.cs:212-232` | `FallbackPolicy = RequireAuthenticatedUser` with explicit `AllowAnonymous`; `ValidAlgorithms = [RS256]`; require auth on `/health/llm` |
+| 13 | **GAP-14** RLS stage 2: "no tenant ⇒ visible", `app_config` / `audit_events` outside RLS, bootstrap failure leaves RLS off silently, real-DB test covers 11/16 tables, ADR lists 9 | Medium | `RowLevelSecurity.cs:132-161`; `RowLevelSecurityRealDbTests.cs:19-24` | Stage 2 per ADR-0012; fail startup outside Development when bootstrap fails; derive the test's table list from `RowLevelSecurity.Tables` |
+| 14 | **GAP-15** Data-tier and log hygiene: no `SslMode=Require`, app connects as server admin, `AllowAllAzureIps`; console / App Insights logs unmasked; dev email sender logs tokens | Medium | `postgres.module.bicep:44-89`; `SecretMaskingLogProcessor.cs`; `NullEmailSender.cs` | `SslMode=VerifyFull`; a least-privilege app login; private endpoint / VNet; mask at the logger provider level |
+| 15 | **GAP-16** Availability / DR: geo-redundant backup off, HA off, single replica, no retention policies, no executed DR drill | Medium | `postgres.module.bicep:22-28`; `web.tmpl.yaml:103` | E2.3 + E1.4 retention |
+| 16 | **GAP-17** Authorization in UI only: `TenantDataService.PurgeAsync` unguarded; Web `?? "default"` tenant fallbacks | Low | `TenantDataService.cs:88`; `src/AgentOs.Web/Program.cs:433-467` | Check platform-admin inside the service; fail closed on a missing claim |
+| 17 | **GAP-18** Repo safety: PRs not drafts; branch protection / CODEOWNERS not consulted | Low | `GitHubPrService.cs:167-170` | E1.5 |
+| 18 | **GAP-19** Hygiene: GET sign-out (CSRF), `POST /pair/vscode` without antiforgery, plugins unsigned / full trust | Low | `src/AgentOs.Web/Program.cs:542-545`; `PluginLoader.cs` | POST sign-out; plugin allowlist by hash |
+| 19 | **GAP-20** Documentation drift: "needs a human approval" (it is a boolean gate); "token never in the URL" (query fallback accepted); CLAUDE.md "PAR succeeded" (PAR disabled) | Low | SECURITY.md; CONFIG.md; CLAUDE.md | Correct the wording when the code above is fixed |
+
+Review this model whenever a trust boundary changes (a new host, transport, external service or untrusted input),
+and at least once per release ([E1.13](../plans/enterprise-readiness.md)). External validation (pen test, SOC 2
+mapping) is **E2.6**.

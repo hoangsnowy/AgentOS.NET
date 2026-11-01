@@ -17,6 +17,7 @@
 @inject IPipelineRunRepository Runs
 @inject AgentOs.Modules.Sessions.Persistence.ISessionRepository Tasks
 @inject IBudgetService Budgets
+@inject AgentOs.Domain.Tools.IToolInvocationLog Evidence
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 
@@ -269,6 +270,7 @@ else
                 <div class="ins-legend"><span class="ins-legend-dot" style="background:var(--ok)"></span> Runs reaching each QA round (NMax caps the loop)</div>
             }
         </Panel>
+
     </div>
 
     @* ── Recent runs ─────────────────────────────────────────────────────────────────────── *@
@@ -306,6 +308,59 @@ else
     </Panel>
 }
 
+@* ── Tool calls on members' computers (governance: what agents did there, and what their permissions refused). Shown
+   whenever there is evidence, even when no agent run was recorded (a run that failed still used tools on the computer). ── *@
+@if ((_computer?.Count ?? 0) > 0 || (_summary?.CallCount ?? 0) > 0)
+{
+    <Panel Title="Tool calls on members' computers">
+        @{ var computer = _computer ?? []; var maxCalls = computer.Count == 0 ? 0 : computer.Max(c => c.ToolCalls); }
+        @if (computer.Count == 0)
+        {
+            <p class="muted ins-note" data-testid="insights-computer-empty">No agent ran tools on a member's computer in this range.</p>
+        }
+        else
+        {
+            <div class="ins-bars" aria-hidden="true">
+                @foreach (var c in computer)
+                {
+                    <div class="ins-bar-row">
+                        <div class="ins-bar-label ins-bar-agent" title="@c.AgentRole"><AgentMascot Role="@c.AgentRole" Size="22" /><span>@RoleLabel(c.AgentRole)</span></div>
+                        <div class="ins-bar-track"><div class="ins-bar-fill" style="width:@(Pct(c.ToolCalls, maxCalls))%"></div></div>
+                        <div class="ins-bar-val">@c.CallsPerRun.ToString("0.#", CultureInfo.InvariantCulture) calls · @c.DenialsPerRun.ToString("0.#", CultureInfo.InvariantCulture) refused, per run</div>
+                    </div>
+                }
+            </div>
+            <table class="data-table" data-testid="insights-computer-table">
+                <caption class="muted ins-note">Per agent: runs that used tools on a paired computer, the calls they made, and how many the computer's permissions refused.</caption>
+                <thead>
+                    <tr><th>Agent</th><th class="num">Runs</th><th class="num">Tool calls</th><th class="num">Per run</th><th class="num">Refused</th><th class="num">Refused / run</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in computer)
+                    {
+                        <tr>
+                            <td>@RoleLabel(c.AgentRole)</td>
+                            <td class="num">@Num(c.Runs)</td>
+                            <td class="num">@Num(c.ToolCalls)</td>
+                            <td class="num">@c.CallsPerRun.ToString("0.#", CultureInfo.InvariantCulture)</td>
+                            <td class="num">@Num(c.Denials)</td>
+                            <td class="num">@c.DenialsPerRun.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (_isAdmin)
+            {
+                <div class="form-actions">
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => SettingsLinks.Open(WM, SettingsLinks.MemberComputerToolCalls()))">
+                        <Icon Name="scroll" Size="13" /> Every call in the Activity log
+                    </Btn>
+                </div>
+            }
+        }
+    </Panel>
+}
+
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
@@ -317,6 +372,7 @@ else
     private CostSummary? _summary;
     private InsightsExtra? _extra;
     private IReadOnlyList<PipelineRunSummary>? _runs;
+    private IReadOnlyList<AgentOs.Domain.Tools.ToolCallsByRole>? _computer;
     private decimal _estApiCost;
 
     // Budget (admin)
@@ -353,6 +409,7 @@ else
             _delivery = await Tasks.GetDeliveryForTenantAsync(_tenantId, Since);
             _runs = await Runs.ListForTenantAsync(_tenantId, limit: 50);
             _estApiCost = _summary.ByModel.Sum(m => WouldBe(m.Key, m.TokensIn, m.TokensOut));
+            _computer = await Evidence.SummarizeMemberComputerAsync(_tenantId, Since);
         }
         // Degrade to empty tiles on any transient read failure — the dashboard must never crash the circuit.
         catch (System.InvalidOperationException ex) { _ = ex.Message; }
@@ -408,6 +465,9 @@ else
         if (app is null) { return; }
         WM.OpenApp(app.Key, app.Title, app.Icon, app.W, app.H);
     }
+
+    private static string RoleLabel(string role) =>
+        string.IsNullOrEmpty(role) ? "Unnamed agent" : AgentOs.Modules.Pipeline.Agents.AgentRoles.Label(role);
 
     // ── would-be metered-API cost of tokens a model produced (the "≈ API" figure; $0-path honest estimate) ──
     private static decimal WouldBe(string model, int tokensIn, int tokensOut)

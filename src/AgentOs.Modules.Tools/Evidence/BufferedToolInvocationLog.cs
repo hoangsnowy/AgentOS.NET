@@ -91,6 +91,16 @@ internal sealed partial class BufferedToolInvocationLog : IToolInvocationLog, IA
         string tenantId, int limit = 50, CancellationToken cancellationToken = default) =>
         _inner.ListRecentAsync(tenantId, limit, cancellationToken);
 
+    /// <summary>Filtered reads delegate to the inner sink (its own query, not the default window filter).</summary>
+    public Task<IReadOnlyList<ToolInvocationEvidence>> ListRecentAsync(
+        string tenantId, ToolEvidenceFilter filter, int limit = 50, CancellationToken cancellationToken = default) =>
+        _inner.ListRecentAsync(tenantId, filter, limit, cancellationToken);
+
+    /// <summary>Per-role totals delegate to the inner sink.</summary>
+    public Task<IReadOnlyList<ToolCallsByRole>> SummarizeMemberComputerAsync(
+        string tenantId, DateTimeOffset? sinceUtc, CancellationToken cancellationToken = default) =>
+        _inner.SummarizeMemberComputerAsync(tenantId, sinceUtc, cancellationToken);
+
     /// <summary>Start the single background drain loop. Called once at module init (NOT in tests, which
     /// drive <see cref="DrainPendingAsync"/> as the sole reader for determinism).</summary>
     public void StartDraining()

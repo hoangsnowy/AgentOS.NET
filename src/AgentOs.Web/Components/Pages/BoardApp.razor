@@ -939,6 +939,16 @@ else if (_tab == Tab.Sessions)
                                             <span>@ev.Message</span>
                                         </div>
                                     }
+                                    @if (_isAdmin)
+                                    {
+                                        @* Governance: every tool the agent used on a member's computer is evidence (Settings › Activity log). *@
+                                        <div class="board-failure-actions">
+                                            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" data-testid="task-tool-calls"
+                                                 OnClick="@(() => AgentOs.Web.Services.SettingsLinks.Open(WM, AgentOs.Web.Services.SettingsLinks.MemberComputerToolCalls(s.Id)))">
+                                                <Icon Name="scroll" Size="13" /> Tool calls on the computer
+                                            </Btn>
+                                        </div>
+                                    }
                                 </div>
                             </td>
                         </tr>
