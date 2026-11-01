@@ -180,6 +180,18 @@ groups:
           description: The server is not recording tool calls a paired runner reports; the evidence for those calls exists only in the runner's logs.
           runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosevidenceremoterefused"
 
+      # A runner answered work dispatched to ANOTHER runner (GAP-06): refused, but a security signal, so no `for` — one is
+      # enough. A runner's own reconnect is accepted, so this is never a flaky network. kind="unknown" (a late answer
+      # after a timeout, a duplicate, an id another replica dispatched) is routine and not alerted.
+      - alert: AgentOsRemoteResultRefused
+        expr: sum by (job, instance, kind) (increase(agentos_remote_result_refused_total{kind!="unknown"}[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanize }} runner {{ $labels.kind }} report(s) from the wrong connection refused on {{ $labels.instance }} in 10 min"
+          description: A paired runner sent a result or progress for work dispatched to a different runner. Nothing was applied; find the runner in the warning log and revoke it if it is not trusted.
+          runbook_url: "https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md#runbook-agentosremoteresultrefused"
+
   # ---------------------------------------------------------------------------------------------------
   # Health — outside-in probe (blackbox exporter on /health) + the in-process health-status gauge.
   # ---------------------------------------------------------------------------------------------------

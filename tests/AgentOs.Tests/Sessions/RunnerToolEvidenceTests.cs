@@ -207,7 +207,7 @@ public sealed class RunnerToolEvidenceTests
         broker.Dispatched += d => _ = Task.Run(async () =>
         {
             await hub.ReportToolCalls(d.Request.Id, "scoped", [Call("toolu_1"), Call("toolu_2", denied: true)]);
-            broker.Complete(new RemoteExecResult(d.Request.Id, true, "done", null));
+            broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "done", null));
         });
         var client = new RemoteAgentLlmClient(broker, services, Microsoft.Extensions.Logging.Abstractions.NullLogger<RemoteAgentLlmClient>.Instance);
         var session = Guid.NewGuid();
@@ -334,7 +334,9 @@ public sealed class RunnerToolEvidenceTests
 
         await Hub(broker, log, "conn-a").ReportToolCalls("req-1", "scoped", [Call("toolu_1")]);
 
-        log.Seen.ShouldHaveSingleItem().ShouldBe(("tenant-a", (Guid?)Guid.Parse("11111111-1111-1111-1111-111111111111")));
+        var (tenant, session) = log.Seen.ShouldHaveSingleItem();
+        tenant.ShouldBe("tenant-a");
+        session.ShouldBe(Guid.Parse("11111111-1111-1111-1111-111111111111"));
         AgentOs.SharedKernel.Identity.AmbientIdentity.Current.ShouldBeNull(); // restored afterwards
     }
 
@@ -352,7 +354,7 @@ public sealed class RunnerToolEvidenceTests
         broker.TrackRun(requestId, new RemoteRunContext(tenant, sessionId, role, requestedAutonomy));
         // Dispatch (binds the run to the connection), then let the runner answer; the run stays tracked for the grace window.
         var pending = broker.DispatchAsync(new RemoteExecRequest(requestId, "s", "u", "m"), new RunnerTarget(tenant, "member-1"), TimeSpan.FromMinutes(5));
-        broker.Complete(new RemoteExecResult(requestId, true, "ok", null));
+        broker.CompleteFromServer(new RemoteExecResult(requestId, true, "ok", null));
         pending.GetAwaiter().GetResult();
         return (broker, runnerId);
     }

@@ -94,15 +94,15 @@ public sealed class RemoteAgentTransport : IHostedService
             if (!await _approver.ApproveAsync(request).ConfigureAwait(false))
             {
                 _logger.LogWarning("[RemoteAgent] request {Id} denied by approval gate.", request.Id);
-                _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, "Denied by approval gate."));
+                _broker.CompleteFromServer(new RemoteExecResult(request.Id, false, string.Empty, "Denied by approval gate."));
                 return;
             }
             await _hub.Clients.Client(dispatch.ConnectionId).SendAsync("Execute", request).ConfigureAwait(false);
         }
-        catch (HubException ex) { _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
-        catch (System.IO.IOException ex) { _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
-        catch (InvalidOperationException ex) { _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
-        catch (TimeoutException ex) { _broker.Complete(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
+        catch (HubException ex) { _broker.CompleteFromServer(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
+        catch (System.IO.IOException ex) { _broker.CompleteFromServer(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
+        catch (InvalidOperationException ex) { _broker.CompleteFromServer(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
+        catch (TimeoutException ex) { _broker.CompleteFromServer(new RemoteExecResult(request.Id, false, string.Empty, $"Transport error: {ex.Message}")); }
     }
 
     // Stop / timeout: tell the runner to kill the CLI run. Best effort — a runner that is already gone has nothing
@@ -128,7 +128,7 @@ public sealed class RemoteAgentTransport : IHostedService
     private async Task PushToolCallAsync(RunnerToolDispatch dispatch)
     {
         void Handle(Exception e) =>
-            _broker.CompleteToolCall(new RunnerToolResult(
+            _broker.CompleteToolCallFromServer(new RunnerToolResult(
                 dispatch.Call.RequestId,
                 dispatch.Call.ToolCallId,
                 false,
@@ -143,7 +143,7 @@ public sealed class RemoteAgentTransport : IHostedService
             {
                 _logger.LogWarning("[RemoteAgent] tool call {ToolCallId} ({Tool}) denied by approval gate.",
                     dispatch.Call.ToolCallId, dispatch.Call.ToolName);
-                _broker.CompleteToolCall(new RunnerToolResult(
+                _broker.CompleteToolCallFromServer(new RunnerToolResult(
                     dispatch.Call.RequestId, dispatch.Call.ToolCallId, false, string.Empty,
                     "Denied by approval gate."));
                 return;

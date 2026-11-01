@@ -954,6 +954,63 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Runner results refused by kind (paired runners)",
+      "description": "agentos.remote.result_refused: results (request, tool_call) and progress steps a paired runner sent for work dispatched to a different runner (GAP-06), refused; plus unknown = answers for ids no one waits for (late after a timeout or Stop, duplicates, another replica's ids). Any request / tool_call / progress is a security signal (alert AgentOsRemoteResultRefused); unknown is routine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (kind) (increase(agentos_remote_result_refused_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ]
 }

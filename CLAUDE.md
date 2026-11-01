@@ -220,6 +220,19 @@ The owner's standing instructions. They apply to every change; the execution pla
   - `cs/dispose-not-called-on-throw`: disposables in tests go under `using`.
   - `cs/missed-readonly-modifier`: enforced at build time via `IDE0044` (`.editorconfig`).
   - `cs/loss-of-precision`: `97 * i` passed as a `double` is an int multiplication first — write `97.0 * i`.
+  - `cs/useless-cast-to-self` / `cs/useless-upcast` that IDE0004 misses: a cast that only sets the inferred type of
+    an enclosing lambda/tuple (`Select(f => (byte[]?)f.Content)`, `((string?)null, name)`, `("t", (Guid?)id)`) —
+    Roslyn keeps it (removing it changes inference), CodeQL sees an identity/implicit conversion. Target-type instead:
+    a declared `IReadOnlyList<(string? Path, …)> x = [.. …]`, a loop into a typed array, or assert tuple parts apart.
+  - `cs/empty-catch-block`: no Roslyn twin — `EmptyCatchGuardTests` scans `src/` + `tests/`. A test step that may
+    fail returns its outcome (`TestFiles.TryIo(() => …)`) and asserts or `_ =`-ignores it.
+  - `cs/missed-where` with an `await` in the `if`: restructure (e.g. do the work under one lock), don't wrap the await.
+  - `cs/complex-condition`: >3 alternating `&&`/`||` in one expression → name a sub-condition (a small static helper).
+  - `cs/constant-condition`: a null check another branch already implies (`x is null ? null : …` then
+    `… && x is not null`) → nest the work under one `is { } x` pattern instead of re-checking.
+  - `cs/dispose-not-called-on-throw` on a buffer that outlives the call (chunked upload) → `ArrayBufferWriter<byte>`
+    (not `IDisposable`) instead of a `MemoryStream`. CA2000 is not its twin (70 ownership-transfer hits, not enabled).
+  - `cs/xmldoc/missing-summary`: a `<param>`-only doc comment still needs a `<summary>` (no compiler twin without doc generation).
 - **Row-level security (ADR-0012):** the dev/lab stack connects as the Postgres SUPERUSER, which bypasses RLS even
   when forced — every connection therefore `SET ROLE agentos_rls`. A new tenant table gets the policy by being
   added to `RowLevelSecurity.Tables`; its module context needs `.AddInterceptors(RowLevelSecurityInterceptor.Instance)`

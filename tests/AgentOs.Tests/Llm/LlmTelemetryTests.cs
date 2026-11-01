@@ -168,7 +168,7 @@ public sealed class LlmTelemetryTests
 
         var broker = new InProcessRemoteAgentBroker();
         using var reg = broker.RegisterRunner("conn-1", new RunnerConnection(Guid.NewGuid(), "default", "member-1"));
-        broker.Dispatched += d => broker.Complete(new RemoteExecResult(d.Request.Id, true, "// generated", null));
+        broker.Dispatched += d => broker.CompleteFromServer(new RemoteExecResult(d.Request.Id, true, "// generated", null));
 
         var tenant = Substitute.For<ITenantContext>();
         tenant.TenantId.Returns("default");

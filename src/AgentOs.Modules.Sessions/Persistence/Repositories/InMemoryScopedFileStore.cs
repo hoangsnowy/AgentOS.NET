@@ -61,14 +61,19 @@ internal sealed class InMemoryScopedFileStore : IScopedFileStore
         }
     }
 
-    public async Task<int> DeleteScopeAsync(string tenantId, string scopeKey, CancellationToken ct = default)
+    public Task<int> DeleteScopeAsync(string tenantId, string scopeKey, CancellationToken ct = default)
     {
-        var count = 0;
-        foreach (var f in Scope(tenantId, scopeKey).ToList())
+        // Every write takes the gate, so what is listed under it is exactly what gets removed.
+        lock (_gate)
         {
-            if (await DeleteAsync(tenantId, scopeKey, f.Info.Path, ct).ConfigureAwait(false)) { count++; }
+            var doomed = _files.Where(kv => kv.Key.Tenant == tenantId && kv.Key.Scope == scopeKey).ToList();
+            foreach (var (key, file) in doomed)
+            {
+                _files.TryRemove(key, out _);
+                _bytes -= file.Content.LongLength;
+            }
+            return Task.FromResult(doomed.Count);
         }
-        return count;
     }
 
     private IEnumerable<StoredFile> Scope(string tenantId, string scopeKey) =>

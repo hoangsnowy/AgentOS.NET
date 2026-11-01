@@ -114,7 +114,8 @@ public sealed class RemoteAgentHub : Hub
     public void CompleteRequest(RemoteExecResult result) => _broker.Complete(Context.ConnectionId, result);
 
     /// <summary>Runner → server: the plain step a running request is on (live progress on the Board). Heard only from the
-    /// connection the request was dispatched to.</summary>
+    /// connection the request was dispatched to, or that runner's reconnect (same runner id, same tenant) — GAP-06; a step
+    /// from any other connection, or for a request no one waits for, is dropped and counted.</summary>
     public void ReportProgress(string requestId, string step) => _broker.ReportProgress(Context.ConnectionId, requestId, step);
 
     /// <summary>Runner → server: where a "Try the app" preview it runs stands (Preparing / Starting / Ready / Failed / Stopped).</summary>
@@ -127,13 +128,15 @@ public sealed class RemoteAgentHub : Hub
         (_broker as IRunnerPreviewBroker)?.AnnouncePreviews(Context.ConnectionId, running ?? [], gone ?? []);
 
     /// <summary>Runner → server: a piece of a ticket file of the request it is running (ADR-0015). Answers only the
-    /// connection the request was dispatched to; null for anything else (an unknown id, another runner).</summary>
+    /// connection the request was dispatched to, or that runner's reconnect (same runner id, same tenant); null for
+    /// anything else (an unknown id, another runner).</summary>
     public RunFileChunk? ReadRunFile(string requestId, int index, long offset) =>
         _broker.ReadRunFile(Context.ConnectionId, requestId, index, offset);
 
     /// <summary>Runner → server: one piece of a file it sends back for the request it ran (the Design gate's screenshots,
-    /// ADR-0016). Heard only from the connection the request was dispatched to; every piece is path-, size- and
-    /// order-checked. Null when accepted, else why it was refused.</summary>
+    /// ADR-0016). Heard only from the connection the request was dispatched to, or that runner's reconnect (same runner
+    /// id, same tenant) — the screenshots come at the end of a run, after any mid-run reconnect; every piece is path-,
+    /// size- and order-checked. Null when accepted, else why it was refused.</summary>
     public string? UploadRunFile(string requestId, AgentOs.Domain.Files.RunUploadChunk chunk) =>
         _broker.UploadRunFile(Context.ConnectionId, requestId, chunk);
 

@@ -184,7 +184,7 @@ public sealed class OpsMetricsTests
             tags.TryGetValue("gen_ai.request.model", out var m) && (m as string) is okModel or failModel);
         var broker = new InProcessRemoteAgentBroker();
         using var reg = broker.RegisterRunner("ops-conn", new RunnerConnection(Guid.NewGuid(), "default", "ops-member"));
-        broker.Dispatched += d => broker.Complete(d.Request.Model == okModel
+        broker.Dispatched += d => broker.CompleteFromServer(d.Request.Model == okModel
             ? new RemoteExecResult(d.Request.Id, true, "// done", null)
             : new RemoteExecResult(d.Request.Id, false, string.Empty, "cli crashed"));
         var tenant = Substitute.For<ITenantContext>();
