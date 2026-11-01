@@ -22,7 +22,11 @@ public sealed class TicketFlowDefinitionTests
     {
         Default.Summary().ShouldBe("Code → Checks → Review → Test → Merge");
         TicketFlowValidator.Validate(Default).ShouldBeEmpty();
-        Default.Edges.Where(e => e.When == TicketFlowEdgeWhen.Fail).Select(e => e.From).ShouldBe(["checks", "review", "test"]);
+        Default.Edges.Where(e => e.When == TicketFlowEdgeWhen.Fail).Select(e => e.From).ShouldBe(["checks", "review", "test", "design"]);
+        // The Design gate sits between Test and Merge, off — for area:ui tickets once it is turned on.
+        Default.Ordered().Select(n => n.Id).ShouldBe(["code", "checks", "review", "test", "design", "merge"]);
+        Default.Find("design")!.Enabled.ShouldBeFalse();
+        Default.Find("design")!.Only.ShouldBe([TicketFlowDefinition.UiLabel]);
         Default.Edges.Where(e => e.When == TicketFlowEdgeWhen.Fail).ShouldAllBe(e => e.To == "code");
         TicketFlowPlan.Default.Summary.ShouldBe("Code → Checks → Review → Test → Merge");
         TicketFlowPlan.Default.SafetyProblem().ShouldBeNull();
@@ -175,8 +179,7 @@ public sealed class TicketFlowDefinitionTests
     [Fact]
     public void StepsOutOfOrder_AreRefused()
     {
-        var n = Default.Nodes;
-        var d = TicketFlowDefinition.Chain([n[0], n[1], n[3], n[2], n[4]]);
+        var d = TicketFlowDefinition.Chain([Default.Find("code")!, Default.Find("checks")!, Default.Find("test")!, Default.Find("review")!, Default.Find("merge")!]);
         Reasons(d).ShouldContain("Review must come before Test");
     }
 
@@ -212,7 +215,7 @@ public sealed class TicketFlowDefinitionTests
         var d = WithNode("review", n => n with { SkipLabels = ["type:chore"] });
 
         d.Resolve(["Type:Chore"]).Summary.ShouldBe("Code → Checks → Test → Merge");
-        d.Resolve(["type:chore"]).Skipped.ShouldHaveSingleItem().Id.ShouldBe("review");
+        d.Resolve(["type:chore"]).Skipped.Select(s => s.Id).ShouldBe(["review", "design"]);
         d.Resolve(["type:feature"]).Summary.ShouldBe("Code → Checks → Review → Test → Merge");
         d.Resolve(null).Runs(TicketStepKind.Review).ShouldBeTrue();
         d.Summary().ShouldBe("Code → Checks → Review (not type:chore) → Test → Merge");
@@ -221,9 +224,10 @@ public sealed class TicketFlowDefinitionTests
     [Fact]
     public void Plan_WithoutAGate_IsUnsafe()
     {
-        var unsafePlan = new TicketFlowPlan([Default.Nodes[0], Default.Nodes[1], Default.Nodes[4]], []);
+        var merge = Default.Find("merge")!;
+        var unsafePlan = new TicketFlowPlan([Default.Nodes[0], Default.Nodes[1], merge], []);
         unsafePlan.SafetyProblem()!.ShouldContain("neither Review nor Test");
-        new TicketFlowPlan([Default.Nodes[0], Default.Nodes[2], Default.Nodes[4]], []).SafetyProblem()!.ShouldContain("Checks");
+        new TicketFlowPlan([Default.Nodes[0], Default.Nodes[2], merge], []).SafetyProblem()!.ShouldContain("Checks");
     }
 
     [Fact]

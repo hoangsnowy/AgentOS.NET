@@ -99,6 +99,43 @@ public sealed class GitHubSourceProvider : ISourceProvider
         };
     }
 
+    // Design gate (ADR-0016): .claude/skills/<folder with "design" in its name>/SKILL.md on the default branch (the
+    // repository's GitHub default — never the change's branch), budgeted like the instruction files. Best-effort: a
+    // repository without the folder (404) has no design skill.
+    public async Task<IReadOnlyList<RepoInstructionFile>> ReadDesignSkillsAsync(WorkspaceDescriptor workspace, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        var client = CreateClient(workspace.AccessToken, workspace.Host);
+        IReadOnlyList<RepositoryContent> skills;
+        try
+        {
+            skills = await client.Repository.Content.GetAllContentsByRef(workspace.Owner, workspace.Repo, ".claude/skills", workspace.DefaultBranch).ConfigureAwait(false);
+        }
+        catch (NotFoundException)
+        {
+            return [];
+        }
+        var folders = skills
+            .Where(c => c.Type == ContentType.Dir && c.Name.Contains("design", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(c => c.Name, StringComparer.Ordinal)
+            .Take(4)
+            .ToList();
+        var reads = folders.Select(async folder =>
+        {
+            var path = $".claude/skills/{folder.Name}/SKILL.md";
+            try
+            {
+                var bytes = await client.Repository.Content.GetRawContentByRef(workspace.Owner, workspace.Repo, path, workspace.DefaultBranch).ConfigureAwait(false);
+                return (path, System.Text.Encoding.UTF8.GetString(bytes));
+            }
+            catch (NotFoundException)
+            {
+                return (path, string.Empty);
+            }
+        });
+        return RepoInstructions.Budget(await Task.WhenAll(reads).ConfigureAwait(false));
+    }
+
     // E0.7: fetch the known agent-instruction files in parallel. Root files are only requested when the root
     // listing shows them (no wasted 404s); nested ones (.github/…, .agentos/…) when their folder exists.
     private static async Task<IReadOnlyList<RepoInstructionFile>> ReadInstructionsAsync(

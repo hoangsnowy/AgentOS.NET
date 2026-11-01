@@ -11,6 +11,7 @@ using Xunit;
 
 namespace AgentOs.E2E.Tests.AgentOsUi;
 
+[Collection(TicketFlowGroup.Name)]
 public sealed class TicketFlowTests : IClassFixture<AgentOsPageFixture>
 {
     private readonly AgentOsPageFixture _fx;
@@ -55,7 +56,7 @@ public sealed class TicketFlowTests : IClassFixture<AgentOsPageFixture>
         await button.EvaluateAsync("el => el.click()");
     }
 
-    // Zero residue: every step on and saved (the built-in flow's content).
+    // Zero residue: every step as the built-in flow has it (Design off), and saved.
     private static async Task EnsureDefaultAsync(ILocator win)
     {
         var discard = win.GetByRole(AriaRole.Button, new() { Name = "Discard" });
@@ -66,6 +67,12 @@ public sealed class TicketFlowTests : IClassFixture<AgentOsPageFixture>
             var css = await Card(win, step).GetAttributeAsync("class");
             if (css is null || !css.Contains("run-skipped", StringComparison.Ordinal)) { continue; }
             await SetRunsAsync(win, step, on: true);
+            changed = true;
+        }
+        var design = await Card(win, "design").GetAttributeAsync("class");
+        if (design is not null && !design.Contains("run-skipped", StringComparison.Ordinal))
+        {
+            await SetRunsAsync(win, "design", on: false);
             changed = true;
         }
         if (changed)
@@ -95,13 +102,13 @@ public sealed class TicketFlowTests : IClassFixture<AgentOsPageFixture>
         await EnsureDefaultAsync(win); // a run cut short earlier may have left a step off
         try
         {
-            // Render: the five steps in order, the way back to Code, and the table alternative.
-            await Assertions.Expect(win.Locator(".tf-node")).ToHaveCountAsync(5);
+            // Render: the six steps in order (Design shown off — ADR-0016), the way back to Code, and the table alternative.
+            await Assertions.Expect(win.Locator(".tf-node")).ToHaveCountAsync(6);
             await Assertions.Expect(win.Locator(".tf-chain")).ToHaveAttributeAsync("aria-label", new System.Text.RegularExpressions.Regex("Code → Checks → Review → Test → Merge"));
             await Assertions.Expect(win.Locator(".tf-back")).ToContainTextAsync("Fail → back to Code");
             await ShotAsync("graph");
             await PressAsync(win.Locator("[data-testid=ticket-flow-table-view]"));
-            await Assertions.Expect(win.Locator("[data-testid=ticket-flow-table] tbody tr")).ToHaveCountAsync(5);
+            await Assertions.Expect(win.Locator("[data-testid=ticket-flow-table] tbody tr")).ToHaveCountAsync(6);
             await Assertions.Expect(win.Locator("[data-testid=ticket-flow-table]")).ToContainTextAsync("Back to Code (a fix round)");
             await ShotAsync("table");
             await PressAsync(win.GetByRole(AriaRole.Button, new() { Name = "Graph" }));

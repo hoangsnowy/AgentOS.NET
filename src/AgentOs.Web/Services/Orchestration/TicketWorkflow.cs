@@ -46,7 +46,7 @@ public enum TicketStage
     Stopped,
     /// <summary>The member's AI plan hit its limit — handed back; Autopilot picks it up after the reset.</summary>
     PlanLimited,
-    /// <summary>A step of a kind added later (e.g. a design gate) passed: on to the next step.</summary>
+    /// <summary>A step of a kind added later (the Design gate) passed: on to the next step.</summary>
     Passed,
 }
 
@@ -153,7 +153,16 @@ public interface ITicketSteps
 
     /// <summary>Why no agent should run now — the member's AI plan is at its limit (plain words) — or null.</summary>
     string? PlanLimited(TicketFlow flow) => null;
+
+    /// <summary>The Design gate (ADR-0016): run the Designer agent on the screenshots the Testing agent sent back (unless the
+    /// owner already decided) and say where the gate stands. Without a design reviewer wired, a person decides.</summary>
+    Task<DesignStep> DesignAsync(TicketFlow flow, CancellationToken ct) =>
+        Task.FromResult(new DesignStep(AgentOs.Domain.Sessions.DesignGateState.NeedsPerson, null, "No design reviewer is set up."));
 }
+
+/// <summary>Where a ticket's Design gate stands after its step ran: the gate, what to send back to Coding on changes, and
+/// why (plain words).</summary>
+public sealed record DesignStep(AgentOs.Domain.Sessions.DesignGateState Gate, string? Findings, string? Why);
 
 /// <summary>Builds and runs a ticket's MAF workflow.</summary>
 public static class TicketWorkflow
@@ -218,6 +227,7 @@ public static class TicketWorkflow
             TicketStepKind.Checks => new ChecksExecutor(node, steps, checksTimeout, pollInterval),
             TicketStepKind.Review => new ReviewExecutor(node, steps),
             TicketStepKind.Test => new TestExecutor(node, steps),
+            TicketStepKind.Design => new DesignExecutor(node, steps),
             TicketStepKind.Merge => new MergeExecutor(node, steps),
             _ => throw new NotSupportedException($"No executor for the {node.Kind} step."),
         };
@@ -343,6 +353,35 @@ public static class TicketWorkflow
                 return f;
             }
             return f.Stop("The Testing agent couldn't test the change.");
+        }
+    }
+
+    // The Design gate: pass → on to Merge; changes (the Designer's or the owner's) → back to Code as a fix round; a
+    // person's call → the flow hands the task back, and Autopilot merges once the owner approves on Board › Tasks.
+    private sealed class DesignExecutor(TicketFlowNode node, ITicketSteps steps) : Executor<TicketFlow, TicketFlow>(node.Id)
+    {
+        public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
+        {
+            f.Enter(node);
+            if (PlanPause(steps, f) is { } before) { return before; }
+            var step = await steps.DesignAsync(f, ct).ConfigureAwait(false);
+            if (PlanPause(steps, f) is { } after) { return after; }
+            switch (step.Gate)
+            {
+                case AgentOs.Domain.Sessions.DesignGateState.Passed:
+                    f.Stage = TicketStage.Passed;
+                    f.Trail.Add("design approved");
+                    return f;
+                case AgentOs.Domain.Sessions.DesignGateState.ChangesRequested:
+                    return f.SendBack("Design review asked for changes", step.Findings ?? "Design review asked for changes.");
+                case AgentOs.Domain.Sessions.DesignGateState.NeedsPerson:
+                    f.Stage = TicketStage.NeedsPerson;
+                    f.Reason = "The design needs a person's eye — approve it or ask for changes on Board › Tasks."
+                        + (string.IsNullOrWhiteSpace(step.Why) ? "" : " " + step.Why);
+                    return f;
+                default:
+                    return f.Stop(step.Why ?? "The Designer agent couldn't check the design.");
+            }
         }
     }
 

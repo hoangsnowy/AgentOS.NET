@@ -132,7 +132,7 @@ connection.On<RemoteExecRequest>("Execute", request =>
             // Stopped while it waited for a slot: never start it.
             var result = CancelledBeforeStart.TryRemove(request.Id, out _)
                 ? new RemoteExecResult(request.Id, false, string.Empty, "Stopped before it started.")
-                : await RunLlmAsync(request, ReportProgressAsync, ReadRunFileAsync).ConfigureAwait(false);
+                : await RunLlmAsync(request, ReportProgressAsync, ReadRunFileAsync, UploadRunFileAsync).ConfigureAwait(false);
             await connection.SendAsync("CompleteRequest", result).ConfigureAwait(false);
             // Print WHY on failure. Logging only ok=False made every distinct failure — CLI not on PATH, CLI not
             // logged in, non-zero exit — look identical from the runner console, which is the one place an
@@ -226,7 +226,8 @@ await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
 // ── M3: run the LLM CLI with the prompt piped to stdin ──────────────────────────────────────────
 
 static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<string, string, Task> report,
-    Func<string, int, long, Task<AgentOs.RemoteAgent.RunFiles.Chunk?>> readFile)
+    Func<string, int, long, Task<AgentOs.RemoteAgent.RunFiles.Chunk?>> readFile,
+    Func<string, AgentOs.Domain.Files.RunUploadChunk, Task<string?>> upload)
 {
     // Pick the CLI-agent profile: per-request hint (server-chosen), else REMOTE_AGENT_CLI, else claude.
     var cli = (request.Cli ?? Environment.GetEnvironmentVariable("REMOTE_AGENT_CLI") ?? "claude").Trim();
@@ -346,7 +347,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             {
                 // Metrics first: the CLI's own usage travels back, so the server shows real tokens, not an estimate.
                 var used = final.Tokens();
-                return (final.IsError
+                return await WithUploadsAsync((final.IsError
                     ? new RemoteExecResult(request.Id, false, string.Empty, final.Text.Length > 0 ? final.Text : streamErr.Trim())
                     : new RemoteExecResult(request.Id, true, final.Text.Trim(), null)) with
                 {
@@ -354,7 +355,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
                     OutputTokens = used?.Output,
                     CacheReadTokens = used?.CacheRead,
                     CacheWriteTokens = used?.CacheWrite,
-                };
+                }).ConfigureAwait(false);
             }
             // No result event (killed by Stop, crashed, not logged in): fall through to the exit-code report.
             stdout = raw.ToString();
@@ -368,7 +369,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
         if (process.ExitCode == 0)
         {
-            return new RemoteExecResult(request.Id, true, stdout.Trim(), null);
+            return await WithUploadsAsync(new RemoteExecResult(request.Id, true, stdout.Trim(), null)).ConfigureAwait(false);
         }
 
         // CLI agents routinely print the reason on STDOUT and exit non-zero (claude's
@@ -388,6 +389,25 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     {
         RunningCli.TryRemove(request.Id, out _);
         if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
+    }
+
+    // Design gate (ADR-0016): a run asked for screenshots sends the images its agent listed back to the server — checked
+    // here (RunUploads) and again piece by piece there — before the run folder goes. Never fails the run itself.
+    async Task<RemoteExecResult> WithUploadsAsync(RemoteExecResult result)
+    {
+        if (!result.Ok || request.Collect is not { } collect) { return result; }
+        try
+        {
+            var candidates = AgentOs.RemoteAgent.RunUploads.Candidates(runDir, AgentOs.RemoteAgent.RunUploads.ListedPaths(result.Content));
+            var outcome = await AgentOs.RemoteAgent.RunUploads.SendAsync(runDir, candidates, collect, chunk => upload(request.Id, chunk)).ConfigureAwait(false);
+            foreach (var why in outcome.Problems) { Console.WriteLine($"[agent] {request.Id}: not sent back — {why}"); }
+            Console.WriteLine($"[agent] {request.Id}: sent back {outcome.Sent.Count} screenshot(s)");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or Microsoft.AspNetCore.SignalR.HubException)
+        {
+            Console.WriteLine($"[agent] {request.Id}: couldn't send the screenshots back: {ex.Message}");
+        }
+        return result;
     }
 }
 
@@ -569,6 +589,11 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
 async Task<AgentOs.RemoteAgent.RunFiles.Chunk?> ReadRunFileAsync(string requestId, int index, long offset) =>
     await connection.InvokeAsync<AgentOs.RemoteAgent.RunFiles.Chunk?>("ReadRunFile", requestId, index, offset).ConfigureAwait(false);
 
+// Design gate (ADR-0016): one piece of a screenshot sent back for the request this computer ran. The server hears only
+// the connection the request was sent to; null = accepted, else why it was refused.
+async Task<string?> UploadRunFileAsync(string requestId, AgentOs.Domain.Files.RunUploadChunk chunk) =>
+    await connection.InvokeAsync<string?>("UploadRunFile", requestId, chunk).ConfigureAwait(false);
+
 // "write_files" — the server-driven path: put the ticket's files in a fresh folder under the work root and say where.
 static async Task<RunnerToolResult> WriteFilesToolAsync(RunnerToolCall call, Func<string, int, long, Task<AgentOs.RemoteAgent.RunFiles.Chunk?>> readFile)
 {
@@ -628,7 +653,7 @@ internal static partial class Program
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
 internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
-    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null);
+    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null, AgentOs.RemoteAgent.RunUploads.Limits? Collect = null);
 internal sealed record WriteFilesInput(IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files);
 internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
 {

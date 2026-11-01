@@ -30,6 +30,7 @@ public sealed class SessionsDbContext : DbContext
     public DbSet<RemoteSessionEntity> Sessions => Set<RemoteSessionEntity>();
     public DbSet<SessionRepoEntity> SessionRepos => Set<SessionRepoEntity>();
     public DbSet<TicketFileEntity> TicketFiles => Set<TicketFileEntity>();
+    public DbSet<DesignReviewEntity> DesignReviews => Set<DesignReviewEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -110,6 +111,26 @@ public sealed class SessionsDbContext : DbContext
             e.Property(x => x.UploadedBy).IsRequired().HasMaxLength(256);
             e.Property(x => x.UploadedAtUtc).IsRequired();
             e.HasIndex(x => new { x.TenantId, x.ScopeKey, x.PathKey }).IsUnique();
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
+        });
+
+        // Design gate (ADR-0016): one review per (tenant, task, test run).
+        modelBuilder.Entity<DesignReviewEntity>(e =>
+        {
+            e.ToTable("design_reviews");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Status).IsRequired().HasMaxLength(32);
+            e.Property(x => x.Summary).IsRequired().HasMaxLength(4000);
+            e.Property(x => x.FindingsJson).IsRequired();
+            e.Property(x => x.ShotsJson).IsRequired();
+            e.Property(x => x.Error).HasMaxLength(2000);
+            e.Property(x => x.Decision).HasMaxLength(32);
+            e.Property(x => x.DecisionNote).HasMaxLength(4000);
+            e.Property(x => x.DecidedBy).HasMaxLength(256);
+            e.Property(x => x.UpdatedAtUtc).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.SessionId, x.Run }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.UpdatedAtUtc });
             e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
         });
     }

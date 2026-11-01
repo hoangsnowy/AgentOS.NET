@@ -55,6 +55,12 @@ public static class PromptCatalog
             Group = AgentRoleGroup.Board,
             Placeholders = AcceptanceAgent.Placeholders,
         },
+        new(AgentRoles.Designer, AgentRoles.Label(AgentRoles.Designer) + " — the Design gate", DesignAgent.InstructionsTemplate)
+        {
+            Group = AgentRoleGroup.Board,
+            Placeholders = AcceptanceAgent.Placeholders,
+            Note = "Checks a UI change's screenshots (390 / 1280 px, light / dark) when the ticket flow runs Design.",
+        },
         new(AgentRoles.AutopilotOrchestrator, AgentRoles.Label(AgentRoles.AutopilotOrchestrator), AutopilotOrchestratorAgent.Instructions)
         {
             Group = AgentRoleGroup.Board,

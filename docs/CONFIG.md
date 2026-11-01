@@ -112,6 +112,7 @@ aliases); `Temperature` is hidden for models that reject sampling params; `MaxTo
 | Coding (tickets) | `IssueWork` | Anthropic | *Computer's default* | 0.2 | 32768 |
 | Reviewer | `Reviewer` | RemoteAgent | *Computer's default* | 0 | 32768 |
 | Testing (tickets) | `Acceptance` | RemoteAgent | *Computer's default* | 0 | 32768 |
+| Designer (the Design gate) | `Designer` | RemoteAgent | *Computer's default* | 0 | 8192 |
 | Autopilot lead | `AutopilotOrchestrator` | RemoteAgent | *Computer's default* | 0 | 4096 |
 | Retrospective | `Retrospective` | RemoteAgent | *Computer's default* | 0 | 4096 |
 | Orchestrator (Workflow pipeline) | `Orchestrator` | Anthropic | `claude-haiku-4-5` | 0.3 | 2000 |
@@ -164,7 +165,7 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:ChecksTimeoutMinutes` | `60` | 5–240 | How long a ticket's MAF workflow waits for a pull request's checks before handing it back to the step-by-step passes. |
 | `Autopilot:ChecksPollSeconds` | `60` | 15–600 | How often it looks at them. |
 | `Autopilot:CodingRunMinutes` | `60` | 10–240 | The longest one Coding (tickets) run may take on a computer — clone, change, build, test, push (was a fixed 20 minutes). |
-| `Autopilot:ReviewRunMinutes` | `30` | 5–120 | The longest one Reviewer run may take (was a fixed 20). |
+| `Autopilot:ReviewRunMinutes` | `30` | 5–120 | The longest one Reviewer run may take (was a fixed 20). The Designer (Design gate) runs under the same limit. |
 | `Autopilot:TestingRunMinutes` | `45` | 10–180 | The longest one Testing (tickets) run may take (was a fixed 30). |
 | `TicketFiles:MaxFileMegabytes` | `10` | 1–100 | *Files for the AI* — the largest single file a person can attach to a ticket ([ADR-0015](adr/0015-ticket-files.md)). |
 | `TicketFiles:MaxTotalMegabytes` | `50` | 1–500 | All files of one ticket together. They are copied to the computer for every run of the ticket. |
@@ -196,11 +197,24 @@ by admins in Workflow › Ticket flow (members read-only) and read when a ticket
 | Checks | — (CI + merge state) | no | back to Code (fix round) |
 | Review | `Reviewer` | yes — *skip tickets labelled* / *only tickets labelled* | back to Code (fix round) |
 | Test | `Acceptance` — Testing (tickets) | yes — same filters | back to Code (fix round) |
+| Design | `Designer` | yes — **off by default**; once on, *only tickets labelled* `area:ui` | back to Code (fix round); needs-person waits for the owner |
 | Merge | — (source control) | no | handed back to Autopilot |
+
+**Design gate** ([ADR-0016](adr/0016-design-gate.md)) — no setting keys either. With Design on for a ticket, its Testing
+run also takes Playwright screenshots (390 / 1280 px, light / dark) that the runner sends back to the tenant's file store
+under `design:{board}:{issue}:{fix round}` (one folder per repo of the task) — fixed caps: 16 files, 5 MB each, 40 MB a
+run, png / jpg / webp only, and at most 8 runs' worth (320 MB) in flight on the server at once. The Designer agent's
+verdict and the owner's *Approve design* / *Ask for changes* are rows in `sessions.design_reviews` (RLS), written by
+separate narrow updates so neither can erase the other. On a server provider the screenshots go as images within fixed
+limits (≤ 16, ≤ 3.75 MB and ≤ 8000 px each, ≤ 32 MB together — from Anthropic's vision docs); an image over them is left
+out and the prompt says why. The Designer reads `.claude/skills/*design*/SKILL.md` from the repo's default branch.
+Autopilot merges the ticket only after a pass or an owner approval; changes count on the task's fix rounds; a check
+that couldn't run is re-run automatically up to 2 times once a computer is connected (*Check again* runs it by hand).
 
 Refused on save **and** at run time (the run then uses the built-in flow and the Autopilot activity says why): a flow
 that doesn't start at Code / end at Merge, turns Checks off or limits it, lets any ticket reach Merge with neither
-Review nor Test (every combination of the filter labels is checked), loops other than *fail → Code*, leaves a step
+Review nor Test (every combination of the filter labels is checked), runs Design for a ticket that doesn't run Test,
+loops other than *fail → Code*, leaves a step
 unreachable, puts steps out of order, or names an agent that can't run the step. Fix rounds stay
 `Autopilot:MaxFixRounds` on the task's persisted count. Every change is audited (`ticketflow.changed`) and can be
 reverted; a task records the version it started with (`sessions.sessions.TicketFlowVersion`) and keeps it.

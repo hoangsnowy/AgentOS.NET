@@ -2779,6 +2779,32 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 .ticket-files-table code { word-break: break-all; }
 @media (prefers-reduced-motion: reduce) { .ticket-files-drop { transition: none; } }
 
+/* Design gate (DesignPanel / DesignChecks, ADR-0016): a task's screenshot grid — screens down, phone/desktop ×
+   light/dark across — with the Designer agent's verdict, findings and the owner's override. The grid scrolls sideways
+   inside its own box on a narrow window (never the page); thumbnails keep their aspect, phone ones narrower. */
+.design-panel { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); white-space: normal; }
+.design-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.design-panel-title { margin: 0; display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); }
+.design-panel-meta, .design-panel-hint { margin: 0; font-size: var(--fs-xs); }
+.design-panel-verdict, .design-panel-decision { margin: 0; font-size: var(--fs-sm); max-width: 90ch; }
+.design-panel-decision { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; color: var(--txt); }
+.design-panel-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.design-panel-ask { display: flex; flex-direction: column; gap: var(--space-1); max-width: 80ch; }
+.design-grid-wrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-sunk); }
+.design-grid { border-collapse: collapse; font-size: var(--fs-xs); min-width: 100%; }
+.design-grid th, .design-grid td { padding: var(--space-2); text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.design-grid thead th { color: var(--txt-dim); font-weight: 600; white-space: nowrap; }
+.design-grid tbody th { color: var(--txt); font-weight: 600; white-space: nowrap; }
+.design-shot { display: block; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg); }
+.design-shot:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.design-shot img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: cover; object-position: top; }
+.design-shot.is-phone { width: 96px; }
+.design-shot.is-desktop { width: 176px; }
+.design-shot-missing { display: inline-block; padding: var(--space-2) 0; }
+.design-findings td { white-space: normal; }
+.design-checks { display: flex; flex-direction: column; gap: var(--space-2); }
+.design-checks-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-size: var(--fs-sm); }
+
 /* ===== Brand mark (BrandMark.razor) — the AgentOS.NET product icon =====
    An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once
    on hover (of the mark or the brand row around it). favicon.svg / the Keycloak tile are its static twins. */

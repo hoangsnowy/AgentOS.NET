@@ -38,12 +38,7 @@ public sealed class ChatClientLlmClient : ILlmClient
         request = ProviderDefaultModel.Apply(request, _defaultModel);
         request.Validate();
 
-        var messages = new List<ChatMessage>(2);
-        if (!string.IsNullOrEmpty(request.SystemPrompt))
-        {
-            messages.Add(new ChatMessage(ChatRole.System, request.SystemPrompt));
-        }
-        messages.Add(new ChatMessage(ChatRole.User, request.UserPrompt));
+        var messages = LlmMessages.For(request);
 
         var options = new ChatOptions
         {

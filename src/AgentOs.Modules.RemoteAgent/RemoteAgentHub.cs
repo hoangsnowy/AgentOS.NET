@@ -25,6 +25,9 @@ public sealed class RemoteAgentHub : Hub
     /// <summary>Route the hub is mapped at.</summary>
     public const string Path = "/hubs/remote-agent";
 
+    /// <summary>The largest message a runner may send (bytes): one upload piece as base64 JSON, with room to spare.</summary>
+    public const long MaxReceiveBytes = 1024 * 1024;
+
     private static readonly ConcurrentDictionary<string, IDisposable> Registrations = new(StringComparer.Ordinal);
 
     private readonly IRemoteAgentBroker _broker;
@@ -111,6 +114,12 @@ public sealed class RemoteAgentHub : Hub
     /// connection the request was dispatched to; null for anything else (an unknown id, another runner).</summary>
     public RunFileChunk? ReadRunFile(string requestId, int index, long offset) =>
         _broker.ReadRunFile(Context.ConnectionId, requestId, index, offset);
+
+    /// <summary>Runner → server: one piece of a file it sends back for the request it ran (the Design gate's screenshots,
+    /// ADR-0016). Heard only from the connection the request was dispatched to; every piece is path-, size- and
+    /// order-checked. Null when accepted, else why it was refused.</summary>
+    public string? UploadRunFile(string requestId, AgentOs.Domain.Files.RunUploadChunk chunk) =>
+        _broker.UploadRunFile(Context.ConnectionId, requestId, chunk);
 
     /// <summary>Invoked by the runner when it has finished executing a tool call (M4).</summary>
     public void CompleteToolCall(RunnerToolResult result) => _broker.CompleteToolCall(result);

@@ -49,6 +49,10 @@ public sealed class AgentsOptions
     /// <summary>Board — Testing (tickets): AcceptanceAgent. Builds and tests the change on the member's computer.</summary>
     public AgentOptions Acceptance { get; set; } = new() { Provider = MembersComputer, Model = ComputersDefault, Temperature = 0, MaxTokens = 32768 };
 
+    /// <summary>Board — Designer (DesignAgent): the Design gate. On the member's computer it reads the screenshots from its
+    /// run folder; on a server provider they travel as images in the request.</summary>
+    public AgentOptions Designer { get; set; } = new() { Provider = MembersComputer, Model = ComputersDefault, Temperature = 0, MaxTokens = 8192 };
+
     /// <summary>Board — Autopilot lead (AutopilotOrchestratorAgent). Answer-only.</summary>
     public AgentOptions AutopilotOrchestrator { get; set; } = new() { Provider = MembersComputer, Model = ComputersDefault, Temperature = 0, MaxTokens = 4096 };
 
@@ -70,6 +74,7 @@ public sealed class AgentsOptions
         AgentRoles.Discovery => Discovery,
         AgentRoles.Reviewer => Reviewer,
         AgentRoles.Acceptance => Acceptance,
+        AgentRoles.Designer => Designer,
         AgentRoles.AutopilotOrchestrator => AutopilotOrchestrator,
         AgentRoles.Retrospective => Retrospective,
         _ => null,

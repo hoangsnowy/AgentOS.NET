@@ -28,6 +28,15 @@ public interface ISourceProvider
     /// <summary>Read README + top-level layout to ground the Requirement agent.</summary>
     Task<RepoContext> ReadRepoContextAsync(WorkspaceDescriptor workspace, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The repository's design skill(s) for the Designer agent (Design gate, ADR-0016): every
+    /// <c>.claude/skills/&lt;folder containing "design"&gt;/SKILL.md</c> on the DEFAULT branch — never the change's own branch,
+    /// so a change can't rewrite the rules it is judged by — budgeted like <see cref="RepoInstructions"/>. Empty when the
+    /// repository has none or the backend can't list folders.
+    /// </summary>
+    Task<IReadOnlyList<RepoInstructionFile>> ReadDesignSkillsAsync(WorkspaceDescriptor workspace, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RepoInstructionFile>>([]);
+
     // ── Boards (GitHub Projects v2 / Azure DevOps board) ────────────────────────────────────────
     // A board is the planning layer that spans many repos. These read the board and its items; the
     // per-repo members above still drive validate/list/ground for the repos under the board.

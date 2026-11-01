@@ -32,6 +32,9 @@ public sealed record LlmResponse(
 
     /// <summary>Reasoning / thinking tokens — a subset of <see cref="OutputTokens"/> (billed as output).</summary>
     public int ReasoningTokens { get; init; }
+
+    /// <summary>The files the paired runner sent back and the server stored (<see cref="LlmRequest.Uploads"/>), by path.</summary>
+    public System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.StoredFileInfo> Uploaded { get; init; } = [];
 }
 
 /// <summary>

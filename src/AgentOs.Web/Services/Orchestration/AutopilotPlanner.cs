@@ -48,6 +48,19 @@ public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IR
     /// <summary>The steps this task runs — its ticket flow (the version it started with) resolved for its ticket's
     /// labels. The rules make no move for a step it passes through (no review when Review is off for it).</summary>
     public TicketFlowPlan Flow { get; init; } = TicketFlowPlan.Default;
+
+    /// <summary>Where the Design gate stands for the task's current change (its review of the current fix round): the
+    /// Designer agent's verdict, overridden by the owner's Approve design / Ask for changes. Read only when the task's
+    /// flow runs Design.</summary>
+    public AgentOs.Domain.Sessions.DesignGateState Design { get; init; } = AgentOs.Domain.Sessions.DesignGateState.NotChecked;
+
+    /// <summary>What goes back to the Coding agent when the Design gate asks for changes.</summary>
+    public string? DesignFindings { get; init; }
+
+    /// <summary>The Designer couldn't run last time (computer offline, budget, a timeout) and may be run again
+    /// automatically (<see cref="AgentOs.Domain.Sessions.DesignReview.CanRetryAutomatically"/>) — unlike a real
+    /// "needs a person" verdict, which waits for the owner.</summary>
+    public bool DesignRetryable { get; init; }
 }
 
 /// <summary>One thing to do, and the sentence that explains it.</summary>
@@ -57,8 +70,19 @@ public abstract record AutopilotAction(string Why)
     public sealed record ResumeTask(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record FixChecks(Guid SessionId, int IssueNumber, string Report, int Round, string Why) : AutopilotAction(Why);
     public sealed record UpdateBranch(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
-    public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
+    public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why)
+    {
+        /// <summary>The task's flow runs the Design gate: this test run also takes the screenshots.</summary>
+        public bool CaptureDesign { get; init; }
+    }
+
     public sealed record RunReview(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
+
+    public sealed record RunDesign(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why)
+    {
+        /// <summary>An automatic re-run of a check that couldn't run (counted against the bound).</summary>
+        public bool Retry { get; init; }
+    }
     public sealed record Merge(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why);
 }
@@ -200,10 +224,59 @@ public static class AutopilotPlanner
             {
                 if (!canTest || running >= maxParallel || testing >= maxParallelTests) { continue; }
                 actions.Add(new AutopilotAction.RunTests(task.SessionId, task.IssueNumber,
-                    $"Testing #{task.IssueNumber} against its acceptance criteria — its checks passed."));
+                    $"Testing #{task.IssueNumber} against its acceptance criteria — its checks passed.")
+                {
+                    CaptureDesign = task.Flow.Runs(TicketStepKind.Design),
+                });
                 running++;
                 testing++;
                 continue;
+            }
+            // The Design gate (ADR-0016) comes after testing, for the tickets whose flow runs it: nothing merges until the
+            // Designer agent passed the screenshots or the owner approved them; "changes" go back to Coding.
+            if (task.Flow.Runs(TicketStepKind.Design))
+            {
+                var gate = task.Design;
+                if (gate == AgentOs.Domain.Sessions.DesignGateState.NeedsPerson && task.DesignRetryable)
+                {
+                    // The Designer couldn't run (computer offline, budget, a timeout) — not a verdict: run it again once a
+                    // computer is there, a bounded number of times; after that the owner decides.
+                    if (!canTest || running >= maxParallel) { continue; }
+                    actions.Add(new AutopilotAction.RunDesign(task.SessionId, task.IssueNumber,
+                        $"Checking #{task.IssueNumber}'s screens again — the last design check couldn't run.") { Retry = true });
+                    running++;
+                    continue;
+                }
+                if (gate is AgentOs.Domain.Sessions.DesignGateState.Checking or AgentOs.Domain.Sessions.DesignGateState.NeedsPerson)
+                {
+                    // Being checked, or the owner decides on Board › Tasks (Approve design / Ask for changes).
+                    continue;
+                }
+                if (gate == AgentOs.Domain.Sessions.DesignGateState.ChangesRequested)
+                {
+                    if (task.FixRounds >= maxFixRounds)
+                    {
+                        actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
+                            $"Design review still asks for changes after {maxFixRounds} automatic fixes — needs a person.",
+                            $"Stopped fixing #{task.IssueNumber}: design review still asks for changes after {maxFixRounds} tries. It needs you."));
+                        continue;
+                    }
+                    if (running >= maxParallel) { continue; }
+                    var round = task.FixRounds + 1;
+                    actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber, task.DesignFindings ?? "Design review asked for changes.", round,
+                        $"Design review asked for changes on #{task.IssueNumber} — sent back to the AI (try {round} of {maxFixRounds})."));
+                    running++;
+                    continue;
+                }
+                if (gate == AgentOs.Domain.Sessions.DesignGateState.NotChecked)
+                {
+                    // The Designer reads screenshots — no app, no ports: a free slot and the member's computer.
+                    if (!canTest || running >= maxParallel) { continue; }
+                    actions.Add(new AutopilotAction.RunDesign(task.SessionId, task.IssueNumber,
+                        $"Checking #{task.IssueNumber}'s screens against the project's design — its tests passed."));
+                    running++;
+                    continue;
+                }
             }
             if (mode == AutopilotMode.BuildAndMerge)
             {
@@ -246,12 +319,14 @@ public static class AutopilotPlanner
         var passed = new List<string> { "checks green" };
         if (flow.Runs(TicketStepKind.Review)) { passed.Add("review approved"); }
         if (flow.Runs(TicketStepKind.Test)) { passed.Add("acceptance testing passed"); }
+        if (flow.Runs(TicketStepKind.Design)) { passed.Add("its design approved"); }
         return passed.Count == 1 ? passed[0] : string.Join(", ", passed.Take(passed.Count - 1)) + " and " + passed[^1];
     }
 
     /// <summary>True for a move that occupies a work slot on the member's computer.</summary>
     public static bool TakesSlot(AutopilotAction action) =>
-        action is AutopilotAction.StartTicket or AutopilotAction.ResumeTask or AutopilotAction.FixChecks or AutopilotAction.RunReview or AutopilotAction.RunTests;
+        action is AutopilotAction.StartTicket or AutopilotAction.ResumeTask or AutopilotAction.FixChecks or AutopilotAction.RunReview
+            or AutopilotAction.RunTests or AutopilotAction.RunDesign;
 
     /// <summary>
     /// The guardrail under the Orchestrator agent: the moves it picked, in its order, kept only while they fit — slots
@@ -290,6 +365,7 @@ public static class AutopilotPlanner
         AutopilotAction.UpdateBranch a => a.SessionId,
         AutopilotAction.RunTests a => a.SessionId,
         AutopilotAction.RunReview a => a.SessionId,
+        AutopilotAction.RunDesign a => a.SessionId,
         AutopilotAction.Merge a => a.SessionId,
         AutopilotAction.NeedsPerson a => a.SessionId,
         _ => null,

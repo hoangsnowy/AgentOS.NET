@@ -757,6 +757,7 @@ else if (_tab == Tab.Sessions)
     @if (_sessions is null) { <Spinner /> }
     else
     {
+        <DesignChecks TenantId="@_tenantId" IsAdmin="@_isAdmin" VisibleTasks="@_sessions.Select(s => s.Id).ToHashSet()" DecidedBy="@_userLabel" />
         <Panel Title="@(_isAdmin ? "Tasks (all members)" : "Your tasks")">
         <table class="data-table">
             <thead>
@@ -859,6 +860,13 @@ else if (_tab == Tab.Sessions)
                                  aria-label="@($"Files for the AI on task #{s.IssueNumber}")">
                                 <Icon Name="file" Size="13" /> Files
                             </Btn>
+                            @if (s.IssueNumber is > 0)
+                            {
+                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => ToggleDesign(s.Id))" aria-expanded="@(_designFor == s.Id)"
+                                     aria-label="@($"Design check of task #{s.IssueNumber}")">
+                                    <Icon Name="palette" Size="13" /> Design
+                                </Btn>
+                            }
                             <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => CloseSession(s))"
                                  Disabled="@(_busyId == s.Id || s.Status is "Closed" or "Running")">
                                 <Icon Name="check" Size="13" /> Close
@@ -907,6 +915,15 @@ else if (_tab == Tab.Sessions)
                             <td colspan="@(_isAdmin ? 7 : 6)">
                                 <TicketFilesPanel TenantId="@_tenantId" ScopeKey="@TicketFileScope.ForTask(s.WorkspaceId, s.IssueNumber, s.Id)"
                                                   UploadedBy="@_userLabel" Note="Every run of this task gets them — the next one too." />
+                            </td>
+                        </tr>
+                    }
+                    @if (_designFor == s.Id)
+                    {
+                        <tr class="board-activity-tr">
+                            <td colspan="@(_isAdmin ? 7 : 6)">
+                                <DesignPanel TenantId="@_tenantId" SessionId="@s.Id" IssueNumber="@(s.IssueNumber ?? 0)"
+                                             CanDecide="@(_isAdmin || s.MemberUserId == _userId)" DecidedBy="@_userLabel" />
                             </td>
                         </tr>
                     }
@@ -2300,6 +2317,11 @@ else if (_tab == Tab.Sessions)
     private bool HasOpenChange(Guid sessionId) => SessionReposFor(sessionId).Any(r => !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName));
 
     private void ToggleFiles(Guid sessionId) => _filesFor = _filesFor == sessionId ? null : sessionId;
+
+    // The task whose Design panel (ADR-0016) is open, if any.
+    private Guid? _designFor;
+
+    private void ToggleDesign(Guid sessionId) => _designFor = _designFor == sessionId ? null : sessionId;
 
     // Best-effort: a draft's files that can't be removed now only take room until the tenant's data is cleaned.
     private async Task DropDraftFilesAsync(string scope)

@@ -167,11 +167,13 @@ public sealed class BoardTaskService(
     /// Agentic Testing: test every open proposed change of a task against its ticket's acceptance criteria on the
     /// member's computer, post the evidence on each pull request, and mark it Accepted or Rejected.
     /// </summary>
-    public async Task<TaskStart> TestAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default) =>
-        (await BeginTestAsync(tenantId, sessionId, cliProfile, ct).ConfigureAwait(false)).Status;
+    /// <param name="captureDesign">The ticket's flow runs the Design gate (ADR-0016): the run also takes screenshots of the
+    /// changed screens, sent back to the task's design scope for its current fix round.</param>
+    public async Task<TaskStart> TestAsync(string tenantId, Guid sessionId, string? cliProfile = null, bool captureDesign = false, CancellationToken ct = default) =>
+        (await BeginTestAsync(tenantId, sessionId, cliProfile, captureDesign, ct).ConfigureAwait(false)).Status;
 
     /// <summary><see cref="TestAsync"/>, returning the running work too.</summary>
-    public async Task<TaskRun> BeginTestAsync(string tenantId, Guid sessionId, string? cliProfile = null, CancellationToken ct = default)
+    public async Task<TaskRun> BeginTestAsync(string tenantId, Guid sessionId, string? cliProfile = null, bool captureDesign = false, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         using var scope = scopes.CreateScope();
@@ -194,8 +196,19 @@ public sealed class BoardTaskService(
         {
             await sessions.UpdateRepoRunResultAsync(tenantId, c.Id, "Testing", c.BranchName, c.PrUrl, null, ct).ConfigureAwait(false);
         }
+        // Design gate: this run's screenshots go to the scope of the task's current change (its fix round), emptied first so
+        // a re-test never mixes in an earlier capture.
+        DesignCapture? capture = null;
+        if (captureDesign && session.IssueNumber is > 0)
+        {
+            capture = new DesignCapture(DesignScope.For(board.Id, session.IssueNumber.Value, session.FixRounds));
+            if (scope.ServiceProvider.GetService<AgentOs.Domain.Files.IScopedFileStore>() is { } store)
+            {
+                await store.DeleteScopeAsync(tenantId, capture.ScopeKey, ct).ConfigureAwait(false);
+            }
+        }
         var stopLease = stops.Begin(tenantId, session.Id);
-        var completion = Task.Run(() => RecordedAsync(tenantId, session, AgentOs.Modules.Pipeline.Agents.AgentRoles.Acceptance, () => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease)),
+        var completion = Task.Run(() => RecordedAsync(tenantId, session, AgentOs.Modules.Pipeline.Agents.AgentRoles.Acceptance, () => TestChangesAsync(tenantId, session, board, pat, changes, cliProfile, stopLease, capture)),
             CancellationToken.None);
         return new TaskRun(TaskStart.Started, completion);
     }
@@ -286,8 +299,186 @@ public sealed class BoardTaskService(
         }
     }
 
+    /// <summary>
+    /// The Design gate (ADR-0016): the Designer agent checks the screenshots the Testing agent sent back for the task's
+    /// current change against the project's design skill and the ticket, posts its verdict on each pull request, and
+    /// records it (pass / changes / needs a person) — the owner can still override it on Board › Tasks.
+    /// </summary>
+    /// <param name="automaticRetry">Autopilot re-runs a check that couldn't run: counted against
+    /// <see cref="DesignReview.MaxAutomaticRetries"/> (a person's "Check again" isn't).</param>
+    public async Task<TaskStart> DesignAsync(string tenantId, Guid sessionId, string? cliProfile = null, bool automaticRetry = false, CancellationToken ct = default) =>
+        (await BeginDesignAsync(tenantId, sessionId, cliProfile, automaticRetry, ct).ConfigureAwait(false)).Status;
+
+    /// <summary><see cref="DesignAsync"/>, returning the running work too.</summary>
+    public async Task<TaskRun> BeginDesignAsync(string tenantId, Guid sessionId, string? cliProfile = null, bool automaticRetry = false, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        using var scope = scopes.CreateScope();
+        var sessions = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+        var session = (await sessions.ListForTenantAsync(tenantId, ct).ConfigureAwait(false)).FirstOrDefault(s => s.Id == sessionId);
+        if (session is null || session.IssueNumber is not > 0) { return TaskStart.TaskNotFound; }
+        var board = await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>()
+            .GetForTenantAsync(tenantId, session.WorkspaceId, ct).ConfigureAwait(false);
+        if (board is null) { return TaskStart.BoardNotFound; }
+        var changes = (await sessions.ListReposForTenantAsync(tenantId, session.Id, ct).ConfigureAwait(false))
+            .Where(r => AgentOs.Web.Services.Orchestration.ProjectOrchestrator.HoldsAProposedChange(r.Status) && !string.IsNullOrEmpty(r.PrUrl) && !string.IsNullOrEmpty(r.BranchName))
+            .ToList();
+        if (changes.Count == 0) { return TaskStart.NoCodeProject; }
+        var pat = await scope.ServiceProvider.GetRequiredService<IAppConfigStore>()
+            .GetForTenantAsync(tenantId, board.CredentialRef, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(pat)) { return TaskStart.NoGitHubAccess; }
+        var reviews = scope.ServiceProvider.GetRequiredService<IDesignReviewStore>();
+        // Narrow writes only (never the whole row): the owner may decide while the check runs, and that must stand.
+        var review = await reviews.EnsureAsync(
+            DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending), ct).ConfigureAwait(false);
+        review = await reviews.SaveVerdictAsync(tenantId, session.Id, review.Run,
+            new DesignVerdictUpdate(DesignReviewStatus.Checking, Error: null, CountRetry: automaticRetry && review.Status == DesignReviewStatus.NotRun), ct)
+            .ConfigureAwait(false) ?? review;
+
+        var stopLease = stops.Begin(tenantId, session.Id);
+        var completion = Task.Run(() => RecordedAsync(tenantId, session, AgentOs.Modules.Pipeline.Agents.AgentRoles.Designer,
+            () => DesignChangesAsync(tenantId, session, board, pat, changes, review, cliProfile, stopLease)), CancellationToken.None);
+        return new TaskRun(TaskStart.Started, completion);
+    }
+
+    private async Task DesignChangesAsync(string tenantId, RemoteSessionEntity session, WorkspaceEntity board, string pat,
+        List<SessionRepoEntity> changes, DesignReview review, string? cliProfile, TaskStopRegistry.Lease stopLease)
+    {
+        using var _stop = stopLease;
+        var primary = changes[0];
+        var repoLabel = $"{primary.Owner}/{primary.Repo}";
+        try
+        {
+            using var scope = scopes.CreateScope();
+            using var _identity = AgentOs.SharedKernel.Identity.AmbientIdentity.Push(tenantId, session.MemberUserId, session.Id);
+            var reviews = scope.ServiceProvider.GetRequiredService<IDesignReviewStore>();
+            var designer = scope.ServiceProvider.GetRequiredService<IDesignAgent>();
+            var files = scope.ServiceProvider.GetRequiredService<AgentOs.Domain.Files.IScopedFileStore>();
+            var stored = await files.LoadAllAsync(tenantId, review.ScopeKey, stopLease.Token).ConfigureAwait(false);
+            var described = review.Shots.ToDictionary(s => s.Path, StringComparer.OrdinalIgnoreCase);
+            var screenshots = stored
+                .Where(f => AgentOs.Domain.Files.RunUploadRules.ContentType(f.Info.Path) is not null)
+                .Select(f => new DesignScreenshot(described.TryGetValue(f.Info.Path, out var shot) ? shot : DesignShot.FromPath(f.Info.Path), f.Content, f.Info.ContentType))
+                .OrderBy(s => s.Shot.Screen, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.Shot.IsPhone ? 0 : 1).ThenBy(s => s.Shot.IsDark ? 1 : 0)
+                .ToList();
+            var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            var skills = await ReadDesignSkillsAsync(scope, board, tenantId, primary, pat).ConfigureAwait(false);
+            var verdict = await designer.RunAsync(new DesignRequest(session.Id, tenantId, session.MemberUserId,
+                new WorkRepo(primary.Id, primary.Owner, primary.Repo, primary.DefaultBranch, primary.BranchName),
+                session.IssueNumber ?? 0, session.Title, body, screenshots, cliProfile) { DesignSkills = skills }, stopLease.Token).ConfigureAwait(false);
+
+            var status = !verdict.Ran ? DesignReviewStatus.NotRun : verdict.Outcome switch
+            {
+                DesignOutcome.Pass => DesignReviewStatus.Pass,
+                DesignOutcome.Changes => DesignReviewStatus.Changes,
+                _ => DesignReviewStatus.NeedsPerson,
+            };
+            // The agent's side only: a decision the owner made while the check ran (Ask for changes / Approve) stands.
+            await reviews.SaveVerdictAsync(tenantId, review.SessionId, review.Run, new DesignVerdictUpdate(status, verdict.Summary, verdict.Findings,
+                screenshots.Select(s => s.Shot).ToList(), verdict.Error)).ConfigureAwait(false);
+            if (verdict.Ran)
+            {
+                var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
+                foreach (var change in changes)
+                {
+                    if (PrNumber(change.PrUrl) is not { } number) { continue; }
+                    await prs.CommentAsync(RepoDescriptor(board, tenantId, change.Owner, change.Repo, change.DefaultBranch, pat), number,
+                        AgentOs.Modules.Pipeline.Agents.DesignAgent.Comment(session.IssueNumber ?? 0, verdict, screenshots.Count)).ConfigureAwait(false);
+                }
+            }
+            feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step, status switch
+            {
+                DesignReviewStatus.Pass => $"{repoLabel} — design check passed",
+                DesignReviewStatus.Changes => $"{repoLabel} — design check asked for changes: {verdict.Summary}",
+                DesignReviewStatus.NeedsPerson => $"{repoLabel} — the design needs your eye: {verdict.Summary}",
+                _ => $"{repoLabel} — couldn't check the design: {verdict.Error}",
+            }, DateTimeOffset.UtcNow, repoLabel));
+        }
+        catch (OperationCanceledException) when (stopLease.Token.IsCancellationRequested)
+        {
+            await ResetDesignAsync(review, new DesignVerdictUpdate(DesignReviewStatus.Pending)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException or System.IO.IOException or TimeoutException
+                                   or System.Data.Common.DbException)
+        {
+            await ResetDesignAsync(review, new DesignVerdictUpdate(DesignReviewStatus.NotRun, Error: ex.Message)).ConfigureAwait(false);
+            feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step, $"{repoLabel} — couldn't check the design: {ex.Message}",
+                DateTimeOffset.UtcNow, repoLabel));
+        }
+    }
+
+    // A stopped or failed design check leaves no "Checking" behind: back to waiting (Stop) or to "couldn't run" (an error,
+    // which Autopilot re-runs a bounded number of times). The agent's side only — never the owner's decision.
+    private async Task ResetDesignAsync(DesignReview review, DesignVerdictUpdate update)
+    {
+        try
+        {
+            using var scope = scopes.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<IDesignReviewStore>().SaveVerdictAsync(review.TenantId, review.SessionId, review.Run, update)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException)
+        {
+            _ = ex; // best-effort: the orchestrator's orphan recovery resets it on its next pass
+        }
+    }
+
+    /// <summary>
+    /// The owner overrides the Design gate for the task's current change: <see cref="DesignDecision.Approved"/> lets
+    /// Autopilot merge it, <see cref="DesignDecision.ChangesAsked"/> sends <paramref name="note"/> back to the Coding agent
+    /// (a fix round). Returns the stored review, or null when the task isn't found.
+    /// </summary>
+    public async Task<DesignReview?> DecideDesignAsync(string tenantId, Guid sessionId, DesignDecision decision, string? note, string decidedBy,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        if (decision == DesignDecision.ChangesAsked && string.IsNullOrWhiteSpace(note))
+        {
+            throw new ArgumentException("Say what should change.", nameof(note));
+        }
+        using var scope = scopes.CreateScope();
+        var session = (await scope.ServiceProvider.GetRequiredService<ISessionRepository>().ListForTenantAsync(tenantId, ct).ConfigureAwait(false))
+            .FirstOrDefault(s => s.Id == sessionId);
+        if (session is null || session.IssueNumber is not > 0) { return null; }
+        var reviews = scope.ServiceProvider.GetRequiredService<IDesignReviewStore>();
+        var review = await reviews.EnsureAsync(
+            DesignReview.New(tenantId, session.WorkspaceId, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending), ct).ConfigureAwait(false);
+        return await DecideAsync(reviews, review, decision, note, decidedBy, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The owner's decision on <paramref name="review"/> (also one shown without its task) — written by the
+    /// decision-only update, so a page that shows an older copy of the review never overwrites the agent's verdict.</summary>
+    public static async Task<DesignReview?> DecideAsync(IDesignReviewStore reviews, DesignReview review, DesignDecision decision, string? note, string decidedBy,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(reviews);
+        ArgumentNullException.ThrowIfNull(review);
+        if (decision == DesignDecision.ChangesAsked && string.IsNullOrWhiteSpace(note))
+        {
+            throw new ArgumentException("Say what should change.", nameof(note));
+        }
+        return await reviews.DecideAsync(review.TenantId, review.SessionId, review.Run,
+            new DesignOwnerDecision(decision, note, decidedBy, DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
+    }
+
+    // The repository's design skill(s) from its default branch. Best-effort: none on any failure.
+    private static async Task<IReadOnlyList<RepoInstructionFile>> ReadDesignSkillsAsync(
+        IServiceScope scope, WorkspaceEntity board, string tenantId, SessionRepoEntity primary, string pat)
+    {
+        var resolver = scope.ServiceProvider.GetRequiredService<ISourceProviderResolver>();
+        if (!resolver.TryResolve(board.Kind, out var provider) || provider is null) { return []; }
+        try
+        {
+            return await provider.ReadDesignSkillsAsync(RepoDescriptor(board, tenantId, primary.Owner, primary.Repo, primary.DefaultBranch, pat)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or Octokit.ApiException or InvalidOperationException or TaskCanceledException)
+        {
+            return [];
+        }
+    }
+
     private async Task TestChangesAsync(string tenantId, RemoteSessionEntity session, WorkspaceEntity board, string pat,
-        IReadOnlyList<SessionRepoEntity> changes, string? cliProfile, TaskStopRegistry.Lease stopLease)
+        List<SessionRepoEntity> changes, string? cliProfile, TaskStopRegistry.Lease stopLease, DesignCapture? capture = null)
     {
         using var _stop = stopLease;
         try
@@ -305,12 +496,21 @@ public sealed class BoardTaskService(
             var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
             var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
             var ticketFiles = await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false);
+            var shots = new List<DesignShot>();
+            var allPassed = changes.Count > 0;
             foreach (var change in changes)
             {
                 var repoLabel = $"{change.Owner}/{change.Repo}";
                 var verdict = await tester.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
                     new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
-                    session.IssueNumber ?? 0, session.Title, body, cliProfile) { Files = ticketFiles }, stopLease.Token).ConfigureAwait(false);
+                    session.IssueNumber ?? 0, session.Title, body, cliProfile)
+                {
+                    Files = ticketFiles,
+                    // Each repo's screenshots under its own folder of the task's design scope — two repos never overwrite each other.
+                    Design = capture is null ? null : capture with { PathPrefix = DesignCapture.PrefixFor(change.Id) },
+                }, stopLease.Token).ConfigureAwait(false);
+                allPassed &= verdict is { Ran: true, Passed: true };
+                shots.AddRange(verdict.Screenshots);
                 if (!verdict.Ran)
                 {
                     // Couldn't test (no computer, timed out): the change stays as it was, the reason is on the feed.
@@ -332,6 +532,21 @@ public sealed class BoardTaskService(
                 feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.RepoDone,
                     verdict.Passed ? $"{repoLabel} — passed testing" : $"{repoLabel} — failed testing: {verdict.Summary}",
                     DateTimeOffset.UtcNow, repoLabel, verdict.Passed ? "Accepted" : "Rejected", change.PrUrl));
+            }
+            // Design gate: a passed change waits for the Designer with the screenshots it sent back (none is a person's call).
+            if (capture is not null && allPassed && session.IssueNumber is > 0
+                && scope.ServiceProvider.GetService<IDesignReviewStore>() is { } reviews)
+            {
+                // Same fix round = same code: a re-test refreshes the screenshots and waits for the Designer again, but an
+                // owner's decision on this round stands (narrow writes only).
+                var fresh = shots.DistinctBy(s => s.Path, StringComparer.OrdinalIgnoreCase).ToList();
+                await reviews.EnsureAsync(DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending))
+                    .ConfigureAwait(false);
+                await reviews.SaveVerdictAsync(tenantId, session.Id, session.FixRounds,
+                    new DesignVerdictUpdate(DesignReviewStatus.Pending, string.Empty, [], fresh)).ConfigureAwait(false);
+                feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step,
+                    shots.Count > 0 ? $"{shots.Count} screenshot(s) ready for the design check." : "No screenshots came back — the design check will need you.",
+                    DateTimeOffset.UtcNow));
             }
             await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id).ConfigureAwait(false);
         }

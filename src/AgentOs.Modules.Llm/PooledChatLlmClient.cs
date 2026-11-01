@@ -132,12 +132,7 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         }
 
         var model = _modelResolver?.Invoke(request.Model) is { Length: > 0 } resolved ? resolved : request.Model;
-        var messages = new List<ChatMessage>(2);
-        if (!string.IsNullOrEmpty(request.SystemPrompt))
-        {
-            messages.Add(new ChatMessage(ChatRole.System, request.SystemPrompt));
-        }
-        messages.Add(new ChatMessage(ChatRole.User, request.UserPrompt));
+        var messages = LlmMessages.For(request);
         var resolvedTools = ResolveTools(request.Tools);
         var options = new ChatOptions
         {

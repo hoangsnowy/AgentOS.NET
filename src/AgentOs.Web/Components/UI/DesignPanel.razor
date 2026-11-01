@@ -1,0 +1,337 @@
+@* DesignPanel — the Design gate of one task (ADR-0016) on Board › Tasks: the screenshot grid the Testing agent sent back
+   (each screen at phone / desktop width × light / dark scheme), the Designer agent's verdict and findings, and the
+   owner's override — "Approve design" lets Autopilot merge, "Ask for changes" sends a note back to the Coding agent.
+   The grid is a real table (screen × variant), so it reads the same without the pictures; each picture opens full
+   size in a new tab. Images load from the tenant-scoped REST route as plain <img> tags (lazy) — the bytes never ride
+   the circuit. A circuit has no HttpContext: the tenant and the person come in as parameters; every call is
+   tenant-explicit. *@
+
+@using AgentOs.Domain.Sessions
+@using AgentOs.Modules.Sessions.Endpoints
+@using Microsoft.Extensions.DependencyInjection
+@inject IServiceScopeFactory Scopes
+@inject AgentOs.Web.Services.BoardTasks.BoardTaskService TaskService
+@inject AgentOs.Web.Shell.Services.ToastService Toasts
+
+<section class="design-panel" aria-labelledby="@_headingId" data-testid="design-panel">
+    <div class="design-panel-head">
+        <p class="design-panel-title" id="@_headingId">
+            <Icon Name="palette" Size="14" /> <strong>Design</strong> <span class="muted">#@IssueNumber</span>
+            @if (_review is not null)
+            {
+                <Badge Variant="@GateVariant(_review.Gate)">@GateLabel(_review.Gate)</Badge>
+            }
+        </p>
+        @if (_review is not null)
+        {
+            <span class="muted design-panel-meta">@(_review.Run == 0 ? "First attempt" : $"After fix round {_review.Run}") · @_review.Shots.Count screenshot(s)</span>
+        }
+    </div>
+
+    @if (_loading)
+    {
+        <Spinner />
+    }
+    else if (_review is null)
+    {
+        <p class="muted design-panel-hint" data-testid="design-empty">
+            No design check yet. When this ticket's flow runs Design (Workflow › Ticket flow), the Testing agent takes
+            screenshots of the screens it changes — phone and desktop, light and dark — and the Designer agent checks them here.
+        </p>
+    }
+    else
+    {
+        <p class="design-panel-verdict" data-testid="design-verdict">
+            <span>Designer agent: <strong>@AgentLabel(_review.Status)</strong></span>
+            @if (!string.IsNullOrWhiteSpace(_review.Summary))
+            {
+                <span> — @_review.Summary</span>
+            }
+            @if (_review.Status == DesignReviewStatus.NotRun && !string.IsNullOrWhiteSpace(_review.Error))
+            {
+                <span class="muted"> (@_review.Error)</span>
+            }
+            @if (_review.CanRetryAutomatically)
+            {
+                <span class="muted"> Autopilot runs it again once your computer is connected (@_review.Retries of @DesignReview.MaxAutomaticRetries re-runs used).</span>
+            }
+        </p>
+        @if (_review.Decision is { } decision)
+        {
+            <p class="design-panel-decision" data-testid="design-decision" role="status">
+                <Icon Name="@(decision == DesignDecision.Approved ? "check" : "arrow-uturn-left")" Size="13" />
+                @(decision == DesignDecision.Approved ? "Design approved" : "Changes asked") by @(_review.DecidedBy ?? "the owner")
+                @if (_review.DecidedAtUtc is { } at)
+                {
+                    <span class="muted" title="@at.ToString("u", System.Globalization.CultureInfo.InvariantCulture)"> · @at.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture)</span>
+                }
+                @if (decision == DesignDecision.ChangesAsked && !string.IsNullOrWhiteSpace(_review.DecisionNote))
+                {
+                    <span>: “@_review.DecisionNote”</span>
+                }
+            </p>
+        }
+
+        @if (_review.Shots.Count > 0)
+        {
+            <div class="design-grid-wrap">
+                <table class="design-grid" aria-label="@($"Screenshots of #{IssueNumber}")" data-testid="design-grid">
+                    <thead>
+                        <tr>
+                            <th scope="col">Screen</th>
+                            @foreach (var v in Variants)
+                            {
+                                <th scope="col">@v.Label</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var screen in _review.Shots.GroupBy(s => s.Screen, StringComparer.OrdinalIgnoreCase))
+                        {
+                            <tr @key="screen.Key">
+                                <th scope="row">@screen.Key</th>
+                                @foreach (var v in Variants)
+                                {
+                                    var shot = screen.FirstOrDefault(s => s.IsPhone == v.Phone && s.IsDark == v.Dark);
+                                    <td>
+                                        @if (shot is not null)
+                                        {
+                                            var url = DesignReviewEndpoints.ShotUrl(_review.SessionId, _review.Run, shot.Path, _review.UpdatedAtUtc.UtcTicks);
+                                            <a class="design-shot @(v.Phone ? "is-phone" : "is-desktop")" href="@url" target="_blank" rel="noopener"
+                                               aria-label="@($"Open {shot.Caption} full size")">
+                                                <img src="@url" alt="@shot.Caption" loading="lazy" decoding="async" />
+                                            </a>
+                                        }
+                                        else
+                                        {
+                                            <span class="muted design-shot-missing">Not taken</span>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (_review.Findings.Count > 0)
+        {
+            <table class="data-table design-findings" aria-label="@($"Design findings for #{IssueNumber}")" data-testid="design-findings">
+                <thead><tr><th>Screen</th><th>Problem</th><th>Fix</th></tr></thead>
+                <tbody>
+                    @foreach (var f in _review.Findings)
+                    {
+                        <tr>
+                            <td>@f.Screen</td>
+                            <td>@f.Problem</td>
+                            <td>@f.Fix</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+
+    @if (CanDecide && !_loading)
+    {
+        <div class="design-panel-actions">
+            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="ApproveAsync" Disabled="_busy"
+                 aria-label="@($"Approve the design of #{IssueNumber}")">
+                <Icon Name="check" Size="13" /> Approve design
+            </Btn>
+            <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => _asking = !_asking)" Disabled="_busy" aria-expanded="@(_asking ? "true" : "false")"
+                 aria-label="@($"Ask for design changes on #{IssueNumber}")">
+                <Icon Name="arrow-uturn-left" Size="13" /> Ask for changes
+            </Btn>
+            @if (_review is { Status: not DesignReviewStatus.Checking })
+            {
+                <Btn Size="Btn.ButtonSize.Sm" OnClick="CheckAgainAsync" Disabled="_busy"
+                     aria-label="@($"Run the design check of #{IssueNumber} again")">
+                    <Icon Name="arrow-clockwise" Size="13" /> Check again
+                </Btn>
+            }
+        </div>
+        @if (_asking)
+        {
+            <div class="design-panel-ask">
+                <label for="@_noteId"><strong>What should change in the design?</strong></label>
+                <textarea id="@_noteId" class="prefs-input" rows="3" @bind="_note" @bind:event="oninput"
+                          placeholder="e.g. The checkout button is unreadable in dark mode — use the accent token, and stack the form on the phone."></textarea>
+                <div class="design-panel-actions">
+                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="AskAsync" Disabled="@(_busy || string.IsNullOrWhiteSpace(_note))">Send to the AI</Btn>
+                </div>
+            </div>
+        }
+        <p class="muted design-panel-hint">Your decision wins over the Designer agent's. Autopilot merges this ticket only after a pass or your approval; changes go back to the Coding agent as a fix round.</p>
+    }
+</section>
+
+@code {
+    /// <summary>The tenant (from the circuit's AuthenticationState).</summary>
+    [Parameter, EditorRequired] public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>The task.</summary>
+    [Parameter, EditorRequired] public Guid SessionId { get; set; }
+
+    /// <summary>The task's ticket number.</summary>
+    [Parameter] public int IssueNumber { get; set; }
+
+    /// <summary>The review to show; null = the task's latest.</summary>
+    [Parameter] public DesignReview? Review { get; set; }
+
+    /// <summary>Whether this person may approve or ask for changes (an admin, or the task's member).</summary>
+    [Parameter] public bool CanDecide { get; set; }
+
+    /// <summary>Who decides (recorded with the decision).</summary>
+    [Parameter] public string DecidedBy { get; set; } = string.Empty;
+
+    /// <summary>Raised after a decision, with the stored review.</summary>
+    [Parameter] public EventCallback<DesignReview> OnDecided { get; set; }
+
+    private sealed record Variant(string Label, bool Phone, bool Dark);
+
+    private static readonly Variant[] Variants =
+    [
+        new("Phone · light", true, false),
+        new("Phone · dark", true, true),
+        new("Desktop · light", false, false),
+        new("Desktop · dark", false, true),
+    ];
+
+    private readonly string _headingId = "design-" + Guid.NewGuid().ToString("N")[..8];
+    private readonly string _noteId = "design-note-" + Guid.NewGuid().ToString("N")[..8];
+    private DesignReview? _review;
+    private bool _loading = true;
+    private bool _busy;
+    private bool _asking;
+    private string _note = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Review is not null)
+        {
+            _review = Review;
+            _loading = false;
+            return;
+        }
+        _loading = true;
+        try
+        {
+            using var scope = Scopes.CreateScope();
+            _review = scope.ServiceProvider.GetService<IDesignReviewStore>() is { } store
+                ? await store.LatestAsync(TenantId, SessionId)
+                : null;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException)
+        {
+            _review = null;
+            Toasts.Show("Design", "Couldn't read the design check: " + ex.Message, AgentOs.Web.Shell.Services.ToastKind.Err);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task ApproveAsync() => DecideAsync(DesignDecision.Approved, null);
+
+    // A person runs the Designer again now (after the computer came back, or a new design skill) — not counted against
+    // Autopilot's automatic re-runs. The owner's decision, if any, stands.
+    private async Task CheckAgainAsync()
+    {
+        _busy = true;
+        try
+        {
+            var started = await TaskService.DesignAsync(TenantId, SessionId);
+            if (started != AgentOs.Web.Services.BoardTasks.TaskStart.Started)
+            {
+                Toasts.Show("Design", $"Couldn't check #{IssueNumber} again: {started}.", AgentOs.Web.Shell.Services.ToastKind.Err);
+                return;
+            }
+            using var scope = Scopes.CreateScope();
+            _review = await scope.ServiceProvider.GetRequiredService<IDesignReviewStore>().LatestAsync(TenantId, SessionId) ?? _review;
+            Toasts.Show("Design", $"#{IssueNumber}: the Designer agent is checking the screens again.", AgentOs.Web.Shell.Services.ToastKind.Ok);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException)
+        {
+            Toasts.Show("Design", "Couldn't start the check: " + ex.Message, AgentOs.Web.Shell.Services.ToastKind.Err);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AskAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_note)) { return; }
+        await DecideAsync(DesignDecision.ChangesAsked, _note);
+    }
+
+    private async Task DecideAsync(DesignDecision decision, string? note)
+    {
+        _busy = true;
+        try
+        {
+            DesignReview? stored;
+            if (_review is not null)
+            {
+                using var scope = Scopes.CreateScope();
+                stored = await AgentOs.Web.Services.BoardTasks.BoardTaskService.DecideAsync(
+                    scope.ServiceProvider.GetRequiredService<IDesignReviewStore>(), _review, decision, note, DecidedBy);
+            }
+            else
+            {
+                stored = await TaskService.DecideDesignAsync(TenantId, SessionId, decision, note, DecidedBy);
+            }
+            if (stored is null)
+            {
+                Toasts.Show("Design", "This task isn't there any more.", AgentOs.Web.Shell.Services.ToastKind.Err);
+                return;
+            }
+            _review = stored;
+            _asking = false;
+            _note = string.Empty;
+            Toasts.Show("Design", decision == DesignDecision.Approved
+                ? $"#{IssueNumber}: design approved — Autopilot may merge it."
+                : $"#{IssueNumber}: changes asked — they go back to the Coding agent.", AgentOs.Web.Shell.Services.ToastKind.Ok);
+            await OnDecided.InvokeAsync(stored);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.Data.Common.DbException)
+        {
+            Toasts.Show("Design", "Not saved: " + ex.Message, AgentOs.Web.Shell.Services.ToastKind.Err);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string GateLabel(DesignGateState gate) => gate switch
+    {
+        DesignGateState.Passed => "Passed",
+        DesignGateState.ChangesRequested => "Changes requested",
+        DesignGateState.NeedsPerson => "Needs you",
+        DesignGateState.Checking => "Checking…",
+        _ => "Waiting for the check",
+    };
+
+    private static Badge.BadgeVariant GateVariant(DesignGateState gate) => gate switch
+    {
+        DesignGateState.Passed => Badge.BadgeVariant.Ok,
+        DesignGateState.ChangesRequested => Badge.BadgeVariant.Warn,
+        DesignGateState.NeedsPerson => Badge.BadgeVariant.Info,
+        _ => Badge.BadgeVariant.Default,
+    };
+
+    private static string AgentLabel(DesignReviewStatus status) => status switch
+    {
+        DesignReviewStatus.Pass => "passed",
+        DesignReviewStatus.Changes => "changes requested",
+        DesignReviewStatus.NeedsPerson => "needs a person",
+        DesignReviewStatus.Checking => "checking now",
+        DesignReviewStatus.NotRun => "couldn't check",
+        _ => "not checked yet",
+    };
+}

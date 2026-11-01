@@ -8,9 +8,10 @@
 // Safety invariants (TicketFlowValidator — checked on save AND when a run loads it; a definition that breaks one is
 // refused with a plain-language reason and the run falls back to Default): it starts at Code, ends at Merge, Checks
 // always runs before Merge, every ticket passes at least one merge gate (Review / Test) before Merge whatever its
-// labels, no cycle except a fail edge back to Code, every step reachable, steps in their natural order.
+// labels, no cycle except a fail edge back to Code, every step reachable, steps in their natural order, and every
+// ticket that runs Design (ADR-0016 — the screenshot gate, off by default, area:ui once on) runs Test too.
 //
-// Adding a step kind (e.g. the upcoming Design/screenshot gate) is local: one TicketStepKind value, one
+// Adding a step kind (as the Design gate did) is local: one TicketStepKind value, one
 // TicketStepKinds entry (rank, agent roles, whether it is a merge gate / can send a change back), one executor in
 // TicketWorkflow and — if the step-by-step rules should run it — one move in AutopilotPlanner.
 
@@ -38,6 +39,10 @@ public enum TicketStepKind
 
     /// <summary>The Testing (tickets) agent tests the change against the ticket's acceptance criteria.</summary>
     Test,
+
+    /// <summary>The Designer agent checks the Testing agent's screenshots (390 / 1280 px, light / dark) against the
+    /// project's design (ADR-0016). Off in the built-in flow; on, it runs for UI tickets (<c>area:ui</c>) by default.</summary>
+    Design,
 
     /// <summary>The change is merged (or left for a person when the board doesn't auto-merge).</summary>
     Merge,
@@ -73,6 +78,10 @@ public static class TicketStepKinds
             [AgentRoles.Reviewer], Required: false, CanSendBack: true, IsMergeGate: true),
         new(TicketStepKind.Test, 30, "Test", "The Testing (tickets) agent tests the change against the ticket's acceptance criteria; failures go back to Code.",
             [AgentRoles.Acceptance], Required: false, CanSendBack: true, IsMergeGate: true),
+        // Not a merge gate: it adds to Review / Test for UI tickets, it never replaces them. It needs Test before it —
+        // the Testing agent takes the screenshots it checks (TicketFlowValidator).
+        new(TicketStepKind.Design, 40, "Design", "The Designer agent checks the Testing agent's screenshots (phone and desktop, light and dark) against the project's design; changes go back to Code.",
+            [AgentRoles.Designer], Required: false, CanSendBack: true, IsMergeGate: false),
         new(TicketStepKind.Merge, 100, "Merge", "Merges the change — or leaves it ready for a person when the project doesn't auto-merge.",
             [], Required: true, CanSendBack: false, IsMergeGate: false),
     ];
@@ -157,16 +166,34 @@ public sealed record TicketFlowEdge(string From, string To, TicketFlowEdgeWhen W
 /// <summary>A ticket flow: ordered step nodes joined by conditional edges.</summary>
 public sealed record TicketFlowDefinition(IReadOnlyList<TicketFlowNode> Nodes, IReadOnlyList<TicketFlowEdge> Edges)
 {
+    /// <summary>The label the Design step runs for when it is turned on (until the owner names others).</summary>
+    public const string UiLabel = "area:ui";
+
     /// <summary>The built-in flow — what Autopilot has always run: Code → Checks → Review → Test → Merge, every failure
-    /// back to Code.</summary>
+    /// back to Code. The Design gate sits between Test and Merge, off, limited to <see cref="UiLabel"/> tickets once on.</summary>
     public static TicketFlowDefinition Default { get; } = Chain(
     [
         new("code", TicketStepKind.Code),
         new("checks", TicketStepKind.Checks),
         new("review", TicketStepKind.Review),
         new("test", TicketStepKind.Test),
+        new("design", TicketStepKind.Design, Enabled: false, OnlyLabels: [UiLabel]),
         new("merge", TicketStepKind.Merge),
     ]);
+
+    /// <summary>
+    /// This definition with every step kind it lacks added as the built-in flow has it (off) — a flow saved before a
+    /// kind existed (e.g. before the Design gate) shows it in the editor, ready to turn on. Only a safe definition is
+    /// extended (a safe one is exactly its chain); anything else comes back unchanged.
+    /// </summary>
+    public TicketFlowDefinition WithKnownSteps()
+    {
+        if (!TicketFlowValidator.IsValid(this)) { return this; }
+        var missing = Default.Nodes.Where(d => Nodes.All(n => n.Kind != d.Kind) && Nodes.All(n => n.Id != d.Id) && !d.Enabled).ToList();
+        if (missing.Count == 0) { return this; }
+        var ordered = Ordered().Concat(missing).OrderBy(n => n.Info.Rank).ToList();
+        return Chain(ordered);
+    }
 
     /// <summary>Steps in the order given, each passing to the next, every step that can fail sending the change back
     /// to the Code step.</summary>
@@ -270,6 +297,7 @@ public sealed class TicketFlowPlan(IReadOnlyList<TicketFlowNode> steps, IReadOnl
         if (Steps[^1].Kind != TicketStepKind.Merge) { return "it doesn't end with Merge"; }
         if (!Runs(TicketStepKind.Checks)) { return "Checks wouldn't run before Merge"; }
         if (!Steps.Any(s => s.Info.IsMergeGate)) { return $"the ticket would reach Merge with {TicketStepKinds.NeitherGate()}"; }
+        if (Runs(TicketStepKind.Design) && !Runs(TicketStepKind.Test)) { return "Design would run without Test to take its screenshots"; }
         for (var i = 1; i < Steps.Count; i++)
         {
             if (Steps[i].Info.Rank <= Steps[i - 1].Info.Rank) { return $"{Steps[i].Info.Label} comes after {Steps[i - 1].Info.Label}"; }
@@ -414,7 +442,33 @@ public static class TicketFlowValidator
 
         // Every ticket — whatever its labels — passes at least one merge gate before Merge.
         if (GateProblem(chain) is { } gate) { problems.Add(gate); }
+        // A ticket that runs Design runs Test too: the Testing agent takes the screenshots Design checks.
+        else if (DesignProblem(chain) is { } design) { problems.Add(design); }
         return problems;
+    }
+
+    // Design checks the screenshots the Testing agent takes, so every ticket the Design step applies to must run Test as
+    // well. As with the gates, only the labels in the two steps' filters matter, so every combination of them is checked.
+    private static TicketFlowProblem? DesignProblem(IReadOnlyList<TicketFlowNode> chain)
+    {
+        var design = chain.FirstOrDefault(n => n.Kind == TicketStepKind.Design && n.Enabled);
+        if (design is null) { return null; }
+        var test = chain.FirstOrDefault(n => n.Kind == TicketStepKind.Test && n.Enabled);
+        if (test is null) { return new(design.Id, "Design checks the Testing agent's screenshots — turn Test on, or Design off."); }
+        var labels = design.Skip.Concat(design.Only).Concat(test.Skip).Concat(test.Only)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        if (labels.Count > MaxDistinctLabels) { return new(design.Id, $"Use at most {MaxDistinctLabels} different labels in the steps' filters."); }
+        var subsets = Enumerable.Range(0, 1 << labels.Count)
+            .OrderBy(m => System.Numerics.BitOperations.PopCount((uint)m)).ThenBy(m => m);
+        foreach (var mask in subsets)
+        {
+            var ticket = labels.Where((_, i) => (mask & (1 << i)) != 0).ToList();
+            if (!design.AppliesTo(ticket) || test.AppliesTo(ticket)) { continue; }
+            return new(design.Id, ticket.Count == 0
+                ? "A ticket with none of the steps' labels would run Design without Test to take its screenshots."
+                : $"A ticket labelled {string.Join(" and ", ticket)} would run Design without Test to take its screenshots.");
+        }
+        return null;
     }
 
     /// <summary>True when <paramref name="definition"/> keeps every invariant.</summary>

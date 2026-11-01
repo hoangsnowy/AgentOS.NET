@@ -1,0 +1,105 @@
+@* DesignChecks — the Design gate's recent checks at the top of Board › Tasks (ADR-0016): one line per check (ticket,
+   where the gate stands, how many screenshots, when), each opening the task's Design panel in place. An admin sees
+   every check of the workspace (as they see every task); a member sees the checks of their own tasks. Renders nothing
+   when there are none. A circuit has no HttpContext: the tenant and the person come in as parameters. *@
+
+@using AgentOs.Domain.Sessions
+@using Microsoft.Extensions.DependencyInjection
+@inject IServiceScopeFactory Scopes
+
+@if (_reviews.Count > 0)
+{
+    <Panel Title="Design checks">
+        <div class="design-checks" data-testid="design-checks">
+            <p class="muted design-panel-hint">UI tickets whose flow runs Design: the screenshots the Testing agent took, what the Designer agent said, and your decision.</p>
+            @foreach (var r in _reviews)
+            {
+                var open = _open == r.Id;
+                <div class="design-checks-row" @key="r.Id">
+                    <strong>#@r.IssueNumber</strong>
+                    <Badge Variant="@Variant(r.Gate)">@Label(r.Gate)</Badge>
+                    <span class="muted">@r.Shots.Count screenshot(s) · @r.UpdatedAtUtc.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture)</span>
+                    <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => _open = open ? null : r.Id)" aria-expanded="@(open ? "true" : "false")"
+                         aria-label="@($"{(open ? "Hide" : "Open")} the design check of #{r.IssueNumber}")">
+                        <Icon Name="palette" Size="13" /> @(open ? "Hide" : "Open")
+                    </Btn>
+                </div>
+                @if (open)
+                {
+                    <DesignPanel TenantId="@TenantId" SessionId="@r.SessionId" IssueNumber="@r.IssueNumber" Review="@r" CanDecide="true"
+                                 DecidedBy="@DecidedBy" OnDecided="@(stored => Replace(stored))" />
+                }
+            }
+        </div>
+    </Panel>
+}
+
+@code {
+    /// <summary>The tenant (from the circuit's AuthenticationState).</summary>
+    [Parameter, EditorRequired] public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>An admin sees every check of the workspace.</summary>
+    [Parameter] public bool IsAdmin { get; set; }
+
+    /// <summary>The tasks this person sees (a member's own); a check of any other task is left out for a member.</summary>
+    [Parameter] public IReadOnlyCollection<Guid> VisibleTasks { get; set; } = [];
+
+    /// <summary>Who decides (recorded with the decision).</summary>
+    [Parameter] public string DecidedBy { get; set; } = string.Empty;
+
+    /// <summary>How many checks to list.</summary>
+    [Parameter] public int Max { get; set; } = 10;
+
+    private List<DesignReview> _reviews = [];
+    private Guid? _open;
+    private string? _loadedFor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // The Board re-renders on every live event: read the store when what this list shows can have changed, and at most
+        // every 30 seconds otherwise (a check finishing on the server shows up on the next render after that).
+        var key = $"{TenantId}|{IsAdmin}|{VisibleTasks.Count}|{DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30}";
+        if (key == _loadedFor) { return; }
+        _loadedFor = key;
+        try
+        {
+            using var scope = Scopes.CreateScope();
+            if (scope.ServiceProvider.GetService<IDesignReviewStore>() is not { } store) { _reviews = []; return; }
+            var visible = VisibleTasks as ISet<Guid> ?? VisibleTasks.ToHashSet();
+            _reviews = (await store.ListRecentAsync(TenantId, 50))
+                .Where(r => IsAdmin || visible.Contains(r.SessionId))
+                // One line per task: its latest run.
+                .GroupBy(r => r.SessionId).Select(g => g.MaxBy(r => r.Run)!)
+                .OrderByDescending(r => r.UpdatedAtUtc)
+                .Take(Max)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException)
+        {
+            _reviews = [];
+        }
+    }
+
+    private void Replace(DesignReview stored)
+    {
+        var i = _reviews.FindIndex(r => r.Id == stored.Id || (r.SessionId == stored.SessionId && r.Run == stored.Run));
+        if (i >= 0) { _reviews[i] = stored; }
+    }
+
+    private static string Label(DesignGateState gate) => gate switch
+    {
+        DesignGateState.Passed => "Passed",
+        DesignGateState.ChangesRequested => "Changes requested",
+        DesignGateState.NeedsPerson => "Needs you",
+        DesignGateState.Checking => "Checking…",
+        _ => "Waiting for the check",
+    };
+
+    private static Badge.BadgeVariant Variant(DesignGateState gate) => gate switch
+    {
+        DesignGateState.Passed => Badge.BadgeVariant.Ok,
+        DesignGateState.ChangesRequested => Badge.BadgeVariant.Warn,
+        DesignGateState.NeedsPerson => Badge.BadgeVariant.Info,
+        _ => Badge.BadgeVariant.Default,
+    };
+}

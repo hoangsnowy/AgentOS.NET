@@ -27,7 +27,40 @@ public sealed class BoardTicketSteps(BoardTaskService tasks, IServiceScopeFactor
 
     public Task<TaskRun> ReviewAsync(TicketFlow flow, CancellationToken ct) => tasks.BeginReviewAsync(flow.TenantId, flow.SessionId, ct: ct);
 
-    public Task<TaskRun> TestAsync(TicketFlow flow, CancellationToken ct) => tasks.BeginTestAsync(flow.TenantId, flow.SessionId, ct: ct);
+    // A ticket whose flow runs the Design gate gets its screenshots taken by this test run.
+    public Task<TaskRun> TestAsync(TicketFlow flow, CancellationToken ct) =>
+        tasks.BeginTestAsync(flow.TenantId, flow.SessionId, captureDesign: flow.Plan.Runs(AgentOs.Modules.Pipeline.Agents.TicketStepKind.Design), ct: ct);
+
+    public async Task<DesignStep> DesignAsync(TicketFlow flow, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+        // The owner may already have decided (Approve design / Ask for changes on Board › Tasks): that wins, nothing runs.
+        if (await CurrentReviewAsync(flow, ct).ConfigureAwait(false) is { Decision: not null } decided) { return Step(decided); }
+        var run = await tasks.BeginDesignAsync(flow.TenantId, flow.SessionId, ct: ct).ConfigureAwait(false);
+        if (run.Status != TaskStart.Started)
+        {
+            return new DesignStep(AgentOs.Domain.Sessions.DesignGateState.Checking, null, $"The Designer agent couldn't start: {run.Status}.");
+        }
+        await run.Completion.ConfigureAwait(false);
+        return await CurrentReviewAsync(flow, ct).ConfigureAwait(false) is { } review
+            ? Step(review)
+            : new DesignStep(AgentOs.Domain.Sessions.DesignGateState.NeedsPerson, null, "The design check left no verdict.");
+
+        static DesignStep Step(AgentOs.Domain.Sessions.DesignReview r) => new(r.Gate,
+            r.Gate == AgentOs.Domain.Sessions.DesignGateState.ChangesRequested ? r.ChangeRequest() : null,
+            string.IsNullOrWhiteSpace(r.Summary) ? r.Error : r.Summary);
+    }
+
+    // The task's review for its current change (its fix round now).
+    private async Task<AgentOs.Domain.Sessions.DesignReview?> CurrentReviewAsync(TicketFlow flow, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var session = (await scope.ServiceProvider.GetRequiredService<ISessionRepository>().ListForTenantAsync(flow.TenantId, ct).ConfigureAwait(false))
+            .FirstOrDefault(s => s.Id == flow.SessionId);
+        return session is null || scope.ServiceProvider.GetService<AgentOs.Domain.Sessions.IDesignReviewStore>() is not { } reviews
+            ? null
+            : await reviews.GetAsync(flow.TenantId, session.Id, session.FixRounds, ct).ConfigureAwait(false);
+    }
 
     public async Task<IReadOnlyList<TicketChange>> ChangesAsync(TicketFlow flow, CancellationToken ct)
     {

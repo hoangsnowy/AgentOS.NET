@@ -229,7 +229,23 @@ public sealed partial class ProjectOrchestrator(
                     open.Add(new PlanChange(r.Id, number, checks, report, testing, findings, merge, r.DefaultBranch, review));
                 }
                 var flow = await TaskFlowAsync(board, s.TicketFlowVersion, taskFlows, ct).ConfigureAwait(false);
-                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds) { Flow = flow.Definition.Resolve(LabelsOf(s, labels)) });
+                var plan = flow.Definition.Resolve(LabelsOf(s, labels));
+                // The Design gate reads the review of the task's CURRENT change (its fix round): a fix round starts afresh.
+                var reviews = plan.Runs(TicketStepKind.Design) ? sp.GetService<AgentOs.Domain.Sessions.IDesignReviewStore>() : null;
+                var design = reviews is null ? null : await reviews.GetAsync(tenant, s.Id, s.FixRounds, ct).ConfigureAwait(false);
+                // A check a restart cut short reads "Checking" with nothing running: it waits for the Designer again.
+                if (design is { Status: AgentOs.Domain.Sessions.DesignReviewStatus.Checking, Decision: null } && reviews is not null && !stops.IsRunning(tenant, s.Id))
+                {
+                    design = await reviews.SaveVerdictAsync(tenant, s.Id, design.Run, new AgentOs.Domain.Sessions.DesignVerdictUpdate(AgentOs.Domain.Sessions.DesignReviewStatus.Pending), ct)
+                        .ConfigureAwait(false) ?? design;
+                }
+                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds)
+                {
+                    Flow = plan,
+                    Design = design?.Gate ?? AgentOs.Domain.Sessions.DesignGateState.NotChecked,
+                    DesignFindings = design?.Gate == AgentOs.Domain.Sessions.DesignGateState.ChangesRequested ? design.ChangeRequest() : null,
+                    DesignRetryable = design?.CanRetryAutomatically == true,
+                });
             }
 
             // Tickets: a ticket with any task that isn't closed is the person's or already handled — never doubled.
@@ -352,8 +368,16 @@ public sealed partial class ProjectOrchestrator(
             }
             case AutopilotAction.RunTests test:
             {
-                var tested = await tasks.TestAsync(tenant, test.SessionId, ct: ct).ConfigureAwait(false);
+                // A ticket whose flow runs the Design gate gets its screenshots taken by this test run (the planner read the
+                // task's flow already — nothing is looked up again here).
+                var tested = await tasks.TestAsync(tenant, test.SessionId, captureDesign: test.CaptureDesign, ct: ct).ConfigureAwait(false);
                 log.Add(tenant, board.Id, tested == TaskStart.Started ? test.Why : $"Couldn't test #{test.IssueNumber}: {tested}.");
+                break;
+            }
+            case AutopilotAction.RunDesign check:
+            {
+                var checking = await tasks.DesignAsync(tenant, check.SessionId, automaticRetry: check.Retry, ct: ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, checking == TaskStart.Started ? check.Why : $"Couldn't check #{check.IssueNumber}'s design: {checking}.");
                 break;
             }
             case AutopilotAction.Merge merge:

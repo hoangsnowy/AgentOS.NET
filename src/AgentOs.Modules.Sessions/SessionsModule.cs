@@ -64,6 +64,7 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
             services.AddScoped<ISessionRepository, SessionRepository>();
             services.AddScoped<IRunnerDirectory, EfRunnerDirectory>();
             services.AddScoped<AgentOs.Domain.Files.IScopedFileStore, EfScopedFileStore>();
+            services.AddScoped<AgentOs.Domain.Sessions.IDesignReviewStore, EfDesignReviewStore>();
         }
         else
         {
@@ -81,6 +82,8 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
             // Unlike the other no-op repositories, ticket files work without a database (process memory), so the
             // standalone desktop can attach, list and remove them for real.
             services.AddSingleton<AgentOs.Domain.Files.IScopedFileStore, InMemoryScopedFileStore>();
+            // Design reviews too (ADR-0016): the Design panel on Board › Tasks works for real in the standalone desktop.
+            services.AddSingleton<AgentOs.Domain.Sessions.IDesignReviewStore, InMemoryDesignReviewStore>();
         }
     }
 
@@ -89,6 +92,7 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapSessionEndpoints();
         endpoints.MapTicketFileEndpoints();
+        endpoints.MapDesignReviewEndpoints();
         // NOTE: the VS Code browser-pairing endpoints (PairingEndpoints) are mapped on the Web host, not
         // here — they rely on the browser's OIDC cookie session, which only the Web has.
     }
