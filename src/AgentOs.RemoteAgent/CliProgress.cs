@@ -49,6 +49,12 @@ internal static class CliProgress
     /// permissions refused during the run (its <c>permission_denials</c>).</summary>
     internal sealed record Result(bool IsError, string Text, JsonElement? Usage, decimal? CostUsd, IReadOnlyList<ToolUse>? PermissionDenials = null)
     {
+        /// <summary>How the run ended ("success", "error_max_turns", "error_during_execution"); null when not reported.</summary>
+        public string? Subtype { get; init; }
+
+        /// <summary>The CLI session the run ran in — what <c>claude -p --resume</c> continues; null when not reported.</summary>
+        public string? SessionId { get; init; }
+
         /// <summary>The run's real token usage, normalised so cache reads/writes are a subset of the input (Claude's
         /// usage reports input_tokens WITHOUT them). Null when the CLI reported none.</summary>
         public (int Input, int Output, int CacheRead, int CacheWrite)? Tokens()
@@ -136,7 +142,11 @@ internal static class CliProgress
                 var isError = root.TryGetProperty("is_error", out var e) && e.ValueKind == JsonValueKind.True;
                 JsonElement? usage = root.TryGetProperty("usage", out var u) && u.ValueKind == JsonValueKind.Object ? u.Clone() : null;
                 decimal? cost = root.TryGetProperty("total_cost_usd", out var cu) && cu.ValueKind == JsonValueKind.Number && cu.TryGetDecimal(out var d) ? d : null;
-                return new Event(null, new Result(isError, text, usage, cost, PermissionDenials(root)), [], []);
+                return new Event(null, new Result(isError, text, usage, cost, PermissionDenials(root))
+                {
+                    Subtype = root.TryGetProperty("subtype", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() : null,
+                    SessionId = root.TryGetProperty("session_id", out var sid) && sid.ValueKind == JsonValueKind.String ? sid.GetString() : null,
+                }, [], []);
             }
             if (!root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
                 || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)

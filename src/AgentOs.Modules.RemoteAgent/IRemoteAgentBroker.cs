@@ -35,12 +35,15 @@ namespace AgentOs.Modules.RemoteAgent;
 /// <paramref name="Autonomy"/> is what the CLI may do on that machine (null = answer only; "scoped" = work in a
 /// fresh per-run directory) — see <c>LlmRequest.Autonomy</c>.
 /// <paramref name="Files"/> lists the ticket files the runner fetches (<c>ReadRunFile</c>) and writes under
-/// <c>&lt;run dir&gt;/.agentos/files/</c> before the CLI starts (ADR-0015); null = none.</summary>
+/// <c>&lt;run dir&gt;/.agentos/files/</c> before the CLI starts (ADR-0015); null = none.
 /// <paramref name="Collect"/> asks the runner to send back the image files the agent listed in its reply (the Design
 /// gate's screenshots, ADR-0016) with <c>UploadRunFile</c> before it completes the request; null = nothing comes back.
 /// The scope they are stored under stays on the server.
+/// <paramref name="ResumeOf"/> is the id of an earlier request this one continues (a follow-up asking a run that ended
+/// without its reply for it): the runner works in that run's kept folder and resumes its CLI session when it still has
+/// them, else it starts fresh — an older runner ignores it. Null = a fresh run.</summary>
 public sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
-    System.Collections.Generic.IReadOnlyList<RunFileEntry>? Files = null, AgentOs.Domain.Files.RunCollect? Collect = null);
+    System.Collections.Generic.IReadOnlyList<RunFileEntry>? Files = null, AgentOs.Domain.Files.RunCollect? Collect = null, string? ResumeOf = null);
 
 /// <summary>A file a runner sent back for a request, complete and checked (<see cref="AgentOs.Domain.Files.RunUploadRules"/>).</summary>
 public sealed record RunUpload(string Path, byte[] Content, string ContentType);
@@ -72,6 +75,10 @@ public sealed record RemoteExecResult(string Id, bool Ok, string Content, string
 
     /// <summary>Input tokens written to the prompt cache (a subset of <see cref="InputTokens"/>).</summary>
     public int? CacheWriteTokens { get; init; }
+
+    /// <summary>True only when the runner continued the earlier run this request resumed (<see cref="RemoteExecRequest.ResumeOf"/>):
+    /// it ran the CLI with <c>--resume &lt;session&gt;</c> in that run's kept folder. An older runner never sets it.</summary>
+    public bool Resumed { get; init; }
 }
 
 /// <summary>Identity of a connected runner, established by the hub's pairing handshake.</summary>

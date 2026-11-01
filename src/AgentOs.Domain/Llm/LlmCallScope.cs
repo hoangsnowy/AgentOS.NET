@@ -23,7 +23,18 @@ public sealed record LlmCallRecord(
     TimeSpan Latency,
     bool Success,
     string? Error,
-    DateTimeOffset At);
+    DateTimeOffset At)
+{
+    /// <summary>Why the call was made (<see cref="LlmRequest.Purpose"/>); null = the agent's own work.</summary>
+    public string? Purpose { get; init; }
+}
+
+/// <summary>The known <see cref="LlmRequest.Purpose"/> values.</summary>
+public static class LlmCallPurposes
+{
+    /// <summary>A run ended without the JSON reply its prompt asks for, and was asked once for it (Insights counts these).</summary>
+    public const string ReplyRecovery = "reply-recovery";
+}
 
 /// <summary>Collects the LLM calls made in the current async flow while it is open (innermost scope wins). An open
 /// scope also marks the flow as a Board agent run on a real project: the gateway never lets the keyless offline demo

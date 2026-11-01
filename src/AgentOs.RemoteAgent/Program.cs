@@ -24,7 +24,9 @@
 //                       its own empty working directory, edits are auto-approved only inside it, and the shell is
 //                       limited to build / test / VCS commands (no force-push, no git config/remote, no gh auth).
 //                       Every other request stays answer-only. "off" refuses scoped runs on this machine. See
-//                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live.
+//                       ScopedAutonomy.cs. REMOTE_AGENT_WORKROOT / REMOTE_AGENT_KEEP_RUNS tune where runs live. A scoped
+//                       run whose reply holds no JSON keeps its folder 15 minutes for one follow-up (RunContinuation.cs);
+//                       REMOTE_AGENT_KEEP_RUNS (keep every run folder) turns that off — a follow-up then starts fresh.
 //   REMOTE_AGENT_ARGS   override the profile's args entirely (advanced; wins over the profile + YOLO + scoped)
 //   REMOTE_AGENT_ALLOW  shell allowlist for server-driven tool calls (see RunnerCommandPolicy): a comma list
 //                       replaces the defaults, "+name" adds, "*" allows everything (explicit opt-out)
@@ -120,14 +122,18 @@ var cliSlots = new SemaphoreSlim(maxParallel, maxParallel);
 // 15-minute coding runs they outlived the server's deadline — the ticket split fell back to the raw draft list.
 var maxAnswers = int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_MAX_ANSWERS"), out var ma) && ma > 0 ? ma : 2;
 var answerSlots = new SemaphoreSlim(maxAnswers, maxAnswers);
+// A follow-up asking a run for its missing reply (RunContinuation.cs) has a 2-minute deadline on the server: queued
+// behind two long coding runs it would spend that deadline waiting. It gets its own lane — one at a time.
+var followUpSlots = new SemaphoreSlim(1, 1);
 using var keepAwake = new AgentOs.RemoteAgent.KeepAwake(AgentOs.RemoteAgent.KeepAwake.Allowed(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_AWAKE")));
 
 // M3 — full-prompt LLM dispatch
 connection.On<RemoteExecRequest>("Execute", request =>
 {
     Console.WriteLine($"[agent] Execute {request.Id} (model={request.Model})");
-    var lane = AgentOs.RemoteAgent.ScopedAutonomy.Grants(request.Autonomy, Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"))
-        ? cliSlots : answerSlots;
+    var hands = AgentOs.RemoteAgent.ScopedAutonomy.Grants(request.Autonomy, Environment.GetEnvironmentVariable("REMOTE_AGENT_AUTONOMY"));
+    var lane = hands && !string.IsNullOrWhiteSpace(request.ResumeOf) ? followUpSlots
+        : hands ? cliSlots : answerSlots;
     _ = Task.Run(async () =>
     {
         await lane.WaitAsync().ConfigureAwait(false);
@@ -224,6 +230,22 @@ connection.On<RunnerToolCall>("ExecuteToolCall", call =>
 AgentOs.RemoteAgent.RunFiles.CleanupDeliveries(
     Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(), TimeSpan.FromDays(3));
 
+// Run folders kept for a follow-up (RunContinuation.cs): a crashed runner's leftovers go now, the ones whose follow-up
+// never came go within a minute of their keep window, and every kept one goes when this runner stops.
+var kept = AgentOs.RemoteAgent.RunContinuation.Shared;
+AgentOs.RemoteAgent.RunContinuation.SweepLeftovers(
+    Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(), DateTimeOffset.UtcNow);
+using var keptSweep = new Timer(_ =>
+{
+    foreach (var stale in kept.Expired(DateTimeOffset.UtcNow)) { AgentOs.RemoteAgent.RunContinuation.Discard(stale); }
+}, null, AgentOs.RemoteAgent.RunContinuation.SweepEvery, AgentOs.RemoteAgent.RunContinuation.SweepEvery);
+void DiscardKept()
+{
+    foreach (var folder in kept.TakeAll()) { AgentOs.RemoteAgent.RunContinuation.Discard(folder); }
+}
+AppDomain.CurrentDomain.ProcessExit += (_, _) => DiscardKept();
+Console.CancelKeyPress += (_, _) => DiscardKept();
+
 await connection.StartAsync().ConfigureAwait(false);
 Console.WriteLine($"[agent] connected to {hubUrl}; runner id={runnerId}. Ctrl+C to exit.");
 await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
@@ -260,12 +282,27 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     // What decided which tools the CLI could use — recorded with every tool call as the evidence's policy source.
     var permissions = argsEnv is not null ? "custom" : yolo ? "yolo" : scoped ? "scoped" : "prompt";
 
+    // Only a run the server asked to have hands may be kept for a follow-up or reported as "stopped short" — the
+    // per-request value: on a machine with REMOTE_AGENT_AUTONOMY=scoped every request gets hands, answer-only ones too.
+    var continuations = AgentOs.RemoteAgent.RunContinuation.Shared;
+    var keepable = scoped && AgentOs.RemoteAgent.RunContinuation.AskedForHands(request.Autonomy);
+    // A follow-up asking an earlier run for the reply it never gave: that run's folder (and Claude Code session), when kept.
+    var resumed = keepable ? continuations.Take(request.ResumeOf, DateTimeOffset.UtcNow) : null;
+    // Resumed = the CLI really continues that run's conversation (the server trusts a recovered approval only then).
+    string[] resumeArgs = argsEnv is null ? AgentOs.RemoteAgent.RunContinuation.ResumeArgs(cmd, resumed) : [];
+    args = [.. args, .. resumeArgs];
+
     // Every CLI run starts in its OWN empty directory — never the runner's current directory, which is usually
     // a checkout of something else (the agent once saw "file access limited to D:\Github\AgentOs").
-    var runDir = AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
+    var runDir = resumed?.Folder ?? AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
         Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(),
         request.Id);
     var keepRun = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_RUNS"));
+    // Set when this run's reply looked unfinished: its folder is kept for one follow-up instead of deleted. A follow-up
+    // itself is never kept — one attempt.
+    var park = false;
+    string? parkSession = null;
+    var parkContextFull = false;
 
     // Test data this computer offers (REMOTE_AGENT_DATA): env vars of the run, named — never pathed — in the prompt.
     var data = scoped ? AgentOs.RemoteAgent.TestData.Parse(Environment.GetEnvironmentVariable("REMOTE_AGENT_DATA")) : [];
@@ -374,7 +411,20 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             {
                 // Metrics first: the CLI's own usage travels back, so the server shows real tokens, not an estimate.
                 var used = final.Tokens();
-                return await WithUploadsAsync((final.IsError
+                // A run with hands that stopped short (turn or context limit) may have done real work: it is reported as
+                // a reply without its answer, so the server asks for the answer instead of discarding the work.
+                var stoppedShort = keepable && AgentOs.RemoteAgent.RunContinuation.StoppedShort(final);
+                if (keepable && resumed is null && (stoppedShort || (!final.IsError && AgentOs.RemoteAgent.RunContinuation.LooksUnfinished(final.Text))))
+                {
+                    park = true;
+                    parkSession = final.SessionId;
+                    parkContextFull = AgentOs.RemoteAgent.RunContinuation.ContextFull(final);
+                }
+                return await WithUploadsAsync((stoppedShort
+                    ? new RemoteExecResult(request.Id, true,
+                        (final.IsError ? AgentOs.RemoteAgent.RunContinuation.StoppedNote(final)
+                            : (final.Text.Trim() + "\n\n" + AgentOs.RemoteAgent.RunContinuation.StoppedNote(final)).Trim()), null)
+                    : final.IsError
                     ? new RemoteExecResult(request.Id, false, string.Empty, final.Text.Length > 0 ? final.Text : streamErr.Trim())
                     : new RemoteExecResult(request.Id, true, final.Text.Trim(), null)) with
                 {
@@ -396,6 +446,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
         if (process.ExitCode == 0)
         {
+            park = keepable && resumed is null && AgentOs.RemoteAgent.RunContinuation.LooksUnfinished(stdout);
             return await WithUploadsAsync(new RemoteExecResult(request.Id, true, stdout.Trim(), null)).ConfigureAwait(false);
         }
 
@@ -415,13 +466,21 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     finally
     {
         RunningCli.TryRemove(request.Id, out _);
-        if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
+        if (park && !keepRun)
+        {
+            AgentOs.RemoteAgent.RunContinuation.Mark(runDir);
+            continuations.Park(request.Id, runDir, parkSession, parkContextFull, DateTimeOffset.UtcNow);
+        }
+        else if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
     }
 
     // Design gate (ADR-0016): a run asked for screenshots sends the images its agent listed back to the server — checked
-    // here (RunUploads) and again piece by piece there — before the run folder goes. Never fails the run itself.
+    // here (RunUploads) and again piece by piece there — before the run folder goes. Never fails the run itself. Every
+    // successful reply passes through here — a "stopped short" one and a follow-up's too — so it also carries whether
+    // this run continued an earlier one's session.
     async Task<RemoteExecResult> WithUploadsAsync(RemoteExecResult result)
     {
+        result = result with { Resumed = resumeArgs.Length > 0 };
         if (!result.Ok || request.Collect is not { } collect) { return result; }
         try
         {
@@ -697,7 +756,7 @@ internal static partial class Program
 // ── DTOs — must match the server's shapes ───────────────────────────────────────────────────────
 
 internal sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
-    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null, AgentOs.RemoteAgent.RunUploads.Limits? Collect = null);
+    IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files = null, AgentOs.RemoteAgent.RunUploads.Limits? Collect = null, string? ResumeOf = null);
 internal sealed record WriteFilesInput(IReadOnlyList<AgentOs.RemoteAgent.RunFiles.Entry>? Files);
 internal sealed record RemoteExecResult(string Id, bool Ok, string Content, string? Error)
 {
@@ -706,6 +765,8 @@ internal sealed record RemoteExecResult(string Id, bool Ok, string Content, stri
     public int? OutputTokens { get; init; }
     public int? CacheReadTokens { get; init; }
     public int? CacheWriteTokens { get; init; }
+    // This run continued an earlier one's CLI session (`--resume <id>` in its kept folder) — not a fresh conversation.
+    public bool Resumed { get; init; }
 }
 internal sealed record RunnerToolCall(string RequestId, string ToolCallId, string ToolName, string JsonInput);
 internal sealed record RunnerToolResult(string RequestId, string ToolCallId, bool Ok, string JsonOutput, string? Error);
