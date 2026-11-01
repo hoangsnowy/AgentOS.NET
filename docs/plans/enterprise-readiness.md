@@ -49,7 +49,7 @@ real services:
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
-| E1.12 security docs | #PRNUM | [docs/security/](../security/README.md): STRIDE threat model with code references + ranked gaps, data flow, sub-processors, hardening checklist, DPA template; linked from SECURITY.md, README, DEPLOYMENT.md |
+| E1.12 security docs | #303 | [docs/security/](../security/README.md): STRIDE threat model with code references + ranked gaps, data flow, sub-processors, hardening checklist, DPA template; linked from SECURITY.md, README, DEPLOYMENT.md |
 | (pre-E0) QA gate before PR, platform-only tenant endpoints, settings audit, isolation E2E, About | #191–#194 | Real-auth suite |
 
 Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machine's `claude -p` (#204). The full
