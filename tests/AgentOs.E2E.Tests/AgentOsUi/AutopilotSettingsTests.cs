@@ -80,6 +80,25 @@ public sealed class AutopilotSettingsTests : IClassFixture<AgentOsPageFixture>
     }
 
     [Fact]
+    public async Task Autopilot_TryTheApp_ShowsTheTestingHoldAndTheIdleStop()
+    {
+        if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
+
+        var win = await OpenAsync();
+        var panel = win.Locator(".panel", new() { HasTextString = "Test while trying the app" });
+
+        await Assertions.Expect(panel.Locator(".prefs-label strong").GetByText("Test while trying the app", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(panel).ToContainTextAsync("Testing can run while you try the app when the app keeps its data separately for each copy.");
+        // Nothing listed by default: every project still holds testing while its app is tried.
+        await Assertions.Expect(panel.Locator("input[aria-label=\"Test while trying the app\"]")).ToHaveValueAsync("");
+        await Assertions.Expect(panel.Locator("input[aria-label=\"Stop an unused app after (minutes)\"]")).ToHaveValueAsync("120");
+        await Assertions.Expect(panel).ToContainTextAsync("keeps running when that computer's AgentOS.NET connection restarts");
+        await win.Locator(".page-title").ScrollIntoViewIfNeededAsync();
+        await panel.ScrollIntoViewIfNeededAsync();
+        await _fx.Page.ScreenshotAsync(new() { Path = System.IO.Path.Join(System.IO.Path.GetTempPath(), "agentos-autopilot-try-the-app.png") });
+    }
+
+    [Fact]
     public async Task CtrlK_FixRounds_OpensSettingsAutopilot()
     {
         if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }

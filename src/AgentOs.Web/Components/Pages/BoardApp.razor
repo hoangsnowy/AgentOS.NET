@@ -2412,11 +2412,11 @@ else if (_tab == Tab.Sessions)
         finally { _previewBusy = null; }
     }
 
-    private void RunPreview(WorkspaceRepoEntity r, AgentOs.Domain.Preview.PreviewRecipe recipe)
+    private async Task RunPreview(WorkspaceRepoEntity r, AgentOs.Domain.Preview.PreviewRecipe recipe)
     {
         if (_selectedBoard is null) { return; }
         _previewAsk.Remove(r.Id);
-        if (Previews.Start(_tenantId, _userId, _selectedBoard.Id, r, recipe) == AgentOs.Web.Services.Preview.PreviewStartResult.NoComputer)
+        if (await Previews.StartAsync(_tenantId, _userId, _selectedBoard.Id, r, recipe) == AgentOs.Web.Services.Preview.PreviewStartResult.NoComputer)
         {
             Toasts.Show("Try the app", "Your computer isn't connected — connect it on the Computers tab first.", ToastKind.Warn);
         }
@@ -2498,7 +2498,8 @@ else if (_tab == Tab.Sessions)
                 <span class="muted">@p.Message</span>
             }
             <div class="board-preview-actions">
-                @if (p.State == "Ready")
+                @* Only an address on the person's own computer goes behind the link — never javascript:, data: or another host. *@
+                @if (p.State == "Ready" && AgentOs.Domain.Preview.PreviewRecipe.IsLocalHttpUrl(p.Url))
                 {
                     <a class="btn btn-primary btn-sm" href="@p.Url" target="_blank" rel="noopener"><Icon Name="arrow-square-out" Size="13" /> Open the app</a>
                     <span class="muted">@p.Url</span>

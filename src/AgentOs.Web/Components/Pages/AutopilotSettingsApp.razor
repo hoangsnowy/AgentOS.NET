@@ -43,6 +43,11 @@ else
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@RunKeys" />
     </Panel>
 
+    <Panel Title="Try the app">
+        <p class="muted platform-hint">Board › Projects › Try the app runs a project on the member's own computer. The app keeps running when that computer's AgentOS.NET connection restarts (an update, a re-pairing), until the member presses Stop or nobody has used it for a while. By default the Testing agent waits while an app is being tried, because both would share the app's ports and data.</p>
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@PreviewKeys" />
+    </Panel>
+
     <Panel Title="When a run ends without its answer">
         <p class="muted platform-hint">A run can run out of turns or context after doing the work. Asked again, it answers in a couple of minutes from what it already did — its folder and session on your computer, when still there. Insights counts how often it happens.</p>
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@RecoveryKeys" />
@@ -77,6 +82,8 @@ else
     ];
 
     private static readonly string[] CheckKeys = [AutopilotSettings.ChecksTimeoutMinutesKey, AutopilotSettings.ChecksPollSecondsKey];
+
+    private static readonly string[] PreviewKeys = [AutopilotSettings.TestWhileTryingKey, AutopilotSettings.PreviewIdleMinutesKey];
 
     private static readonly IReadOnlyList<string> FileKeys = AgentOs.Modules.Sessions.Files.TicketFileSettings.Keys;
 

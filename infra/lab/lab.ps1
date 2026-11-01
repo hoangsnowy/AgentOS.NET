@@ -15,7 +15,7 @@
     Commands:
         up       create the worktree if needed, build, start in the background, wait until healthy
         update   stop, move the worktree to the latest origin/main (or -Ref), rebuild, start
-        down     stop the lab
+        down     stop the lab (and the "Try the app" previews the runner left running)
         status   show health + URLs
         reset    stop and DELETE the lab's data volumes (Postgres + Keycloak) — asks unless -Force
         logs     tail the AppHost log
@@ -23,7 +23,7 @@
         pair     pair THIS machine as a RemoteAgent runner (claude -p, your Claude subscription) and route the lab
                  tenant's agents to it — real agent runs with no API key on the server (prompt mode, no YOLO;
                  Board "Run on my machine" sessions get scoped autonomy: own dir per run + a tool allowlist)
-        unpair   stop the paired runner
+        unpair   stop the paired runner and its "Try the app" previews
 
 .EXAMPLE
     pwsh infra/lab/lab.ps1 up
@@ -65,6 +65,13 @@ function Stop-Runner {
     $p = Get-Process -Id ([int](Get-Content $runnerPid)) -ErrorAction SilentlyContinue
     if ($p) { Write-Host "Stopping paired runner (pid $($p.Id))…"; Stop-Process -Id $p.Id -Force }
     Remove-Item $runnerPid -Force
+}
+
+# A "Try the app" preview outlives a runner restart on purpose (update / pair keep it running). When the runner goes away
+# for good (unpair, down) its apps are stopped too, so nothing keeps running unseen on this machine.
+function Stop-Previews {
+    $exe = Join-Path $LabDir 'src/AgentOs.RemoteAgent/bin/Release/net10.0/AgentOs.RemoteAgent.exe'
+    if (Test-Path $exe) { & $exe stop-previews }
 }
 
 function Stop-Lab {
@@ -168,7 +175,7 @@ switch ($Command) {
         git -C $LabDir checkout --quiet --detach $Ref
         Start-Lab
     }
-    'down' { Stop-Runner; Stop-Lab; Write-Host 'Lab stopped.' }
+    'down' { Stop-Runner; Stop-Previews; Stop-Lab; Write-Host 'Lab stopped.' }
     'pair' {
         if (-not (Test-Web)) { throw "Lab is not running — start it with: pwsh infra/lab/lab.ps1 up" }
         if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { throw 'claude CLI not on PATH — install Claude Code and sign in first.' }
@@ -190,6 +197,7 @@ switch ($Command) {
     }
     'unpair' {
         Stop-Runner
+        Stop-Previews
         if (Test-Web) {
             $pwDir = Join-Path $LabDir 'tests/AgentOs.E2E.Tests/bin/Release/net10.0/.playwright'
             $env:PW_PACKAGE = Join-Path $pwDir 'package'; $env:LAB_URL = $WebUrl; $env:UNPAIR = '1'
