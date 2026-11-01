@@ -41,14 +41,20 @@ public sealed class TenantExportRedactionTests
         => TenantDataService.RedactedColumns(table, ["Id", "TenantId", "Prefix", "TokenHash"]).ShouldBe(["TokenHash"]);
 
     [Fact]
-    public void RedactedColumns_UnknownTable_DropsColumnsNamedLikeSecrets()
-        => TenantDataService.RedactedColumns("future.table", ["Id", "TenantId", "TotalTokensIn", "WebhookSecret", "PasswordHash", "LegacyEncryptedValue", "Name"])
-            .ShouldBe(["LegacyEncryptedValue", "PasswordHash", "WebhookSecret"]);
+    public void RedactedColumns_UnknownTable_DropsColumnsNamedLikeCredentials()
+        => TenantDataService.RedactedColumns("future.table", ["Id", "TenantId", "TotalTokensIn", "RefreshTokenHash", "PasswordHash", "LegacyEncryptedValue", "Name"])
+            .ShouldBe(["LegacyEncryptedValue", "PasswordHash", "RefreshTokenHash"]);
+
+    // The name rule is narrow on purpose: data that merely ends in Hash/Secret/Password is still exported.
+    [Fact]
+    public void RedactedColumns_UnknownTable_KeepsOrdinaryHashAndFlagColumns()
+        => TenantDataService.RedactedColumns("future.table", ["Id", "TenantId", "ContentHash", "CommitHash", "HasSecret", "ResetPassword"])
+            .ShouldBeEmpty();
 
     // The bug class itself: a map entry naming a column that isn't there must not silently export the real one.
     [Fact]
     public void RedactedColumns_MappedColumnMissing_FailsClosed()
-        => Should.Throw<InvalidOperationException>(() => TenantDataService.RedactedColumns("config.app_config", ["TenantId", "Key", "Value"]))
+        => Should.Throw<TenantExportRefusedException>(() => TenantDataService.RedactedColumns("config.app_config", ["TenantId", "Key", "Value"]))
             .Message.ShouldContain("EncryptedValue");
 
     // ── Real Postgres ──
