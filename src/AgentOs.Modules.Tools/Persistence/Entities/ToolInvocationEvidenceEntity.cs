@@ -20,4 +20,10 @@ public sealed class ToolInvocationEvidenceEntity
     public bool IsError { get; set; }
     public DateTimeOffset StartedUtc { get; set; }
     public DateTimeOffset FinishedUtc { get; set; }
+
+    /// <summary>Full tool-output length in chars (2.7 shaping evidence); null on rows written before it.</summary>
+    public int? OutputChars { get; set; }
+
+    /// <summary>Length the model received after shaping; null on rows written before it.</summary>
+    public int? ShapedOutputChars { get; set; }
 }

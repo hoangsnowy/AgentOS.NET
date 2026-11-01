@@ -4,7 +4,7 @@
 // InvokeCoreAsync override serializes the model-emitted arguments back into the ITool's string
 // Input and runs it through the shared IToolGateway (policy gate + evidence), returning the
 // textual Output for the next LLM turn. All governance lives in the gateway (M1) so the
-// remote-session path enforces the same policy + evidence.
+// remote-session path enforces the same policy + evidence — and the same tool-output shaping (2.7).
 
 using System;
 using System.Collections.Generic;
@@ -34,6 +34,13 @@ internal sealed class AIToolFunction : AIFunction
     }
 
     public AIToolFunction(ITool tool, string tenantId, string? runId, IToolPolicy? policy, IToolInvocationLog? log)
+        : this(tool, tenantId, runId, policy, log, settings: null)
+    {
+    }
+
+    public AIToolFunction(
+        ITool tool, string tenantId, string? runId, IToolPolicy? policy, IToolInvocationLog? log,
+        AgentOs.Domain.Configuration.ISettings? settings)
     {
         ArgumentNullException.ThrowIfNull(tool);
         _tool = tool;
@@ -41,7 +48,7 @@ internal sealed class AIToolFunction : AIFunction
         _runId = runId;
         // All policy + evidence enforcement lives in the gateway so every path (here + the remote
         // session executor) governs identically.
-        _gateway = new DefaultToolGateway(policy, log);
+        _gateway = new DefaultToolGateway(policy, log, settings);
 
         var def = tool.Definition;
         def.Validate();

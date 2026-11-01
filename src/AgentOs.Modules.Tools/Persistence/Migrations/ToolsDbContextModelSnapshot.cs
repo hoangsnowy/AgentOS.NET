@@ -18,7 +18,7 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("tools")
-                .HasAnnotation("ProductVersion", "10.0.8")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -48,6 +48,9 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int?>("OutputChars")
+                        .HasColumnType("integer");
+
                     b.Property<string>("RunId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
@@ -55,6 +58,9 @@ namespace AgentOs.Modules.Tools.Persistence.Migrations
                     b.Property<string>("SessionId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<int?>("ShapedOutputChars")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("StartedUtc")
                         .HasColumnType("timestamp with time zone");

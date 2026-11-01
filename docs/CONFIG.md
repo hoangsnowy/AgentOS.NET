@@ -78,6 +78,7 @@ Defaults below are the code defaults (tier 5). **Scope**: *Tenant* = each tenant
 |---|---|---|---|
 | `Llm:Provider` | `Claude` | Tenant | Used by any agent whose profile names no provider. `Anthropic` is an alias of `Claude`. |
 | `Llm:ForceProvider` | empty | Tenant | Route every agent to one provider. |
+| `Tools:MaxOutputTokens` | `4000` (500–50000) | Tenant | Budget for one tool result sent back to the model (≈ chars / 4), on the **Routing** page. See *Tool-output shaping* below. |
 | `Llm:OfflineFallback` | **`true` in Development, else `false`** | Platform | Keyless provider → canned, schema-valid output, labelled Offline everywhere (runs, Workflow chip, PR refusal). Lets a fresh checkout run with no secrets. Locked off in Production. Never applies to Board agent runs (New idea, Coding, Reviewer, Testing, the Autopilot lead, Retrospective): those act on a real project, so they fail with the real reason (e.g. a plan limit) instead of getting canned text. |
 | `Llm:Claude:ApiKey` / `ApiKeys` | empty | Tenant | Secret, write-only in the UI. Pool = round-robin with 429 failover. |
 | `Llm:AzureOpenAi:Endpoint` / `ApiKey` / `ApiKeys` | empty | Tenant | Endpoint must be absolute `https://`. |
@@ -95,6 +96,17 @@ Code-only (no UI yet; seed via env if you must): `Llm:Claude:Endpoint` (`https:/
 `Llm:Claude:ApiVersion` (`2023-06-01`), `Llm:*:TimeoutSeconds` (60), `Llm:Fallbacks`
 (inter-provider failover map). Resilience today is key-pool cooldown + failover; `Llm:*:MaxRetries`
 exists on the options type but is not honoured yet.
+
+**Tool-output shaping** — every tool result passes `DefaultToolGateway` on its way back to the model (the in-process
+tool loop and every other `IToolGateway` caller) and is shaped there: build/test logs (MSBuild, `dotnet build`/`test`, VSTest,
+xUnit / Microsoft.Testing.Platform — also when wrapped in a JSON result such as `build_verifier`'s `output`) keep
+their `error`/`warning` lines (`error CS…`, analyzer ids), failed-test blocks with their first 5 stack frames,
+summary lines and a short head/tail window; restore/progress noise is dropped and repeated lines collapse to one
+with a `(×N)` count. Anything still larger than `Tools:MaxOutputTokens` × 4 chars is cut head + tail around an
+explicit `[… N lines omitted …]` marker (never inside a surrogate pair). The evidence log
+(`tools.tool_invocations`) still stores the **full** output plus `OutputChars` and `ShapedOutputChars`, and the
+`AgentOs.Tools` meter counts the difference as `agentos.tools.output.saved_chars` (tag `tool`; ≈ chars / 4
+tokens — an estimate, not billed usage).
 
 ### Settings → Agent profiles
 

@@ -75,7 +75,8 @@ public sealed class ToolsModule : IModule, IInitializableModule
         // are gated + recorded identically regardless of where the side effect runs.
         services.TryAddSingleton<IToolGateway>(sp => new DefaultToolGateway(
             sp.GetService<IToolPolicy>(),
-            sp.GetService<IToolInvocationLog>()));
+            sp.GetService<IToolInvocationLog>(),
+            sp.GetService<AgentOs.Domain.Configuration.ISettings>()));
     }
 
     public async Task InitializeAsync(IServiceProvider services, CancellationToken ct)

@@ -28,11 +28,11 @@ namespace AgentOs.Modules.Tools.Evidence;
 internal sealed partial class BufferedToolInvocationLog : IToolInvocationLog, IAsyncDisposable
 {
     /// <summary>Meter for evidence health (exported with the host's OTel metrics).</summary>
-    public const string MeterName = "AgentOs.Tools";
+    public const string MeterName = ToolTelemetry.MeterName;
 
     internal const int Capacity = 4096;
 
-    private static readonly Meter Meter = new(MeterName);
+    private static readonly Meter Meter = ToolTelemetry.Meter;
     private static readonly Counter<long> InlineWrites = Meter.CreateCounter<long>("agentos.evidence.inline_writes", description: "Evidence rows persisted inline because the queue was full.");
     private static readonly Counter<long> Lost = Meter.CreateCounter<long>("agentos.evidence.lost", description: "Evidence rows lost after every persistence attempt failed.");
 

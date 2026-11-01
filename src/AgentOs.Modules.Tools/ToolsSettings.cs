@@ -4,7 +4,9 @@
 // permissive in Development.
 
 using System.Collections.Generic;
+using System.Globalization;
 using AgentOs.Domain.Configuration;
+using AgentOs.Domain.Tools;
 
 namespace AgentOs.Modules.Tools;
 
@@ -14,6 +16,9 @@ public sealed class ToolsSettings(bool enforceByDefault) : ISettingsContributor
     /// <summary>Deny tool calls unless a tenant has an explicit allowlist.</summary>
     public const string EnforceByDefault = "Tools:EnforceByDefault";
 
+    /// <summary>Per-call budget for a tool result sent back to the model, in tokens (≈ chars / 4).</summary>
+    public const string MaxOutputTokens = ToolOutputShaper.MaxOutputTokensKey;
+
     /// <inheritdoc />
     public IEnumerable<SettingDescriptor> Describe()
     {
@@ -22,6 +27,15 @@ public sealed class ToolsSettings(bool enforceByDefault) : ISettingsContributor
             DefaultValue = enforceByDefault ? "true" : "false",
             Scope = SettingScope.Platform,
             Help = "Deny every tool call unless the tenant has an explicit allowlist (Tool policy). Keep on in production.",
+        };
+        yield return new(MaxOutputTokens, SettingKind.WholeNumber, "Tools", "Tool output budget (tokens)")
+        {
+            DefaultValue = ToolOutputShaper.DefaultMaxOutputTokens.ToString(CultureInfo.InvariantCulture),
+            Min = ToolOutputShaper.MinMaxOutputTokens,
+            Max = ToolOutputShaper.MaxMaxOutputTokens,
+            Help = "Largest tool result (≈ chars / 4) sent back to the model. Build/test logs are first trimmed to errors, "
+                + "failed tests and summaries; anything still larger is cut head + tail with an explicit omitted-lines marker. "
+                + "The evidence log keeps the full output.",
         };
     }
 }

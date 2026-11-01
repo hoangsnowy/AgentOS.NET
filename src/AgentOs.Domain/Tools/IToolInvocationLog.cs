@@ -16,6 +16,8 @@ namespace AgentOs.Domain.Tools;
 /// <param name="StartedUtc">When the invocation started (UTC).</param>
 /// <param name="FinishedUtc">When the invocation finished or was denied (UTC).</param>
 /// <param name="SessionId">Remote-session correlator, when the call ran inside a member×workspace session.</param>
+/// <param name="OutputChars">Length of the full tool output (what <paramref name="Output"/> holds); null on legacy rows.</param>
+/// <param name="ShapedOutputChars">Length of what the model actually received after tool-output shaping; null on legacy rows.</param>
 public sealed record ToolInvocationEvidence(
     string CallId,
     string ToolName,
@@ -26,10 +28,15 @@ public sealed record ToolInvocationEvidence(
     bool IsError,
     System.DateTimeOffset StartedUtc,
     System.DateTimeOffset FinishedUtc,
-    string? SessionId = null)
+    string? SessionId = null,
+    int? OutputChars = null,
+    int? ShapedOutputChars = null)
 {
     /// <summary>Wall-clock duration of the invocation.</summary>
     public System.TimeSpan Duration => FinishedUtc - StartedUtc;
+
+    /// <summary>Characters shaping kept away from the model (0 when unshaped or unknown).</summary>
+    public int SavedChars => OutputChars is { } full && ShapedOutputChars is { } shaped ? System.Math.Max(0, full - shaped) : 0;
 }
 
 /// <summary>Writes <see cref="ToolInvocationEvidence"/> entries. Impls must be thread-safe.</summary>
