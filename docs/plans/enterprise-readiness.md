@@ -49,7 +49,7 @@ real services:
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
-| E1.10 dashboards, alerts, SLOs | #PRNUM, [OPERATIONS.md](../OPERATIONS.md) | Real code → OTLP → Prometheus 3.7: every dashboard series present, 3 Grafana dashboards render (light + dark), `AgentOsBudgetBlockingRuns` fired + `AgentOsBudgetOverCap` pending on an over-cap tenant; `promtool test rules` green. Lab over-cap run + Azure deploy still to do |
+| E1.10 dashboards, alerts, SLOs | #302, [OPERATIONS.md](../OPERATIONS.md) | Real code → OTLP → Prometheus 3.7: every dashboard series present, 3 Grafana dashboards render (light + dark), `AgentOsBudgetBlockingRuns` fired + `AgentOsBudgetOverCap` pending on an over-cap tenant; `promtool test rules` green. Lab over-cap run + Azure deploy still to do |
 | (pre-E0) QA gate before PR, platform-only tenant endpoints, settings audit, isolation E2E, About | #191–#194 | Real-auth suite |
 
 Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machine's `claude -p` (#204). The full
@@ -124,7 +124,7 @@ behaviour, unit + E2E, real integrations verified on the lab, docs updated in th
 | **E1.7** `feat(skills)` | **Agent Skills** (= plan 4.5) pulled forward: SKILL.md packs per tenant, name+description in prompt, body on demand, per-agent enablement, usage metrics | A tenant skill changes Coding output; usage counted |
 | **E1.8** `feat(integration)` | **Azure DevOps boards** (= plan 0.10) + **Jira** (native or Atlassian MCP) + Teams/Slack notifications | Lab: ADO + Jira tickets run end to end |
 | **E1.9** `feat(deploy)` | **On-prem**: Helm chart + docker compose (Postgres, Keycloak, Web, Api, optional Ollama), offline image bundle, upgrade guide | Cold install on a clean k8s (kind) from docs only |
-| **E1.10** `feat(ops)` ✅ #PRNUM | Dashboards (Grafana JSON + App Insights workbook), alert rules (budget over cap, runner disconnect, failed runs, evidence drops, probe Down), SLOs | Alert fires on a lab over-cap run |
+| **E1.10** `feat(ops)` ✅ #302 | Dashboards (Grafana JSON + App Insights workbook), alert rules (budget over cap, runner disconnect, failed runs, evidence drops, probe Down), SLOs | Alert fires on a lab over-cap run |
 | **E1.11** `chore(supply-chain)` | CycloneDX SBOM per release, cosign-signed images, SLSA provenance | `cosign verify` passes on a release image |
 | **E1.12** `docs(security)` | Threat model (STRIDE per module), data-flow diagram, sub-processor list (LLM vendors + what leaves the box), DPA template, hardening guide | Reviewed; linked from SECURITY.md |
 | **E1.13** `docs(release)` | Semver + CHANGELOG + migration notes + supported-versions policy | First tagged release follows it |
