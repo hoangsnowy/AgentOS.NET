@@ -85,6 +85,13 @@ AgentOs.SharedKernel.Security.DevSecretGuard.EnsureNoDevDefaults(builder.Configu
 // when auto-login is active, never under real Keycloak auth.
 builder.Services.AddSingleton(new AgentOs.Web.Services.DevModeState(devAutoLogin));
 
+// The standalone desktop (dev auto-login, no database) has no tasks, so the Design gate's panel (ADR-0016) could never be
+// seen there: one clearly-labelled sample check is seeded into the in-memory stores. Never with a database.
+if (devAutoLogin && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
+{
+    builder.Services.AddHostedService<AgentOs.Web.Services.BoardTasks.DesignGateSample>();
+}
+
 if (devAutoLogin)
 {
     builder.Services
@@ -467,6 +474,10 @@ app.MapGet("/audit/export", async (HttpContext http, AgentOs.Modules.Tenants.IAu
 // exchange (/runner/pair/exchange). Mapped here on the Web — the extension and browser both target the
 // Web origin, and the approve step uses the browser session, not a Bearer token.
 AgentOs.Modules.Sessions.Endpoints.PairingEndpoints.MapPairingEndpoints(app);
+
+// Design gate (ADR-0016): the Design panel on Board › Tasks loads its screenshot grid as plain <img> tags from this
+// tenant-scoped, cookie-authed route — the bytes never ride the Blazor circuit.
+AgentOs.Modules.Sessions.Endpoints.DesignReviewEndpoints.MapDesignReviewEndpoints(app);
 
 // The runner's SignalR hub, mapped explicitly rather than via MapModuleEndpoints — this host serves a
 // UI, not the API's REST surface, so it opts in one endpoint at a time (same reason PairingEndpoints

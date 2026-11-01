@@ -39,7 +39,7 @@ public sealed class AutopilotOrchestratorAgent(ILlmClientFactory factory, ILogge
 
         You receive the board's state, the LEGAL MOVES the rules allow this pass (ids M1, M2, …), the STUCK tasks, the
         number of free work slots, and your recent decisions. Decide:
-        1. "moves": which legal moves to make now, in order. Each start / fix / review / test move takes one free slot;
+        1. "moves": which legal moves to make now, in order. Each start / fix / review / test / design move takes one free slot;
            merges and branch updates take none. Prefer what unblocks the most other tickets (a ticket many others
            depend on), then fixes of nearly-done work over starting new work, then priority. Leave slots free only
            with a reason. Never invent a move id.

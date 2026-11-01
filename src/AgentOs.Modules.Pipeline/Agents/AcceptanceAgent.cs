@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Cost;
+using AgentOs.Domain.Files;
 using AgentOs.Domain.Llm;
 using AgentOs.Domain.Memory;
 using AgentOs.Domain.Sessions;
@@ -58,11 +59,14 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
 
         // Ticket files (ADR-0015) reach the run only on the member's computer — only then does the prompt mention them.
         var onComputer = AgentBudgetGate.RunsOnMembersComputer(provider);
+        // Design gate (ADR-0016): screenshots come from a real browser on the member's computer, sent back by its runner.
+        var capture = onComputer ? request.Design : null;
         var llmRequest = new LlmRequest(
             SystemPrompt: await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Acceptance, InstructionsTemplate, Values(request),
                 UntrustedText.SystemRule, ct).ConfigureAwait(false),
             UserPrompt: User(request)
                 + (onComputer ? TicketFilesPrompt.ForRunDirectory(request.Files, TicketFilesPrompt.Use.Check) : string.Empty)
+                + (capture is not null ? ScreenshotsSection(capture.Limits) : string.Empty)
                 + await ProjectPractices.BlockAsync(memory, request.TenantId, [repoLabel], logger, ct).ConfigureAwait(false),
             Model: profile.Model,
             Temperature: profile.Temperature,
@@ -73,6 +77,7 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
             AgentRole = AgentRoles.Acceptance,
             Autonomy = WorkspaceAutonomy.Scoped,
             Files = onComputer && request.Files.Count > 0 ? request.Files : null,
+            Uploads = capture is null ? null : new RunUploadTarget(capture.ScopeKey, capture.Limits),
             Progress = new InlineProgress<string>(step =>
             {
                 if (TaskSteps.LabelFor(step) is { } label) { Emit(request, SessionRunEventKind.Step, "Testing — " + label, repoLabel); }
@@ -81,7 +86,8 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
         try
         {
             var response = await llm.SendAsync(llmRequest, ct).ConfigureAwait(false);
-            return Parse(response.Content ?? string.Empty);
+            var verdict = Parse(response.Content ?? string.Empty);
+            return capture is null ? verdict : verdict with { Screenshots = Arrived(verdict.Screenshots, response.Uploaded) };
         }
         catch (Exception ex) when (ex is LlmException or TimeoutException or InvalidOperationException or System.Net.Http.HttpRequestException)
         {
@@ -185,7 +191,7 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
                 ? bf.EnumerateArray().Select(b => new AcceptanceCriterion(Str(b, "test"), "fail", Str(b, "evidence")))
                     .Where(b => b.Criterion.Length > 0).ToList()
                 : [];
-            return new AcceptanceVerdict(true, passed, criteria, Str(root, "summary"), null) { BaseFailures = baseFailures };
+            return new AcceptanceVerdict(true, passed, criteria, Str(root, "summary"), null) { BaseFailures = baseFailures, Screenshots = Shots(root) };
         }
         catch (JsonException)
         {
@@ -194,6 +200,66 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
 
         static string Str(JsonElement e, string name) =>
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+    }
+
+    // The "screenshots" the reply lists (Design gate): objects {path, screen, width, theme} or bare paths. A path the
+    // upload rules refuse is dropped; what the reply leaves out is read from the file name.
+    private static List<DesignShot> Shots(JsonElement root)
+    {
+        if (!root.TryGetProperty("screenshots", out var list) || list.ValueKind != JsonValueKind.Array) { return []; }
+        var shots = new List<DesignShot>();
+        foreach (var item in list.EnumerateArray().Take(RunUploadRules.MaxFiles * 2))
+        {
+            var raw = item.ValueKind == JsonValueKind.String ? item.GetString()
+                : item.ValueKind == JsonValueKind.Object && item.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+            if (!RunUploadRules.TryCheck(raw, out var path, out _)) { continue; }
+            var named = DesignShot.FromPath(path);
+            if (item.ValueKind != JsonValueKind.Object) { shots.Add(named); continue; }
+            var screen = item.TryGetProperty("screen", out var s) && s.ValueKind == JsonValueKind.String && s.GetString() is { Length: > 0 } sv ? sv.Trim() : named.Screen;
+            var width = item.TryGetProperty("width", out var w) && w.ValueKind == JsonValueKind.Number && w.TryGetInt32(out var wv) && wv is > 0 and < 10_000 ? wv : named.Width;
+            var theme = item.TryGetProperty("theme", out var t) && t.ValueKind == JsonValueKind.String
+                && string.Equals(t.GetString(), "dark", StringComparison.OrdinalIgnoreCase) ? "dark"
+                : item.TryGetProperty("theme", out _) ? "light" : named.Theme;
+            shots.Add(new DesignShot(path, screen.Length > 80 ? screen[..80] : screen, width, theme));
+        }
+        return shots;
+    }
+
+    /// <summary>The screenshots that actually arrived: every stored upload, described by the reply when it lists it (else by
+    /// its file name), in the reply's order first.</summary>
+    internal static IReadOnlyList<DesignShot> Arrived(IReadOnlyList<DesignShot> listed, IReadOnlyList<AgentOs.Domain.Files.StoredFileInfo> uploaded)
+    {
+        ArgumentNullException.ThrowIfNull(listed);
+        ArgumentNullException.ThrowIfNull(uploaded);
+        var stored = uploaded.Select(u => u.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var result = listed.Where(s => stored.Contains(s.Path)).DistinctBy(s => s.Path, StringComparer.OrdinalIgnoreCase).ToList();
+        var described = result.Select(s => s.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        result.AddRange(uploaded.Where(u => !described.Contains(u.Path)).Select(u => DesignShot.FromPath(u.Path)));
+        return result;
+    }
+
+    /// <summary>The prompt section that asks for the design gate's screenshots (only on a member's computer).</summary>
+    internal static string ScreenshotsSection(RunCollect limits)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        var screens = Math.Max(1, limits.MaxFiles / 4);
+        return string.Create(CultureInfo.InvariantCulture,
+            $"""
+
+
+            ## Screenshots for the design check
+            This ticket changes what people see, and a Designer agent checks its screens next. After the acceptance checks,
+            while the app still runs, take a screenshot of each screen this change touches (at most {screens} screens) at two
+            widths — {DesignShot.PhoneWidth} px (phone) and {DesignShot.DesktopWidth} px (desktop) — each in light and in
+            dark colour scheme: four per screen. Use Playwright, e.g.
+            `npx playwright screenshot --viewport-size={DesignShot.PhoneWidth},844 --color-scheme=dark --full-page <url> <file>`
+            (or `colorScheme` on the browser context in a spec). Save them as PNG in `{RunUploadRules.Folder}/` of the run
+            folder — the folder you started in, not inside the clone — named `<screen>-<width>-<theme>.png`
+            (e.g. `checkout-{DesignShot.PhoneWidth}-dark.png`); each under {limits.MaxFileBytes / (1024 * 1024)} MB. Never
+            commit them: the runner sends them to AgentOS.NET itself. Add them to your JSON reply:
+            "screenshots":[{"{"}"path":"{RunUploadRules.Folder}/checkout-{DesignShot.PhoneWidth}-dark.png","screen":"Checkout","width":{DesignShot.PhoneWidth},"theme":"dark"{"}"}]
+            A screenshot you could not take is left out (say why in the summary); it never fails the verdict on its own.
+            """);
     }
 
     /// <summary>The verdict as a pull-request comment (Markdown), evidence per criterion.</summary>

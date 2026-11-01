@@ -229,7 +229,22 @@ public sealed partial class ProjectOrchestrator(
                     open.Add(new PlanChange(r.Id, number, checks, report, testing, findings, merge, r.DefaultBranch, review));
                 }
                 var flow = await TaskFlowAsync(board, s.TicketFlowVersion, taskFlows, ct).ConfigureAwait(false);
-                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds) { Flow = flow.Definition.Resolve(LabelsOf(s, labels)) });
+                var plan = flow.Definition.Resolve(LabelsOf(s, labels));
+                // The Design gate reads the review of the task's CURRENT change (its fix round): a fix round starts afresh.
+                var reviews = plan.Runs(TicketStepKind.Design) ? sp.GetService<AgentOs.Domain.Sessions.IDesignReviewStore>() : null;
+                var design = reviews is null ? null : await reviews.GetAsync(tenant, s.Id, s.FixRounds, ct).ConfigureAwait(false);
+                // A check a restart cut short reads "Checking" with nothing running: it waits for the Designer again.
+                if (design is { Status: AgentOs.Domain.Sessions.DesignReviewStatus.Checking, Decision: null } && reviews is not null && !stops.IsRunning(tenant, s.Id))
+                {
+                    design = await reviews.SaveAsync(design with { Status = AgentOs.Domain.Sessions.DesignReviewStatus.Pending, UpdatedAtUtc = DateTimeOffset.UtcNow }, ct)
+                        .ConfigureAwait(false);
+                }
+                planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds)
+                {
+                    Flow = plan,
+                    Design = design?.Gate ?? AgentOs.Domain.Sessions.DesignGateState.NotChecked,
+                    DesignFindings = design?.Gate == AgentOs.Domain.Sessions.DesignGateState.ChangesRequested ? design.ChangeRequest() : null,
+                });
             }
 
             // Tickets: a ticket with any task that isn't closed is the person's or already handled — never doubled.
@@ -352,8 +367,16 @@ public sealed partial class ProjectOrchestrator(
             }
             case AutopilotAction.RunTests test:
             {
-                var tested = await tasks.TestAsync(tenant, test.SessionId, ct: ct).ConfigureAwait(false);
+                // A ticket whose flow runs the Design gate gets its screenshots taken by this test run.
+                var tested = await tasks.TestAsync(tenant, test.SessionId, captureDesign: await RunsDesignAsync(board, test.SessionId, tickets, sp, ct).ConfigureAwait(false),
+                    ct: ct).ConfigureAwait(false);
                 log.Add(tenant, board.Id, tested == TaskStart.Started ? test.Why : $"Couldn't test #{test.IssueNumber}: {tested}.");
+                break;
+            }
+            case AutopilotAction.RunDesign check:
+            {
+                var checking = await tasks.DesignAsync(tenant, check.SessionId, ct: ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, checking == TaskStart.Started ? check.Why : $"Couldn't check #{check.IssueNumber}'s design: {checking}.");
                 break;
             }
             case AutopilotAction.Merge merge:
@@ -480,6 +503,17 @@ public sealed partial class ProjectOrchestrator(
     internal static IReadOnlyList<string> LabelsOf(RemoteSessionEntity task, IReadOnlyDictionary<(string Owner, string Repo, int Number), IReadOnlyList<string>> labels) =>
         task is { IssueNumber: { } n, RepoOwner: { } o, RepoName: { } r } && labels.TryGetValue((o, r, n), out var l) ? l
         : task.TicketType is { Length: > 0 } type ? [type] : [];
+
+    // True when the task's ticket flow (the version it started with, for its ticket's labels) runs the Design gate — its
+    // test run then takes the screenshots the Designer checks.
+    private async Task<bool> RunsDesignAsync(WorkspaceEntity board, Guid sessionId, IReadOnlyList<BoardTicket> tickets, IServiceProvider sp, CancellationToken ct)
+    {
+        var session = (await sp.GetRequiredService<ISessionRepository>().ListForTenantAsync(board.TenantId, ct).ConfigureAwait(false))
+            .FirstOrDefault(s => s.Id == sessionId);
+        if (session is null) { return false; }
+        var flow = await flows.ForTaskAsync(board.TenantId, board.Id, session.TicketFlowVersion, ct).ConfigureAwait(false);
+        return flow.Definition.Resolve(LabelsOf(session, TicketLabels(tickets))).Runs(TicketStepKind.Design);
+    }
 
     // The flow a task runs (the version it started with), once per version per pass.
     private async Task<EffectiveTicketFlow> TaskFlowAsync(WorkspaceEntity board, int? snapshot, Dictionary<int, EffectiveTicketFlow> memo, CancellationToken ct)

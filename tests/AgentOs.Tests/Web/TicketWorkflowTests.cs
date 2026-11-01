@@ -74,6 +74,16 @@ public sealed class TicketWorkflowTests
         public Task UpdateBranchAsync(TicketFlow flow, TicketChange change, CancellationToken ct) { Updates++; return Task.CompletedTask; }
 
         public Task<string?> MergeAsync(TicketFlow flow, TicketChange change, CancellationToken ct) { Merges++; _status = "Merged"; return Task.FromResult<string?>(null); }
+
+        /// <summary>The Design gate's answers, in order (Design gate, ADR-0016).</summary>
+        public Queue<DesignStep> Designs { get; } = new();
+        public int DesignRuns { get; private set; }
+
+        public Task<DesignStep> DesignAsync(TicketFlow flow, CancellationToken ct)
+        {
+            DesignRuns++;
+            return Task.FromResult(Designs.Dequeue());
+        }
     }
 
     private static readonly (PrChecksState, PrMergeState) Green = (PrChecksState.Passed, PrMergeState.Clean);
@@ -333,6 +343,105 @@ public sealed class TicketWorkflowTests
         flow.Plan.ShouldBeSameAs(plan);
         flow.FlowVersion.ShouldBe(7);
         flow.Round.ShouldBe(1);
+    }
+
+    // ── The Design gate (ADR-0016) ──
+
+    private static TicketFlowDefinition DesignOn() =>
+        TicketFlowDefinition.Default.With(TicketFlowDefinition.Default.Find("design")! with { Enabled = true });
+
+    private static ScriptedSteps GreenThroughTest(int rounds = 1)
+    {
+        var steps = new ScriptedSteps();
+        for (var i = 0; i < rounds; i++)
+        {
+            steps.Checks.Enqueue(Green);
+            steps.Reviews.Enqueue("Reviewed");
+            steps.Tests.Enqueue("Accepted");
+        }
+        return steps;
+    }
+
+    [Fact]
+    public async Task Design_UiTicket_PassesTheDesigner_ThenMerges()
+    {
+        var steps = GreenThroughTest();
+        steps.Designs.Enqueue(new DesignStep(AgentOs.Domain.Sessions.DesignGateState.Passed, null, "Looks right."));
+        var entered = new List<string>();
+
+        var flow = await RunPlan(steps, DesignOn().Resolve(["area:ui"]), entered);
+
+        flow.Stage.ShouldBe(TicketStage.Merged);
+        flow.Trail.ShouldBe(["coded", "checks green", "review approved", "acceptance passed", "design approved", "merged"]);
+        entered.ShouldBe(["code", "checks", "review", "test", "design", "merge"]);
+        steps.Merges.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Design_ChangesGoBackToCoding_OnTheSameRounds_ThenPass()
+    {
+        var steps = GreenThroughTest(rounds: 2);
+        steps.Designs.Enqueue(new DesignStep(AgentOs.Domain.Sessions.DesignGateState.ChangesRequested, "- Checkout · phone · dark: unreadable button", null));
+        steps.Designs.Enqueue(new DesignStep(AgentOs.Domain.Sessions.DesignGateState.Passed, null, null));
+
+        var flow = await RunPlan(steps, DesignOn().Resolve(["area:ui"]));
+
+        flow.Stage.ShouldBe(TicketStage.Merged);
+        flow.Round.ShouldBe(1);
+        steps.CodeRequests.Count.ShouldBe(2);
+        steps.CodeRequests[1]!.ShouldContain("unreadable button");
+        flow.Trail.ShouldContain("design review asked for changes → back to Coding (try 1 of 3)");
+    }
+
+    [Fact]
+    public async Task Design_NeedsAPerson_EndsTheFlow_WithoutMerging()
+    {
+        var steps = GreenThroughTest();
+        steps.Designs.Enqueue(new DesignStep(AgentOs.Domain.Sessions.DesignGateState.NeedsPerson, null, "No screenshots came back."));
+
+        var flow = await RunPlan(steps, DesignOn().Resolve(["area:ui"]));
+
+        flow.Stage.ShouldBe(TicketStage.NeedsPerson);
+        flow.Reason!.ShouldContain("approve it or ask for changes on Board › Tasks");
+        flow.Reason!.ShouldContain("No screenshots came back.");
+        steps.Merges.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Design_ThatCouldntStart_StopsTheFlow()
+    {
+        var steps = GreenThroughTest();
+        steps.Designs.Enqueue(new DesignStep(AgentOs.Domain.Sessions.DesignGateState.Checking, null, "The Designer agent couldn't start: NoCodeProject."));
+
+        var flow = await RunPlan(steps, DesignOn().Resolve(["area:ui"]));
+
+        flow.Stage.ShouldBe(TicketStage.Stopped);
+        flow.Reason.ShouldBe("The Designer agent couldn't start: NoCodeProject.");
+    }
+
+    [Fact]
+    public async Task Design_OffOrNotForThisTicket_IsNeverRun()
+    {
+        var off = GreenThroughTest();
+        (await RunPlan(off, TicketFlowDefinition.Default.Resolve(["area:ui"]))).Stage.ShouldBe(TicketStage.Merged);
+        off.DesignRuns.ShouldBe(0);
+
+        var api = GreenThroughTest();
+        (await RunPlan(api, DesignOn().Resolve(["area:api"]))).Trail.ShouldNotContain("design approved");
+        api.DesignRuns.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Design_WithoutTest_IsAnUnsafePlan_SoTheDefaultFlowRuns()
+    {
+        var d = DesignOn();
+        var unsafePlan = new TicketFlowPlan([d.Find("code")!, d.Find("checks")!, d.Find("review")!, d.Find("design")!, d.Find("merge")!], []);
+        var steps = GreenThroughTest();
+
+        var flow = await RunPlan(steps, unsafePlan);
+
+        flow.Trail.ShouldBe(["coded", "checks green", "review approved", "acceptance passed", "merged"]);
+        steps.DesignRuns.ShouldBe(0);
     }
 
     [Fact]

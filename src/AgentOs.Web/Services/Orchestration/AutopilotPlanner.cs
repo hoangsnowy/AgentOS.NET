@@ -48,6 +48,14 @@ public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IR
     /// <summary>The steps this task runs — its ticket flow (the version it started with) resolved for its ticket's
     /// labels. The rules make no move for a step it passes through (no review when Review is off for it).</summary>
     public TicketFlowPlan Flow { get; init; } = TicketFlowPlan.Default;
+
+    /// <summary>Where the Design gate stands for the task's current change (its review of the current fix round): the
+    /// Designer agent's verdict, overridden by the owner's Approve design / Ask for changes. Read only when the task's
+    /// flow runs Design.</summary>
+    public AgentOs.Domain.Sessions.DesignGateState Design { get; init; } = AgentOs.Domain.Sessions.DesignGateState.NotChecked;
+
+    /// <summary>What goes back to the Coding agent when the Design gate asks for changes.</summary>
+    public string? DesignFindings { get; init; }
 }
 
 /// <summary>One thing to do, and the sentence that explains it.</summary>
@@ -59,6 +67,7 @@ public abstract record AutopilotAction(string Why)
     public sealed record UpdateBranch(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record RunTests(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record RunReview(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
+    public sealed record RunDesign(Guid SessionId, int IssueNumber, string Why) : AutopilotAction(Why);
     public sealed record Merge(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
     public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why);
 }
@@ -205,6 +214,42 @@ public static class AutopilotPlanner
                 testing++;
                 continue;
             }
+            // The Design gate (ADR-0016) comes after testing, for the tickets whose flow runs it: nothing merges until the
+            // Designer agent passed the screenshots or the owner approved them; "changes" go back to Coding.
+            if (task.Flow.Runs(TicketStepKind.Design))
+            {
+                var gate = task.Design;
+                if (gate is AgentOs.Domain.Sessions.DesignGateState.Checking or AgentOs.Domain.Sessions.DesignGateState.NeedsPerson)
+                {
+                    // Being checked, or the owner decides on Board › Tasks (Approve design / Ask for changes).
+                    continue;
+                }
+                if (gate == AgentOs.Domain.Sessions.DesignGateState.ChangesRequested)
+                {
+                    if (task.FixRounds >= maxFixRounds)
+                    {
+                        actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber,
+                            $"Design review still asks for changes after {maxFixRounds} automatic fixes — needs a person.",
+                            $"Stopped fixing #{task.IssueNumber}: design review still asks for changes after {maxFixRounds} tries. It needs you."));
+                        continue;
+                    }
+                    if (running >= maxParallel) { continue; }
+                    var round = task.FixRounds + 1;
+                    actions.Add(new AutopilotAction.FixChecks(task.SessionId, task.IssueNumber, task.DesignFindings ?? "Design review asked for changes.", round,
+                        $"Design review asked for changes on #{task.IssueNumber} — sent back to the AI (try {round} of {maxFixRounds})."));
+                    running++;
+                    continue;
+                }
+                if (gate == AgentOs.Domain.Sessions.DesignGateState.NotChecked)
+                {
+                    // The Designer reads screenshots — no app, no ports: a free slot and the member's computer.
+                    if (!canTest || running >= maxParallel) { continue; }
+                    actions.Add(new AutopilotAction.RunDesign(task.SessionId, task.IssueNumber,
+                        $"Checking #{task.IssueNumber}'s screens against the project's design — its tests passed."));
+                    running++;
+                    continue;
+                }
+            }
             if (mode == AutopilotMode.BuildAndMerge)
             {
                 // Its base moved on without conflicts: update the branch first (checks run again), merge next pass.
@@ -246,12 +291,14 @@ public static class AutopilotPlanner
         var passed = new List<string> { "checks green" };
         if (flow.Runs(TicketStepKind.Review)) { passed.Add("review approved"); }
         if (flow.Runs(TicketStepKind.Test)) { passed.Add("acceptance testing passed"); }
+        if (flow.Runs(TicketStepKind.Design)) { passed.Add("its design approved"); }
         return passed.Count == 1 ? passed[0] : string.Join(", ", passed.Take(passed.Count - 1)) + " and " + passed[^1];
     }
 
     /// <summary>True for a move that occupies a work slot on the member's computer.</summary>
     public static bool TakesSlot(AutopilotAction action) =>
-        action is AutopilotAction.StartTicket or AutopilotAction.ResumeTask or AutopilotAction.FixChecks or AutopilotAction.RunReview or AutopilotAction.RunTests;
+        action is AutopilotAction.StartTicket or AutopilotAction.ResumeTask or AutopilotAction.FixChecks or AutopilotAction.RunReview
+            or AutopilotAction.RunTests or AutopilotAction.RunDesign;
 
     /// <summary>
     /// The guardrail under the Orchestrator agent: the moves it picked, in its order, kept only while they fit — slots
@@ -290,6 +337,7 @@ public static class AutopilotPlanner
         AutopilotAction.UpdateBranch a => a.SessionId,
         AutopilotAction.RunTests a => a.SessionId,
         AutopilotAction.RunReview a => a.SessionId,
+        AutopilotAction.RunDesign a => a.SessionId,
         AutopilotAction.Merge a => a.SessionId,
         AutopilotAction.NeedsPerson a => a.SessionId,
         _ => null,

@@ -40,7 +40,9 @@ public sealed class RemoteAgentModule : IModule, IEndpointModule
         // Ticket files ahead of a server-driven run (ADR-0015); a CLI run carries them with its dispatch instead.
         services.TryAddSingleton<AgentOs.Domain.Files.IRunnerFileDelivery, RunnerFileDeliveryService>();
 
-        services.AddSignalR();
+        // A runner sends screenshots back in pieces of RunUploadRules.ChunkBytes (256 KB, ~342 KB as base64 JSON) — above
+        // SignalR's 32 KB default for what a server receives. Raised for this hub only (Blazor's circuits keep theirs).
+        services.AddSignalR().AddHubOptions<RemoteAgentHub>(o => o.MaximumReceiveMessageSize = RemoteAgentHub.MaxReceiveBytes);
         services.AddHostedService<RemoteAgentTransport>();
     }
 

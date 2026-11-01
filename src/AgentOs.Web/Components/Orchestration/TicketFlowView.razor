@@ -284,6 +284,9 @@
     private Guid? _openedFor;
     private EffectiveTicketFlow _effective = EffectiveTicketFlow.BuiltIn;
     private TicketFlowDefinition _draft = TicketFlowDefinition.Default;
+    // What the scope runs now, with any step kind added since it was saved shown off (the Design gate) — what "unsaved"
+    // compares to, so a flow saved before Design existed can turn it on without reading as changed.
+    private TicketFlowDefinition _baseline = TicketFlowDefinition.Default;
     private IReadOnlyList<TicketFlowNode> _ordered = [];
     private IReadOnlyList<TicketFlowProblem> _problems = [];
     private IReadOnlyList<TicketFlowVersion> _history = [];
@@ -301,7 +304,7 @@
     private string GraphBtnClass => _table ? "syn-btn" : "syn-btn is-on";
     private string TableBtnClass => _table ? "syn-btn is-on" : "syn-btn";
     private string ScopeValue => _scope?.ToString("D") ?? string.Empty;
-    private bool Dirty => !string.Equals(_draft.ToJson(), _effective.Definition.ToJson(), StringComparison.Ordinal);
+    private bool Dirty => !string.Equals(_draft.ToJson(), _baseline.ToJson(), StringComparison.Ordinal);
     private string Rounds => _limits.MaxFixRounds.ToString(CultureInfo.InvariantCulture);
 
     private string Caption => $"Ticket flow {(_scope is null ? "for all projects" : "for " + BoardName(_scope.Value))}: {_draft.Summary()}";
@@ -346,7 +349,8 @@
     {
         _effective = await Flows.ResolveAsync(TenantId, _scope);
         _history = await Flows.HistoryAsync(TenantId, _scope);
-        _draft = _effective.Definition;
+        _baseline = _effective.Definition.WithKnownSteps();
+        _draft = _baseline;
         _saveError = null;
         Revalidate();
         _live = LiveForScope();
@@ -377,7 +381,7 @@
 
     private void Discard()
     {
-        _draft = _effective.Definition;
+        _draft = _baseline;
         _saveError = null;
         Revalidate();
     }
@@ -494,7 +498,7 @@
 
     private static string CatOf(TicketStepKind kind) => kind switch
     {
-        TicketStepKind.Code or TicketStepKind.Review or TicketStepKind.Test => "agent",
+        TicketStepKind.Code or TicketStepKind.Review or TicketStepKind.Test or TicketStepKind.Design => "agent",
         TicketStepKind.Merge => "terminal",
         _ => "logic",
     };
@@ -505,6 +509,7 @@
         TicketStepKind.Checks => "shield",
         TicketStepKind.Review => "search",
         TicketStepKind.Test => "check",
+        TicketStepKind.Design => "palette",
         TicketStepKind.Merge => "git-pull-request",
         _ => "diamond",
     };

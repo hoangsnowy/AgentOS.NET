@@ -84,9 +84,13 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         // Ticket files (ADR-0015): the manifest travels with the request; the bytes wait in the broker until the runner it
         // goes to fetches them, before its CLI starts.
         var files = request.Files is { Count: > 0 } attached ? attached : null;
+        // Files sent back (Design gate, ADR-0016): the runner learns only the caps; where they are stored stays here.
+        var uploads = request.Uploads;
         var execRequest = new RemoteExecRequest(id, request.SystemPrompt, request.UserPrompt, request.Model, request.Cli, request.Autonomy,
-            files is null ? null : RunFileEvidence.Manifest(files));
+            files is null ? null : RunFileEvidence.Manifest(files), uploads?.Limits);
         if (files is not null) { _broker.StageFiles(id, files); }
+        if (uploads is not null) { _broker.ExpectUploads(id, uploads.Limits); }
+        IReadOnlyList<RunUpload> sentBack = [];
         var dispatchedAt = DateTimeOffset.UtcNow;
 
         // A single full-prompt dispatch (M3) caps at 120s, but an agentic issue-work run on the local
@@ -110,6 +114,7 @@ public sealed class RemoteAgentLlmClient : ILlmClient
             finally
             {
                 if (request.Progress is not null) { _broker.Progressed -= OnProgress; }
+                if (uploads is not null) { sentBack = _broker.TakeUploads(id); }
                 if (files is not null)
                 {
                     await RunFileEvidence.RecordAsync(_services, target.TenantId, id, files, _broker.UnstageFiles(id),
@@ -160,6 +165,8 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         _logger.LogInformation("[RemoteAgent] request {Id} handled by a remote agent ({Count} connected); {In}->{Out} tokens ({Kind}), 0 API cost.",
             id, _broker.AgentCount, inTok, outTok, real ? "reported by the CLI" : "estimated");
 
+        var stored = uploads is null || sentBack.Count == 0 ? [] : await StoreUploadsAsync(target.TenantId, uploads.ScopeKey, sentBack, id).ConfigureAwait(false);
+
         return new LlmResponse(
             Content: result.Content,
             InputTokens: inTok,
@@ -171,7 +178,33 @@ public sealed class RemoteAgentLlmClient : ILlmClient
         {
             CacheReadTokens = real ? result.CacheReadTokens ?? 0 : 0,
             CacheWriteTokens = real ? result.CacheWriteTokens ?? 0 : 0,
+            Uploaded = stored,
         };
+    }
+
+    // The files the runner sent back, into the tenant's file store under the request's scope (never into git). Each was
+    // already checked piece by piece (RunUploadRules); a store failure loses the screenshots, never the run's answer.
+    private async Task<IReadOnlyList<AgentOs.Domain.Files.StoredFileInfo>> StoreUploadsAsync(string tenantId, string scopeKey,
+        IReadOnlyList<RunUpload> uploads, string requestId)
+    {
+        var stored = new List<AgentOs.Domain.Files.StoredFileInfo>(uploads.Count);
+        try
+        {
+            using var scope = _services.CreateScope();
+            if (scope.ServiceProvider.GetService<AgentOs.Domain.Files.IScopedFileStore>() is not { } store) { return stored; }
+            foreach (var u in uploads)
+            {
+                var info = new AgentOs.Domain.Files.StoredFileInfo(Guid.NewGuid(), tenantId, scopeKey, u.Path, u.Content.LongLength,
+                    AgentOs.Domain.Files.RunFile.Hash(u.Content), u.ContentType, "Testing agent (member's computer)", DateTimeOffset.UtcNow);
+                stored.Add(await store.PutAsync(info, u.Content).ConfigureAwait(false));
+            }
+            _logger.LogInformation("[RemoteAgent] request {Id}: stored {Count} file(s) sent back by the runner.", requestId, stored.Count);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or System.Data.Common.DbException or TimeoutException)
+        {
+            _logger.LogWarning(ex, "[RemoteAgent] request {Id}: couldn't store the files the runner sent back.", requestId);
+        }
+        return stored;
     }
 
     // Rough token estimate for text the CLI produced no usage numbers for: ~4 characters per token, the

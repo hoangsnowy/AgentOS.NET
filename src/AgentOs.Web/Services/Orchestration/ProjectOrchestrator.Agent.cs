@@ -328,6 +328,7 @@ public sealed partial class ProjectOrchestrator
             sb.Append('#').Append(task.IssueNumber).Append(' ').Append(task.Status).Append(", fix rounds used ").Append(task.FixRounds);
             // Its ticket flow leaves steps out: the agent must not expect (or ask for) a review or test it won't get.
             if (task.Flow.Skipped.Count > 0) { sb.Append(", ticket flow ").Append(task.Flow.Summary); }
+            if (task.Flow.Runs(TicketStepKind.Design)) { sb.Append(", design ").Append(task.Design); }
             sb.Append('\n');
             foreach (var c in task.OpenChanges)
             {
@@ -369,6 +370,7 @@ public sealed partial class ProjectOrchestrator
         AutopilotAction.FixChecks => "fix",
         AutopilotAction.RunReview => "review",
         AutopilotAction.RunTests => "test",
+        AutopilotAction.RunDesign => "design",
         AutopilotAction.Merge => "merge",
         AutopilotAction.UpdateBranch => "update-branch",
         _ => "other",
@@ -381,6 +383,7 @@ public sealed partial class ProjectOrchestrator
         AutopilotAction.FixChecks x => x.IssueNumber,
         AutopilotAction.RunReview x => x.IssueNumber,
         AutopilotAction.RunTests x => x.IssueNumber,
+        AutopilotAction.RunDesign x => x.IssueNumber,
         AutopilotAction.Merge x => x.IssueNumber,
         AutopilotAction.UpdateBranch x => x.IssueNumber,
         AutopilotAction.NeedsPerson x => x.IssueNumber,

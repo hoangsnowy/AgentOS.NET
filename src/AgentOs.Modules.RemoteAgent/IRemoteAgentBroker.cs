@@ -29,8 +29,14 @@ namespace AgentOs.Modules.RemoteAgent;
 /// fresh per-run directory) — see <c>LlmRequest.Autonomy</c>.
 /// <paramref name="Files"/> lists the ticket files the runner fetches (<c>ReadRunFile</c>) and writes under
 /// <c>&lt;run dir&gt;/.agentos/files/</c> before the CLI starts (ADR-0015); null = none.</summary>
+/// <paramref name="Collect"/> asks the runner to send back the image files the agent listed in its reply (the Design
+/// gate's screenshots, ADR-0016) with <c>UploadRunFile</c> before it completes the request; null = nothing comes back.
+/// The scope they are stored under stays on the server.
 public sealed record RemoteExecRequest(string Id, string SystemPrompt, string UserPrompt, string Model, string? Cli = null, string? Autonomy = null,
-    System.Collections.Generic.IReadOnlyList<RunFileEntry>? Files = null);
+    System.Collections.Generic.IReadOnlyList<RunFileEntry>? Files = null, AgentOs.Domain.Files.RunCollect? Collect = null);
+
+/// <summary>A file a runner sent back for a request, complete and checked (<see cref="AgentOs.Domain.Files.RunUploadRules"/>).</summary>
+public sealed record RunUpload(string Path, byte[] Content, string ContentType);
 
 /// <summary>One ticket file of a dispatch, as the runner sees it before fetching it: where it goes, how big it is and the
 /// SHA-256 the written bytes must match.</summary>
@@ -206,6 +212,19 @@ public interface IRemoteAgentBroker
 
     /// <summary>Drop what was staged for <paramref name="id"/>; returns how many files its runner fetched to the end.</summary>
     int UnstageFiles(string id) => 0;
+
+    // ── Files sent back (Design gate, ADR-0016) ──
+
+    /// <summary>Accept files sent back for request <paramref name="id"/> within <paramref name="limits"/> — only from the
+    /// runner it is then dispatched to. Call before dispatching; <see cref="TakeUploads"/> after.</summary>
+    void ExpectUploads(string id, AgentOs.Domain.Files.RunCollect limits) { }
+
+    /// <summary>Called by the hub: one piece of a file sent back. Null when accepted, else why it was refused (the file is
+    /// then dropped). Only the connection the request was dispatched to is heard.</summary>
+    string? UploadRunFile(string connectionId, string id, AgentOs.Domain.Files.RunUploadChunk chunk) => "This server takes no files back.";
+
+    /// <summary>The complete files sent back for <paramref name="id"/>, and forget the request.</summary>
+    System.Collections.Generic.IReadOnlyList<RunUpload> TakeUploads(string id) => [];
 }
 
 /// <summary>In-process broker. Singleton; thread-safe.</summary>
@@ -256,10 +275,100 @@ public sealed class InProcessRemoteAgentBroker : IRemoteAgentBroker, IRunnerPrev
     public int UnstageFiles(string id) =>
         !string.IsNullOrEmpty(id) && _staged.TryRemove(id, out var staged) ? Volatile.Read(ref staged.Delivered) : 0;
 
-    // A dispatch's files can be fetched only by the connection it went to.
+    // A dispatch's files can be fetched only by the connection it went to — and files come back only from it.
     private void BindStaged(string id, string connectionId)
     {
         if (_staged.TryGetValue(id, out var staged)) { staged.ConnectionId = connectionId; }
+        if (_uploads.TryGetValue(id, out var uploads)) { uploads.ConnectionId = connectionId; }
+    }
+
+    // ── Files sent back (Design gate, ADR-0016) ──
+
+    // Request id → what its runner is sending back. Bounded by the request's limits; dropped by TakeUploads.
+    private readonly ConcurrentDictionary<string, UploadSlot> _uploads = new(StringComparer.Ordinal);
+
+    private sealed class UploadSlot(AgentOs.Domain.Files.RunCollect limits)
+    {
+        public readonly AgentOs.Domain.Files.RunCollect Limits = limits;
+        public readonly object Gate = new();
+        public volatile string? ConnectionId;
+        public readonly System.Collections.Generic.Dictionary<string, System.IO.MemoryStream> Open = new(StringComparer.OrdinalIgnoreCase);
+        public readonly System.Collections.Generic.List<RunUpload> Done = [];
+        public long Total;
+    }
+
+    public void ExpectUploads(string id, AgentOs.Domain.Files.RunCollect limits)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentNullException.ThrowIfNull(limits);
+        // Never above the hard caps, whatever a caller asks for.
+        _uploads[id] = new UploadSlot(new AgentOs.Domain.Files.RunCollect(
+            Math.Clamp(limits.MaxFiles, 0, AgentOs.Domain.Files.RunUploadRules.MaxFiles),
+            Math.Clamp(limits.MaxFileBytes, 0, AgentOs.Domain.Files.RunUploadRules.MaxFileBytes),
+            Math.Clamp(limits.MaxTotalBytes, 0, AgentOs.Domain.Files.RunUploadRules.MaxTotalBytes)));
+    }
+
+    public string? UploadRunFile(string connectionId, string id, AgentOs.Domain.Files.RunUploadChunk chunk)
+    {
+        if (chunk is null || string.IsNullOrEmpty(id) || !_uploads.TryGetValue(id, out var slot) || slot.ConnectionId is not { } owner
+            || !string.Equals(owner, connectionId, StringComparison.Ordinal))
+        {
+            return "Nothing is expected back for this request.";
+        }
+        if (!AgentOs.Domain.Files.RunUploadRules.TryCheck(chunk.Path, out var path, out var error) || !string.Equals(path, chunk.Path, StringComparison.Ordinal))
+        {
+            return $"Refused \"{chunk.Path}\": {error ?? "the path must be sent normalised."}";
+        }
+        var data = chunk.Data ?? [];
+        if (data.Length > AgentOs.Domain.Files.RunUploadRules.ChunkBytes) { return $"Refused \"{path}\": a piece is at most {AgentOs.Domain.Files.RunUploadRules.ChunkBytes} bytes."; }
+        lock (slot.Gate)
+        {
+            if (!slot.Open.TryGetValue(path, out var buffer))
+            {
+                if (chunk.Offset != 0) { return $"Refused \"{path}\": it must start at the beginning."; }
+                if (slot.Done.Exists(d => string.Equals(d.Path, path, StringComparison.OrdinalIgnoreCase))) { return $"Refused \"{path}\": it was already sent."; }
+                if (slot.Done.Count + slot.Open.Count >= slot.Limits.MaxFiles) { return $"Refused \"{path}\": at most {slot.Limits.MaxFiles} files come back from one run."; }
+                buffer = new System.IO.MemoryStream();
+                slot.Open[path] = buffer;
+            }
+            string? refused = null;
+            if (chunk.Offset != buffer.Length) { refused = $"Refused \"{path}\": pieces must arrive in order."; }
+            else if (buffer.Length + data.Length > slot.Limits.MaxFileBytes) { refused = $"Refused \"{path}\": a file is at most {slot.Limits.MaxFileBytes} bytes."; }
+            else if (slot.Total + data.Length > slot.Limits.MaxTotalBytes) { refused = $"Refused \"{path}\": one run sends back at most {slot.Limits.MaxTotalBytes} bytes."; }
+            else if (!chunk.Last && data.Length == 0) { refused = $"Refused \"{path}\": an empty piece."; }
+            if (refused is not null) { Drop(slot, path, buffer); return refused; }
+            buffer.Write(data);
+            slot.Total += data.Length;
+            if (!chunk.Last) { return null; }
+            var content = buffer.ToArray();
+            slot.Open.Remove(path);
+            buffer.Dispose();
+            if (!AgentOs.Domain.Files.RunUploadRules.LooksLikeImage(path, content))
+            {
+                slot.Total -= content.LongLength;
+                return $"Refused \"{path}\": it isn't the image its name says.";
+            }
+            slot.Done.Add(new RunUpload(path, content, AgentOs.Domain.Files.RunUploadRules.ContentType(path)!));
+            return null;
+        }
+
+        static void Drop(UploadSlot slot, string path, System.IO.MemoryStream buffer)
+        {
+            slot.Total -= buffer.Length;
+            slot.Open.Remove(path);
+            buffer.Dispose();
+        }
+    }
+
+    public System.Collections.Generic.IReadOnlyList<RunUpload> TakeUploads(string id)
+    {
+        if (string.IsNullOrEmpty(id) || !_uploads.TryRemove(id, out var slot)) { return []; }
+        lock (slot.Gate)
+        {
+            foreach (var open in slot.Open.Values) { open.Dispose(); }
+            slot.Open.Clear();
+            return [.. slot.Done];
+        }
     }
 
     public event Action<PreviewCommand>? PreviewCommanded;

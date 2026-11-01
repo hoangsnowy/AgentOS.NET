@@ -19,6 +19,8 @@
     <Compile Include="..\AgentOs.Domain\Preview\PreviewRecipe.cs" Link="Linked\PreviewRecipe.cs" />
     <!-- Ticket files: the runner re-checks every path with exactly the server's rules (ADR-0015). -->
     <Compile Include="..\AgentOs.Domain\Files\TicketFilePath.cs" Link="Linked\TicketFilePath.cs" />
+    <!-- Design gate: the screenshots a run sends back pass exactly the server's rules (ADR-0016). -->
+    <Compile Include="..\AgentOs.Domain\Files\RunUploadRules.cs" Link="Linked\RunUploadRules.cs" />
   </ItemGroup>
 
 </Project>

@@ -36,7 +36,7 @@ public sealed class BoardAgentRegistryTests
 {
     private const string Tenant = "acme";
     private static readonly string[] BoardRoles =
-        [AgentRoles.Discovery, AgentRoles.IssueWork, AgentRoles.Reviewer, AgentRoles.Acceptance, AgentRoles.AutopilotOrchestrator, AgentRoles.Retrospective];
+        [AgentRoles.Discovery, AgentRoles.IssueWork, AgentRoles.Reviewer, AgentRoles.Acceptance, AgentRoles.Designer, AgentRoles.AutopilotOrchestrator, AgentRoles.Retrospective];
 
     private static readonly IReadOnlyList<string> ShopRepo = ["acme/shop"];
 
@@ -103,6 +103,7 @@ public sealed class BoardAgentRegistryTests
     [Theory]
     [InlineData(AgentRoles.Reviewer, 32768)]
     [InlineData(AgentRoles.Acceptance, 32768)]
+    [InlineData(AgentRoles.Designer, 8192)]
     [InlineData(AgentRoles.AutopilotOrchestrator, 4096)]
     [InlineData(AgentRoles.Retrospective, 4096)]
     public void Seeds_KeepTodaysBehaviour_OnTheMembersComputer(string role, int maxTokens)

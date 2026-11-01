@@ -81,6 +81,20 @@ public sealed record LlmRequest(
     public System.Collections.Generic.IReadOnlyList<AgentOs.Domain.Files.RunFile>? Files { get; init; }
 
     /// <summary>
+    /// Images sent with the user prompt (multimodal) — the Designer agent's screenshots (ADR-0016). The HTTP-backed
+    /// providers attach them as image content after the text; <c>RemoteAgentLlmClient</c> can't carry them (the member's
+    /// CLI reads files instead), so a caller checks <see cref="LlmImage.Carries"/> and falls back to <see cref="Files"/>.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyList<LlmImage>? Images { get; init; }
+
+    /// <summary>
+    /// Files the paired runner sends back after the run (ADR-0016 — the Testing agent's screenshots): it uploads the image
+    /// files the agent listed in its reply, path-checked and size-capped, and the server stores them in the tenant's file
+    /// store under <see cref="RunUploadTarget.ScopeKey"/> (never into git). Only <c>RemoteAgentLlmClient</c> honours it.
+    /// </summary>
+    public RunUploadTarget? Uploads { get; init; }
+
+    /// <summary>
     /// Validates required values. Throws <see cref="System.ArgumentException"/> if invalid.
     /// </summary>
     public void Validate()
@@ -120,3 +134,19 @@ public sealed record LlmRequest(
         }
     }
 }
+
+/// <summary>An image sent with a prompt.</summary>
+/// <param name="Name">What the prompt calls it ("Checkout · phone · dark").</param>
+/// <param name="Data">The image bytes.</param>
+/// <param name="MediaType"><c>image/png</c>, <c>image/jpeg</c> or <c>image/webp</c>.</param>
+public sealed record LlmImage(string Name, byte[] Data, string MediaType)
+{
+    /// <summary>True when a provider sends images to the model itself: every HTTP-backed provider. A member's computer
+    /// (<c>RemoteAgent</c>) runs a CLI that reads files from its run folder instead.</summary>
+    public static bool Carries(string? provider) => !string.Equals(provider, "RemoteAgent", System.StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>Where the files a runner sends back after a run are stored, and the caps on them.</summary>
+/// <param name="ScopeKey">The scope in the tenant's file store (e.g. <c>DesignScope.For(…)</c>).</param>
+/// <param name="Limits">How many files and bytes the run may send back.</param>
+public sealed record RunUploadTarget(string ScopeKey, AgentOs.Domain.Files.RunCollect Limits);

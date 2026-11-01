@@ -22,6 +22,10 @@ public sealed record AcceptanceRequest(
 {
     /// <summary>The files a person attached to the ticket (ADR-0015) — copied into the run's working folder.</summary>
     public IReadOnlyList<AgentOs.Domain.Files.RunFile> Files { get; init; } = [];
+
+    /// <summary>The ticket's flow runs the Design gate (ADR-0016): take screenshots of the changed screens and send them
+    /// back to this scope. Null = no screenshots.</summary>
+    public DesignCapture? Design { get; init; }
 }
 
 /// <summary>One acceptance criterion's result: <c>pass</c>, <c>fail</c> or <c>not-checked</c> (with the reason).</summary>
@@ -33,6 +37,10 @@ public sealed record AcceptanceVerdict(bool Ran, bool Passed, IReadOnlyList<Acce
     /// <summary>Tests that fail identically on the base branch — not caused by this change, so they don't fail it; the
     /// base gets its own fix ticket.</summary>
     public IReadOnlyList<AcceptanceCriterion> BaseFailures { get; init; } = [];
+
+    /// <summary>The screenshots the run took and the server stored (Design gate, ADR-0016) — only those listed in the reply
+    /// that actually arrived.</summary>
+    public IReadOnlyList<DesignShot> Screenshots { get; init; } = [];
 
     /// <summary>The criteria that failed, as the findings sent back to the Coding agent.</summary>
     public IEnumerable<AcceptanceCriterion> Failures =>

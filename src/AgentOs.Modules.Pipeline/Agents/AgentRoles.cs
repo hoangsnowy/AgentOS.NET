@@ -58,6 +58,9 @@ public static class AgentRoles
     /// <summary>Board — tests a proposed change against its acceptance criteria (Testing agent of the Board).</summary>
     public const string Acceptance = "Acceptance";
 
+    /// <summary>Board — checks a UI change's screenshots against the project's design (the Design gate, ADR-0016).</summary>
+    public const string Designer = "Designer";
+
     /// <summary>Board — Autopilot's lead: decides what happens next on a board.</summary>
     public const string AutopilotOrchestrator = "AutopilotOrchestrator";
 
@@ -71,6 +74,7 @@ public static class AgentRoles
         new(IssueWork, "Coding (tickets)", AgentRoleGroup.Board, "Implements a ticket: clone, change, build, test, push a branch."),
         new(Reviewer, "Reviewer", AgentRoleGroup.Board, "Reviews a proposed change before it is tested; must-fix findings go back to Coding."),
         new(Acceptance, "Testing (tickets)", AgentRoleGroup.Board, "Tests a proposed change against its ticket's acceptance criteria."),
+        new(Designer, "Designer", AgentRoleGroup.Board, "Checks a UI change's screenshots (phone and desktop, light and dark) against the project's design; changes go back to Coding."),
         new(AutopilotOrchestrator, "Autopilot lead", AgentRoleGroup.Board, "Decides what Autopilot does next on a board: starts, retries, questions, closes."),
         new(Retrospective, "Retrospective", AgentRoleGroup.Board, "After a merge, turns lessons into the project's practices."),
         new(Orchestrator, "Orchestrator (Workflow pipeline)", AgentRoleGroup.WorkflowPipeline, "Coordinates the 5-agent Workflow pipeline."),
@@ -93,6 +97,7 @@ public static class AgentRoles
         ["IssueWorkAgent"] = IssueWork,
         ["ReviewAgent"] = Reviewer,
         ["AcceptanceAgent"] = Acceptance,
+        ["DesignAgent"] = Designer,
         ["AutopilotOrchestratorAgent"] = AutopilotOrchestrator,
         ["RetrospectiveAgent"] = Retrospective,
         ["PipelineOrchestrator"] = Orchestrator,
