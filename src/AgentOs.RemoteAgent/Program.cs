@@ -37,7 +37,9 @@
 //   REMOTE_AGENT_KEEP_AWAKE  "off" lets the computer idle-sleep mid-run (default: while a run or preview is in flight,
 //                       the idle timer is reset so the machine doesn't sleep under the agent — see KeepAwake.cs)
 //   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks
-//                       Try the app after seeing the project's command); REMOTE_AGENT_PREVIEWROOT moves their folder
+//                       Try the app after seeing the project's command); REMOTE_AGENT_PREVIEWROOT moves their folder.
+//                       A preview keeps running when this runner exits or restarts: the next runner re-attaches it
+//                       (state in <previews folder>/running) and the Board keeps showing it — see PreviewProcess.cs
 //
 // A shell command outside the allowlist needs approval at THIS console ([y]es / [a]lways this session / [N]o,
 // 60 s, default no); a runner with no interactive console denies it. The pairing token travels in a header,
@@ -173,10 +175,15 @@ connection.On<string>("Cancel", requestId =>
 // host re-checks it against its own checkout before running it.
 var previewRoot = Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWROOT") ?? AgentOs.RemoteAgent.PreviewHost.DefaultRoot();
 var previewsOff = string.Equals(Environment.GetEnvironmentVariable("REMOTE_AGENT_PREVIEWS"), "off", StringComparison.OrdinalIgnoreCase);
-AgentOs.RemoteAgent.PreviewHost.KillLeftovers(previewRoot);
+AgentOs.RemoteAgent.PreviewHost.KillLeftovers(previewRoot); // previews of a runner from before re-attaching existed
 var previews = new AgentOs.RemoteAgent.PreviewHost(previewRoot, ReportPreviewAsync, keepAwake);
-AppDomain.CurrentDomain.ProcessExit += (_, _) => previews.StopAll();
-Console.CancelKeyPress += (_, _) => previews.StopAll();
+// The apps an earlier runner started are still running (their own process group): take them back, and tell the server
+// on every (re)connect — after a restart, an update or a re-pairing the Board keeps showing them with the same URL.
+previews.Restore();
+// Exiting (Ctrl+C, an update, a crash handler) lets go of the previews without stopping them; Stop on the Board, or
+// their idle time, still ends them.
+AppDomain.CurrentDomain.ProcessExit += (_, _) => previews.Detach();
+connection.Reconnected += _ => AnnouncePreviewsAsync();
 
 connection.On<AgentOs.RemoteAgent.PreviewStart>("StartPreview", start =>
 {
@@ -221,6 +228,7 @@ AgentOs.RemoteAgent.RunFiles.CleanupDeliveries(
 
 await connection.StartAsync().ConfigureAwait(false);
 Console.WriteLine($"[agent] connected to {hubUrl}; runner id={runnerId}. Ctrl+C to exit.");
+await AnnouncePreviewsAsync().ConfigureAwait(false);
 await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
 
 // ── M3: run the LLM CLI with the prompt piped to stdin ──────────────────────────────────────────
@@ -632,6 +640,15 @@ async Task ReportProgressAsync(string requestId, string step)
 async Task ReportPreviewAsync(string previewId, string state, string? message)
 {
     try { await connection.SendAsync("ReportPreview", previewId, state, message).ConfigureAwait(false); }
+    catch (Exception ex) when (ex is InvalidOperationException or IOException) { _ = ex; }
+}
+
+// The previews this runner runs (also those re-attached after a restart) and the ones it found gone — on every
+// (re)connect, so the server re-attaches them to their Board cards. Best effort: the next reconnect sends it again.
+async Task AnnouncePreviewsAsync()
+{
+    var (running, gone) = previews.Announcements();
+    try { await connection.SendAsync("AnnouncePreviews", running, gone).ConfigureAwait(false); }
     catch (Exception ex) when (ex is InvalidOperationException or IOException) { _ = ex; }
 }
 

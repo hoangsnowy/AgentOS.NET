@@ -85,6 +85,16 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// <summary>The longest one Testing (tickets) run may take (minutes) — bring the app up and check every criterion.</summary>
     public const string TestingRunMinutesKey = "Autopilot:TestingRunMinutes";
 
+    /// <summary>Projects whose acceptance testing keeps running while someone tries the app (Board › Projects › Try the
+    /// app) — every other project holds testing until the preview stops.</summary>
+    public const string TestWhileTryingKey = "Autopilot:TestWhileTrying";
+
+    /// <summary>Minutes a "Try the app" preview keeps running with nobody using it before the computer stops it.</summary>
+    public const string PreviewIdleMinutesKey = "Preview:IdleMinutes";
+
+    /// <summary>The idle stop's built-in value (minutes).</summary>
+    public const int DefaultPreviewIdleMinutes = 120;
+
     internal const int DefaultMaxParallel = 2;
     internal const int DefaultMaxParallelTests = 1;
     internal const int DefaultMaxFixRounds = 3;
@@ -107,6 +117,7 @@ public sealed class AutopilotSettings : ISettingsContributor
         (CodingRunMinutesKey, 10, 240, DefaultCodingRunMinutes),
         (ReviewRunMinutesKey, 5, 120, DefaultReviewRunMinutes),
         (TestingRunMinutesKey, 10, 180, DefaultTestingRunMinutes),
+        (PreviewIdleMinutesKey, 10, 1440, DefaultPreviewIdleMinutes),
     ];
 
     /// <summary>True when the stored value means a MAF workflow (anything but "Step by step").</summary>
@@ -145,6 +156,37 @@ public sealed class AutopilotSettings : ISettingsContributor
             "The longest one Reviewer agent run may take.");
         yield return Bound(TestingRunMinutesKey, "Testing run time limit (minutes)",
             "The longest one Testing agent run may take: bring the app up and check every acceptance criterion.");
+        yield return new(TestWhileTryingKey, SettingKind.Text, Category, "Test while trying the app")
+        {
+            Help = "Testing can run while you try the app when the app keeps its data separately for each copy. List those projects by name, comma-separated; every other project waits with testing until you stop trying the app.",
+            Validator = v => v.Length <= 2000 ? null : "Keep the list under 2000 characters.",
+        };
+        yield return Bound(PreviewIdleMinutesKey, "Stop an unused app after (minutes)",
+            "Try the app keeps the app running on your computer — also when the computer's AgentOS.NET connection restarts — until you press Stop, or until nobody has had it open for this long.");
+    }
+
+    /// <summary>True when Autopilot holds acceptance testing on <paramref name="projectName"/> while one of its apps is being
+    /// tried: the default, unless the project is listed in <see cref="TestWhileTryingKey"/> (by name or id, any case).</summary>
+    public static bool HoldsTestingWhileTrying(string? testWhileTrying, string projectName, Guid projectId)
+    {
+        if (string.IsNullOrWhiteSpace(testWhileTrying)) { return true; }
+        foreach (var entry in testWhileTrying.Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (string.Equals(entry, projectName?.Trim(), StringComparison.OrdinalIgnoreCase)
+                || (Guid.TryParse(entry, out var id) && id == projectId))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>The idle stop of a "Try the app" preview, read now and clamped to its range.</summary>
+    public static async ValueTask<int> ReadPreviewIdleMinutesAsync(ISettings settings, string? tenantId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var b = Array.Find(Bounds, x => x.Key == PreviewIdleMinutesKey);
+        return Math.Clamp(await settings.GetIntAsync(PreviewIdleMinutesKey, tenantId, b.Default, ct).ConfigureAwait(false), b.Min, b.Max);
     }
 
     /// <summary>A run time limit (<see cref="CodingRunMinutesKey"/>, …), read now and clamped to its range.</summary>

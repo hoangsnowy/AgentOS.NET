@@ -161,16 +161,21 @@ public class TryTheAppTests
     }
 
     [Fact]
-    public void RunnerDisconnect_ReportsItsPreviewsStopped()
+    public void RunnerDisconnect_KeepsItsPreviewsUntilTheGraceRunsOut()
     {
-        var broker = new InProcessRemoteAgentBroker();
+        var clock = new ManualClock();
+        var broker = new InProcessRemoteAgentBroker(clock);
         using var registration = broker.RegisterRunner("conn-a", new RunnerConnection(Guid.NewGuid(), "t1", "u1"));
         var reports = new List<PreviewStatus>();
         broker.PreviewReported += reports.Add;
         broker.StartPreview(Start(), new RunnerTarget("t1", "u1"));
 
         registration.Dispose();
+        broker.SweepDetachedPreviews();
+        reports.ShouldBeEmpty(); // the app runs on outside the runner — the Board keeps it while the computer comes back
 
+        clock.Advance(InProcessRemoteAgentBroker.PreviewReconnectGrace);
+        broker.SweepDetachedPreviews();
         reports.ShouldHaveSingleItem().State.ShouldBe(PreviewStates.Stopped);
     }
 
@@ -199,19 +204,26 @@ public class TryTheAppTests
         PreviewHost.IsSafeBranch(branch).ShouldBe(expected);
 
     [Fact]
-    public void ShellFor_RunsTheLineInTheCheckout()
+    public void ShellFor_RunsTheLineInTheCheckout_DetachedWithItsOutputInTheLog()
     {
-        var psi = PreviewHost.ShellFor("npm run dev -- --host \"x y\"", "C:/work");
+        var psi = PreviewProcess.ShellFor("npm run dev -- --host \"x y\"", "C:/work", "/tmp/p1.log");
         psi.WorkingDirectory.ShouldBe("C:/work");
         psi.UseShellExecute.ShouldBeFalse();
+        psi.CreateNoWindow.ShouldBeTrue();
+        psi.RedirectStandardOutput.ShouldBeFalse(); // no pipe to the runner: a dead reader would take the app down
+        psi.RedirectStandardInput.ShouldBeFalse();
+        psi.Environment["AGENTOS_PREVIEW_LOG"].ShouldBe("/tmp/p1.log");
         if (OperatingSystem.IsWindows())
         {
             psi.FileName.ShouldBe("cmd.exe");
-            psi.Arguments.ShouldBe("/d /s /c \"npm run dev -- --host \"x y\"\"");
+            psi.Arguments.ShouldBe("/d /s /c \"(npm run dev -- --host \"x y\") >>\"%AGENTOS_PREVIEW_LOG%\" 2>&1 <NUL\"");
         }
         else
         {
-            psi.ArgumentList.ShouldBe(["-c", "npm run dev -- --host \"x y\""]);
+            psi.ArgumentList[^2].ShouldBe("-c");
+            psi.ArgumentList[^1].ShouldEndWith(Environment.NewLine + "npm run dev -- --host \"x y\"");
+            psi.ArgumentList[^1].ShouldStartWith("exec >>\"$AGENTOS_PREVIEW_LOG\" 2>&1 </dev/null");
+            PreviewProcess.StartsOwnGroup(psi).ShouldBe(psi.FileName.EndsWith("setsid", StringComparison.Ordinal));
         }
     }
 
@@ -242,6 +254,13 @@ public class TryTheAppTests
         await Task.Yield();
 
         reports.ShouldBe([("p1", "Failed")]);
+    }
+
+    internal sealed class ManualClock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 11, 1, 9, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now += by;
     }
 
     // ── Board-side state ──

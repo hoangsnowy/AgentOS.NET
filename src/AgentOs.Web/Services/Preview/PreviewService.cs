@@ -3,14 +3,18 @@
 // command first, asks the person's runner to run it, and keeps each repo's preview state for the Board — and for
 // Autopilot, which holds back acceptance testing on a board while one of its previews holds the computer's ports.
 //
-// In memory on purpose: a preview lives exactly as long as the runner process that runs it, and a Web restart drops
-// the runner connections too (the broker reports their previews Stopped).
+// In memory on purpose: the runner is the source of truth. A preview runs outside the runner's process tree, so it
+// outlives a runner restart (an update, a re-pairing, a crash); the runner keeps its state on disk and re-announces it
+// on every reconnect, and this service re-attaches it — the same card, state and URL. That also rebuilds the Board
+// after a Web restart: the announcement carries the board + repo the preview was started for.
 
 using System.Collections.Concurrent;
+using AgentOs.Domain.Configuration;
 using AgentOs.Domain.Preview;
 using AgentOs.Domain.Workspaces;
 using AgentOs.Modules.AppConfig;
 using AgentOs.Modules.Integration;
+using AgentOs.Modules.Pipeline.Agents;
 using AgentOs.Modules.RemoteAgent;
 using AgentOs.Modules.Workspaces.Persistence.Entities;
 
@@ -47,6 +51,7 @@ public sealed class PreviewService : IDisposable
         _broker = broker;
         _scopes = scopes;
         _broker.PreviewReported += OnReported;
+        _broker.PreviewReattached += OnReattached;
     }
 
     /// <summary>Raised with the tenant id whenever one of its previews changes.</summary>
@@ -96,7 +101,8 @@ public sealed class PreviewService : IDisposable
             PreviewStates.Preparing, "Asking your computer…", DateTimeOffset.UtcNow, userId);
         _byRepo[(tenantId, repo.Id)] = state;
         _byId[id] = (tenantId, repo.Id);
-        var start = new PreviewStart(id, repo.Owner, repo.Repo, Branch(repo), recipe.Command, recipe.Url.AbsoluteUri, recipe.ReadyTimeoutSeconds);
+        var start = new PreviewStart(id, repo.Owner, repo.Repo, Branch(repo), recipe.Command, recipe.Url.AbsoluteUri, recipe.ReadyTimeoutSeconds,
+            IdleMinutes(tenantId), boardId, repo.Id);
         if (!_broker.StartPreview(start, new RunnerTarget(tenantId, userId)))
         {
             _byRepo.TryRemove((tenantId, repo.Id), out _);
@@ -166,7 +172,47 @@ public sealed class PreviewService : IDisposable
         Changed?.Invoke(key.Tenant);
     }
 
+    // A runner (re)connected and still runs this preview. Known → the same card carries on; unknown (the Web restarted)
+    // → rebuilt from what the runner kept, when it says which board + repo it belongs to and that repo has no newer one.
+    // Anything the Board can't place is stopped, so nothing keeps running unseen on the member's computer.
+    private void OnReattached(PreviewReattach reattach)
+    {
+        var p = reattach.Preview;
+        var message = p.State == PreviewStates.Ready ? p.Url : "Your computer reconnected — the app is still starting.";
+        if (_byId.TryGetValue(p.PreviewId, out var key) && _byRepo.TryGetValue(key, out var current) && current.Id == p.PreviewId)
+        {
+            _byRepo[key] = current with { State = p.State, Message = message };
+            Changed?.Invoke(key.Tenant);
+            return;
+        }
+        var repoKey = (reattach.TenantId, p.RepoId);
+        if (p.BoardId == Guid.Empty || p.RepoId == Guid.Empty
+            || (_byRepo.TryGetValue(repoKey, out var other) && other.Id != p.PreviewId && other.IsActive))
+        {
+            _broker.StopPreview(p.PreviewId);
+            return;
+        }
+        _byRepo[repoKey] = new PreviewState(p.PreviewId, reattach.TenantId, p.BoardId, p.RepoId, $"{p.Owner}/{p.Repo}", p.Command, p.Url,
+            p.State, message, p.StartedAt, reattach.UserId);
+        _byId[p.PreviewId] = repoKey;
+        Changed?.Invoke(reattach.TenantId);
+    }
+
+    // The tenant's idle stop (Settings › Autopilot); the built-in value when settings aren't available.
+    private int IdleMinutes(string tenantId)
+    {
+        using var scope = _scopes.CreateScope();
+        var settings = scope.ServiceProvider.GetService<ISettings>();
+        if (settings is null) { return AutopilotSettings.DefaultPreviewIdleMinutes; }
+        var pending = AutopilotSettings.ReadPreviewIdleMinutesAsync(settings, tenantId);
+        return pending.IsCompletedSuccessfully ? pending.Result : pending.AsTask().GetAwaiter().GetResult();
+    }
+
     private static string Branch(WorkspaceRepoEntity repo) => string.IsNullOrWhiteSpace(repo.DefaultBranch) ? "main" : repo.DefaultBranch;
 
-    public void Dispose() => _broker.PreviewReported -= OnReported;
+    public void Dispose()
+    {
+        _broker.PreviewReported -= OnReported;
+        _broker.PreviewReattached -= OnReattached;
+    }
 }

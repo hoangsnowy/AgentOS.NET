@@ -110,6 +110,11 @@ public sealed class RemoteAgentHub : Hub
     public void ReportPreview(string previewId, string state, string? message) =>
         (_broker as IRunnerPreviewBroker)?.ReportPreview(Context.ConnectionId, previewId, state, message);
 
+    /// <summary>Runner → server, on every (re)connect: the "Try the app" previews it still runs (they outlive a runner
+    /// restart) and the ones it found gone. The server re-attaches the first and closes the second on the Board.</summary>
+    public void AnnouncePreviews(PreviewAnnouncement[]? running, string[]? gone) =>
+        (_broker as IRunnerPreviewBroker)?.AnnouncePreviews(Context.ConnectionId, running ?? [], gone ?? []);
+
     /// <summary>Runner → server: a piece of a ticket file of the request it is running (ADR-0015). Answers only the
     /// connection the request was dispatched to; null for anything else (an unknown id, another runner).</summary>
     public RunFileChunk? ReadRunFile(string requestId, int index, long offset) =>

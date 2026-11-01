@@ -122,8 +122,14 @@ files by default). ([ADR-0015](docs/adr/0015-ticket-files.md))
 ```
 
 The command is shown before anything runs, and the computer re-reads it from its own checkout and refuses if it
-changed. A project without the file gets an *Ask the AI to set it up* button that opens a ticket for it. Testing on
-that project waits while the app runs (same ports). `REMOTE_AGENT_PREVIEWS=off` refuses previews on a computer.
+changed. A project without the file gets an *Ask the AI to set it up* button that opens a ticket for it.
+
+The app keeps running when the computer's runner restarts (an update, a re-pairing, a crash): it runs in a process
+group of its own, the runner keeps its state on disk and re-attaches it on the next start, and the Board card keeps
+showing it with the same URL. It ends when you press *Stop* — also after a restart — or when nobody has had it open
+for *Stop an unused app after* (Settings › Autopilot, default 120 minutes). Testing on that project waits while the
+app runs (same ports, often the same data) unless the project is listed under *Test while trying the app* — safe
+when the app keeps its data separately for each copy. `REMOTE_AGENT_PREVIEWS=off` refuses previews on a computer.
 
 ### 4 — Build and test
 

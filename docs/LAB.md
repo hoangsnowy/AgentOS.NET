@@ -111,9 +111,18 @@ the screen never queues behind Autopilot's coding. Specialist answers get a 5-mi
 
 With the runner paired, Board → VNChessAcademy → **Try the app** on a repository runs its latest default branch on
 this machine from `%LOCALAPPDATA%\AgentOS.NET\previews\<owner>-<repo>` (a reused checkout, so restores stay warm)
-and shows *Open the app* once the recipe's url accepts connections. *Stop* kills the whole process tree; the runner
-also stops its previews when it exits and kills leftovers from a hard kill on its next start (`preview.pid`).
-Autopilot holds acceptance testing on that board while a preview runs and says so in the Autopilot log.
+and shows *Open the app* once the recipe's url accepts connections. The app runs outside the runner's process tree
+(a named job on Windows, its own session via `setsid` on Linux; output in `previews\running\<id>.log`), so
+`lab.ps1 update`, `lab.ps1 pair` or a runner crash no longer kills it: the state file next to the log (pid, process
+start time, port, recipe, board/repo) lets the next runner re-attach it — only if that pid is still the same process —
+and announce it, and the Board card keeps showing *running* with the same URL. A preview whose process is gone is
+reported stopped. While the runner is away the server keeps the card for 15 minutes. *Stop* kills the whole process
+tree (also after a restart); a preview nobody has had open for `Preview:IdleMinutes` (Settings › Autopilot, default
+120) stops by itself. To check by hand: start a preview, `lab.ps1 update` (or restart the runner), and the card stays
+*Ready* with the same *Open the app*; *Stop* still closes it.
+Autopilot holds acceptance testing on that board while a preview runs and says so in the Autopilot log — unless the
+project is listed in Settings › Autopilot › *Test while trying the app* (only when the app keeps its data separately
+for each checkout).
 The test data the runner was paired with (`-Data`, e.g. `CHESS_LIBRARY_PATH`) reaches the app too, so a project that loads
 real data when it is there shows it.
 

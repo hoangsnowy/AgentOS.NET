@@ -167,6 +167,8 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:CodingRunMinutes` | `60` | 10–240 | The longest one Coding (tickets) run may take on a computer — clone, change, build, test, push (was a fixed 20 minutes). |
 | `Autopilot:ReviewRunMinutes` | `30` | 5–120 | The longest one Reviewer run may take (was a fixed 20). The Designer (Design gate) runs under the same limit. |
 | `Autopilot:TestingRunMinutes` | `45` | 10–180 | The longest one Testing (tickets) run may take (was a fixed 30). |
+| `Autopilot:TestWhileTrying` | *(empty)* | project names or ids, comma-separated | *Try the app* panel. Projects whose acceptance testing keeps running while someone tries the app — only safe when the app keeps its data separately for each copy (e.g. a database volume per checkout). Empty = every project holds testing while a preview runs, as before. |
+| `Preview:IdleMinutes` | `120` | 10–1440 | *Try the app* panel. A preview nobody has had open (no connection to its port) for this long is stopped by the computer. Sent with each start; a preview keeps its value across a runner restart. |
 | `TicketFiles:MaxFileMegabytes` | `10` | 1–100 | *Files for the AI* — the largest single file a person can attach to a ticket ([ADR-0015](adr/0015-ticket-files.md)). |
 | `TicketFiles:MaxTotalMegabytes` | `50` | 1–500 | All files of one ticket together. They are copied to the computer for every run of the ticket. |
 | `TicketFiles:MaxFiles` | `500` | 1–2000 | Files per ticket (an uploaded folder counts each file in it). |
