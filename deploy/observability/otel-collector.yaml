@@ -1,0 +1,52 @@
+# OpenTelemetry Collector for AgentOS.NET → Prometheus (E1.10).
+# Point the Api + Web at it:  OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317  (gRPC; or :4318 + http/protobuf)
+# and give each host a stable OTEL_SERVICE_NAME (api / web) — it becomes the Prometheus `job` label the
+# dashboards + alerts group by. Prometheus scrapes this collector on :8889 (see prometheus/prometheus.yml).
+#
+# Alternative with no collector: Prometheus ≥ 3.0 started with --web.enable-otlp-receiver accepts OTLP/HTTP at
+# /api/v1/otlp (OTEL_EXPORTER_OTLP_ENDPOINT=http://prometheus:9090/api/v1/otlp, OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf).
+# Both produce the same metric names (OTel → Prometheus translation with unit suffixes and _total).
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  batch: {}
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Drop a series 5 minutes (the default) after its last update — a stopped replica, or a tenant's budget gauge
+    # once the app stops reporting it. The budget gauges are observable: the app re-reports every tenant it
+    # evaluated in the last 15 minutes on EVERY export and then stops (PipelineTelemetry.BudgetSampleTtl), so the
+    # app — not this expiry — decides how long a budget value lives; this only bounds how long a dead series lingers.
+    metric_expiration: 5m
+    resource_to_telemetry_conversion:
+      enabled: false
+  # Traces + logs: send them wherever you keep them (Tempo, Jaeger, Loki, Azure Monitor …). `debug` keeps
+  # this file runnable on its own.
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]

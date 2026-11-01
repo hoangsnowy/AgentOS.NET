@@ -51,6 +51,9 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   opt-out).
 - **Release pipeline**: signed Api / Web images on GHCR with CycloneDX SBOMs and SLSA provenance
   ([docs/RELEASE.md](docs/RELEASE.md)), and this changelog.
+- **Operations**: Grafana + Azure Monitor dashboards, Prometheus alert rules with promtool tests and runbooks,
+  SLOs, and run / budget / health metrics (`deploy/observability`,
+  [docs/OPERATIONS.md](docs/OPERATIONS.md)).
 - **On-prem install** ([docs/ONPREM.md](docs/ONPREM.md)): docker compose for one host, a Helm chart for
   Kubernetes and an offline image bundle for air-gapped sites — Postgres, Keycloak with the AgentOS.NET realm
   and theme, Api, Web and optional Ollama, with the key ring certificate-wrapped and row-level security on by

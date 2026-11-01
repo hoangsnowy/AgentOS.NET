@@ -162,6 +162,8 @@ public sealed class GraphExecutor : IGraphExecutor
 
             if (budget.IsBlocking)
             {
+                PipelineTelemetry.RecordBudgetBlocked(PipelineTelemetry.BudgetScopes.Run);
+                PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Workflow, PipelineTelemetry.Outcomes.BudgetBlocked);
                 return new GraphRunResult(false,
                     $"Budget exceeded for this workspace — spent ${budget.SpentUsd:0.00} of ${budget.CapUsd:0.00} this month. The run was blocked before any agent ran.");
             }
@@ -171,6 +173,7 @@ public sealed class GraphExecutor : IGraphExecutor
         using var lease = _admission is null ? null : await _admission.AdmitAsync(budgetTenant, ct).ConfigureAwait(false);
         if (lease is { Admitted: false })
         {
+            PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Workflow, PipelineTelemetry.Outcomes.Refused);
             return new GraphRunResult(false, lease.Reason);
         }
 
@@ -182,82 +185,100 @@ public sealed class GraphExecutor : IGraphExecutor
         var runIdentity = AmbientIdentity.Resolve(tenantId, userId, context: null);
         using var _identity = AmbientIdentity.Push(runIdentity.TenantId, runIdentity.UserId);
 
-        // Baseline: everything Pending.
-        foreach (var n in graph.Nodes)
-        {
-            await onNode(new GraphNodeEvent(n.Id, GraphNodePhase.Pending, null, null)).ConfigureAwait(false);
-        }
-
-        var clampedNMax = Math.Clamp(nMax, 1, 10);
-        var runGuid = Guid.NewGuid();
-        var runId = runGuid.ToString("N");
-        var state = new GraphState(userStoryText, clampedNMax, Coalesce(tenantId, OperatorTenant), runId);
-
-        var supported = plan.Nodes
-            .Where(v => v.Support == NodeSupport.Supported)
-            .Select(v => v.NodeId)
-            .ToHashSet(StringComparer.Ordinal);
-
-        Workflow workflow;
+        // E1.10: every run that got past admission is counted exactly once, in the finally — a node exception, a
+        // graph that fails to build (the early return below) and a caller cancellation included. The outcome stays
+        // "failed" unless the run reaches its normal end (done / failed) or is cancelled by the caller. Workflow
+        // runs never report max_iterations: a graph's loop caps end the loop, not the run (docs/OPERATIONS.md).
+        var startedAtUtc = _clock.GetUtcNow();
+        var outcome = PipelineTelemetry.Outcomes.Failed;
         try
         {
-            workflow = BuildWorkflow(graph, plan, supported, clampedNMax, onHuman);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return new GraphRunResult(false, ex.Message);
-        }
-
-        string? failure = null;
-        // Explicit End nodes are the designated terminals. If the graph HAS an End but the run quiesces without
-        // any End completing (e.g. a fan-in barrier fed by a branch an If/Else skipped — MAF returns normally),
-        // we must NOT report success. Empty when the graph has no End (then we don't second-guess completion).
-        var terminals = TerminalNodeIds(graph, supported);
-        var terminalReached = false;
-        // Backstop against a non-terminating graph (a cyclic gate/loop the cap logic somehow doesn't bound):
-        // cap total node activations generously, then abort with a clear failure rather than spin forever.
-        var invoked = 0;
-        var activationBudget = Math.Max(200, graph.Nodes.Count * (clampedNMax + 2) * 4);
-
-        var startedAtUtc = _clock.GetUtcNow();
-        await using var run = await InProcessExecution.RunStreamingAsync(workflow, state, runId, ct).ConfigureAwait(false);
-        await foreach (var evt in run.WatchStreamAsync(ct).ConfigureAwait(false))
-        {
-            if (evt is ExecutorInvokedEvent ie && supported.Contains(ie.ExecutorId))
+            // Baseline: everything Pending.
+            foreach (var n in graph.Nodes)
             {
-                if (++invoked > activationBudget)
+                await onNode(new GraphNodeEvent(n.Id, GraphNodePhase.Pending, null, null)).ConfigureAwait(false);
+            }
+
+            var clampedNMax = Math.Clamp(nMax, 1, 10);
+            var runGuid = Guid.NewGuid();
+            var runId = runGuid.ToString("N");
+            var state = new GraphState(userStoryText, clampedNMax, Coalesce(tenantId, OperatorTenant), runId);
+
+            var supported = plan.Nodes
+                .Where(v => v.Support == NodeSupport.Supported)
+                .Select(v => v.NodeId)
+                .ToHashSet(StringComparer.Ordinal);
+
+            Workflow workflow;
+            try
+            {
+                workflow = BuildWorkflow(graph, plan, supported, clampedNMax, onHuman);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new GraphRunResult(false, ex.Message);
+            }
+
+            string? failure = null;
+            // Explicit End nodes are the designated terminals. If the graph HAS an End but the run quiesces without
+            // any End completing (e.g. a fan-in barrier fed by a branch an If/Else skipped — MAF returns normally),
+            // we must NOT report success. Empty when the graph has no End (then we don't second-guess completion).
+            var terminals = TerminalNodeIds(graph, supported);
+            var terminalReached = false;
+            // Backstop against a non-terminating graph (a cyclic gate/loop the cap logic somehow doesn't bound):
+            // cap total node activations generously, then abort with a clear failure rather than spin forever.
+            var invoked = 0;
+            var activationBudget = Math.Max(200, graph.Nodes.Count * (clampedNMax + 2) * 4);
+
+            await using var run = await InProcessExecution.RunStreamingAsync(workflow, state, runId, ct).ConfigureAwait(false);
+            await foreach (var evt in run.WatchStreamAsync(ct).ConfigureAwait(false))
+            {
+                if (evt is ExecutorInvokedEvent ie && supported.Contains(ie.ExecutorId))
                 {
-                    failure ??= "Run exceeded its execution budget — a loop or join is not terminating. Check the graph's cycles/caps.";
-                    try { await run.CancelRunAsync().ConfigureAwait(false); }
-                    catch (InvalidOperationException) { /* already finished */ }
-                    break;
+                    if (++invoked > activationBudget)
+                    {
+                        failure ??= "Run exceeded its execution budget — a loop or join is not terminating. Check the graph's cycles/caps.";
+                        try { await run.CancelRunAsync().ConfigureAwait(false); }
+                        catch (InvalidOperationException) { /* already finished */ }
+                        break;
+                    }
+                    await onNode(new GraphNodeEvent(ie.ExecutorId, GraphNodePhase.Running, null, null)).ConfigureAwait(false);
                 }
-                await onNode(new GraphNodeEvent(ie.ExecutorId, GraphNodePhase.Running, null, null)).ConfigureAwait(false);
+                else if (evt is ExecutorCompletedEvent ce && supported.Contains(ce.ExecutorId))
+                {
+                    if (terminals.Contains(ce.ExecutorId)) { terminalReached = true; }
+                    await onNode(new GraphNodeEvent(
+                        ce.ExecutorId, GraphNodePhase.Done, state.NodeMeta.GetValueOrDefault(ce.ExecutorId), null,
+                        state.OfflineNodes.ContainsKey(ce.ExecutorId))).ConfigureAwait(false);
+                }
+                else if (evt is ExecutorFailedEvent fe && supported.Contains(fe.ExecutorId))
+                {
+                    failure ??= fe.Data?.Message ?? "node failed";
+                    await onNode(new GraphNodeEvent(fe.ExecutorId, GraphNodePhase.Failed, null, failure)).ConfigureAwait(false);
+                }
             }
-            else if (evt is ExecutorCompletedEvent ce && supported.Contains(ce.ExecutorId))
-            {
-                if (terminals.Contains(ce.ExecutorId)) { terminalReached = true; }
-                await onNode(new GraphNodeEvent(
-                    ce.ExecutorId, GraphNodePhase.Done, state.NodeMeta.GetValueOrDefault(ce.ExecutorId), null,
-                    state.OfflineNodes.ContainsKey(ce.ExecutorId))).ConfigureAwait(false);
-            }
-            else if (evt is ExecutorFailedEvent fe && supported.Contains(fe.ExecutorId))
-            {
-                failure ??= fe.Data?.Message ?? "node failed";
-                await onNode(new GraphNodeEvent(fe.ExecutorId, GraphNodePhase.Failed, null, failure)).ConfigureAwait(false);
-            }
-        }
 
-        if (failure is null && terminals.Count > 0 && !terminalReached)
+            if (failure is null && terminals.Count > 0 && !terminalReached)
+            {
+                failure = "Workflow stopped before reaching End — a branch or join did not complete (check Merge / If-Else wiring).";
+            }
+
+            // Meter the run's own LLM spend. Persisted even on failure (the tenant is billed for whatever ran),
+            // stamping the explicit tenant so the budget gate sees it on the NEXT run — see PersistRunAsync.
+            outcome = failure is null ? PipelineTelemetry.Outcomes.Done : PipelineTelemetry.Outcomes.Failed;
+            await PersistRunAsync(runGuid, state, budgetTenant, failure, startedAtUtc, ct).ConfigureAwait(false);
+
+            return new GraphRunResult(failure is null, failure, state.AnyOffline) { Usage = UsageByAgent(state.Spend) };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            failure = "Workflow stopped before reaching End — a branch or join did not complete (check Merge / If-Else wiring).";
+            outcome = PipelineTelemetry.Outcomes.Cancelled;
+            throw;
         }
-
-        // Meter the run's own LLM spend. Persisted even on failure (the tenant is billed for whatever ran),
-        // stamping the explicit tenant so the budget gate sees it on the NEXT run — see PersistRunAsync.
-        await PersistRunAsync(runGuid, state, budgetTenant, failure, startedAtUtc, ct).ConfigureAwait(false);
-
-        return new GraphRunResult(failure is null, failure, state.AnyOffline) { Usage = UsageByAgent(state.Spend) };
+        finally
+        {
+            PipelineTelemetry.RecordRun(PipelineTelemetry.Kinds.Workflow, outcome, _clock.GetUtcNow() - startedAtUtc);
+        }
     }
 
     /// <summary>Per-agent tokens/cost for the run, in the order each agent first ran. One pass over the

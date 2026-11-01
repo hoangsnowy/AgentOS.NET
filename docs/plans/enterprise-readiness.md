@@ -49,6 +49,7 @@ real services:
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
+| E1.10 dashboards, alerts, SLOs | #302, [OPERATIONS.md](../OPERATIONS.md) | Real code → OTLP → Prometheus 3.7: every dashboard series present, 3 Grafana dashboards render (light + dark), `AgentOsBudgetBlockingRuns` fired + `AgentOsBudgetOverCap` pending on an over-cap tenant; `promtool test rules` green. Lab over-cap run + Azure deploy still to do |
 | E1.9 on-prem install (compose + Helm + offline bundle) | #298, [ONPREM.md](../ONPREM.md) | Compose cold install → themed login → desktop; pg_dump restore drill; air-gapped bundle (`docker save`→`load`, no repo) boots; key ring certificate-wrapped, RLS on; chart lint/template + strict schema check; kind cold install + upgrade in CI (`deploy-lint`) |
 | E1.11 signed images + SBOM + provenance 🟡 | #297 | Shipped, not yet verified: `release.yml` passes actionlint and the CycloneDX solution SBOM was generated locally; the image build, signing and attestations only run on a tag. Acceptance: `cosign verify` + `gh attestation verify` on the first tag ([RELEASE.md](../RELEASE.md#verify-an-image)) |
 | E1.13 release policy + CHANGELOG 🟡 | #297 | Shipped, not yet verified: [RELEASE.md](../RELEASE.md) (SemVer, supported versions, migration notes) + [CHANGELOG.md](../../CHANGELOG.md); the release workflow refuses a tag without a CHANGELOG section. Acceptance: the first tagged release follows it |
@@ -90,7 +91,7 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 | 18 | Trackers / SCM | GitHub ✅; Azure DevOps boards; GitLab; Jira; Teams/Slack notifications; webhooks | 🟡 GitHub + ADO repos | plan 0.10, 4.3, 7 | **E1.8**, **E2.4** |
 | 19 | Deployment | Azure (azd) ✅; on-prem Helm chart + docker compose; air-gapped bundle; upgrade path | ✅ azd/ACA + compose + Helm + offline bundle | `DEPLOYMENT.md`, `ONPREM.md`, `deploy/` | **E1.9** ✅ |
 | 20 | Availability | ≥2 replicas (backplane / sticky), HA Postgres, backups geo-redundant, executed DR drill | ❌ `minReplicas: 1`, geo backup off | `postgres.module.bicep:22-27` | **E2.3** |
-| 21 | Observability | dashboards, alerts, SLOs, live status | 🟡 OTel (export opt-in), About page (#191) | `ServiceDefaults` | **E1.10** |
+| 21 | Observability | dashboards, alerts, SLOs, live status | ✅ Grafana + App Insights dashboards, 20 alerts with runbooks, SLOs (E1.10); runner-connected gauge open | `deploy/observability`, [OPERATIONS.md](../OPERATIONS.md) | **E1.10** ✅ |
 | 22 | Supply chain | SBOM, signed images + provenance, pinned deps, SAST | 🟡 CodeQL 0, Dependabot, pinned actions; release workflow for cosign-signed images + CycloneDX SBOMs + SLSA provenance shipped, pending the first tag + `cosign verify` | `.github/workflows/release.yml`, `docs/RELEASE.md` | **E1.11** |
 | 23 | Compliance docs | threat model, data-flow + sub-processors (LLM vendors), DPA template, SOC 2 mapping, pen test | 🟡 threat model, data flow, sub-processors, hardening, DPA template ✅ (E1.12); SOC 2 mapping + pen test open | `docs/security/` | **E2.6** |
 | 24 | Admin console | tenants list/suspend/delete, quotas, usage per tenant, seats | 🟡 Platform settings + About | `PlatformSettingsApp` | **E2.7** |
@@ -128,7 +129,7 @@ behaviour, unit + E2E, real integrations verified on the lab, docs updated in th
 | **E1.7** `feat(skills)` | **Agent Skills** (= plan 4.5) pulled forward: SKILL.md packs per tenant, name+description in prompt, body on demand, per-agent enablement, usage metrics | A tenant skill changes Coding output; usage counted |
 | **E1.8** `feat(integration)` | **Azure DevOps boards** (= plan 0.10) + **Jira** (native or Atlassian MCP) + Teams/Slack notifications | Lab: ADO + Jira tickets run end to end |
 | **E1.9** `feat(deploy)` | **On-prem**: Helm chart + docker compose (Postgres, Keycloak, Web, Api, optional Ollama), offline image bundle, upgrade guide | Cold install on a clean k8s (kind) from docs only |
-| **E1.10** `feat(ops)` | Dashboards (Grafana JSON + App Insights workbook), alert rules (budget over cap, runner disconnect, failed runs, evidence drops, probe Down), SLOs | Alert fires on a lab over-cap run |
+| **E1.10** `feat(ops)` ✅ #302 | Dashboards (Grafana JSON + App Insights workbook), alert rules (budget over cap, runner disconnect, failed runs, evidence drops, probe Down), SLOs | Alert fires on a lab over-cap run |
 | **E1.11** `chore(supply-chain)` | CycloneDX SBOM per release, cosign-signed images, SLSA provenance | `cosign verify` passes on a release image |
 | **E1.12** `docs(security)` | Threat model (STRIDE per module), data-flow diagram, sub-processor list (LLM vendors + what leaves the box), DPA template, hardening guide | Reviewed; linked from SECURITY.md |
 | **E1.13** `docs(release)` | Semver + CHANGELOG + migration notes + supported-versions policy | First tagged release follows it |

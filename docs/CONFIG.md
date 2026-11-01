@@ -50,7 +50,7 @@ to the next request.
 | `Api:BaseUrl` | empty | Empty = Web runs the engine in-process. Set = Web is a thin client of the Api host. System → About probes the Api at Aspire's `services:api:*` address first (the AppHost references the Api from the Web for that card only), then this. |
 | `Settings:Locks:<key>` | Production pins 4 keys (below) | Operator locks. Change with an env var, e.g. `Settings__Locks__RemoteAgent__AutoApprove=true` — a deployment decision, not a click. |
 | `Logging:*`, `AllowedHosts` | ASP.NET defaults | |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` / `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Enable OTLP / App Insights export. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Enable OTLP / App Insights export. Set `OTEL_SERVICE_NAME` (`api` / `web`) too — dashboards and alerts group by it. See [OPERATIONS.md](OPERATIONS.md). |
 | `Email:*` | `SmtpHost` empty → logs instead of sending | `SmtpHost`, `SmtpPort` (1025), `From`, `FromName`, `User`, `Password`, `UseStartTls`. Validated at startup. Aspire injects MailHog in dev. |
 | `Mcp:Servers[]`, `Mcp:CallTimeoutSeconds` | empty / 60 | Upstream MCP servers. Validated at startup. Moves to a per-tenant registry in Phase 4. |
 | `Plugins:Path` | `plugins` | Folder scanned for `IAgentOsPlugin` assemblies. |

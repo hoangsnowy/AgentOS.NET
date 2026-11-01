@@ -1,0 +1,13 @@
+# Grafana dashboard provisioning: loads deploy/observability/grafana/*.json into an "AgentOS.NET" folder.
+# Mount that directory at /var/lib/grafana/dashboards/agentos (see docs/OPERATIONS.md#import-the-dashboards).
+apiVersion: 1
+providers:
+  - name: agentos
+    folder: AgentOS.NET
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards/agentos
+      foldersFromFilesStructure: false

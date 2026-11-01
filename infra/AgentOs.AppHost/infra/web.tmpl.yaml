@@ -87,6 +87,9 @@ properties:
             value: http://keycloak.{{ .Env.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN }}
           - name: OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY
             value: in_memory
+          # E1.10: empty unless infra was provisioned with enableObservability=true (main.bicep output).
+          - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+            value: '{{ .Env.APPLICATIONINSIGHTS_CONNECTION_STRING }}'
           - name: services__keycloak__http__0
             value: http://keycloak.{{ .Env.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN }}
           - name: Auth__Keycloak__Admin__Password

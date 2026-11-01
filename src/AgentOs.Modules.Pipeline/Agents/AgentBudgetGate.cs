@@ -58,6 +58,7 @@ public static class AgentBudgetGate
         catch (InvalidOperationException ex) { return Failed(ex); }
 
         if (budget is not { State: BudgetState.Exceeded, EnforceOn: true }) { return null; }
+        Metrics.PipelineTelemetry.RecordBudgetBlocked(Metrics.PipelineTelemetry.BudgetScopes.Agent, agent);
         logger.LogWarning("{Agent}: blocked — tenant {Tenant} is over its monthly LLM budget (${Spent} of ${Cap}) and the call would run on {Provider}.",
             agent, tenant, budget.SpentUsd, budget.CapUsd, effectiveProvider);
         return budget;

@@ -13,10 +13,14 @@ Deployment is driven by **.NET Aspire + Azure Developer CLI (`azd`)**. The AppHo
 | Azure Database for PostgreSQL flexible server (password auth) | `AddAzurePostgresFlexibleServer("postgres")` |
 | Key Vault for the Postgres secrets | `infra/postgres-kv*` |
 | Managed identity + role assignments | implicit (Aspire) |
+| Application Insights + operations workbook + alert rules (opt-in, `enableObservability`) | `infra/observability/` (hand-written, E1.10 — see [OPERATIONS.md](../docs/OPERATIONS.md#azure-azd)) |
 
 `infra/main.bicep`, `resources.bicep` and the `postgres*` modules are the azd-generated infrastructure
 (`azd infra synth`), committed so the provisioned shape is reviewable — regenerate them rather than
-hand-editing when the app model changes. `azd` builds images with the .NET SDK (no Dockerfile needed); the root `Dockerfile` / `Dockerfile.web`
+hand-editing when the app model changes. Exception: `infra/observability/` is hand-written, and its hook in
+`main.bicep` (the three observability parameters, the `observability` module, the
+`APPLICATIONINSIGHTS_CONNECTION_STRING` output) plus the matching env var in `AgentOs.AppHost/infra/{api,web}.tmpl.yaml`
+must be re-applied after an `azd infra synth`. `azd` builds images with the .NET SDK (no Dockerfile needed); the root `Dockerfile` / `Dockerfile.web`
 and `infra/keycloak/Dockerfile` build the images for the on-prem install ([docs/ONPREM.md](../docs/ONPREM.md)).
 
 ## First deploy (local)

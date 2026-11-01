@@ -1,0 +1,13 @@
+# Grafana datasource provisioning for the AgentOS.NET dashboards. Point `url` at your Prometheus (or any
+# PromQL-compatible store: Mimir, Thanos, Azure Monitor managed Prometheus via its query endpoint).
+# Grafana expands $VAR / ${VAR} from its environment here, e.g. url: ${AGENTOS_PROMETHEUS_URL} (no :- defaults).
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: agentos-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s

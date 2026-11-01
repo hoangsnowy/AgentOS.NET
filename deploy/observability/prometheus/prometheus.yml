@@ -1,0 +1,38 @@
+# Example Prometheus configuration for AgentOS.NET (E1.10). Merge the scrape jobs + rule_files into yours.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - alerts.yml
+
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # App metrics, relayed by the OpenTelemetry Collector (deploy/observability/otel-collector.yaml).
+  # honor_labels keeps the app's `job` (OTel service.name) and `instance` (service.instance.id).
+  - job_name: otel-collector
+    honor_labels: true
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # Outside-in health probe — feeds AgentOsHealthProbeDown. Needs prometheus/blackbox_exporter with an
+  # `http_2xx` module. /health is readiness (Postgres + Keycloak), /alive is liveness.
+  - job_name: agentos-health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://agentos.example.com/health      # Web — replace with your URL
+          - https://api.agentos.example.com/health  # Api — replace with your URL
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

@@ -1,0 +1,337 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 9,
+      "name": "parameters",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "parameters": [
+          {
+            "id": "time-range",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 86400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 14400000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                }
+              ],
+              "allowCustom": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## AgentOS.NET — operations\nLLM tokens and cost, runs, budget, evidence and HTTP health. Custom metrics arrive as OpenTelemetry metrics (`customMetrics`, delta sums per export). Member-computer runs (`gen_ai.system = agentos.remote_agent`) report ≈ estimated tokens and cost 0. Runbooks: [docs/OPERATIONS.md](https://github.com/hoangsnowy/AgentOS.NET/blob/main/docs/OPERATIONS.md)."
+      },
+      "name": "text-1"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### SLOs"
+      },
+      "name": "text-2"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests\n| where name !has \"/health\" and name !has \"/alive\"\n| summarize Total = sum(itemCount), Errors = sumif(itemCount, toint(resultCode) >= 500)\n| extend Availability = round(100.0 * (1 - todouble(Errors) / iff(Total == 0, 1.0, todouble(Total))), 3)\n| project Availability, Total, Errors",
+        "size": 0,
+        "title": "Availability (non-5xx share, SLO 99.5%)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "Availability",
+            "formatter": 1
+          },
+          "showBorder": true
+        }
+      },
+      "name": "query-3",
+      "customWidth": "25"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.pipeline.runs\"\n| extend Outcome = tostring(customDimensions[\"agentos.run.outcome\"])\n| summarize Failed = sumif(valueSum, Outcome == \"failed\"), Started = sumif(valueSum, Outcome in (\"done\", \"max_iterations\", \"failed\"))\n| extend Reliability = round(100.0 * (1 - Failed / iff(Started == 0, 1.0, Started)), 2)\n| project Reliability, Started, Failed",
+        "size": 0,
+        "title": "Run reliability (SLO 95%)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "Reliability",
+            "formatter": 1
+          },
+          "showBorder": true
+        }
+      },
+      "name": "query-4",
+      "customWidth": "25"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests\n| where name !has \"_blazor\" and name !has \"/hubs/\" and name !has \"/pipeline\" and name !has \"/mcp\" and name !has \"/health\" and name !has \"/alive\"\n| summarize P95ms = round(percentile(duration, 95), 0), P50ms = round(percentile(duration, 50), 0)",
+        "size": 0,
+        "title": "HTTP p95 (SLO 1 s)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "P95ms",
+            "formatter": 1
+          },
+          "showBorder": true
+        }
+      },
+      "name": "query-5",
+      "customWidth": "25"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.evidence.lost\"\n| summarize Lost = sum(valueSum)\n| extend Lost = coalesce(Lost, 0.0)",
+        "size": 0,
+        "title": "Evidence rows lost (must be 0)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "Lost",
+            "formatter": 1
+          },
+          "showBorder": true
+        }
+      },
+      "name": "query-6",
+      "customWidth": "25"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### LLM tokens & cost"
+      },
+      "name": "text-7"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.llm.tokens\"\n| extend Class = tostring(customDimensions[\"agentos.token.class\"])\n| where Class != \"reasoning\"\n| summarize Tokens = sum(valueSum) by Class, bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "Tokens by billing class",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "areachart"
+      },
+      "name": "query-8",
+      "customWidth": "50"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.llm.cost.usd\"\n| extend Agent = tostring(customDimensions[\"gen_ai.agent.name\"])\n| summarize CostUsd = sum(valueSum) by Agent, bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "Cost (USD) by agent",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "query-9",
+      "customWidth": "50"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let cost = customMetrics | where name == \"agentos.llm.cost.usd\" | summarize CostUsd = round(sum(valueSum), 4), Calls = sum(valueCount) by Agent = tostring(customDimensions[\"gen_ai.agent.name\"]), Model = tostring(customDimensions[\"gen_ai.request.model\"]);\nlet tokens = customMetrics | where name == \"agentos.llm.tokens\" | extend Class = tostring(customDimensions[\"agentos.token.class\"]) | summarize FreshInput = sumif(valueSum, Class == \"fresh_input\"), CacheRead = sumif(valueSum, Class == \"cache_read\"), CacheWrite = sumif(valueSum, Class == \"cache_write\"), Output = sumif(valueSum, Class == \"output\") by Agent = tostring(customDimensions[\"gen_ai.agent.name\"]), Model = tostring(customDimensions[\"gen_ai.request.model\"]);\ncost | join kind=fullouter tokens on Agent, Model\n| project Agent = coalesce(Agent, Agent1), Model = coalesce(Model, Model1), CostUsd, Calls, FreshInput, CacheRead, CacheWrite, Output\n| order by CostUsd desc",
+        "size": 0,
+        "title": "Cost, calls and tokens by agent × model",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "table"
+      },
+      "name": "query-10"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "dependencies\n| where name startswith \"chat \"\n| summarize p50 = percentile(duration, 50), p95 = percentile(duration, 95) by Model = tostring(customDimensions[\"gen_ai.request.model\"]), bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "LLM call latency p50 / p95 by model (from chat spans)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "name": "query-11",
+      "customWidth": "50"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.llm.errors\"\n| summarize Errors = sum(valueSum) by ErrorType = tostring(customDimensions[\"error.type\"]), bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "Failed LLM attempts by error type",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "query-12",
+      "customWidth": "50"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Runs & budget"
+      },
+      "name": "text-13"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.pipeline.runs\"\n| summarize Runs = sum(valueSum) by Outcome = tostring(customDimensions[\"agentos.run.outcome\"]), bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "Runs by outcome",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "query-14",
+      "customWidth": "50"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name in (\"agentos.budget.utilization\", \"agentos.budget.enforced\")\n| summarize arg_max(timestamp, valueMax) by Tenant = tostring(customDimensions[\"agentos.tenant.id\"]), name\n| summarize UsedPercent = round(100.0 * maxif(valueMax, name == \"agentos.budget.utilization\"), 1), Enforced = maxif(valueMax, name == \"agentos.budget.enforced\") == 1, LastEvaluated = max(timestamp) by Tenant\n| order by UsedPercent desc",
+        "size": 0,
+        "title": "Budget used by tenant (last evaluation)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "table"
+      },
+      "name": "query-15",
+      "customWidth": "50"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.budget.blocked\"\n| summarize Refusals = sum(valueSum) by Scope = tostring(customDimensions[\"agentos.budget.scope\"]), bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "Budget refusals",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "query-16",
+      "customWidth": "50"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"agentos.health.status\"\n| summarize Worst = min(valueMin) by Check = tostring(customDimensions[\"agentos.health.check\"]), Role = cloud_RoleName\n| extend Status = case(Worst >= 1, \"Healthy\", Worst >= 0.5, \"Degraded\", \"Unhealthy\")\n| project Role, Check, Status",
+        "size": 0,
+        "title": "Health checks (worst status)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "table"
+      },
+      "name": "query-17",
+      "customWidth": "50"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### HTTP & SignalR"
+      },
+      "name": "text-18"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests\n| summarize Requests = sum(itemCount) by Class = strcat(substring(resultCode, 0, 1), \"xx\"), bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "Requests by result code class",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "name": "query-19",
+      "customWidth": "50"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name in (\"signalr.server.active_connections\", \"aspnetcore.components.circuit.active\", \"aspnetcore.components.circuit.connected\")\n| summarize Value = max(valueMax) by name, bin(timestamp, {TimeRange:grain})",
+        "size": 0,
+        "title": "SignalR connections and Blazor circuits",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "name": "query-20",
+      "customWidth": "50"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

@@ -189,7 +189,9 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
                         LogSafe.Scrub(model));
                 }
                 LlmTelemetry.RecordSuccess(activity, genAiSystem, model, response.ModelId ?? model,
-                    inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds);
+                    inputTokens, outputTokens, cost, stopwatch.Elapsed.TotalSeconds,
+                    cacheReadTokens: usage.CacheRead, cacheWriteTokens: usage.CacheWrite,
+                    reasoningTokens: usage.Reasoning, agent: request.AgentRole);
                 _logger.LogInformation(
                     "LlmCallCompleted {Provider} {Model} {InTok} {CacheReadTok} {CacheWriteTok} {OutTok} {CostUsd} {Ms} {Tenant}",
                     Provider, LogSafe.Scrub(model), inputTokens, usage.CacheRead, usage.CacheWrite, outputTokens, cost,
@@ -219,12 +221,19 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
             // unclassified error is non-retryable and propagates. (CodeQL cs/catch-of-all-exceptions is
             // expected to flag this single line.)
             catch (Exception ex) when (ShouldFailover(ex)) { await HandleFailover(ex).ConfigureAwait(false); }
+            // A non-retryable failure (400 bad request, unclassified) propagates — but is still COUNTED, so the
+            // error-rate panel + AgentOsLlmErrorRateHigh see it (E1.10). Not a cancellation by the caller (above).
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LlmTelemetry.RecordError(activity, ex.Message, genAiSystem, model, ErrorTypeOf(ex), request.AgentRole);
+                throw;
+            }
 
             async Task HandleFailover(Exception ex)
             {
-                LlmTelemetry.RecordError(activity, ex.Message);
                 last = ex;
                 var kind = _classify(ex);
+                LlmTelemetry.RecordError(activity, ex.Message, genAiSystem, model, ErrorTypeOf(ex), request.AgentRole);
                 // Penalize the key: a transient error honors the server's Retry-After; an auth failure has no
                 // cooldown signal (the key is simply wrong) so it gets the default cooldown.
                 _router.Penalize(Provider, key, kind == LlmErrorKind.Transient ? _retryAfter(ex) : null);
@@ -249,6 +258,10 @@ public sealed class PooledChatLlmClient : ILlmClient, IDisposable
         var kind = _classify(ex);
         return kind is LlmErrorKind.Transient or LlmErrorKind.Auth;
     }
+
+    // The error.type metric value (LlmTelemetry.ErrorTypes) for a failed attempt, via the injected classifiers.
+    private string ErrorTypeOf(Exception ex) =>
+        _isRateLimited(ex) ? LlmTelemetry.ErrorTypes.RateLimited : SdkChatClients.ErrorTypeOf(_classify(ex));
 
     private List<AIToolFunction> ResolveTools(IReadOnlyList<string>? requested)
     {

@@ -88,7 +88,10 @@ public static class Extensions
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
                 .AddMeter("AgentOs.Llm") // SharedKernel.Telemetry.LlmTelemetry.SourceName — kept literal to avoid coupling this Aspire-shared project.
-                .AddMeter("AgentOs.Tools")) // evidence health: inline writes + lost rows (BufferedToolInvocationLog.MeterName)
+                .AddMeter("AgentOs.Tools") // evidence health (inline writes, lost rows, runner-reported refusals) + tool-output savings (ToolTelemetry.MeterName)
+                .AddMeter("AgentOs.Pipeline") // runs by outcome, run duration, budget refusals + utilization (PipelineTelemetry.MeterName)
+                .AddMeter(HealthMetricsPublisher.MeterName) // health check status per check (agentos.health.status)
+                .AddMeter("Npgsql")) // connection pool + command duration (db.client.*) — the Postgres side of the run SLOs
             .WithTracing(tracing => tracing
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
@@ -112,6 +115,15 @@ public static class Extensions
 
         var checks = builder.Services.AddHealthChecks()
             .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"]);
+        // E1.10: every check's status is also a metric (agentos.health.status). The publisher RUNS every check (the
+        // Postgres ping, the Keycloak discovery fetch) on its own schedule, per replica — once a minute is plenty for
+        // alerts that wait minutes, and keeps the IdP from being polled by the metric on top of the /health probes.
+        builder.Services.AddSingleton<IHealthCheckPublisher, HealthMetricsPublisher>();
+        builder.Services.Configure<HealthCheckPublisherOptions>(o =>
+        {
+            o.Delay = HealthMetricsPublisher.FirstPublishDelay;
+            o.Period = HealthMetricsPublisher.PublishPeriod;
+        });
 
         var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
