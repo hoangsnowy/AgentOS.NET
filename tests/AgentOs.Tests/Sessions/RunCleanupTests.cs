@@ -1,7 +1,8 @@
-// A run leaves nothing behind: a Testing agent's Aspire AppHost left Postgres, Keycloak, MailHog and a DCP tunnel proxy
-// running after the run on the lab. The end-of-run cleanup lets DCP remove its containers, kills what's left, and
-// removes only the containers whose DCP creator was one of THIS run's processes — never the lab stack's or a "Try the
-// app" preview's (their creator lives outside the run's job). Docker and the run's processes are fakes here.
+// A run leaves nothing behind: a Testing agent's Aspire AppHost left Postgres, Keycloak, MailHog, a DCP tunnel proxy, its
+// session network and its data volume behind on the lab. The end-of-run cleanup lets DCP remove what it created, kills
+// what's left, and removes only the containers / networks whose DCP creator was one of THIS run's processes — never the
+// lab stack's or a "Try the app" preview's (their creator lives outside the run's job) — and the named volumes those
+// containers mounted that were created during the run. Docker and the run's processes are fakes here.
 
 using System;
 using System.Collections.Generic;
@@ -18,6 +19,7 @@ namespace AgentOs.Tests.Sessions;
 public sealed class RunCleanupTests
 {
     private static readonly DateTime T0 = new(2026, 11, 2, 15, 52, 20, 121, DateTimeKind.Utc);
+    private static readonly DateTime RunStart = T0.AddMinutes(-2);
 
     // The run: a shell, the AppHost it started in the background, and the AppHost's DCP (api server + controllers).
     private static readonly RunProcess Shell = new(100, T0.AddSeconds(-30), "bash");
@@ -44,43 +46,77 @@ public sealed class RunCleanupTests
         Line("cc01", "postgres-preview1", PreviewDcpPid, PreviewDcpStarted),                // a "Try the app" preview
         Line("dd01", "postgres-oldrun", DcpControllers.Pid, DcpControllers.StartedUtc.AddHours(-30))); // a reused pid
 
+    private static readonly string Networks = string.Join('\n',
+        Line("ee01", "aspire-session-network-hcezjxrc-ThuVienCo", DcpControllers.Pid, DcpControllers.StartedUtc),
+        Line("ee02", "aspire-session-network-tubqmwfw-AgentOs", LabDcpPid, LabDcpStarted),  // the lab stack's
+        Line("ee03", "aspire-session-network-rtdywpcd-ThuVienCo", PreviewDcpPid, PreviewDcpStarted));
+
+    // `docker inspect` of the run's containers: postgres mounts its data volume (+ an anonymous one), keycloak a volume
+    // that existed before the run (the project's shared data), the others nothing.
+    private const string Mounts =
+        "thuvienco-postgres-data-13416a39 0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0 \nthuvienco-keycloak-data \n\n\n";
+
+    private static string VolumeInspect() => string.Join('\n',
+        $"thuvienco-postgres-data-13416a39|{RunStart.AddSeconds(90):yyyy-MM-ddTHH:mm:ssZ}",
+        $"thuvienco-keycloak-data|{RunStart.AddDays(-3):yyyy-MM-ddTHH:mm:ssZ}");
+
+    private static FakeDocker Docker(string containers) => new(new Dictionary<string, DockerResult>
+    {
+        ["ps"] = new(0, containers, string.Empty),
+        ["network ls"] = new(0, Networks, string.Empty),
+        ["inspect"] = new(0, Mounts, string.Empty),
+        ["volume inspect"] = new(0, VolumeInspect(), string.Empty),
+    });
+
+    private static Task<CleanupOutcome> End(FakeTree tree, FakeDocker docker, CleanupOptions options, Action<string>? log = null) =>
+        RunCleanup.EndAsync(tree, docker, options, log ?? (_ => { }), RunStart);
+
     [Fact]
     public async Task EndAsync_DcpStopsItself_AppHostKilledFirstAndNothingLeftToRemove()
     {
         var tree = new FakeTree([Shell, AppHost, DcpApi, DcpControllers]) { DcpStopsWhenAppHostDies = true };
-        var docker = new FakeDocker(string.Empty);
+        var docker = Docker(string.Empty);
         var log = new List<string>();
 
-        var outcome = await RunCleanup.EndAsync(tree, docker, new CleanupOptions(false, TimeSpan.FromSeconds(5)), log.Add);
+        var outcome = await End(tree, docker, new CleanupOptions(false, TimeSpan.FromSeconds(5)), log.Add);
 
         tree.KilledBeforeDispose.ShouldBe([Shell, AppHost], ignoreOrder: true); // never DCP itself: it cleans up
         tree.Disposed.ShouldBeTrue();
         outcome.OrchestratorStoppedItself.ShouldBeTrue();
         outcome.ContainersRemoved.ShouldBeEmpty();
-        docker.Calls.ShouldHaveSingleItem()[0].ShouldBe("ps"); // listed (nothing of the run's left), nothing removed
+        docker.Calls.ShouldNotContain(c => c[0] == "rm");
         log.ShouldContain(l => l.Contains("stopped its containers itself", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task EndAsync_DcpDoesNotStop_ForcesAndRemovesOnlyTheRunsContainers()
+    public async Task EndAsync_DcpDoesNotStop_ForcesAndRemovesOnlyTheRunsContainersNetworksAndNewVolumes()
     {
         var tree = new FakeTree([Shell, AppHost, DcpApi, DcpControllers]) { DcpStopsWhenAppHostDies = false };
-        var docker = new FakeDocker(Listing);
+        var docker = Docker(Listing);
         var log = new List<string>();
 
-        var outcome = await RunCleanup.EndAsync(tree, docker, new CleanupOptions(false, TimeSpan.FromMilliseconds(300)), log.Add);
+        var outcome = await End(tree, docker, new CleanupOptions(false, TimeSpan.FromMilliseconds(300)), log.Add);
 
         outcome.OrchestratorStoppedItself.ShouldBeFalse();
         tree.Disposed.ShouldBeTrue();
-        docker.Calls.Count.ShouldBe(2);
-        var rm = docker.Calls[1];
-        rm.Take(2).ShouldBe(["rm", "-f"]);
-        rm.Skip(2).ShouldBe(["aa01", "aa02", "aa03", "aa04"]);         // the run's three containers + its tunnel proxy
-        rm.ShouldNotContain("-v");                                       // named volumes are the project's data
-        rm.ShouldNotContain("--volumes");
+        // Containers: the run's three + its tunnel proxy, with their anonymous volumes (-v never removes a named one).
+        var rm = docker.Calls.Single(c => c[0] == "rm");
+        rm.Take(3).ShouldBe(["rm", "-f", "-v"]);
+        rm.Skip(3).ShouldBe(["aa01", "aa02", "aa03", "aa04"]);
+        docker.Calls.Single(c => c[0] == "inspect").Skip(3).ShouldBe(["aa01", "aa02", "aa03", "aa04"]); // mounts asked before rm
         outcome.ContainersRemoved.ShouldBe(["postgres-jrwbbahn", "keycloak-rjrytsmd", "mailhog-cynmrhdp", "aspire-container-network-tunnelproxy-c2djbs6j14"]);
+        // Networks: only the run's session network — never the lab's or the preview's.
+        docker.Calls.Single(c => c is ["network", "rm", ..]).Skip(2).ShouldBe(["ee01"]);
+        outcome.NetworksRemoved.ShouldBe(["aspire-session-network-hcezjxrc-ThuVienCo"]);
+        // Volumes: the named one created during the run; the older shared one stays; the anonymous one went with -v.
+        docker.Calls.Single(c => c is ["volume", "inspect", ..]).ShouldBe(
+            ["volume", "inspect", "--format", "{{.Name}}|{{.CreatedAt}}", "thuvienco-postgres-data-13416a39", "thuvienco-keycloak-data"]);
+        docker.Calls.Single(c => c is ["volume", "rm", ..]).Skip(2).ShouldBe(["thuvienco-postgres-data-13416a39"]);
+        outcome.VolumesRemoved.ShouldBe(["thuvienco-postgres-data-13416a39"]);
         log.ShouldContain(l => l.Contains("forcing", StringComparison.Ordinal));
-        log.ShouldContain(l => l.Contains("removed 4 container(s)", StringComparison.Ordinal) && l.Contains("volumes kept", StringComparison.Ordinal));
+        log.ShouldContain(l => l.Contains("removed 4 container(s)", StringComparison.Ordinal));
+        log.ShouldContain(l => l.Contains("removed 1 network(s)", StringComparison.Ordinal));
+        log.ShouldContain(l => l.Contains("removed 1 volume(s)", StringComparison.Ordinal));
     }
 
     // Stop on the Board kills the CLI's whole tree at once — DCP included — before the cleanup runs: the containers are
@@ -91,21 +127,22 @@ public sealed class RunCleanupTests
         var tree = new FakeTree([Shell, AppHost, DcpApi, DcpControllers]);
         tree.Sample();
         tree.KillAllNow();
-        var docker = new FakeDocker(Listing);
+        var docker = Docker(Listing);
 
-        var outcome = await RunCleanup.EndAsync(tree, docker, new CleanupOptions(false, TimeSpan.FromSeconds(5)), _ => { });
+        var outcome = await End(tree, docker, new CleanupOptions(false, TimeSpan.FromSeconds(5)));
 
         outcome.ContainersRemoved.Count.ShouldBe(4);
-        docker.Calls[1].Skip(2).ShouldBe(["aa01", "aa02", "aa03", "aa04"]);
+        outcome.NetworksRemoved.ShouldBe(["aspire-session-network-hcezjxrc-ThuVienCo"]);
+        docker.Calls.Single(c => c[0] == "rm").Skip(3).ShouldBe(["aa01", "aa02", "aa03", "aa04"]);
     }
 
     [Fact]
     public async Task EndAsync_NoOrchestratorInTheRun_NeverAsksDocker()
     {
         var tree = new FakeTree([Shell, new RunProcess(500, T0, "node")]);
-        var docker = new FakeDocker(Listing);
+        var docker = Docker(Listing);
 
-        var outcome = await RunCleanup.EndAsync(tree, docker, new CleanupOptions(false, TimeSpan.FromSeconds(5)), _ => { });
+        var outcome = await End(tree, docker, new CleanupOptions(false, TimeSpan.FromSeconds(5)));
 
         docker.Calls.ShouldBeEmpty();
         tree.KilledBeforeDispose.ShouldBeEmpty(); // no graceful step: the job closes them
@@ -117,9 +154,9 @@ public sealed class RunCleanupTests
     public async Task EndAsync_KeepContainers_NoGracefulStopAndNoRemoval()
     {
         var tree = new FakeTree([Shell, AppHost, DcpApi, DcpControllers]);
-        var docker = new FakeDocker(Listing);
+        var docker = Docker(Listing);
 
-        await RunCleanup.EndAsync(tree, docker, CleanupOptions.FromSetting("1"), _ => { });
+        await End(tree, docker, CleanupOptions.FromSetting("1"));
 
         docker.Calls.ShouldBeEmpty();
         tree.KilledBeforeDispose.ShouldBeEmpty();
@@ -127,17 +164,32 @@ public sealed class RunCleanupTests
     }
 
     [Fact]
+    public async Task EndAsync_KeepVolumes_ContainersAndNetworksGoVolumesStay()
+    {
+        var tree = new FakeTree([Shell, AppHost, DcpApi, DcpControllers]) { DcpStopsWhenAppHostDies = false };
+        var docker = Docker(Listing);
+
+        var outcome = await End(tree, docker, CleanupOptions.FromSetting(null, "1") with { GracefulWait = TimeSpan.Zero });
+
+        docker.Calls.Single(c => c[0] == "rm").Take(3).ShouldBe(["rm", "-f", "aa01"]); // no -v
+        docker.Calls.ShouldNotContain(c => c[0] == "inspect" || c[0] == "volume");
+        outcome.NetworksRemoved.Count.ShouldBe(1);
+        outcome.VolumesRemoved.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task EndAsync_DockerMissing_LogsAndRemovesNothing()
     {
         var tree = new FakeTree([DcpControllers]) { DcpStopsWhenAppHostDies = false };
-        var docker = new FakeDocker(string.Empty, exitCode: -1, error: "The system cannot find the file specified.");
+        var docker = new FakeDocker(new Dictionary<string, DockerResult>(), new DockerResult(-1, string.Empty, "The system cannot find the file specified."));
         var log = new List<string>();
 
-        var outcome = await RunCleanup.EndAsync(tree, docker, new CleanupOptions(false, TimeSpan.Zero), log.Add);
+        var outcome = await End(tree, docker, new CleanupOptions(false, TimeSpan.Zero), log.Add);
 
         outcome.ContainersRemoved.ShouldBeEmpty();
-        docker.Calls.ShouldHaveSingleItem();
-        log.ShouldContain(l => l.StartsWith("couldn't list", StringComparison.Ordinal));
+        outcome.NetworksRemoved.ShouldBeEmpty();
+        docker.Calls.ShouldNotContain(c => c[0] == "rm" || (c.Count > 1 && c[1] == "rm"));
+        log.ShouldContain(l => l.StartsWith("couldn't list the app's containers", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -177,18 +229,34 @@ public sealed class RunCleanupTests
     }
 
     [Fact]
-    public void ListArgs_FiltersOnTheDcpCreatorLabel() =>
+    public void ListArgs_FilterOnTheDcpCreatorLabel()
+    {
         RunCleanup.ListArgs().ShouldContain("label=com.microsoft.developer.usvc-dev.creatorProcessId");
+        RunCleanup.NetworkListArgs().Take(2).ShouldBe(["network", "ls"]);
+        RunCleanup.NetworkListArgs().ShouldContain("label=com.microsoft.developer.usvc-dev.creatorProcessId");
+    }
+
+    [Fact]
+    public void NamedVolumes_SkipsAnonymousOnesAndJunk() =>
+        RunCleanup.NamedVolumes(Mounts + " -rf ").ShouldBe(["thuvienco-postgres-data-13416a39", "thuvienco-keycloak-data"]);
+
+    [Fact]
+    public void VolumesCreatedSince_OnlyThoseCreatedDuringTheRun() =>
+        RunCleanup.VolumesCreatedSince(VolumeInspect() + "\nbroken line", RunStart).ShouldBe(["thuvienco-postgres-data-13416a39"]);
 
     [Theory]
-    [InlineData(null, false)]
-    [InlineData("", false)]
-    [InlineData("0", false)]
-    [InlineData("1", true)]
-    [InlineData(" TRUE ", true)]
-    [InlineData("on", true)]
-    public void CleanupOptions_FromSetting_KeepsOnlyWhenAsked(string? setting, bool keep) =>
-        CleanupOptions.FromSetting(setting).KeepContainers.ShouldBe(keep);
+    [InlineData(null, null, false, false)]
+    [InlineData("", "0", false, false)]
+    [InlineData("1", null, true, true)]   // keeping containers keeps their volumes
+    [InlineData(" TRUE ", null, true, true)]
+    [InlineData(null, "on", false, true)]
+    public void CleanupOptions_FromSetting_KeepsOnlyWhenAsked(string? containers, string? volumes, bool keepContainers, bool keepVolumes)
+    {
+        var options = CleanupOptions.FromSetting(containers, volumes);
+
+        options.KeepContainers.ShouldBe(keepContainers);
+        options.KeepVolumes.ShouldBe(keepVolumes);
+    }
 
     [Fact]
     public void Safe_ControlCharacters_CannotForgeALogLine() =>
@@ -234,14 +302,18 @@ public sealed class RunCleanupTests
         }
     }
 
-    private sealed class FakeDocker(string listing, int exitCode = 0, string error = "") : IDockerCli
+    // A fake docker CLI: answers by command ("ps", "network ls", "inspect", "volume inspect"); removals succeed.
+    private sealed class FakeDocker(IReadOnlyDictionary<string, DockerResult> answers, DockerResult? fallback = null) : IDockerCli
     {
         public List<IReadOnlyList<string>> Calls { get; } = [];
 
         public Task<DockerResult> RunAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
         {
             Calls.Add([.. args]);
-            return Task.FromResult(args[0] == "ps" ? new DockerResult(exitCode, listing, error) : new DockerResult(0, string.Empty, string.Empty));
+            var two = args.Count > 1 ? args[0] + " " + args[1] : args[0];
+            if (answers.TryGetValue(two, out var byTwo)) { return Task.FromResult(byTwo); }
+            if (answers.TryGetValue(args[0], out var byOne)) { return Task.FromResult(byOne); }
+            return Task.FromResult(fallback ?? new DockerResult(0, string.Empty, string.Empty));
         }
     }
 }
@@ -360,9 +432,34 @@ public sealed class RunsRootWatchTests
     [Theory]
     [InlineData("20261102-154906-d1ed26ddc4d74ab186c0ce6d6559fba7", true)]
     [InlineData("20261102-154906-d1ed26ddc4d74ab186c0ce6d6559fba7.parked", true)]
+    [InlineData("20261102-154906-d1ed26ddc4d74ab186c0ce6d6559fba7.tmp", true)]
+    [InlineData("base-122.tmp", false)]
     [InlineData("base-122", false)]
     [InlineData("trx84", false)]
     [InlineData("20261102-154906-", false)]
     [InlineData("20261102-154906-x.json", false)]
     public void IsRunnersOwn_OnlyTheRunnersNames(string name, bool own) => RunsRootWatch.IsRunnersOwn(name).ShouldBe(own);
+
+    [Fact]
+    public void SweepTempLeftovers_RemovesRunTempFoldersOnly()
+    {
+        var root = NewRoot();
+        try
+        {
+            var run = Path.Join(root, "20261102-154906-d1ed26ddc4d74ab186c0ce6d6559fba7");
+            Directory.CreateDirectory(run);
+            Directory.CreateDirectory(run + RunsRootWatch.TempSuffix);
+            Directory.CreateDirectory(Path.Join(root, "notes.tmp"));
+
+            RunsRootWatch.SweepTempLeftovers(root).ShouldBe(1);
+
+            Directory.Exists(run + RunsRootWatch.TempSuffix).ShouldBeFalse();
+            Directory.Exists(run).ShouldBeTrue();
+            Directory.Exists(Path.Join(root, "notes.tmp")).ShouldBeTrue();
+        }
+        finally
+        {
+            _ = TestFiles.TryDeleteDirectory(root);
+        }
+    }
 }

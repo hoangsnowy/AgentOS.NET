@@ -8,44 +8,131 @@
 // So every scoped claude run gets a PreToolUse hook (`--settings <file>`, written per run): claude runs
 // `AgentOs.RemoteAgent guard` before each Bash / PowerShell / Write / Edit / MultiEdit / NotebookEdit call, with the call
 // on stdin. The guard resolves every path the call would write — relative to the shell's current folder, following the
-// `cd`s inside the command — and blocks the call (exit 2, the reason goes back to the agent) when one is outside the run
-// folder (AGENTOS_RUN_DIR, set on the CLI's environment):
+// `cd`s inside the command, expanding the variables it knows ($TEMP / $TMP / $TMPDIR = the run's own temp folder,
+// $AGENTOS_RUN_DIR, $PWD, `$(pwd)`, `$(git rev-parse --show-toplevel)`) — and blocks the call (exit 2, the reason goes
+// back to the agent) when one is outside the run folder or its temp folder (AGENTOS_RUN_DIR / AGENTOS_RUN_TMP):
 //   - the file tools' file_path / notebook_path;
 //   - `cd` / `pushd` / Set-Location out of the run folder, and any command run from a folder outside it;
-//   - redirections (`>`, `>>`, `2>`, `&>`, `*>`) — except /dev/null, NUL, $null;
+//   - redirections (`>`, `>>`, `2>`, `&>`, `>&file`, `<>`, `*>`) — except /dev/null, NUL, $null;
 //   - file-writing commands (mkdir, touch, cp, mv, rm, ln, tar, unzip, tee, New-Item, Copy-Item, Set-Content, Out-File…):
-//     every argument that isn't an option;
+//     every argument that isn't an option, attached values too (`tar -C../x`, `cp -t../x`);
 //   - git: `-C <dir>`, `--git-dir` / `--work-tree`, `worktree add <path>`, `clone <repo> <dir>`, `init <dir>`,
 //     `archive -o`, `format-patch -o`, `bundle create`; gh: `repo clone <repo> <dir>`;
-//   - dotnet / npm / pnpm / yarn / curl / wget output options (`-o`, `--output`, `--prefix`, `--tool-path`…) and global
-//     installs (`-g`, `--global`);
-//   - scripts run by an interpreter (node, deno, bun, tsx, ts-node, python): the script must be inside the run folder AND
-//     a file of the repository that is committed and unmodified (`git status --porcelain --ignored` says nothing about
-//     it) — a helper the agent just wrote is refused; inline code (`node -e`, `python -c`) is refused;
-//   - `sh -c` / `bash -c` / `pwsh -Command` strings are checked the same way; a path that is computed (`$VAR`, `$(…)`)
-//     where a write goes is refused (it can't be checked).
-// What the guard can NOT see is what a build tool does with the repository's own code (an npm script, an MSBuild target):
-// that runs with the member's rights, as before — the end-of-run sweep (RunsRootWatch in RunCleanup.cs) removes what such
-// code leaves next to the run folders, and an OS sandbox remains the real boundary (docs/adr/0018).
+//   - dotnet / npm / pnpm / yarn / curl / wget output options (`-o`, `-o:`, `--output`, `-so<file>`, `--prefix`,
+//     `-p:OutputPath=…`…), global installs (`-g`, `--global`) and `npm pkg set scripts.*`;
+//   - code the agent could have written itself: a script run by an interpreter (node, deno, bun, tsx, ts-node, python,
+//     sh/bash, pwsh -File, `dotnet run x.cs` / `--file`, `dotnet fsi`, `dotnet exec`, `./x`, `source x`) must be a file
+//     the repository tracks (committed, or modified — either way it ships in the pull request's diff) or an ignored
+//     build output (dist/, bin/, node_modules/…) the agent didn't write itself; a NEW untracked script is refused with
+//     "commit it first"; inline code (`node -e`, `python -c`, a heredoc or a pipe into an interpreter) is refused;
+//   - nested commands are checked the same way: `$(…)` and backticks, `sh -c` / `bash -lc`, `pwsh -Command` /
+//     `-EncodedCommand`, `cmd /c`, `iex`, Start-Process, `find -exec`, `xargs`, `npm exec` / `npx` / `pnpm dlx`.
+// A path that is computed in a way the guard can't follow (`$VAR`, an unknown `$(…)`) where a write goes is refused.
+// Every write target an allowed call names is appended to the run's ledger (AGENTOS_GUARD_LEDGER), so an ignored file the
+// agent wrote can't later pass as a build output.
+//
+// The hook is a guard rail, not a sandbox: Claude Code runs the tool call anyway when the hook can't run (the runner's
+// executable gone mid-run, a crash, a timeout, `disableAllHooks`) — only exit 2 blocks. And what a build tool does with
+// the repository's own code (an npm script, an MSBuild target, a test the agent wrote) runs with the member's rights; the
+// end-of-run sweep (RunsRootWatch in RunCleanup.cs) removes what such code leaves next to the run folders, and an OS
+// sandbox remains the real boundary (docs/adr/0018).
 
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AgentOs.RemoteAgent;
 
+/// <summary>What git says about a script the agent wants to run.</summary>
+internal enum ScriptState
+{
+    /// <summary>Committed and unchanged.</summary>
+    Clean,
+    /// <summary>Tracked, with changes (modified, staged, added) — it ships in the pull request's diff.</summary>
+    Tracked,
+    /// <summary>A new file git doesn't track.</summary>
+    Untracked,
+    /// <summary>Ignored by the repository (a build output, node_modules).</summary>
+    Ignored,
+    /// <summary>Not inside a repository checkout.</summary>
+    NotInRepo,
+    /// <summary>The file doesn't exist (yet).</summary>
+    Missing,
+}
+
+/// <summary>What one guard check knows: the run's folders, how to ask git about a script, what the run wrote before —
+/// and, as the check goes, what this call writes (recorded to the ledger when the call is allowed).</summary>
+internal sealed class GuardContext
+{
+    public GuardContext(string runDir, string? tempDir = null)
+    {
+        RunDir = Path.GetFullPath(ScopedWriteGuard.FromGitBash(runDir));
+        TempDir = string.IsNullOrWhiteSpace(tempDir) ? null : Path.GetFullPath(ScopedWriteGuard.FromGitBash(tempDir));
+        // Not the shared /tmp off Windows: it is outside the run (the run's TMPDIR is its own temp folder). On Windows Git
+        // Bash's /tmp IS the CLI's TEMP, so Resolve maps it there.
+        Roots = TempDir is null ? [RunDir] : [RunDir, TempDir];
+    }
+
+    /// <summary>The run folder.</summary>
+    public string RunDir { get; }
+
+    /// <summary>The run's own temp folder (TEMP / TMP / TMPDIR of the CLI).</summary>
+    public string? TempDir { get; }
+
+    /// <summary>Where a write may land.</summary>
+    public IReadOnlyList<string> Roots { get; }
+
+    /// <summary>Asks git about a script (a fake in tests).</summary>
+    public Func<string, ScriptState> ScriptStateOf { get; init; } = ScopedWriteGuard.ScriptStateOf;
+
+    /// <summary>Whether an earlier call of this run wrote that path (the ledger).</summary>
+    public Func<string, bool> WrittenEarlier { get; init; } = static _ => false;
+
+    /// <summary>What this call writes (full paths).</summary>
+    public List<string> Written { get; } = [];
+
+    /// <summary>Inside the run folder or its temp folder.</summary>
+    public bool IsWritable(string fullPath) => Roots.Any(root => ScopedWriteGuard.IsInside(fullPath, root));
+
+    /// <summary>Written by this run: earlier (the ledger) or by this very call.</summary>
+    public bool WrittenByRun(string fullPath) =>
+        Written.Exists(w => ScopedWriteGuard.IsInside(fullPath, w)) || WrittenEarlier(fullPath);
+
+    /// <summary>The value of a variable the guard can vouch for, or null.</summary>
+    public string? Variable(string name, string? cwd) => name.ToUpperInvariant() switch
+    {
+        "TEMP" or "TMP" or "TMPDIR" or "AGENTOS_RUN_TMP" => TempDir,
+        "AGENTOS_RUN_DIR" => RunDir,
+        "PWD" => cwd,
+        "HOME" or "USERPROFILE" => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        _ => null,
+    };
+}
+
 /// <summary>The PreToolUse guard that keeps a scoped run's writes inside its run folder.</summary>
-internal static class ScopedWriteGuard
+internal static partial class ScopedWriteGuard
 {
     /// <summary>The CLI environment variable naming the run folder (the hook reads it).</summary>
     internal const string RunDirVariable = "AGENTOS_RUN_DIR";
+
+    /// <summary>The CLI environment variable naming the run's temp folder.</summary>
+    internal const string RunTempVariable = "AGENTOS_RUN_TMP";
+
+    /// <summary>The CLI environment variable naming the run's ledger of written paths.</summary>
+    internal const string LedgerVariable = "AGENTOS_GUARD_LEDGER";
 
     /// <summary>How every block starts — CliProgress recognises it in a tool result and records the call as refused.</summary>
     internal const string BlockedPrefix = "Blocked by the AgentOS.NET runner:";
 
     /// <summary>The tools the hook is asked about.</summary>
     internal const string Matcher = "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit";
+
+    /// <summary>A ledger holds at most this many paths; past it, every ignored script counts as written by the run.</summary>
+    internal const int MaxLedgerLines = 20_000;
+
+    private const int MaxDepth = 8;
 
     private static readonly HashSet<string> CdCommands = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -60,55 +147,86 @@ internal static class ScopedWriteGuard
         "set-content", "add-content", "ac", "out-file", "tee-object", "expand-archive", "compress-archive", "new-symlink",
     };
 
+    // Write commands that put content somewhere (recorded to the ledger) — not mkdir / rm / touch / chmod.
+    private static readonly HashSet<string> ContentCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cp", "copy", "mv", "move", "ln", "install", "tee", "tar", "unzip", "7z", "rsync", "dd", "copy-item", "cpi",
+        "move-item", "mi", "rename-item", "rni", "ren", "set-content", "add-content", "ac", "out-file", "tee-object",
+        "expand-archive", "new-item", "ni", "new-symlink",
+    };
+
+    // Short options whose value may be attached (`tar -C../x`, `cp -t../x`, `unzip -d../x`, `7z -o../x`).
+    private static readonly Dictionary<string, string> AttachedValueLetters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["tar"] = "Cf", ["cp"] = "t", ["mv"] = "t", ["install"] = "t", ["ln"] = "t", ["unzip"] = "d", ["7z"] = "o",
+    };
+
+    // PowerShell cmdlet parameters whose value is not a path.
+    private static readonly HashSet<string> PsValueOptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-value", "-itemtype", "-type", "-encoding", "-filter", "-include", "-exclude", "-inputobject", "-stream",
+        "-delimiter", "-width", "-credential", "-newname",
+    };
+
     private static readonly HashSet<string> Interpreters = new(StringComparer.OrdinalIgnoreCase)
     {
         "node", "deno", "bun", "tsx", "ts-node", "python", "python3", "py",
     };
 
-    private static readonly HashSet<string> Shells = new(StringComparer.OrdinalIgnoreCase) { "sh", "bash", "zsh", "dash" };
+    private static readonly HashSet<string> Shells = new(StringComparer.OrdinalIgnoreCase) { "sh", "bash", "zsh", "dash", "ksh" };
 
     private static readonly HashSet<string> PowerShells = new(StringComparer.OrdinalIgnoreCase) { "pwsh", "powershell" };
 
-    // Prefixes that run the next word as the command.
-    private static readonly HashSet<string> Wrappers = new(StringComparer.OrdinalIgnoreCase) { "env", "nohup", "time", "command", "exec", "nice" };
-
-    // Options of the package / build / download tools whose value is where they write.
-    private static readonly HashSet<string> OutputOptions = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> PackageManagers = new(StringComparer.OrdinalIgnoreCase)
     {
-        "-o", "--output", "--output-dir", "--output-directory", "--prefix", "--tool-path", "--directory-prefix", "-P",
-        "-O", "--output-document", "--modules-folder", "--global-folder", "--cache-folder", "--results-directory",
+        "npm", "pnpm", "yarn", "npx", "pnpx", "bunx",
     };
 
-    private static readonly HashSet<string> OutputTools = new(StringComparer.OrdinalIgnoreCase)
+    // Prefixes that run the next word as the command (and shell keywords that start a command).
+    private static readonly HashSet<string> Wrappers = new(StringComparer.OrdinalIgnoreCase)
     {
-        "dotnet", "npm", "pnpm", "yarn", "npx", "curl", "wget",
+        "env", "nohup", "time", "command", "exec", "nice", "sudo", "doas", "timeout", "stdbuf", "builtin",
+        "{", "!", "then", "do", "else", "elif", "if", "while", "until",
+    };
+
+    private static readonly HashSet<string> WrapperValueOptions = new(StringComparer.Ordinal)
+    {
+        "-u", "-g", "-n", "-s", "-k", "-C", "-D", "-p", "-U", "-h", "-r", "-t", "-i", "-o", "-e",
     };
 
     private static readonly HashSet<string> NullTargets = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/dev/null", "nul", "$null", "/dev/stdout", "/dev/stderr",
+        "/dev/null", "nul", "$null", "/dev/stdout", "/dev/stderr", "con",
     };
 
     private static readonly string[] ProgramExtensions = [".exe", ".cmd", ".bat", ".ps1"];
 
     private static readonly string[] GitStatusArgs = ["status", "--porcelain", "--ignored", "--"];
 
-    // Files inside the run folder that are still off limits: git's own folder (a hook there runs on the next commit) and
-    // claude's project settings (a follow-up run resumed in this folder would load their permissions and hooks).
+    // Files inside the run folder that are still off limits: git's own folder (a hook there runs on the next commit),
+    // husky's hooks (the same, through the repository), and claude's project settings (a follow-up run resumed in this
+    // folder would load their permissions and hooks).
     private static readonly string[] ProtectedFiles = ["settings.json", "settings.local.json"];
 
     // ── the hook ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary><c>AgentOs.RemoteAgent guard</c>: read the hook's JSON from <paramref name="input"/>; 0 = allow, 2 = block
-    /// (the reason on <paramref name="error"/> goes back to the agent). Fails closed: anything unexpected blocks.</summary>
-    internal static int Run(TextReader input, TextWriter error, string? runDir)
+    /// (the reason on <paramref name="error"/> goes back to the agent). Anything unexpected blocks — but note that Claude
+    /// Code itself runs the call when the hook can't run at all (fail-open; see the header).</summary>
+    internal static int Run(TextReader input, TextWriter error, string? runDir, string? tempDir = null, string? ledgerPath = null)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(error);
         if (string.IsNullOrWhiteSpace(runDir)) { return 0; } // not a scoped run: nothing to confine
         try
         {
-            if (CheckHookInput(input.ReadToEnd(), runDir) is not { } reason) { return 0; }
+            var ledger = Ledger.Load(ledgerPath);
+            var ctx = new GuardContext(runDir, tempDir) { WrittenEarlier = ledger.Contains };
+            if (CheckHookInput(input.ReadToEnd(), ctx) is not { } reason)
+            {
+                ledger.Append(ctx.Written);
+                return 0;
+            }
             error.WriteLine(BlockedPrefix + " " + reason
                 + " This run may only write inside its own folder (" + runDir + ").");
             return 2;
@@ -121,41 +239,51 @@ internal static class ScopedWriteGuard
     }
 
     /// <summary>Why the tool call in <paramref name="json"/> (a PreToolUse hook input) must not run, or null.</summary>
-    internal static string? CheckHookInput(string json, string runDir, Func<string, bool>? isCleanRepoFile = null)
+    internal static string? CheckHookInput(string json, GuardContext ctx)
     {
+        ArgumentNullException.ThrowIfNull(ctx);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         var tool = root.TryGetProperty("tool_name", out var t) ? t.GetString() ?? string.Empty : string.Empty;
-        var cwd = root.TryGetProperty("cwd", out var c) && c.GetString() is { Length: > 0 } dir ? dir : runDir;
+        var cwd = root.TryGetProperty("cwd", out var c) && c.GetString() is { Length: > 0 } dir ? dir : ctx.RunDir;
         if (!root.TryGetProperty("tool_input", out var toolInput) || toolInput.ValueKind != JsonValueKind.Object) { return null; }
         string? Field(string name) => toolInput.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         return tool switch
         {
-            "Bash" => Field("command") is { } bash ? CheckCommand(bash, cwd, runDir, powerShell: false, isCleanRepoFile) : null,
-            "PowerShell" => Field("command") is { } ps ? CheckCommand(ps, cwd, runDir, powerShell: true, isCleanRepoFile) : null,
-            "Write" or "Edit" or "MultiEdit" => CheckFileTool(Field("file_path"), cwd, runDir),
-            "NotebookEdit" => CheckFileTool(Field("notebook_path"), cwd, runDir),
+            "Bash" => Field("command") is { } bash ? CheckCommand(bash, cwd, ctx, powerShell: false) : null,
+            "PowerShell" => Field("command") is { } ps ? CheckCommand(ps, cwd, ctx, powerShell: true) : null,
+            "Write" or "Edit" or "MultiEdit" => CheckFileTool(Field("file_path"), cwd, ctx),
+            "NotebookEdit" => CheckFileTool(Field("notebook_path"), cwd, ctx),
             _ => null,
         };
     }
 
-    /// <summary>A file tool's target must resolve inside the run folder.</summary>
-    internal static string? CheckFileTool(string? path, string cwd, string runDir)
+    /// <summary>A file tool's target must resolve inside the run folder (and not be one of its protected files).</summary>
+    internal static string? CheckFileTool(string? path, string cwd, GuardContext ctx)
     {
+        ArgumentNullException.ThrowIfNull(ctx);
         if (string.IsNullOrWhiteSpace(path)) { return null; }
-        return Resolve(path, cwd) is { } full ? WriteProblem(full, path, runDir) : $"'{path}' can't be resolved.";
+        if (Resolve(path, cwd, ctx.TempDir) is not { } full) { return $"'{path}' can't be resolved."; }
+        if (WriteProblem(full, path, ctx) is { } problem) { return problem; }
+        ctx.Written.Add(full);
+        return null;
     }
 
-    /// <summary>Why a write to <paramref name="full"/> is refused (outside the run folder, or one of its protected files),
-    /// or null.</summary>
-    internal static string? WriteProblem(string full, string shown, string runDir)
+    /// <summary>Why a write to <paramref name="full"/> is refused (outside the run's folders, or a protected file), or null.</summary>
+    internal static string? WriteProblem(string full, string shown, GuardContext ctx)
     {
-        if (!IsInside(full, runDir)) { return $"'{shown}' is outside the run folder."; }
-        var relative = Path.GetRelativePath(Path.GetFullPath(NormalizeCwd(runDir)), full).Replace('\\', '/');
+        ArgumentNullException.ThrowIfNull(ctx);
+        if (!ctx.IsWritable(full)) { return $"'{shown}' is outside the run folder."; }
+        if (!IsInside(full, ctx.RunDir)) { return null; }
+        var relative = Path.GetRelativePath(ctx.RunDir, full).Replace('\\', '/');
         var segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length >= 2 && Array.Exists(segments[..^1], seg => seg.Equals(".git", StringComparison.OrdinalIgnoreCase)))
         {
             return $"'{shown}' is inside git's own folder (.git) — use git commands.";
+        }
+        if (segments.Length >= 2 && Array.Exists(segments[..^1], seg => seg.Equals(".husky", StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"'{shown}' is a git hook (.husky) — hooks run on the member's computer; they can't be changed in a run.";
         }
         if (segments.Length >= 2 && segments[^2].Equals(".claude", StringComparison.OrdinalIgnoreCase)
             && ProtectedFiles.Contains(segments[^1], StringComparer.OrdinalIgnoreCase))
@@ -169,107 +297,205 @@ internal static class ScopedWriteGuard
 
     /// <summary>Why <paramref name="command"/> (as the Bash or PowerShell tool would run it from <paramref name="cwd"/>)
     /// must not run, or null.</summary>
-    internal static string? CheckCommand(string command, string cwd, string runDir, bool powerShell, Func<string, bool>? isCleanRepoFile = null)
+    internal static string? CheckCommand(string command, string cwd, GuardContext ctx, bool powerShell) =>
+        CheckCommand(command, cwd, ctx, powerShell, 0);
+
+    private static string? CheckCommand(string command, string? cwd, GuardContext ctx, bool powerShell, int depth)
     {
         ArgumentNullException.ThrowIfNull(command);
-        isCleanRepoFile ??= IsCleanRepoFile;
-        if (powerShell && (command.Contains("[System.IO.", StringComparison.OrdinalIgnoreCase) || command.Contains("[IO.", StringComparison.OrdinalIgnoreCase)))
+        ArgumentNullException.ThrowIfNull(ctx);
+        if (depth > MaxDepth) { return "the command nests other commands too deeply to be checked."; }
+        if (powerShell && DotNetFileApi().IsMatch(command))
         {
-            return "direct .NET file calls ([System.IO.…]) can't be checked.";
+            return "direct .NET file calls ([System.IO.File] / [IO.Directory] …) can't be checked — use the file tools or New-Item / Set-Content.";
         }
-        string? here = cwd;
+        var state = new ShellState(cwd);
         foreach (var simple in ShellWords.Commands(command, powerShell))
         {
-            if (CheckSimple(simple, ref here, runDir, powerShell, isCleanRepoFile) is { } reason) { return reason; }
+            if (CheckSimple(simple, state, ctx, powerShell, depth) is { } reason) { return reason; }
         }
         return null;
     }
 
-    private static string? CheckSimple(ShellWords.Simple simple, ref string? here, string runDir, bool powerShell, Func<string, bool> isCleanRepoFile)
+    // The shell's folder as the command goes (null = computed, unknown) and the one before it (`cd -`).
+    private sealed class ShellState(string? cwd)
     {
-        var cwd = here;
+        public string? Here { get; set; } = cwd;
+        public string? Previous { get; set; }
+        public bool PreviousKnown { get; set; }
+    }
+
+    private static string? CheckSimple(ShellWords.Simple simple, ShellState state, GuardContext ctx, bool powerShell, int depth)
+    {
+        var cwd = state.Here;
+
+        // What runs first: the command substitutions, in a subshell from the same folder.
+        foreach (var sub in simple.Substitutions)
+        {
+            if (cwd is null) { return "it runs after a 'cd' to a computed folder, so its paths can't be checked."; }
+            if (CheckCommand(sub, cwd, ctx, powerShell, depth + 1) is { } inner) { return inner; }
+        }
+
         foreach (var target in simple.Redirects)
         {
             if (target.Text.Length == 0 || NullTargets.Contains(target.Text)) { continue; }
-            if (target.Dynamic) { return $"the redirection target '{target.Text}' is computed, so it can't be checked."; }
-            if (cwd is null || Resolve(target.Text, cwd) is not { } full)
-            {
-                return $"the redirection to '{target.Text}' can't be resolved.";
-            }
-            if (WriteProblem(full, target.Text, runDir) is { } problem) { return "the redirection is refused: " + problem; }
+            if (Expand(target, cwd, ctx) is not { } text) { return $"the redirection target '{target.Text}' is computed, so it can't be checked."; }
+            if (cwd is null || Resolve(text, cwd, ctx.TempDir) is not { } full) { return $"the redirection to '{target.Text}' can't be resolved."; }
+            if (WriteProblem(full, target.Text, ctx) is { } problem) { return "the redirection is refused: " + problem; }
+            ctx.Written.Add(full);
         }
 
         var words = simple.Words;
-        var start = 0;
-        while (start < words.Count && (IsAssignment(words[start].Text, powerShell) || Wrappers.Contains(ProgramName(words[start].Text))))
+        var start = SkipPrefixes(words, powerShell, out var assignments);
+        foreach (var a in assignments.Where(a => a.Text.StartsWith("NODE_OPTIONS=", StringComparison.Ordinal)))
         {
-            start++;
+            if (CheckNodeOptions(a, cwd, ctx) is { } reason) { return reason; }
         }
         if (start >= words.Count) { return null; }
-        var program = ProgramName(words[start].Text);
+        var programWord = words[start];
+        var program = ProgramName(programWord.Text);
         var args = words.Skip(start + 1).ToList();
 
-        if (CdCommands.Contains(program))
-        {
-            var target = args.FirstOrDefault(a => !a.Text.StartsWith('-'));
-            if (target is null) { return "'" + program + "' without a folder leaves the run folder."; }
-            if (target.Dynamic) { here = null; return null; } // computed: later writes in this command can't be checked
-            if (cwd is null || Resolve(target.Text, cwd) is not { } dir || !IsInside(dir, runDir))
-            {
-                return $"'{program} {target.Text}' leaves the run folder.";
-            }
-            here = dir;
-            return null;
-        }
+        if (CdCommands.Contains(program)) { return CheckCd(program, args, state, ctx); }
 
-        var guarded = WriteCommands.Contains(program) || program.Equals("git", StringComparison.OrdinalIgnoreCase)
-            || program.Equals("gh", StringComparison.OrdinalIgnoreCase) || OutputTools.Contains(program)
-            || Interpreters.Contains(program) || Shells.Contains(program) || PowerShells.Contains(program)
-            || program.Equals("xargs", StringComparison.OrdinalIgnoreCase);
-        if (!guarded) { return cwd is not null && !IsInside(cwd, runDir) ? "it runs from a folder outside the run folder." : null; }
+        // A program named by its path inside the run folder (`./helper.sh`, `node_modules/.bin/x`) is code the run may
+        // have written: the same rule as a script given to an interpreter.
+        var runsAPath = !programWord.Dynamic && !(powerShell && programWord.Quoted)
+            && programWord.Text.IndexOfAny(['/', '\\']) >= 0 && cwd is not null
+            && Resolve(programWord.Text, cwd, ctx.TempDir) is { } programPath && ctx.IsWritable(programPath);
+
+        var guarded = runsAPath || IsGuarded(program, powerShell);
+        if (!guarded) { return cwd is not null && !ctx.IsWritable(cwd) ? "it runs from a folder outside the run folder." : null; }
         if (cwd is null) { return "it runs after a 'cd' to a computed folder, so its paths can't be checked."; }
-        if (!IsInside(cwd, runDir)) { return "it runs from a folder outside the run folder."; }
+        if (!ctx.IsWritable(cwd)) { return "it runs from a folder outside the run folder."; }
+        if (runsAPath && CheckScript(programWord.Text, programWord, cwd, ctx) is { } own) { return own; }
 
-        if (WriteCommands.Contains(program)) { return CheckPaths(program, Operands(args), cwd, runDir); }
-        return program.ToLowerInvariant() switch
+        if (WriteCommands.Contains(program))
         {
-            "git" => CheckGit(args, cwd, runDir),
-            "gh" => CheckGh(args, cwd, runDir),
-            "xargs" => args.FirstOrDefault(a => !a.Text.StartsWith('-')) is { } next && WriteCommands.Contains(ProgramName(next.Text))
-                ? $"'xargs {next.Text}' writes to paths that can't be checked."
-                : null,
-            _ when Interpreters.Contains(program) => CheckInterpreter(program, args, cwd, runDir, isCleanRepoFile),
-            _ when Shells.Contains(program) => NestedScript(args, "-c", cwd, runDir, powerShell: false, isCleanRepoFile),
-            _ when PowerShells.Contains(program) => NestedScript(args, "-c", cwd, runDir, powerShell: true, isCleanRepoFile)
-                ?? NestedScript(args, "-command", cwd, runDir, powerShell: true, isCleanRepoFile),
-            _ => CheckOutputs(program, args, cwd, runDir),
+            return CheckPaths(program, Operands(program, args), cwd, ctx, record: ContentCommands.Contains(program));
+        }
+        return program switch
+        {
+            "git" => CheckGit(args, cwd, ctx),
+            "gh" => CheckGh(args, cwd, ctx),
+            "xargs" => CheckXargs(args, cwd, ctx, powerShell, depth),
+            "find" => CheckFind(args, cwd, ctx, powerShell, depth),
+            "dotnet" => CheckDotnet(args, simple, cwd, ctx),
+            "msbuild" => CheckMsBuildProperties(args, cwd, ctx),
+            "curl" or "wget" => CheckDownload(program, args, cwd, ctx),
+            "cmd" => CheckCmd(args, simple, cwd, ctx, depth),
+            "." or "source" => args.Count > 0 ? CheckScript(program, args[0], cwd, ctx) : null,
+            "iex" or "invoke-expression" => CheckIex(args, cwd, ctx, depth),
+            "start-process" or "saps" or "start" when powerShell => CheckStartProcess(args, cwd, ctx, powerShell, depth),
+            _ when PackageManagers.Contains(program) => CheckPackageManager(program, args, simple, cwd, ctx, powerShell, depth),
+            _ when Interpreters.Contains(program) => CheckInterpreter(program, args, simple, cwd, ctx),
+            _ when Shells.Contains(program) => CheckShell(program, args, simple, cwd, ctx, depth),
+            _ when PowerShells.Contains(program) => CheckPwsh(args, simple, cwd, ctx, depth),
+            _ => null,
         };
     }
 
-    private static string? CheckPaths(string what, IEnumerable<ShellWords.Word> paths, string cwd, string runDir)
+    private static bool IsGuarded(string program, bool powerShell) =>
+        WriteCommands.Contains(program) || Interpreters.Contains(program) || Shells.Contains(program)
+        || PowerShells.Contains(program) || PackageManagers.Contains(program) || GuardedTools.Contains(program)
+        || (powerShell && program is "start");
+
+    private static readonly HashSet<string> GuardedTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "git", "gh", "xargs", "find", "dotnet", "msbuild", "curl", "wget", "cmd", ".", "source", "iex", "invoke-expression",
+        "start-process", "saps",
+    };
+
+    // Leading assignments (FOO=1), wrappers (env, sudo, nohup, timeout 10…) and shell keywords (then, do, {).
+    private static int SkipPrefixes(IReadOnlyList<ShellWords.Word> words, bool powerShell, out List<ShellWords.Word> assignments)
+    {
+        assignments = [];
+        var i = 0;
+        while (i < words.Count)
+        {
+            var text = words[i].Text;
+            if (IsAssignment(text, powerShell)) { assignments.Add(words[i]); i++; continue; }
+            var name = ProgramName(text);
+            if (!Wrappers.Contains(name) || (powerShell && name is "if" or "while" or "until" or "else" or "elif")) { break; }
+            i++;
+            while (i < words.Count && words[i].Text.StartsWith('-') && words[i].Text.Length > 1)
+            {
+                var opt = words[i].Text;
+                i++;
+                if (WrapperValueOptions.Contains(opt)) { i++; }
+            }
+            if (name == "timeout" && i < words.Count) { i++; } // the duration
+        }
+        return i;
+    }
+
+    private static string? CheckCd(string program, List<ShellWords.Word> args, ShellState state, GuardContext ctx)
+    {
+        var cwd = state.Here;
+        var target = args.FirstOrDefault(a => !a.Text.StartsWith('-') || a.Text == "-");
+        if (target is null) { return "'" + program + "' without a folder leaves the run folder."; }
+        if (target.Text == "-")
+        {
+            // The folder before: known when this command changed it; otherwise the shell's own — unknown here.
+            var back = state.PreviousKnown ? state.Previous : null;
+            if (back is not null && !ctx.IsWritable(back)) { return $"'{program} -' leaves the run folder."; }
+            (state.Previous, state.Here, state.PreviousKnown) = (cwd, back, true);
+            return null;
+        }
+        if (Expand(target, cwd, ctx) is not { } text)
+        {
+            (state.Previous, state.Here, state.PreviousKnown) = (cwd, null, true); // computed: later writes can't be checked
+            return null;
+        }
+        if (cwd is null || Resolve(text, cwd, ctx.TempDir) is not { } dir || !ctx.IsWritable(dir))
+        {
+            return $"'{program} {target.Text}' leaves the run folder.";
+        }
+        (state.Previous, state.Here, state.PreviousKnown) = (cwd, dir, true);
+        return null;
+    }
+
+    private static string? CheckPaths(string what, IEnumerable<ShellWords.Word> paths, string cwd, GuardContext ctx, bool record)
     {
         foreach (var p in paths)
         {
-            if (p.Dynamic) { return $"'{what}' gets a computed path ('{p.Text}'), so it can't be checked."; }
-            if (Resolve(p.Text, cwd) is not { } full) { return $"'{what} {p.Text}': the path can't be resolved."; }
-            if (WriteProblem(full, p.Text, runDir) is { } problem) { return $"'{what} {p.Text}' is refused: " + problem; }
+            if (Expand(p, cwd, ctx) is not { } text) { return $"'{what}' gets a computed path ('{p.Text}'), so it can't be checked."; }
+            if (Resolve(text, cwd, ctx.TempDir) is not { } full) { return $"'{what} {p.Text}': the path can't be resolved."; }
+            if (WriteProblem(full, p.Text, ctx) is { } problem) { return $"'{what} {p.Text}' is refused: " + problem; }
+            if (record) { ctx.Written.Add(full); }
         }
         return null;
     }
 
-    // Arguments that aren't options; "--opt=value" contributes its value; after "--" everything is an operand.
-    private static List<ShellWords.Word> Operands(List<ShellWords.Word> args)
+    // Arguments that aren't options; "--opt=value" contributes its value, an attached short value too (`-C../x`);
+    // after "--" everything is an operand. PowerShell parameters whose value isn't a path are skipped with it.
+    private static List<ShellWords.Word> Operands(string program, List<ShellWords.Word> args)
     {
         var result = new List<ShellWords.Word>();
         var endOfOptions = false;
-        foreach (var a in args)
+        var attached = AttachedValueLetters.GetValueOrDefault(program);
+        for (var i = 0; i < args.Count; i++)
         {
+            var a = args[i];
             if (!endOfOptions && a.Text == "--") { endOfOptions = true; continue; }
-            if (endOfOptions || !a.Text.StartsWith('-')) { result.Add(a); continue; }
+            if (endOfOptions || !a.Text.StartsWith('-') || a.Text == "-") { result.Add(a); continue; }
+            if (PsValueOptions.Contains(a.Text)) { i++; continue; }
             var eq = a.Text.IndexOf('=', StringComparison.Ordinal);
-            if (eq > 0 && eq < a.Text.Length - 1) { result.Add(a with { Text = a.Text[(eq + 1)..] }); }
+            if (eq > 0 && eq < a.Text.Length - 1) { result.Add(a with { Text = a.Text[(eq + 1)..] }); continue; }
+            if (attached is not null && AttachedValue(a.Text, attached) is { Length: > 0 } value) { result.Add(a with { Text = value }); }
         }
         return result;
+    }
+
+    // `-xzC../x` → "../x" when one of the letters takes a value and something follows it.
+    private static string? AttachedValue(string option, string letters)
+    {
+        if (option.StartsWith("--", StringComparison.Ordinal) || option.Length < 3) { return null; }
+        for (var k = 1; k < option.Length; k++)
+        {
+            if (letters.Contains(option[k], StringComparison.Ordinal)) { return k + 1 < option.Length ? option[(k + 1)..] : null; }
+        }
+        return null;
     }
 
     // Positional arguments, skipping the values of the options that take one.
@@ -282,30 +508,44 @@ internal static class ScopedWriteGuard
         {
             var text = list[i].Text;
             if (!endOfOptions && text == "--") { endOfOptions = true; continue; }
-            if (endOfOptions || !text.StartsWith('-')) { result.Add(list[i]); continue; }
+            if (endOfOptions || !text.StartsWith('-') || text == "-") { result.Add(list[i]); continue; }
             if (!text.Contains('=', StringComparison.Ordinal) && valueOptions.Contains(text)) { i++; }
         }
         return result;
     }
 
-    // The value of option `name` ("--name value" or "--name=value"), every occurrence.
-    private static IEnumerable<ShellWords.Word> OptionValues(List<ShellWords.Word> args, HashSet<string> names)
+    // The values of the named options: "--name value", "--name=value", "-o:value" / "--output:value" (dotnet), and a
+    // short letter's attached value in a group ("-so../x" when 'o' is one of <paramref name="shortLetters"/>).
+    private static IEnumerable<ShellWords.Word> OptionValues(List<ShellWords.Word> args, HashSet<string> names, string shortLetters = "")
     {
         for (var i = 0; i < args.Count; i++)
         {
             var text = args[i].Text;
             if (text == "--") { yield break; }
-            var eq = text.IndexOf('=', StringComparison.Ordinal);
-            if (eq > 0 && text.StartsWith("--", StringComparison.Ordinal) && names.Contains(text[..eq]))
+            if (!text.StartsWith('-')) { continue; }
+            var sep = text.IndexOfAny(['=', ':']);
+            if (sep > 0 && names.Contains(text[..sep]))
             {
-                yield return args[i] with { Text = text[(eq + 1)..] };
+                yield return args[i] with { Text = text[(sep + 1)..] };
             }
-            else if (names.Contains(text) && i + 1 < args.Count)
+            else if (names.Contains(text))
             {
-                yield return args[++i];
+                if (i + 1 < args.Count) { yield return args[++i]; }
+            }
+            else if (shortLetters.Length > 0 && !text.StartsWith("--", StringComparison.Ordinal) && text.Length > 2)
+            {
+                for (var k = 1; k < text.Length; k++)
+                {
+                    if (!shortLetters.Contains(text[k], StringComparison.Ordinal)) { continue; }
+                    if (k + 1 < text.Length) { yield return args[i] with { Text = text[(k + 1)..] }; }
+                    else if (i + 1 < args.Count) { yield return args[++i]; }
+                    break;
+                }
             }
         }
     }
+
+    // ── git / gh ───────────────────────────────────────────────────────────────────────────────────────────────────
 
     private static readonly HashSet<string> GitGlobalWithValue = new(StringComparer.Ordinal) { "-c", "--namespace", "--config-env", "--exec-path" };
     private static readonly HashSet<string> GitDirOptions = new(StringComparer.Ordinal) { "-C", "--git-dir", "--work-tree" };
@@ -318,7 +558,7 @@ internal static class ScopedWriteGuard
     private static readonly HashSet<string> WorktreeAddValueOptions = new(StringComparer.Ordinal) { "-b", "-B", "--reason" };
     private static readonly HashSet<string> GitOutputOptions = new(StringComparer.Ordinal) { "-o", "--output", "--output-directory", "--separate-git-dir", "--template" };
 
-    private static string? CheckGit(List<ShellWords.Word> args, string cwd, string runDir)
+    private static string? CheckGit(List<ShellWords.Word> args, string cwd, GuardContext ctx)
     {
         var i = 0;
         var gitCwd = cwd;
@@ -331,8 +571,8 @@ internal static class ScopedWriteGuard
             {
                 ShellWords.Word? value = eq > 0 ? args[i] with { Text = text[(eq + 1)..] } : i + 1 < args.Count ? args[++i] : null;
                 if (value is null) { return $"'git {text}' without a folder."; }
-                if (CheckPaths("git " + name, [value], gitCwd, runDir) is { } reason) { return reason; }
-                if (name == "-C") { gitCwd = Resolve(value.Text, gitCwd) ?? gitCwd; }
+                if (CheckPaths("git " + name, [value], gitCwd, ctx, record: false) is { } reason) { return reason; }
+                if (name == "-C" && Expand(value, gitCwd, ctx) is { } dir) { gitCwd = Resolve(dir, gitCwd, ctx.TempDir) ?? gitCwd; }
             }
             else if (eq < 0 && GitGlobalWithValue.Contains(name)) { i++; }
             i++;
@@ -340,21 +580,21 @@ internal static class ScopedWriteGuard
         if (i >= args.Count) { return null; }
         var sub = args[i].Text;
         var rest = args.Skip(i + 1).ToList();
-        if (CheckPaths("git " + sub, OptionValues(rest, GitOutputOptions), gitCwd, runDir) is { } output) { return output; }
+        if (CheckPaths("git " + sub, OptionValues(rest, GitOutputOptions), gitCwd, ctx, record: false) is { } output) { return output; }
         switch (sub)
         {
             case "worktree" when rest.Count > 0 && rest[0].Text is "add" or "move":
                 var paths = Positionals(rest.Skip(1), WorktreeAddValueOptions);
                 var target = rest[0].Text == "add" ? paths.FirstOrDefault() : paths.ElementAtOrDefault(1);
-                return target is null ? null : CheckPaths("git worktree " + rest[0].Text, [target], gitCwd, runDir);
+                return target is null ? null : CheckPaths("git worktree " + rest[0].Text, [target], gitCwd, ctx, record: true);
             case "clone":
                 var dest = Positionals(rest, CloneValueOptions).ElementAtOrDefault(1);
-                return dest is null ? null : CheckPaths("git clone", [dest], gitCwd, runDir);
+                return dest is null ? null : CheckPaths("git clone", [dest], gitCwd, ctx, record: false);
             case "init":
                 var initDir = Positionals(rest, CloneValueOptions).FirstOrDefault();
-                return initDir is null ? null : CheckPaths("git init", [initDir], gitCwd, runDir);
+                return initDir is null ? null : CheckPaths("git init", [initDir], gitCwd, ctx, record: false);
             case "bundle" when rest.Count > 1 && rest[0].Text == "create":
-                return CheckPaths("git bundle create", [rest[1]], gitCwd, runDir);
+                return CheckPaths("git bundle create", [rest[1]], gitCwd, ctx, record: false);
             default:
                 return null;
         }
@@ -362,68 +602,444 @@ internal static class ScopedWriteGuard
 
     private static readonly HashSet<string> NoValueOptions = new(StringComparer.Ordinal);
 
-    private static string? CheckGh(List<ShellWords.Word> args, string cwd, string runDir)
+    private static string? CheckGh(List<ShellWords.Word> args, string cwd, GuardContext ctx)
     {
         var positional = Positionals(args, NoValueOptions);
         if (positional.Count >= 4 && positional[0].Text == "repo" && positional[1].Text == "clone")
         {
-            return CheckPaths("gh repo clone", [positional[3]], cwd, runDir);
+            return CheckPaths("gh repo clone", [positional[3]], cwd, ctx, record: false);
         }
         return null;
     }
 
-    private static string? CheckOutputs(string program, List<ShellWords.Word> args, string cwd, string runDir)
+    // ── nested commands ──────────────────────────────────────────────────────────────────────────────────────────
+
+    private static readonly HashSet<string> XargsValueOptions = new(StringComparer.Ordinal)
     {
-        var isPackageManager = program is "npm" or "pnpm" or "yarn" or "dotnet";
-        if (isPackageManager && args.Exists(a => a.Text is "-g" or "--global" or "--location=global"))
+        "-I", "-n", "-L", "-l", "-P", "-d", "-E", "-e", "-s", "-a", "--arg-file", "--delimiter", "--max-args", "--max-procs",
+        "--max-lines", "--replace", "--eof", "--max-chars",
+    };
+
+    private static string? CheckXargs(List<ShellWords.Word> args, string cwd, GuardContext ctx, bool powerShell, int depth)
+    {
+        var i = 0;
+        while (i < args.Count && args[i].Text.StartsWith('-'))
+        {
+            if (XargsValueOptions.Contains(args[i].Text)) { i++; }
+            i++;
+        }
+        if (i >= args.Count) { return null; }
+        var program = ProgramName(args[i].Text);
+        if (WriteCommands.Contains(program) || Interpreters.Contains(program) || Shells.Contains(program))
+        {
+            return $"'xargs {args[i].Text}' takes its paths from its input, which can't be checked.";
+        }
+        return CheckSynthesized(args.Skip(i), cwd, ctx, powerShell, depth);
+    }
+
+    private static readonly HashSet<string> FindOutputOptions = new(StringComparer.Ordinal) { "-fprint", "-fprint0", "-fls", "-fprintf" };
+
+    private static string? CheckFind(List<ShellWords.Word> args, string cwd, GuardContext ctx, bool powerShell, int depth)
+    {
+        if (CheckPaths("find", OptionValues(args, FindOutputOptions), cwd, ctx, record: true) is { } output) { return output; }
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i].Text is not ("-exec" or "-execdir" or "-ok" or "-okdir")) { continue; }
+            var end = args.FindIndex(i + 1, a => a.Text is ";" or "+");
+            var command = args.Skip(i + 1).Take((end < 0 ? args.Count : end) - i - 1).ToList();
+            if (CheckSynthesized(command, cwd, ctx, powerShell, depth) is { } reason) { return reason; }
+            i = end < 0 ? args.Count : end;
+        }
+        return null;
+    }
+
+    // Words that another program runs as a command of their own.
+    private static string? CheckSynthesized(IEnumerable<ShellWords.Word> words, string cwd, GuardContext ctx, bool powerShell, int depth)
+    {
+        var list = words.ToList();
+        if (list.Count == 0) { return null; }
+        if (depth > MaxDepth) { return "the command nests other commands too deeply to be checked."; }
+        var simple = new ShellWords.Simple(list, [], [], [], PipedIn: false, StdinText: false);
+        return CheckSimple(simple, new ShellState(cwd), ctx, powerShell, depth + 1);
+    }
+
+    private static string? CheckCmd(List<ShellWords.Word> args, ShellWords.Simple simple, string cwd, GuardContext ctx, int depth)
+    {
+        var at = args.FindIndex(a => a.Text.Equals("/c", StringComparison.OrdinalIgnoreCase) || a.Text.Equals("/k", StringComparison.OrdinalIgnoreCase));
+        if (at < 0) { return simple.PipedIn || simple.StdinText || simple.Inputs.Count > 0 ? "'cmd' reads commands from its input, which can't be checked." : null; }
+        var rest = args.Skip(at + 1).ToList();
+        if (rest.Exists(w => w.Dynamic)) { return "'cmd /c' runs a computed command."; }
+        // cmd reads backslashes literally: tokenise the rest like PowerShell does.
+        return CheckCommand(string.Join(' ', rest.Select(w => Quote(w.Text))), cwd, ctx, powerShell: true, depth + 1);
+    }
+
+    private static string? CheckIex(List<ShellWords.Word> args, string cwd, GuardContext ctx, int depth)
+    {
+        var rest = args.Where(a => !a.Text.Equals("-command", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (rest.Count == 0) { return "Invoke-Expression runs code from its input, which can't be checked."; }
+        if (rest.Exists(w => w.Dynamic)) { return "Invoke-Expression runs a computed command."; }
+        return CheckCommand(string.Join(' ', rest.Select(w => w.Text)), cwd, ctx, powerShell: true, depth + 1);
+    }
+
+    private static string? CheckStartProcess(List<ShellWords.Word> args, string cwd, GuardContext ctx, bool powerShell, int depth)
+    {
+        ShellWords.Word? file = null;
+        var argList = new List<ShellWords.Word>();
+        var workDir = cwd;
+        var positional = 0;
+        for (var i = 0; i < args.Count; i++)
+        {
+            var name = args[i].Text.ToLowerInvariant();
+            ShellWords.Word? Next() => i + 1 < args.Count ? args[++i] : null;
+            switch (name)
+            {
+                case "-filepath" or "-path":
+                    file = Next();
+                    break;
+                case "-argumentlist" or "-args":
+                    if (Next() is { } list) { argList.AddRange(SplitArgumentList(list)); }
+                    break;
+                case "-workingdirectory":
+                    if (Next() is not { } wd || Expand(wd, cwd, ctx) is not { } wdText || Resolve(wdText, cwd, ctx.TempDir) is not { } wdFull || !ctx.IsWritable(wdFull))
+                    {
+                        return "Start-Process runs from a folder outside the run folder.";
+                    }
+                    workDir = wdFull;
+                    break;
+                case "-redirectstandardoutput" or "-redirectstandarderror" or "-redirectstandardinput":
+                    if (Next() is { } redirect && name != "-redirectstandardinput"
+                        && CheckPaths("Start-Process", [redirect], cwd, ctx, record: true) is { } reason) { return reason; }
+                    break;
+                default:
+                    if (name.StartsWith('-')) { break; }
+                    if (positional++ == 0) { file = args[i]; }
+                    else { argList.AddRange(SplitArgumentList(args[i])); }
+                    break;
+            }
+        }
+        return file is null ? null : CheckSynthesized([file, .. argList], workDir, ctx, powerShell, depth);
+    }
+
+    // PowerShell's "-ArgumentList 'a','b c'" arrives as one word "a,b c": split on commas and spaces.
+    private static IEnumerable<ShellWords.Word> SplitArgumentList(ShellWords.Word list) =>
+        list.Text.Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part => list with { Text = part });
+
+    private static string Quote(string word) =>
+        word.Length > 0 && word.IndexOfAny([' ', '\t', '&', '|', ';', '<', '>', '(', ')', '{', '}']) < 0
+            ? word
+            : "'" + word.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    // ── package managers / build tools / downloads ────────────────────────────────────────────────────────────────
+
+    private static readonly HashSet<string> PmValueOptions = new(StringComparer.Ordinal)
+    {
+        "--prefix", "-C", "--dir", "--cwd", "--filter", "-w", "--workspace", "--tag", "--registry", "--cache", "--userconfig",
+        "-p", "--package", "-c", "--call",
+    };
+
+    private static readonly HashSet<string> PmPathOptions = new(StringComparer.Ordinal)
+    {
+        "--prefix", "-C", "--dir", "--cwd", "--modules-folder", "--global-folder", "--cache-folder", "--virtual-store-dir",
+    };
+
+    private static readonly HashSet<string> CallOptions = new(StringComparer.Ordinal) { "-c", "--call" };
+
+    private static string? CheckPackageManager(string program, List<ShellWords.Word> args, ShellWords.Simple simple, string cwd,
+        GuardContext ctx, bool powerShell, int depth)
+    {
+        if (args.Exists(a => a.Text is "-g" or "--global" or "--location=global"))
         {
             return $"'{program} … {(args.Exists(a => a.Text == "-g") ? "-g" : "--global")}' installs outside the run folder.";
         }
-        var names = program is "curl" ? CurlOutputs : OutputOptions;
-        return CheckPaths(program, OptionValues(args, names), cwd, runDir);
+        if (CheckPaths(program, OptionValues(args, PmPathOptions), cwd, ctx, record: false) is { } path) { return path; }
+        var positional = Positionals(args, PmValueOptions);
+        var first = positional.FirstOrDefault()?.Text;
+        if (program == "yarn" && first == "global") { return "'yarn global' installs outside the run folder."; }
+        if (first == "pkg" && positional.Skip(1).FirstOrDefault()?.Text == "set" && positional.Skip(2).Any(p => p.Text.StartsWith("scripts.", StringComparison.Ordinal)))
+        {
+            return $"'{program} pkg set scripts.…' adds a script the run would then run — edit package.json instead (it ships in the pull request).";
+        }
+        if (program == "yarn" && first == "node")
+        {
+            return CheckInterpreter("node", args.SkipWhile(a => a.Text != "node").Skip(1).ToList(), simple, cwd, ctx);
+        }
+        var execs = program is "npx" or "pnpx" or "bunx"
+            || (program == "npm" && first is "exec" or "x")
+            || (program is "pnpm" or "yarn" && first is "dlx" or "exec");
+        if (!execs) { return null; }
+        // `npm exec -c '<command>'`: a shell command.
+        foreach (var call in OptionValues(args, CallOptions))
+        {
+            if (call.Dynamic) { return $"'{program}' runs a computed command."; }
+            if (CheckCommand(call.Text, cwd, ctx, powerShell: false, depth + 1) is { } reason) { return reason; }
+        }
+        // Otherwise the words after the subcommand (and its options) are a command of their own.
+        var rest = program is "npx" or "pnpx" or "bunx" ? args : args.SkipWhile(a => a.Text != first).Skip(1).ToList();
+        var command = new List<ShellWords.Word>();
+        var i = 0;
+        while (i < rest.Count && rest[i].Text.StartsWith('-') && rest[i].Text != "--")
+        {
+            if (PmValueOptions.Contains(rest[i].Text)) { i++; }
+            i++;
+        }
+        if (i < rest.Count && rest[i].Text == "--") { i++; }
+        command.AddRange(rest.Skip(i));
+        return CheckSynthesized(command, cwd, ctx, powerShell, depth);
     }
 
-    // curl: -O / -P mean something else there (remote name / port).
-    private static readonly HashSet<string> CurlOutputs = new(StringComparer.Ordinal) { "-o", "--output", "--output-dir", "-D", "--dump-header", "-c", "--cookie-jar" };
+    private static readonly HashSet<string> DotnetOutputOptions = new(StringComparer.Ordinal)
+    {
+        "-o", "--output", "--results-directory", "--diag", "--tool-path",
+    };
+
+    private static readonly HashSet<string> DotnetRunValueOptions = new(StringComparer.Ordinal)
+    {
+        "--project", "-p", "--launch-profile", "-lp", "-c", "--configuration", "-f", "--framework", "-r", "--runtime",
+        "-a", "--arch", "--os", "-v", "--verbosity", "-e", "--environment", "--file",
+    };
+
+    private static string? CheckDotnet(List<ShellWords.Word> args, ShellWords.Simple simple, string cwd, GuardContext ctx)
+    {
+        if (CheckPaths("dotnet", OptionValues(args, DotnetOutputOptions), cwd, ctx, record: false) is { } output) { return output; }
+        if (CheckMsBuildProperties(args, cwd, ctx) is { } property) { return property; }
+        var sub = args.FirstOrDefault(a => !a.Text.StartsWith('-'))?.Text;
+        var afterSub = sub is null ? [] : args.SkipWhile(a => a.Text != sub).Skip(1).ToList();
+        switch (sub)
+        {
+            case "tool" when afterSub.Exists(a => a.Text is "-g" or "--global"):
+                return "'dotnet tool … --global' installs outside the run folder.";
+            case "run":
+                // A file-based app (.NET 10 `dotnet run app.cs` / `--file`) is code the run may have written.
+                var file = OptionValues(afterSub, ["--file"]).FirstOrDefault()
+                    ?? Positionals(afterSub.TakeWhile(a => a.Text != "--"), DotnetRunValueOptions)
+                        .FirstOrDefault(p => p.Text.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+                return file is null ? null : CheckScript("dotnet run", file, cwd, ctx);
+            case "fsi":
+                var fsx = Positionals(afterSub, NoValueOptions).FirstOrDefault();
+                return fsx is not null ? CheckScript("dotnet fsi", fsx, cwd, ctx) : StdinCode("dotnet fsi", simple, cwd, ctx);
+            case "exec":
+                var dll = Positionals(afterSub, NoValueOptions).FirstOrDefault();
+                return dll is null ? null : CheckScript("dotnet exec", dll, cwd, ctx);
+            default:
+                return null;
+        }
+    }
+
+    // `-p:OutputPath=../x`, `/p:A=B;C=D`, `--property:…`, `-property:…`, `-p A=B`: a property naming a folder or file
+    // must stay inside.
+    private static string? CheckMsBuildProperties(List<ShellWords.Word> args, string cwd, GuardContext ctx)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            var text = args[i].Text;
+            string? assignments = null;
+            var colon = text.IndexOf(':', StringComparison.Ordinal);
+            var name = colon > 0 ? text[..colon].ToLowerInvariant() : text.ToLowerInvariant();
+            if (name is "-p" or "/p" or "-property" or "--property" or "/property")
+            {
+                assignments = colon > 0 ? text[(colon + 1)..] : i + 1 < args.Count ? args[++i].Text : null;
+            }
+            if (assignments is null) { continue; }
+            foreach (var pair in assignments.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var eq = pair.IndexOf('=', StringComparison.Ordinal);
+                if (eq <= 0 || !PathProperty().IsMatch(pair[..eq])) { continue; }
+                var value = new ShellWords.Word(pair[(eq + 1)..], args[i].Dynamic);
+                if (CheckPaths("dotnet -p:" + pair[..eq], [value], cwd, ctx, record: false) is { } reason) { return reason; }
+            }
+        }
+        return null;
+    }
+
+    private static readonly HashSet<string> CurlOutputs = new(StringComparer.Ordinal)
+    {
+        "-o", "--output", "--output-dir", "-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr",
+        "--libcurl", "--etag-save", "--hsts", "--alt-svc",
+    };
+
+    private static readonly HashSet<string> WgetOutputs = new(StringComparer.Ordinal)
+    {
+        "-O", "--output-document", "-P", "--directory-prefix", "-o", "--output-file", "-a", "--append-output",
+    };
+
+    private static string? CheckDownload(string program, List<ShellWords.Word> args, string cwd, GuardContext ctx) =>
+        program == "curl"
+            ? CheckPaths("curl", OptionValues(args, CurlOutputs, "oDc"), cwd, ctx, record: true)
+            : CheckPaths("wget", OptionValues(args, WgetOutputs, "OPoa"), cwd, ctx, record: true);
+
+    // ── code the run could have written ─────────────────────────────────────────────────────────────────────────
 
     private static readonly HashSet<string> InlineCode = new(StringComparer.Ordinal) { "-e", "--eval", "-p", "--print", "-c" };
     private static readonly HashSet<string> ScriptOptions = new(StringComparer.Ordinal) { "-r", "--require", "--import", "--loader", "--experimental-loader" };
     private static readonly HashSet<string> InterpreterValueOptions = new(StringComparer.Ordinal)
     {
         "-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions", "--input-type", "--env-file",
-        "--title", "-m",
+        "--title", "-m", "-W", "-X",
     };
+    private static readonly HashSet<string> InfoFlags = new(StringComparer.Ordinal) { "--version", "-v", "-V", "--help", "-h" };
 
-    private static string? CheckInterpreter(string program, List<ShellWords.Word> args, string cwd, string runDir, Func<string, bool> isCleanRepoFile)
+    private static string? CheckInterpreter(string program, List<ShellWords.Word> args, ShellWords.Simple simple, string cwd, GuardContext ctx)
     {
-        if (args.Exists(a => InlineCode.Contains(a.Text) || a.Text.StartsWith("--eval=", StringComparison.Ordinal)))
+        if (args.Exists(a => InlineCode.Contains(a.Text) || a.Text.StartsWith("--eval=", StringComparison.Ordinal) || a.Text.StartsWith("--print=", StringComparison.Ordinal)))
         {
             return $"'{program}' with inline code can write anywhere — run one of the repository's own scripts instead.";
         }
         if (args.Exists(a => a.Text == "-m")) { return null; } // python -m <module>: installed code, not a file of the run
+        if (args.Count > 0 && args.TrueForAll(a => InfoFlags.Contains(a.Text))) { return null; }
         var scripts = OptionValues(args, ScriptOptions).Where(v => LooksLikePath(v.Text)).ToList();
-        if (Positionals(args, InterpreterValueOptions).FirstOrDefault() is { } script) { scripts.Add(script); }
+        var positional = Positionals(args, InterpreterValueOptions);
+        if (program is "deno" or "bun" && positional.Count > 0 && positional[0].Text is "run" or "test") { positional.RemoveAt(0); }
+        var script = positional.FirstOrDefault();
+        if (script is null || script.Text == "-")
+        {
+            if (StdinCode(program, simple, cwd, ctx) is { } stdin) { return stdin; }
+        }
+        else
+        {
+            scripts.Add(script);
+        }
         foreach (var s in scripts)
         {
-            if (s.Dynamic) { return $"'{program}' runs a computed script path ('{s.Text}')."; }
-            if (Resolve(s.Text, cwd) is not { } full || !IsInside(full, runDir)) { return $"'{program} {s.Text}' runs a script outside the run folder."; }
-            if (!isCleanRepoFile(full))
-            {
-                return $"'{program} {s.Text}' runs a script that isn't a committed, unchanged file of the repository (a script written "
-                    + "during this run can write anywhere). Use the repository's own scripts, or the file tools.";
-            }
+            if (CheckScript(program, s, cwd, ctx) is { } reason) { return reason; }
         }
         return null;
     }
 
-    private static string? NestedScript(List<ShellWords.Word> args, string flag, string cwd, string runDir, bool powerShell, Func<string, bool> isCleanRepoFile)
+    // An interpreter reading its program from stdin: a heredoc or a pipe is inline code; a file is checked like a script.
+    private static string? StdinCode(string program, ShellWords.Simple simple, string cwd, GuardContext ctx)
     {
-        var at = args.FindIndex(a => a.Text.Equals(flag, StringComparison.OrdinalIgnoreCase));
-        if (at < 0 || at + 1 >= args.Count) { return null; }
-        return args[at + 1].Dynamic
-            ? "a nested shell runs a computed command."
-            : CheckCommand(args[at + 1].Text, cwd, runDir, powerShell, isCleanRepoFile);
+        if (simple.StdinText) { return $"'{program}' with inline code (a heredoc) can write anywhere — run one of the repository's own scripts instead."; }
+        if (simple.PipedIn) { return $"'{program}' reading its code from a pipe can write anywhere — run one of the repository's own scripts instead."; }
+        foreach (var input in simple.Inputs)
+        {
+            if (CheckScript(program, input, cwd, ctx) is { } reason) { return reason; }
+        }
+        return null;
     }
+
+    private static string? CheckShell(string program, List<ShellWords.Word> args, ShellWords.Simple simple, string cwd, GuardContext ctx, int depth)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            var text = args[i].Text;
+            if (text == "--") { continue; }
+            if (text.StartsWith("--", StringComparison.Ordinal)) { continue; } // --login, --norc…
+            if (text.StartsWith('-') && text.Length > 1)
+            {
+                if (text is "-o" or "+o") { i++; continue; }
+                if (!text.Contains('c', StringComparison.Ordinal)) { continue; }
+                // -c / -lc / -ec: the next word (after a "--") is the command.
+                var at = i + 1 < args.Count && args[i + 1].Text == "--" ? i + 2 : i + 1;
+                if (at >= args.Count) { return null; }
+                return args[at].Dynamic
+                    ? $"'{program} {text}' runs a computed command."
+                    : CheckCommand(args[at].Text, cwd, ctx, powerShell: false, depth + 1);
+            }
+            return CheckScript(program, args[i], cwd, ctx); // `sh script.sh`
+        }
+        return StdinCode(program, simple, cwd, ctx);
+    }
+
+    private static string? CheckPwsh(List<ShellWords.Word> args, ShellWords.Simple simple, string cwd, GuardContext ctx, int depth)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            var flag = args[i].Text.ToLowerInvariant();
+            if (!flag.StartsWith('-'))
+            {
+                return CheckScript("pwsh", args[i], cwd, ctx); // `pwsh script.ps1`
+            }
+            if (flag is "-c" or "-cmd" || (flag.Length >= 4 && "-command".StartsWith(flag, StringComparison.Ordinal)))
+            {
+                var rest = args.Skip(i + 1).ToList();
+                if (rest.Exists(w => w.Dynamic)) { return "'pwsh -Command' runs a computed command."; }
+                return CheckCommand(string.Join(' ', rest.Select(w => w.Text)), cwd, ctx, powerShell: true, depth + 1);
+            }
+            if (flag is "-e" or "-ec" || (flag.Length >= 3 && "-encodedcommand".StartsWith(flag, StringComparison.Ordinal)))
+            {
+                if (i + 1 >= args.Count) { return null; }
+                return DecodeUtf16Base64(args[i + 1].Text) is { } decoded
+                    ? CheckCommand(decoded, cwd, ctx, powerShell: true, depth + 1)
+                    : "'pwsh -EncodedCommand' with a command that can't be decoded.";
+            }
+            if (flag is "-f" || (flag.Length >= 3 && "-file".StartsWith(flag, StringComparison.Ordinal)))
+            {
+                return i + 1 < args.Count ? CheckScript("pwsh -File", args[i + 1], cwd, ctx) : null;
+            }
+            if (flag is "-wd" || (flag.Length >= 3 && "-workingdirectory".StartsWith(flag, StringComparison.Ordinal)))
+            {
+                if (i + 1 >= args.Count) { return null; }
+                var wd = args[++i];
+                if (Expand(wd, cwd, ctx) is not { } wdText || Resolve(wdText, cwd, ctx.TempDir) is not { } full || !ctx.IsWritable(full))
+                {
+                    return $"'pwsh -WorkingDirectory {wd.Text}' leaves the run folder.";
+                }
+                cwd = full;
+                continue;
+            }
+            if (flag is "-ex" or "-ep" or "-executionpolicy" or "-of" or "-outputformat" or "-if" or "-inputformat"
+                or "-w" or "-windowstyle" or "-config" or "-configurationname" or "-settingsfile")
+            {
+                i++;
+            }
+        }
+        return StdinCode("pwsh", simple, cwd, ctx);
+    }
+
+    private static string? DecodeUtf16Base64(string value)
+    {
+        try { return Encoding.Unicode.GetString(Convert.FromBase64String(value)); }
+        catch (FormatException ex)
+        {
+            _ = ex;
+            return null;
+        }
+    }
+
+    // NODE_OPTIONS='--require ./x.mjs': a preloaded script, the same rule as a script node runs.
+    private static string? CheckNodeOptions(ShellWords.Word assignment, string? cwd, GuardContext ctx)
+    {
+        if (Expand(assignment, cwd, ctx) is not { } text) { return "NODE_OPTIONS is computed, so the code it preloads can't be checked."; }
+        var value = text["NODE_OPTIONS=".Length..];
+        var words = value.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries).Select(w => new ShellWords.Word(w, false)).ToList();
+        foreach (var script in OptionValues(words, ScriptOptions))
+        {
+            if (cwd is null) { return "NODE_OPTIONS preloads a script from a computed folder."; }
+            if (CheckScript("NODE_OPTIONS", script, cwd, ctx) is { } reason) { return reason; }
+        }
+        return null;
+    }
+
+    /// <summary>Whether <paramref name="script"/> — code <paramref name="program"/> is about to run — may run: a file the
+    /// repository tracks (committed or changed: it ships in the pull request), or an ignored build output the run didn't
+    /// write itself. A new untracked file, anything outside the run's folders, or an ignored file the run wrote is refused.</summary>
+    private static string? CheckScript(string program, ShellWords.Word script, string cwd, GuardContext ctx)
+    {
+        if (Expand(script, cwd, ctx) is not { } text) { return $"'{program}' runs a computed script path ('{script.Text}')."; }
+        if (Resolve(text, cwd, ctx.TempDir) is not { } full) { return $"'{program} {script.Text}': the path can't be resolved."; }
+        if (!ctx.IsWritable(full)) { return $"'{program} {script.Text}' runs a script outside the run folder."; }
+        if (IsCopyHelper(full, ctx)) { return null; }
+        return ctx.ScriptStateOf(full) switch
+        {
+            ScriptState.Clean or ScriptState.Tracked => null,
+            ScriptState.Untracked =>
+                $"'{program} {script.Text}' runs a new file the repository doesn't track — a script written during the run can write "
+                + $"anywhere. Commit it first (`git add {script.Text} && git commit -m \"…\"`) — it then ships in the pull request — "
+                + "and run it again.",
+            ScriptState.Ignored or ScriptState.Missing when ctx.WrittenByRun(full) =>
+                $"'{program} {script.Text}' runs a file this run wrote where git ignores it (it would never ship). Put the script in "
+                + "the repository and commit it, then run it again.",
+            ScriptState.Ignored or ScriptState.Missing => null, // a build output (dist/, bin/, node_modules/) or not built yet
+            _ => $"'{program} {script.Text}' runs a file that isn't part of a repository checkout — a script written during the "
+                + "run can write anywhere. Commit it to the repository first, then run it again.",
+        };
+    }
+
+    // The runner's own copy-in helper (RunFiles.CopyHelper) — rewritten by the runner every run.
+    private static bool IsCopyHelper(string full, GuardContext ctx) =>
+        string.Equals(full, Path.GetFullPath(Path.Join(ctx.RunDir, RunFiles.CopyHelper)),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private static bool LooksLikePath(string value) =>
         value.StartsWith('.') || value.Contains('/', StringComparison.Ordinal) || value.Contains('\\', StringComparison.Ordinal);
@@ -447,19 +1063,86 @@ internal static class ScopedWriteGuard
         return name.ToLowerInvariant();
     }
 
-    // ── paths ────────────────────────────────────────────────────────────────────────────────────────────────────
+    // ── paths and variables ──────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>The text of a word with the variables and command substitutions the guard can vouch for expanded; null
+    /// when anything else is computed.</summary>
+    internal static string? Expand(ShellWords.Word word, string? cwd, GuardContext ctx)
+    {
+        ArgumentNullException.ThrowIfNull(word);
+        ArgumentNullException.ThrowIfNull(ctx);
+        if (!word.Dynamic) { return word.Text; }
+        var t = word.Text;
+        var sb = new StringBuilder();
+        var i = 0;
+        while (i < t.Length)
+        {
+            var c = t[i];
+            if (c == '`') { return null; }
+            if (c != '$') { sb.Append(c); i++; continue; }
+            if (i + 1 < t.Length && t[i + 1] == '(')
+            {
+                var end = ShellWords.FindSubstitutionEnd(t, i + 2, powerShell: false);
+                if (end >= t.Length || KnownSubstitution(t[(i + 2)..end].Trim(), cwd, ctx) is not { } value) { return null; }
+                sb.Append(value);
+                i = end + 1;
+                continue;
+            }
+            string name;
+            if (i + 1 < t.Length && t[i + 1] == '{')
+            {
+                var close = t.IndexOf('}', i);
+                if (close < 0) { return null; }
+                name = t[(i + 2)..close];
+                i = close + 1;
+            }
+            else
+            {
+                var j = i + 1;
+                while (j < t.Length && (char.IsAsciiLetterOrDigit(t[j]) || t[j] is '_' or ':')) { j++; }
+                name = t[(i + 1)..j];
+                i = j;
+            }
+            if (name.StartsWith("env:", StringComparison.OrdinalIgnoreCase)) { name = name[4..]; }
+            if (name.Length == 0 || ctx.Variable(name, cwd) is not { } v) { return null; }
+            sb.Append(v);
+        }
+        return sb.ToString();
+    }
+
+    private static string? KnownSubstitution(string body, string? cwd, GuardContext ctx) => body switch
+    {
+        "pwd" => cwd,
+        "git rev-parse --show-toplevel" => GitTopLevel(cwd, ctx),
+        _ => null,
+    };
+
+    private static string? GitTopLevel(string? cwd, GuardContext ctx)
+    {
+        var dir = cwd;
+        while (dir is not null && ctx.IsWritable(dir))
+        {
+            var git = Path.Join(dir, ".git");
+            if (Directory.Exists(git) || File.Exists(git)) { return dir; }
+            dir = Path.GetDirectoryName(dir);
+        }
+        return null;
+    }
 
     /// <summary>The full path <paramref name="path"/> names from <paramref name="cwd"/>: <c>~</c> is the home folder, a Git
-    /// Bash drive path (<c>/c/Users/…</c>) is the Windows one. Null when it can't be resolved.</summary>
-    internal static string? Resolve(string path, string cwd)
+    /// Bash drive path (<c>/c/Users/…</c>) is the Windows one, and on Windows Git Bash's <c>/tmp</c> is the run's temp
+    /// folder (<paramref name="tempDir"/> — the CLI's TEMP). Null when it can't be resolved.</summary>
+    internal static string? Resolve(string path, string cwd, string? tempDir = null)
     {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(cwd);
         if (path.Length == 0) { return null; }
-        var p = IsHomePath(path)
-            ? Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[1..])
-            : NormalizeCwd(path);
+        var p = IsHomePath(path) ? Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[1..])
+            : OperatingSystem.IsWindows() && tempDir is not null && IsGitBashTmp(path) ? Path.Join(tempDir, path[4..])
+            : FromGitBash(path);
         try
         {
-            var baseDir = NormalizeCwd(cwd);
+            var baseDir = FromGitBash(cwd);
             return Path.GetFullPath(Path.IsPathRooted(p) ? p : Path.Join(baseDir, p));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
@@ -472,8 +1155,10 @@ internal static class ScopedWriteGuard
     private static bool IsHomePath(string path) =>
         path == "~" || path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal);
 
-    // Windows: a Git Bash drive path ("/c" or "/c/Users/…") is "C:\…". Anything else is returned as it is.
-    private static string NormalizeCwd(string path) =>
+    private static bool IsGitBashTmp(string path) => path == "/tmp" || path.StartsWith("/tmp/", StringComparison.Ordinal);
+
+    /// <summary>Windows: a Git Bash drive path ("/c" or "/c/Users/…") is "C:\…". Anything else is returned as it is.</summary>
+    internal static string FromGitBash(string path) =>
         OperatingSystem.IsWindows() && IsGitBashDrivePath(path)
             ? path[1] + ":\\" + (path.Length > 3 ? path[3..] : string.Empty)
             : path;
@@ -484,21 +1169,21 @@ internal static class ScopedWriteGuard
         return path.Length == 2 || path[2] == '/';
     }
 
-    /// <summary>Whether <paramref name="fullPath"/> is the run folder or inside it (case-insensitive on Windows).</summary>
-    internal static bool IsInside(string fullPath, string runDir)
+    /// <summary>Whether <paramref name="fullPath"/> is <paramref name="root"/> or inside it (case-insensitive on Windows).</summary>
+    internal static bool IsInside(string fullPath, string root)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        var root = Path.GetFullPath(NormalizeCwd(runDir)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var full = Path.GetFullPath(NormalizeCwd(fullPath)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return string.Equals(full, root, comparison)
-            || (full.Length > root.Length && full.StartsWith(root, comparison) && full[root.Length] is '/' or '\\');
+        var r = Path.GetFullPath(FromGitBash(root)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var full = Path.GetFullPath(FromGitBash(fullPath)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(full, r, comparison)
+            || (full.Length > r.Length && full.StartsWith(r, comparison) && full[r.Length] is '/' or '\\');
     }
 
-    /// <summary>Whether a file is committed in its repository and unchanged: <c>git status --porcelain --ignored</c> lists
-    /// nothing for it (an untracked, ignored, added or modified file is listed). Not in a repository = no.</summary>
-    internal static bool IsCleanRepoFile(string fullPath)
+    /// <summary>What git says about a file: <c>git status --porcelain --ignored -- &lt;file&gt;</c> from its folder.</summary>
+    internal static ScriptState ScriptStateOf(string fullPath)
     {
-        if (!File.Exists(fullPath) || Path.GetDirectoryName(fullPath) is not { } dir) { return false; }
+        if (!File.Exists(fullPath)) { return ScriptState.Missing; }
+        if (Path.GetDirectoryName(fullPath) is not { } dir) { return ScriptState.NotInRepo; }
         var psi = new ProcessStartInfo("git")
         {
             WorkingDirectory = dir,
@@ -512,19 +1197,32 @@ internal static class ScopedWriteGuard
         try
         {
             using var git = Process.Start(psi);
-            if (git is null) { return false; }
+            if (git is null) { return ScriptState.NotInRepo; }
             var stderr = git.StandardError.ReadToEndAsync();
             var output = git.StandardOutput.ReadToEnd();
-            if (!git.WaitForExit(10_000)) { git.Kill(); return false; }
+            if (!git.WaitForExit(10_000)) { git.Kill(); return ScriptState.NotInRepo; }
             _ = stderr.Result;
-            return git.ExitCode == 0 && output.Trim().Length == 0;
+            if (git.ExitCode != 0) { return ScriptState.NotInRepo; }
+            var line = output.Trim();
+            if (line.Length == 0) { return ScriptState.Clean; }
+            return line.StartsWith("??", StringComparison.Ordinal) ? ScriptState.Untracked
+                : line.StartsWith("!!", StringComparison.Ordinal) ? ScriptState.Ignored
+                : ScriptState.Tracked;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
             _ = ex;
-            return false;
+            return ScriptState.NotInRepo;
         }
     }
+
+    // [System.IO.File]::…, [IO.Directory]::…, a StreamWriter — not [System.IO.Path]:: (string work only).
+    [GeneratedRegex(@"\[(?:System\.)?IO\.(?!Path\])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex DotNetFileApi();
+
+    // MSBuild properties that name a folder or a file (OutputPath, OutDir, BaseIntermediateOutputPath, PublishDir…).
+    [GeneratedRegex("(?:path|dir|directory|file|output)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PathProperty();
 
     // ── wiring ───────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -587,225 +1285,359 @@ internal static class ScopedWriteGuard
         return path;
     }
 
+    /// <summary>The run's ledger of written paths, next to its settings file (outside the run folder).</summary>
+    internal static string LedgerPath(string folder, string runDir) =>
+        Path.Join(folder, Path.GetFileName(runDir.TrimEnd('/', '\\')) + ".ledger");
+
+    /// <summary>The run's own temp folder: beside the run folder (the agent clones into the run folder, which must start
+    /// empty), removed with it.</summary>
+    internal static string TempFolderFor(string runDir) => runDir.TrimEnd('/', '\\') + RunsRootWatch.TempSuffix;
+
     /// <summary>Where the per-run settings files live.</summary>
     internal static string SettingsFolder() => Path.Join(Path.GetTempPath(), "agentos-net-runner");
+
+    /// <summary>The paths earlier calls of the run wrote — one per line, appended by each allowed call.</summary>
+    private sealed class Ledger
+    {
+        private readonly string? _path;
+        private readonly List<string> _entries;
+        private readonly bool _full;
+
+        private Ledger(string? path, List<string> entries, bool full)
+        {
+            _path = path;
+            _entries = entries;
+            _full = full;
+        }
+
+        public static Ledger Load(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) { return new Ledger(path, [], false); }
+            var lines = File.ReadAllLines(path).Where(l => l.Length > 0).ToList();
+            return new Ledger(path, lines, lines.Count >= MaxLedgerLines);
+        }
+
+        // Past the cap the ledger can't tell — every ignored script counts as written by the run.
+        public bool Contains(string fullPath) => _full || _entries.Exists(e => IsInside(fullPath, e));
+
+        public void Append(List<string> written)
+        {
+            if (_path is null || written.Count == 0 || _full) { return; }
+            File.AppendAllLines(_path, written.Distinct(StringComparer.Ordinal).Take(MaxLedgerLines - _entries.Count));
+        }
+    }
 }
 
-/// <summary>A small shell tokenizer — enough to find the commands, their words and redirection targets of a Bash or
-/// PowerShell command line. Quotes are honoured; a word that holds a variable or a command substitution is marked
-/// <see cref="Word.Dynamic"/>; heredoc bodies are skipped.</summary>
+/// <summary>A small shell tokenizer — enough to find the commands, their words, redirection targets and command
+/// substitutions of a Bash or PowerShell command line. Quotes are honoured; a word that holds a variable or a command
+/// substitution is marked <see cref="Word.Dynamic"/>; heredoc bodies are skipped (they are text, not commands).</summary>
 internal static class ShellWords
 {
-    /// <summary>One word of a command, unquoted. <see cref="Dynamic"/>: its value is only known when the shell runs.</summary>
-    internal sealed record Word(string Text, bool Dynamic);
+    /// <summary>One word of a command, unquoted. <see cref="Dynamic"/>: its value is only known when the shell runs;
+    /// <see cref="Quoted"/>: it started with a quote (in PowerShell a quoted string on its own is a value, not a command).</summary>
+    internal sealed record Word(string Text, bool Dynamic, bool Quoted = false);
 
-    /// <summary>One simple command: its words and where its output is redirected to.</summary>
-    internal sealed record Simple(IReadOnlyList<Word> Words, IReadOnlyList<Word> Redirects);
+    /// <summary>One simple command: its words, where its output goes (<paramref name="Redirects"/>), the files it reads
+    /// (<paramref name="Inputs"/>), the command substitutions it runs first, whether a pipe feeds it, and whether a heredoc
+    /// or here-string does.</summary>
+    internal sealed record Simple(IReadOnlyList<Word> Words, IReadOnlyList<Word> Redirects, IReadOnlyList<Word> Inputs,
+        IReadOnlyList<string> Substitutions, bool PipedIn, bool StdinText);
 
     /// <summary>The simple commands of <paramref name="text"/>, split at <c>&amp;&amp; || ; | &amp;</c>, newlines and
     /// (PowerShell) braces / parentheses.</summary>
-    internal static IReadOnlyList<Simple> Commands(string text, bool powerShell)
+    internal static IReadOnlyList<Simple> Commands(string text, bool powerShell) => new Parser(text, powerShell).Run();
+
+    private enum Target { None, Output, Input, Discard }
+
+    private sealed class Parser(string text, bool powerShell)
     {
-        var result = new List<Simple>();
-        var words = new List<Word>();
-        var redirects = new List<Word>();
-        var current = new StringBuilder();
-        var inWord = false;
-        var dynamic = false;
-        var redirectNext = false;
-        var heredocs = new List<string>();
-        var escape = powerShell ? '`' : '\\';
+        private readonly List<Simple> _result = [];
+        private readonly List<Word> _words = [];
+        private readonly List<Word> _redirects = [];
+        private readonly List<Word> _inputs = [];
+        private readonly List<string> _subs = [];
+        private readonly List<string> _heredocs = [];
+        private readonly StringBuilder _current = new();
+        private bool _inWord;
+        private bool _dynamic;
+        private bool _pipedIn;
+        private bool _stdinText;
+        private bool _quoted;
+        private Target _target;
 
-        void EndWord()
+        private char Escape => powerShell ? '`' : '\\';
+
+        public List<Simple> Run()
         {
-            if (!inWord) { return; }
-            // PowerShell takes either separator on every OS; elsewhere a backslash would be part of a file name.
-            var text = powerShell && !OperatingSystem.IsWindows() ? current.ToString().Replace('\\', '/') : current.ToString();
-            var word = new Word(text, dynamic);
-            if (redirectNext) { redirects.Add(word); redirectNext = false; }
-            else { words.Add(word); }
-            current.Clear();
-            inWord = false;
-            dynamic = false;
+            var i = 0;
+            while (i < text.Length) { i = Step(i); }
+            EndCommand(pipeAfter: false);
+            return _result;
         }
 
-        void EndCommand()
-        {
-            EndWord();
-            if (words.Count > 0 || redirects.Count > 0) { result.Add(new Simple([.. words], [.. redirects])); }
-            words.Clear();
-            redirects.Clear();
-            redirectNext = false;
-        }
+        private bool At(int i, char c) => i < text.Length && text[i] == c;
 
-        var i = 0;
-        while (i < text.Length)
+        private int Step(int i)
         {
             var ch = text[i];
-            if (ch == '\n')
+            switch (ch)
             {
-                EndCommand();
-                i++;
-                if (heredocs.Count > 0) { i = SkipHeredocs(text, i, heredocs); }
-                continue;
-            }
-            if (ch is ' ' or '\t' or '\r') { EndWord(); i++; continue; }
-            if (ch == ';') { EndCommand(); i++; continue; }
-            if (ch == '|') { EndCommand(); i += i + 1 < text.Length && text[i + 1] is '|' or '&' ? 2 : 1; continue; }
-            if (ch == '&')
-            {
-                if (!powerShell && i + 1 < text.Length && text[i + 1] == '>')
-                {
+                case '\n':
+                    EndCommand(pipeAfter: false);
+                    return _heredocs.Count > 0 ? SkipHeredocs(text, i + 1, _heredocs) : i + 1;
+                case ' ' or '\t' or '\r':
                     EndWord();
-                    i = Redirect(text, i + 1, ref redirectNext);
-                    continue;
-                }
-                EndCommand();
-                i += i + 1 < text.Length && text[i + 1] == '&' ? 2 : 1;
-                continue;
+                    return i + 1;
+                case ';':
+                    EndCommand(pipeAfter: false);
+                    return i + 1;
+                case '|':
+                    if (At(i + 1, '|')) { EndCommand(pipeAfter: false); return i + 2; }
+                    EndCommand(pipeAfter: true);
+                    return At(i + 1, '&') ? i + 2 : i + 1;
+                case '&':
+                    if (!powerShell && At(i + 1, '>')) { EndWord(); return Redirect(i + 1); } // &> / &>>
+                    EndCommand(pipeAfter: false);
+                    return At(i + 1, '&') ? i + 2 : i + 1;
+                case '>':
+                    // "2>" / "*>": the stream number before it is not a word.
+                    if (_inWord && IsStreamNumber(_current.ToString())) { ResetWord(); }
+                    EndWord();
+                    return Redirect(i);
+                case '<':
+                    return LessThan(i);
+                case '\'':
+                    _quoted |= !_inWord;
+                    return SingleQuoted(i + 1);
+                case '"':
+                    _quoted |= !_inWord;
+                    return DoubleQuoted(i + 1);
+                case '$':
+                    _inWord = true;
+                    return Dollar(i);
+                default:
+                    break;
             }
-            if (powerShell && ch is '{' or '}' or '(' or ')') { EndCommand(); i++; continue; }
-            if (!powerShell && ch is '(' or ')' && !inWord) { EndCommand(); i++; continue; }
-            if (ch == '>')
+            if (powerShell && ch is '{' or '}' or '(' or ')') { EndCommand(pipeAfter: false); return i + 1; }
+            if (!powerShell && ch is '(' or ')' && !_inWord) { EndCommand(pipeAfter: false); return i + 1; }
+            if (!powerShell && ch == '`') { _inWord = true; return Backticks(i); }
+            if (ch == Escape && i + 1 < text.Length)
             {
-                // "2>" / "*>": the digits or star before it are the stream, not a word.
-                if (inWord && IsStreamNumber(current.ToString()))
-                {
-                    current.Clear();
-                    inWord = false;
-                }
-                EndWord();
-                i = Redirect(text, i, ref redirectNext);
-                continue;
+                _inWord = true;
+                if (text[i + 1] != '\n') { _current.Append(text[i + 1]); }
+                return i + 2;
             }
-            if (ch == '<')
-            {
-                EndWord();
-                if (!powerShell && IsHeredoc(text, i))
-                {
-                    i = ReadHeredocDelimiter(text, i + 2, heredocs);
-                    continue;
-                }
-                i++;
-                // An input redirection reads; its source is not a write target — read it as a throwaway word.
-                i = SkipWord(text, i);
-                continue;
-            }
-            if (ch == '\'')
-            {
-                inWord = true;
-                var close = i + 1;
-                var sb = new StringBuilder();
-                while (close < text.Length)
-                {
-                    if (text[close] == '\'')
-                    {
-                        if (powerShell && close + 1 < text.Length && text[close + 1] == '\'') { sb.Append('\''); close += 2; continue; }
-                        break;
-                    }
-                    sb.Append(text[close++]);
-                }
-                current.Append(sb);
-                i = close + 1;
-                continue;
-            }
-            if (ch == '"')
-            {
-                inWord = true;
-                i++;
-                while (i < text.Length && text[i] != '"')
-                {
-                    // Bash keeps a backslash inside double quotes unless it escapes $ ` " \ or a newline ("C:\Users" stays).
-                    if (text[i] == escape && i + 1 < text.Length && (powerShell || text[i + 1] is '$' or '`' or '"' or '\\' or '\n'))
-                    {
-                        current.Append(text[i + 1]);
-                        i += 2;
-                        continue;
-                    }
-                    if (text[i] == '$') { dynamic = true; i = DollarPart(text, i, current); continue; }
-                    if (!powerShell && text[i] == '`') { dynamic = true; i = Backticks(text, i, current); continue; }
-                    current.Append(text[i++]);
-                }
-                i++;
-                continue;
-            }
-            if (ch == '$') { inWord = true; dynamic = true; i = DollarPart(text, i, current); continue; }
-            if (!powerShell && ch == '`') { inWord = true; dynamic = true; i = Backticks(text, i, current); continue; }
-            if (ch == escape && i + 1 < text.Length)
-            {
-                inWord = true;
-                if (text[i + 1] != '\n') { current.Append(text[i + 1]); }
-                i += 2;
-                continue;
-            }
-            inWord = true;
-            current.Append(ch);
-            i++;
+            _inWord = true;
+            _current.Append(ch);
+            return i + 1;
         }
-        EndCommand();
-        return result;
+
+        private void ResetWord()
+        {
+            _current.Clear();
+            _inWord = false;
+            _dynamic = false;
+            _quoted = false;
+        }
+
+        private void EndWord()
+        {
+            if (!_inWord) { return; }
+            // PowerShell takes either separator on every OS; elsewhere a backslash would be part of a file name.
+            var value = powerShell && !OperatingSystem.IsWindows() ? _current.ToString().Replace('\\', '/') : _current.ToString();
+            var word = new Word(value, _dynamic, _quoted);
+            switch (_target)
+            {
+                case Target.Output: _redirects.Add(word); break;
+                case Target.Input: _inputs.Add(word); break;
+                case Target.Discard: break;
+                default: _words.Add(word); break;
+            }
+            _target = Target.None;
+            ResetWord();
+        }
+
+        private void EndCommand(bool pipeAfter)
+        {
+            EndWord();
+            if (_words.Count > 0 || _redirects.Count > 0 || _inputs.Count > 0 || _subs.Count > 0)
+            {
+                _result.Add(new Simple([.. _words], [.. _redirects], [.. _inputs], [.. _subs], _pipedIn, _stdinText));
+            }
+            _words.Clear();
+            _redirects.Clear();
+            _inputs.Clear();
+            _subs.Clear();
+            _pipedIn = pipeAfter;
+            _stdinText = false;
+            _target = Target.None;
+        }
+
+        // At a '>' (or the '>' after '&'): consume the operator; "&N" / "&-" duplicates a stream (no file); ">&file" is a file.
+        private int Redirect(int i)
+        {
+            i++; // '>'
+            if (At(i, '>') || At(i, '|')) { i++; }
+            if (At(i, '&'))
+            {
+                i++;
+                if (i < text.Length && (char.IsAsciiDigit(text[i]) || text[i] == '-'))
+                {
+                    while (i < text.Length && (char.IsAsciiDigit(text[i]) || text[i] == '-')) { i++; }
+                    return i;
+                }
+            }
+            _target = Target.Output;
+            return i;
+        }
+
+        private int LessThan(int i)
+        {
+            EndWord();
+            if (At(i + 1, '>')) { _target = Target.Output; return i + 2; } // <> opens the file for writing too
+            if (!powerShell && At(i + 1, '<'))
+            {
+                _stdinText = true;
+                if (At(i + 2, '<')) { _target = Target.Discard; return i + 3; } // <<< here-string
+                return ReadHeredocDelimiter(text, i + 2, _heredocs);
+            }
+            _target = Target.Input;
+            return i + 1;
+        }
+
+        private int SingleQuoted(int i)
+        {
+            _inWord = true;
+            while (i < text.Length)
+            {
+                if (text[i] == '\'')
+                {
+                    if (powerShell && At(i + 1, '\'')) { _current.Append('\''); i += 2; continue; }
+                    return i + 1;
+                }
+                _current.Append(text[i++]);
+            }
+            return i;
+        }
+
+        private int DoubleQuoted(int i)
+        {
+            _inWord = true;
+            while (i < text.Length && text[i] != '"')
+            {
+                // Bash keeps a backslash inside double quotes unless it escapes $ ` " \ or a newline ("C:\Users" stays).
+                if (text[i] == Escape && i + 1 < text.Length && (powerShell || text[i + 1] is '$' or '`' or '"' or '\\' or '\n'))
+                {
+                    _current.Append(text[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                if (text[i] == '$') { i = Dollar(i); continue; }
+                if (!powerShell && text[i] == '`') { i = Backticks(i); continue; }
+                _current.Append(text[i++]);
+            }
+            return i + 1;
+        }
+
+        // "$(…)" — a command substitution (checked as a command of its own); "$((…))" arithmetic; "${…}" / "$name".
+        private int Dollar(int i)
+        {
+            _dynamic = true;
+            if (At(i + 1, '('))
+            {
+                var end = FindSubstitutionEnd(text, i + 2, powerShell);
+                var body = text[(i + 2)..Math.Min(end, text.Length)];
+                if (!body.StartsWith('(')) { _subs.Add(body); } // not arithmetic
+                _current.Append("$(").Append(body).Append(')');
+                return Math.Min(end + 1, text.Length);
+            }
+            if (At(i + 1, '{'))
+            {
+                var close = text.IndexOf('}', i);
+                var end = close < 0 ? text.Length : close + 1;
+                _current.Append(text, i, end - i);
+                return end;
+            }
+            _current.Append('$');
+            return i + 1;
+        }
+
+        private int Backticks(int i)
+        {
+            _dynamic = true;
+            var close = i + 1;
+            while (close < text.Length && text[close] != '`')
+            {
+                close += text[close] == '\\' ? 2 : 1;
+            }
+            var end = Math.Min(close, text.Length);
+            _subs.Add(text[(i + 1)..end]);
+            _current.Append(text, i, Math.Min(end + 1, text.Length) - i);
+            return Math.Min(end + 1, text.Length);
+        }
     }
 
     // "2" in "2>" / "*" in PowerShell's "*>": the stream being redirected, not a word.
     private static bool IsStreamNumber(string word) => word == "*" || (word.Length > 0 && word.All(char.IsAsciiDigit));
 
-    // At a '<': "<<" (or "<<-") starts a heredoc; "<<<" is a here-string (one word, read as input).
-    private static bool IsHeredoc(string text, int i)
+    /// <summary>The index of the ')' closing a "$(" whose body starts at <paramref name="start"/> (text length when it is
+    /// never closed). Quotes, nested substitutions, backticks and heredoc bodies are skipped, so a ")" in a commit
+    /// message's heredoc ("1) fixed …") doesn't end it.</summary>
+    internal static int FindSubstitutionEnd(string text, int start, bool powerShell)
     {
-        if (i + 1 >= text.Length || text[i + 1] != '<') { return false; }
-        return i + 2 >= text.Length || text[i + 2] != '<';
-    }
-
-    // At a '>' (or the '>' after '&'): consume the operator; "&N" / "&-" duplicates a stream (no file).
-    private static int Redirect(string text, int i, ref bool redirectNext)
-    {
-        i++; // '>'
-        if (i < text.Length && text[i] is '>' or '|') { i++; }
-        if (i < text.Length && text[i] == '&')
+        ArgumentNullException.ThrowIfNull(text);
+        var depth = 1;
+        var heredocs = new List<string>();
+        var i = start;
+        while (i < text.Length)
         {
-            i++;
-            while (i < text.Length && (char.IsAsciiDigit(text[i]) || text[i] == '-')) { i++; }
-            return i;
-        }
-        redirectNext = true;
-        return i;
-    }
-
-    private static int SkipWord(string text, int i)
-    {
-        while (i < text.Length && text[i] is ' ' or '\t') { i++; }
-        while (i < text.Length && text[i] is not (' ' or '\t' or '\n' or ';' or '|' or '&')) { i++; }
-        return i;
-    }
-
-    // "$(…)" / "${…}" / "$name": copied into the word as written (it is dynamic anyway); nesting is followed.
-    private static int DollarPart(string text, int i, StringBuilder into)
-    {
-        into.Append('$');
-        i++;
-        if (i < text.Length && text[i] is '(' or '{')
-        {
-            var open = text[i];
-            var close = open == '(' ? ')' : '}';
-            var depth = 0;
-            while (i < text.Length)
+            var c = text[i];
+            if (c == '\n' && heredocs.Count > 0) { i = SkipHeredocs(text, i + 1, heredocs); continue; }
+            if (c == (powerShell ? '`' : '\\')) { i += 2; continue; }
+            switch (c)
             {
-                var c = text[i];
-                into.Append(c);
-                i++;
-                if (c == open) { depth++; }
-                else if (c == close && --depth == 0) { break; }
+                case '\'':
+                    var q = text.IndexOf('\'', i + 1);
+                    i = q < 0 ? text.Length : q + 1;
+                    continue;
+                case '"':
+                    i = SkipDoubleQuoted(text, i + 1, powerShell);
+                    continue;
+                case '`' when !powerShell:
+                    var b = text.IndexOf('`', i + 1);
+                    i = b < 0 ? text.Length : b + 1;
+                    continue;
+                case '<' when !powerShell && i + 1 < text.Length && text[i + 1] == '<' && (i + 2 >= text.Length || text[i + 2] != '<'):
+                    i = ReadHeredocDelimiter(text, i + 2, heredocs);
+                    continue;
+                case '(':
+                    depth++;
+                    break;
+                case ')':
+                    if (--depth == 0) { return i; }
+                    break;
+                default:
+                    break;
             }
+            i++;
         }
-        return i;
+        return text.Length;
     }
 
-    private static int Backticks(string text, int i, StringBuilder into)
+    // From just inside a '"' to just past its closing '"' (nested "$(…)" followed).
+    private static int SkipDoubleQuoted(string text, int i, bool powerShell)
     {
-        var close = text.IndexOf('`', i + 1);
-        var end = close < 0 ? text.Length : close + 1;
-        into.Append(text, i, end - i);
-        return end;
+        while (i < text.Length && text[i] != '"')
+        {
+            if (text[i] == (powerShell ? '`' : '\\')) { i += 2; continue; }
+            if (text[i] == '$' && i + 1 < text.Length && text[i + 1] == '(')
+            {
+                i = FindSubstitutionEnd(text, i + 2, powerShell) + 1;
+                continue;
+            }
+            i++;
+        }
+        return i + 1;
     }
 
     // After "<<" (or "<<-"): the delimiter word, quotes removed; its body starts at the next line.

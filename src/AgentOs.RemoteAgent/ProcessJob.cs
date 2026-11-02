@@ -61,6 +61,8 @@ internal sealed partial class ProcessJob : IRunProcessTree
     private static readonly string[] PsArgs = ["-A", "-o", "pid=", "-o", "ppid="];
 
     private nint _handle;
+    private bool _disposed;
+    private readonly object _handleGate = new();
     private readonly List<Process> _roots = [];
     private readonly List<int> _rootPids = [];
     private readonly Dictionary<(int Pid, long Ticks), RunProcess> _seen = [];
@@ -111,9 +113,9 @@ internal sealed partial class ProcessJob : IRunProcessTree
         var now = Members();
         lock (_seen)
         {
-            foreach (var p in now)
+            // Past the cap only the orchestrator (DCP) is still remembered: it is what the container cleanup needs.
+            foreach (var p in now.Where(p => _seen.Count < MaxSeen || RunCleanup.IsOrchestrator(p)))
             {
-                if (_seen.Count >= MaxSeen) { break; }
                 _seen.TryAdd((p.Pid, p.StartedUtc.Ticks), p);
             }
         }
@@ -122,15 +124,19 @@ internal sealed partial class ProcessJob : IRunProcessTree
     /// <inheritdoc />
     public IReadOnlyList<RunProcess> Members()
     {
-        var handle = _handle;
         List<int> pids;
-        if (handle != 0 && OperatingSystem.IsWindows()) { pids = JobProcessIds(handle); }
-        else
+        // The handle is read and used under the lock: a sampler tick racing Dispose never queries a closed (or reused) handle.
+        lock (_handleGate)
         {
-            lock (_roots) { pids = [.. _rootPids]; }
-            if (!OperatingSystem.IsWindows()) { pids = Descendants(pids); }
+            if (_disposed) { return []; }
+            if (_handle != 0 && OperatingSystem.IsWindows()) { pids = JobProcessIds(_handle); }
+            else
+            {
+                lock (_roots) { pids = [.. _rootPids]; }
+                if (!OperatingSystem.IsWindows()) { pids = Descendants(pids); }
+            }
         }
-        return [.. pids.Select(Describe).OfType<RunProcess>()];
+        return Describe(pids);
     }
 
     /// <inheritdoc />
@@ -157,7 +163,13 @@ internal sealed partial class ProcessJob : IRunProcessTree
             try { if (!root.HasExited) { root.Kill(entireProcessTree: true); } }
             catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException) { _ = ex; }
         }
-        var handle = Interlocked.Exchange(ref _handle, 0);
+        nint handle;
+        lock (_handleGate)
+        {
+            _disposed = true;
+            handle = _handle;
+            _handle = 0;
+        }
         if (handle != 0)
         {
             CloseHandle(handle); // KILL_ON_JOB_CLOSE: background children that left the tree go too
@@ -165,6 +177,28 @@ internal sealed partial class ProcessJob : IRunProcessTree
         }
         // No job: whatever was seen in the run and still runs (a server re-parented to init) goes too.
         foreach (var p in Seen) { Kill(p); }
+    }
+
+    // The processes by pid, from ONE snapshot of the computer's processes (GetProcessById takes a full snapshot per call).
+    private static List<RunProcess> Describe(List<int> pids)
+    {
+        if (pids.Count == 0) { return []; }
+        var wanted = new HashSet<int>(pids);
+        var all = Process.GetProcesses();
+        var result = new List<RunProcess>(pids.Count);
+        try
+        {
+            foreach (var p in all.Where(p => wanted.Contains(p.Id)))
+            {
+                try { result.Add(new RunProcess(p.Id, p.StartTime.ToUniversalTime(), p.ProcessName)); }
+                catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException) { _ = ex; } // exited
+            }
+        }
+        finally
+        {
+            foreach (var p in all) { p.Dispose(); }
+        }
+        return result;
     }
 
     /// <summary>A process by pid, with its start time and name; null when it is gone or not ours to inspect.</summary>

@@ -1,12 +1,14 @@
 // Scoped autonomy keeps a run's writes in its own folder. A Testing agent on the lab, refused `git worktree add ../base`,
 // wrote a helper script into its folder and ran it with `node ./.tester-base.mjs` — leaving `../base-122` next to the run
 // folders. The PreToolUse guard resolves every path a call would write (real path resolution against a real temp run
-// folder here) and blocks what lands outside, a helper the run wrote itself, and the run's own git / claude settings.
+// folder here) and blocks what lands outside, a new script the run wrote itself (with "commit it first"), and the run's
+// own git / husky / claude settings — while a ticket's own scripts, build outputs and temp files keep working.
 
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using AgentOs.RemoteAgent;
 using Shouldly;
@@ -18,24 +20,41 @@ public sealed class ScopedWriteGuardTests : IDisposable
 {
     private readonly string _root;
     private readonly string _run;
+    private readonly string _tmp;
 
     public ScopedWriteGuardTests()
     {
         _root = Path.Join(Path.GetTempPath(), "agentos-guard-" + Guid.NewGuid().ToString("N"));
         _run = Path.Join(_root, "20261102-154906-d1ed26ddc4d74ab186c0ce6d6559fba7");
+        _tmp = _run + RunsRootWatch.TempSuffix;
         Directory.CreateDirectory(Path.Join(_run, "repo", "tools"));
+        Directory.CreateDirectory(_tmp);
     }
 
     public void Dispose() => _ = TestFiles.TryDeleteDirectory(_root);
 
-    // Committed, unchanged repository files are the "tools/" ones here; everything else counts as written by the run.
-    private static bool CleanTools(string fullPath) => fullPath.Replace('\\', '/').Contains("/tools/", StringComparison.Ordinal);
+    // What git would say, by folder: tools/ committed, edited/ tracked with changes, dist/ + node_modules/ ignored,
+    // missing/ not there; anything else is a new file the run wrote.
+    private static ScriptState FakeGit(string fullPath)
+    {
+        var p = fullPath.Replace('\\', '/');
+        if (p.Contains("/tools/", StringComparison.Ordinal)) { return ScriptState.Clean; }
+        if (p.Contains("/edited/", StringComparison.Ordinal)) { return ScriptState.Tracked; }
+        if (p.Contains("/dist/", StringComparison.Ordinal) || p.Contains("/node_modules/", StringComparison.Ordinal)) { return ScriptState.Ignored; }
+        if (p.Contains("/missing/", StringComparison.Ordinal)) { return ScriptState.Missing; }
+        return ScriptState.Untracked;
+    }
+
+    private GuardContext Ctx(Func<string, bool>? writtenEarlier = null) =>
+        new(_run, _tmp) { ScriptStateOf = FakeGit, WrittenEarlier = writtenEarlier ?? (static _ => false) };
 
     private string? Bash(string command, string? cwd = null) =>
-        ScopedWriteGuard.CheckCommand(command, cwd ?? _run, _run, powerShell: false, CleanTools);
+        ScopedWriteGuard.CheckCommand(command, cwd ?? _run, Ctx(), powerShell: false);
 
     private string? Ps(string command, string? cwd = null) =>
-        ScopedWriteGuard.CheckCommand(command, cwd ?? _run, _run, powerShell: true, CleanTools);
+        ScopedWriteGuard.CheckCommand(command, cwd ?? _run, Ctx(), powerShell: true);
+
+    private string? File(string? path) => ScopedWriteGuard.CheckFileTool(path, _run, Ctx());
 
     // ── what the lab run did ──────────────────────────────────────────────────────────────────────────────────
 
@@ -65,12 +84,19 @@ public sealed class ScopedWriteGuardTests : IDisposable
     [InlineData("rm -rf ../other-run")]
     [InlineData("ln -s .. up")]
     [InlineData("cp -t ../x a.txt")]
+    [InlineData("cp -t../x a.txt")]
     [InlineData("cp --target-directory=../x a.txt")]
     [InlineData("tee ../log.txt")]
     [InlineData("unzip a.zip -d ../x")]
+    [InlineData("tar -xf a.tar -C../x")]
     [InlineData("mkdir \"$HOME/x\"")]
     [InlineData("mkdir $(pwd)/../x")]
     [InlineData("mkdir `pwd`/x")]
+    [InlineData("x=../x; mkdir $x")]
+    [InlineData("sudo mkdir ../x")]
+    [InlineData("time mkdir ../x")]
+    [InlineData("{ mkdir ../x; }")]
+    [InlineData("if true; then mkdir ../x; fi")]
     public void CheckCommand_WritesOutside_AreBlocked(string command) => Bash(command).ShouldNotBeNull();
 
     [Theory]
@@ -83,7 +109,17 @@ public sealed class ScopedWriteGuardTests : IDisposable
     [InlineData("npm ci 2>/dev/null")]
     [InlineData("ls -la ..")]   // reading outside is not a write
     [InlineData("git status")]
+    [InlineData("for i in 1 2 3; do curl -s http://localhost:5000/health && break; sleep 2; done")]
     public void CheckCommand_WritesInside_AreAllowed(string command) => Bash(command).ShouldBeNull();
+
+    [Theory]
+    [InlineData("npm run build >> ../x.log")]
+    [InlineData("npm run build 2> ../x.log")]
+    [InlineData("npm run build &> ../x.log")]
+    [InlineData("npm run build >& ../x.log")]
+    [InlineData("npm run build >&../x.log")]
+    [InlineData("npm test <> ../x.log")]
+    public void CheckCommand_EveryRedirectionForm_IsChecked(string command) => Bash(command).ShouldNotBeNull();
 
     [Fact]
     public void CheckCommand_AbsolutePathInside_IsAllowed_Outside_IsBlocked()
@@ -95,6 +131,30 @@ public sealed class ScopedWriteGuardTests : IDisposable
     [Fact]
     public void CheckCommand_SiblingWithTheRunFolderAsPrefix_IsOutside() =>
         Bash($"mkdir \"{_run}-copy\"").ShouldNotBeNull(); // "<run>-copy" starts with "<run>" but is a sibling
+
+    // ── temp files: the run's own temp folder ───────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("npm run build > \"$TEMP/build.log\" 2>&1")]
+    [InlineData("npm run build > \"${TMPDIR}/build.log\"")]
+    [InlineData("mkdir -p $TMP/out")]
+    [InlineData("echo x > \"$AGENTOS_RUN_DIR/notes.txt\"")]
+    public void CheckCommand_TheRunsTempFolderAndVariables_AreAllowed(string command) => Bash(command).ShouldBeNull();
+
+    [Fact]
+    public void CheckCommand_GitBashTmp_IsTheRunsTempFolder()
+    {
+        var verdict = Bash("dotnet test > /tmp/test.log 2>&1; tail -50 /tmp/test.log");
+
+        // Windows: Git Bash's /tmp is the CLI's TEMP = the run's temp folder. Elsewhere /tmp is the shared one — outside
+        // the run (the CLI's TMPDIR is the run's temp folder).
+        if (OperatingSystem.IsWindows()) { verdict.ShouldBeNull(); }
+        else { verdict.ShouldNotBeNull(); }
+    }
+
+    [Fact]
+    public void CheckCommand_PowerShellEnvTemp_IsTheRunsTempFolder() =>
+        Ps("dotnet test *> $env:TEMP\\test.log").ShouldBeNull();
 
     // ── cd ────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -116,17 +176,38 @@ public sealed class ScopedWriteGuardTests : IDisposable
     }
 
     [Fact]
+    public void CheckCommand_CdToTheRepositoryTop_StaysInsideAndWritesAreChecked()
+    {
+        Directory.CreateDirectory(Path.Join(_run, "repo", ".git"));
+        var src = Path.Join(_run, "repo", "src");
+        Directory.CreateDirectory(src);
+
+        Bash("cd \"$(git rev-parse --show-toplevel)\" && npm test", cwd: src).ShouldBeNull();
+        Bash("cd \"$(git rev-parse --show-toplevel)\" && mkdir out", cwd: src).ShouldBeNull();
+        Bash("cd \"$(git rev-parse --show-toplevel)\" && mkdir ../../x", cwd: src).ShouldNotBeNull();
+    }
+
+    [Fact]
     public void CheckCommand_CdToAComputedFolder_LaterWritesAreBlocked()
     {
-        Bash("cd \"$(git rev-parse --show-toplevel)\" && ls").ShouldBeNull();
-        Bash("cd \"$(git rev-parse --show-toplevel)\" && git worktree add x").ShouldNotBeNull();
-        Bash("cd \"$(git rev-parse --show-toplevel)\" && mkdir x").ShouldNotBeNull();
+        Bash("cd \"$SOMEWHERE\" && ls").ShouldBeNull();
+        Bash("cd \"$SOMEWHERE\" && mkdir x").ShouldNotBeNull();
+        Bash("cd \"$(git rev-parse --show-toplevel)\" && mkdir x").ShouldNotBeNull(); // no repository here: unknown
+    }
+
+    [Fact]
+    public void CheckCommand_CdBack_IsAllowedInsideAndFollowed()
+    {
+        Bash("cd -").ShouldBeNull();
+        Bash("cd repo && cd - && mkdir x").ShouldBeNull();
+        Bash("cd repo && cd - && mkdir ../x").ShouldNotBeNull();
     }
 
     // ── git / gh / package tools ──────────────────────────────────────────────────────────────────────────────
 
     [Theory]
     [InlineData("git clone https://github.com/o/r.git ../r")]
+    [InlineData("git clone -- https://github.com/o/r.git ../r")]
     [InlineData("git clone --depth 1 -b main https://github.com/o/r.git ../r")]
     [InlineData("git clone --separate-git-dir=../g https://github.com/o/r.git r")]
     [InlineData("git -C ../other status")]
@@ -141,11 +222,19 @@ public sealed class ScopedWriteGuardTests : IDisposable
     [InlineData("gh repo clone o/r ../r")]
     [InlineData("dotnet new console -o ../x")]
     [InlineData("dotnet publish -c Release --output ../pub")]
+    [InlineData("dotnet publish -o:../pub")]
+    [InlineData("dotnet build -p:OutputPath=../out/")]
+    [InlineData("dotnet build --property:BaseIntermediateOutputPath=../obj/")]
+    [InlineData("dotnet build \"/p:Configuration=Release;OutDir=../out\"")]
     [InlineData("dotnet tool install -g dotnet-ef")]
     [InlineData("npm install -g http-server")]
     [InlineData("npm --prefix ../x install")]
     [InlineData("pnpm add --global x")]
+    [InlineData("yarn global add x")]
     [InlineData("curl -o ../x.html http://localhost:5000")]
+    [InlineData("curl http://localhost:5000 --output=../x")]
+    [InlineData("curl -so ../x http://localhost:5000")]
+    [InlineData("curl -sSo../x http://localhost:5000")]
     public void CheckCommand_ToolsWritingOutside_AreBlocked(string command) => Bash(command).ShouldNotBeNull();
 
     [Theory]
@@ -158,47 +247,134 @@ public sealed class ScopedWriteGuardTests : IDisposable
     [InlineData("gh pr create --title x --body y")]
     [InlineData("dotnet new console -o app")]
     [InlineData("dotnet test --results-directory TestResults")]
+    [InlineData("dotnet build -p:OutputPath=out/ -p:Configuration=Release")]
+    [InlineData("dotnet test --logger \"trx;LogFileName=r.trx\" --results-directory TestResults")]
+    [InlineData("dotnet run --project src/App.AppHost > apphost.log 2>&1 &")]
     [InlineData("npm install")]
+    [InlineData("npm install -D -P vitest")]
+    [InlineData("npm i -O fsevents")]
     [InlineData("npx playwright test --reporter=line")]
+    [InlineData("npx playwright install --with-deps chromium")]
     [InlineData("curl -s http://localhost:5000/health")]
+    [InlineData("curl -s -o out/health.json http://localhost:5000/health")]
     public void CheckCommand_ToolsWritingInside_AreAllowed(string command) => Bash(command).ShouldBeNull();
 
-    // A heredoc commit message is text, not commands — "rm -rf ../x" in it must not block the commit.
-    [Fact]
-    public void CheckCommand_HeredocCommitMessage_IsNotParsedAsCommands()
-    {
-        const string commit = "git commit -m \"$(cat <<'EOF'\nfix(board): keep ../x out (1) of it\n\nrm -rf ../x\nEOF\n)\"";
-        Bash(commit).ShouldBeNull();
-        Bash("cat > notes.md <<'EOF'\nmkdir ../x\nEOF\ngit add notes.md").ShouldBeNull();
-        Bash("cat > ../notes.md <<'EOF'\nhello\nEOF").ShouldNotBeNull();
-    }
+    // ── heredocs and command substitutions ────────────────────────────────────────────────────────────────────
 
-    // ── scripts ───────────────────────────────────────────────────────────────────────────────────────────────
+    // A heredoc commit message or pull-request body is text, not commands — "rm -rf ../x", "1)" or quotes in it must not
+    // block the call; a substitution that does write is checked like any command.
+    [Theory]
+    [InlineData("git commit -m \"$(cat <<'EOF'\nfix(board): keep ../x out (1) of it\n\nrm -rf ../x\nEOF\n)\"")]
+    [InlineData("gh pr create --title \"feat: icons\" --body \"$(cat <<'EOF'\n## Summary\n1) generated icons\n2) wired them (see #12)\n\n## Test plan\n- npm run build\nEOF\n)\"")]
+    [InlineData("gh pr create --title \"x\" --body \"$(cat <<'EOF'\n## Summary\n1) Fixed the \"login\" redirect -> /home\n- removed ../tmp usage\nEOF\n)\"")]
+    [InlineData("git commit -m \"$(cat <<'EOF'\nfix: handle case 1) where it's off\n\nCo-Authored-By: X <x@y>\nEOF\n)\"")]
+    [InlineData("cat > notes.md <<'EOF'\nmkdir ../x\nEOF\ngit add notes.md")]
+    [InlineData("cat > notes.md <<EOF\nhello $USER\nEOF")]
+    public void CheckCommand_HeredocText_IsNotParsedAsCommands(string command) => Bash(command).ShouldBeNull();
 
     [Theory]
-    [InlineData("node ./helper.mjs")]                // written by the run (not a clean repository file)
+    [InlineData("cat > ../notes.md <<'EOF'\nhello\nEOF")]
+    [InlineData("ls $(mkdir ../x)")]
+    [InlineData("git commit -m \"$(mkdir ../x)\"")]
+    [InlineData("git status `mkdir ../x`")]
+    [InlineData("echo \"$(cd .. && touch x)\"")]
+    public void CheckCommand_Substitutions_AreChecked(string command) => Bash(command).ShouldNotBeNull();
+
+    // ── scripts: what a ticket needs, and what the incident did ───────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("node repo/tools/gen.mjs")]               // committed
+    [InlineData("node repo/edited/mod.mjs")]              // tracked, changed by the run: ships in the pull request
+    [InlineData("node repo/dist/server.js")]              // a build output the run didn't write itself
+    [InlineData("node repo/node_modules/.bin/vite build")]
+    [InlineData("npm run build && node repo/missing/server.js")] // not built yet when checked
+    [InlineData("node --test")]
+    [InlineData("node --version")]
+    [InlineData("python -m pytest")]
+    [InlineData("sh -c \"dotnet build\"")]
+    [InlineData("sh .agentos/bin/copy-in .agentos/files/logo.png repo/wwwroot/logo.png")]
+    [InlineData("./repo/node_modules/.bin/vite build")]
+    [InlineData("./repo/tools/build.sh")]
+    public void CheckCommand_RepositoryScriptsAndBuildOutputs_AreAllowed(string command) => Bash(command).ShouldBeNull();
+
+    [Theory]
+    [InlineData("node ./helper.mjs")]
     [InlineData("node ../outside.mjs")]
     [InlineData("node -e \"require('fs').mkdirSync('../x')\"")]
     [InlineData("node --eval=1")]
     [InlineData("node --import ./hook.mjs repo/tools/x.mjs")]
+    [InlineData("node -r ./hook.mjs repo/tools/x.mjs")]
+    [InlineData("NODE_OPTIONS='--require ./hook.mjs' node repo/tools/x.mjs")]
+    [InlineData("NODE_OPTIONS=--require=./hook.mjs npm test")]
+    [InlineData("node < helper.mjs")]
+    [InlineData("node - < helper.mjs")]
+    [InlineData("cat helper.mjs | node")]
+    [InlineData("node <<'EOF'\nrequire('fs').mkdirSync('../x')\nEOF")]
+    [InlineData("python - <<'EOF'\nopen('../x','w')\nEOF")]
     [InlineData("python3 -c \"open('../x','w')\"")]
     [InlineData("python helper.py")]
     [InlineData("sh -c \"mkdir ../x\"")]
+    [InlineData("bash -lc 'mkdir ../x'")]
+    [InlineData("bash -c -- 'mkdir ../x'")]
     [InlineData("bash -c 'cd .. && touch x'")]
+    [InlineData("bash helper.sh")]
+    [InlineData("./helper.sh")]
+    [InlineData("source ./helper.sh")]
     [InlineData("xargs rm")]
+    [InlineData("ls | xargs -I{} cp {} ../x")]
+    [InlineData("find . -name '*.cs' -exec cp {} ../x \\;")]
     [InlineData("FOO=1 node ./helper.mjs")]
     [InlineData("env FOO=1 node ./helper.mjs")]
-    public void CheckCommand_ScriptsThatCanWriteAnywhere_AreBlocked(string command) => Bash(command).ShouldNotBeNull();
+    [InlineData("nohup node ./helper.mjs &")]
+    [InlineData("dotnet run helper.cs")]
+    [InlineData("dotnet run --file helper.cs")]
+    [InlineData("dotnet fsi helper.fsx")]
+    [InlineData("dotnet exec helper.dll")]
+    [InlineData("npm exec -- node -e \"require('fs').mkdirSync('../x')\"")]
+    [InlineData("npm x -c 'mkdir ../x'")]
+    [InlineData("npx node ./helper.mjs")]
+    [InlineData("pnpm dlx node ./helper.mjs")]
+    [InlineData("yarn node ./helper.mjs")]
+    [InlineData("npm pkg set scripts.x=\"node ./new.mjs\" && npm run x")]
+    public void CheckCommand_CodeTheRunCouldHaveWritten_IsBlocked(string command) => Bash(command).ShouldNotBeNull();
 
-    [Theory]
-    [InlineData("node repo/tools/gen.mjs")]
-    [InlineData("node --test")]
-    [InlineData("python -m pytest")]
-    [InlineData("sh -c \"dotnet build\"")]
-    [InlineData("sh .agentos/bin/copy-in .agentos/files/logo.png repo/wwwroot/logo.png")]
-    public void CheckCommand_RepositoryScripts_AreAllowed(string command) => Bash(command).ShouldBeNull();
+    // A new script the ticket asked for runs once it is committed — the block says exactly how.
+    [Fact]
+    public void CheckCommand_NewUntrackedScript_SaysCommitItFirst()
+    {
+        var reason = Bash("node web/scripts/gen-icons.mjs").ShouldNotBeNull();
 
-    // ── PowerShell ────────────────────────────────────────────────────────────────────────────────────────────
+        reason.ShouldContain("Commit it first (`git add web/scripts/gen-icons.mjs && git commit -m");
+        reason.ShouldContain("ships in the pull request");
+        reason.ShouldContain("run it again");
+    }
+
+    // A gitignored file the run wrote itself (here: earlier, per the ledger) is not a build output.
+    [Fact]
+    public void CheckCommand_IgnoredFileTheRunWrote_IsBlocked()
+    {
+        var written = Path.GetFullPath(Path.Join(_run, "repo", "dist", "evil.js"));
+        var ctx = Ctx(path => ScopedWriteGuard.IsInside(path, written));
+
+        ScopedWriteGuard.CheckCommand("node repo/dist/evil.js", _run, ctx, powerShell: false).ShouldNotBeNull();
+        ScopedWriteGuard.CheckCommand("node repo/dist/server.js", _run, Ctx(), powerShell: false).ShouldBeNull();
+        // …and within one command: written, then run.
+        Bash("cp helper.mjs repo/dist/x.js && node repo/dist/x.js").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void CheckCommand_WriteTargets_AreRecordedForTheLedger()
+    {
+        var ctx = Ctx();
+
+        ScopedWriteGuard.CheckCommand("echo x > out/a.txt && cp a b && mkdir -p d", _run, ctx, powerShell: false).ShouldBeNull();
+
+        ctx.Written.ShouldContain(Path.GetFullPath(Path.Join(_run, "out", "a.txt")));
+        ctx.Written.ShouldContain(Path.GetFullPath(Path.Join(_run, "b")));
+        ctx.Written.ShouldNotContain(Path.GetFullPath(Path.Join(_run, "d"))); // a folder made is not content written
+    }
+
+    // ── PowerShell / cmd ──────────────────────────────────────────────────────────────────────────────────────
 
     [Theory]
     [InlineData("New-Item -ItemType Directory -Path ..\\base-122")]
@@ -211,15 +387,36 @@ public sealed class ScopedWriteGuardTests : IDisposable
     [InlineData("[System.IO.File]::WriteAllText('..\\x', 'y')")]
     [InlineData("[IO.Directory]::CreateDirectory('..\\x')")]
     [InlineData("Get-Item . | ForEach-Object { New-Item -Path ..\\x -ItemType File }")]
+    [InlineData("& { mkdir ../x }")]
+    [InlineData("Start-Process node -ArgumentList './helper.mjs'")]
+    [InlineData("Invoke-Expression 'mkdir ../x'")]
+    [InlineData("iex 'mkdir ../x'")]
+    [InlineData("cmd /c mkdir ..\\x")]
+    [InlineData("pwsh -Command \"New-Item -ItemType Directory ../x\"")]
+    [InlineData("pwsh -File ./helper.ps1")]
     public void CheckCommand_PowerShellWritesOutside_AreBlocked(string command) => Ps(command).ShouldNotBeNull();
+
+    [Fact]
+    public void CheckCommand_PwshEncodedCommand_IsDecodedAndChecked()
+    {
+        var bad = Convert.ToBase64String(Encoding.Unicode.GetBytes("New-Item -ItemType Directory ../x"));
+        var fine = Convert.ToBase64String(Encoding.Unicode.GetBytes("Get-ChildItem"));
+
+        Bash("pwsh -EncodedCommand " + bad).ShouldNotBeNull();
+        Bash("pwsh -enc " + fine).ShouldBeNull();
+        Bash("pwsh -EncodedCommand not-base64!").ShouldNotBeNull();
+    }
 
     [Theory]
     [InlineData("New-Item -ItemType Directory -Path out\\base -Force")]
+    [InlineData("Set-Content -Path notes.txt -Value '../not-a-path'")]
     [InlineData("dotnet build *> build.log")]
     [InlineData("dotnet test 2>$null")]
     [InlineData("Copy-Item a.txt b.txt")]
     [InlineData("Set-Location repo; dotnet build")]
     [InlineData("git log -1 --format=`\"%H`\"")]
+    [InlineData("[System.IO.Path]::GetFileName('a/b.txt')")]
+    [InlineData("pwsh -NoProfile -File repo/tools/build.ps1")]
     public void CheckCommand_PowerShellWritesInside_AreAllowed(string command) => Ps(command).ShouldBeNull();
 
     // ── the file tools ────────────────────────────────────────────────────────────────────────────────────────
@@ -227,18 +424,22 @@ public sealed class ScopedWriteGuardTests : IDisposable
     [Fact]
     public void CheckFileTool_InsideIsAllowed_OutsideAndProtectedAreBlocked()
     {
-        ScopedWriteGuard.CheckFileTool(Path.Join(_run, "repo", "src", "a.cs"), _run, _run).ShouldBeNull();
-        ScopedWriteGuard.CheckFileTool("repo/src/a.cs", _run, _run).ShouldBeNull();
-        ScopedWriteGuard.CheckFileTool(Path.Join(_run, "repo", ".claude", "skills", "x", "SKILL.md"), _run, _run).ShouldBeNull();
-        ScopedWriteGuard.CheckFileTool(null, _run, _run).ShouldBeNull();
+        File(Path.Join(_run, "repo", "src", "a.cs")).ShouldBeNull();
+        File("repo/src/a.cs").ShouldBeNull();
+        File(Path.Join(_run, "repo", ".claude", "skills", "x", "SKILL.md")).ShouldBeNull();
+        File(Path.Join(_run, "repo", "package.json")).ShouldBeNull();
+        File(null).ShouldBeNull();
 
-        ScopedWriteGuard.CheckFileTool(Path.Join(_root, "base-122", "x.mjs"), _run, _run).ShouldNotBeNull();
-        ScopedWriteGuard.CheckFileTool("../x.txt", _run, _run).ShouldNotBeNull();
-        ScopedWriteGuard.CheckFileTool("~/.bashrc", _run, _run).ShouldNotBeNull();
-        ScopedWriteGuard.CheckFileTool(Path.Join(_run, "repo", ".git", "hooks", "pre-commit"), _run, _run).ShouldNotBeNull();
-        ScopedWriteGuard.CheckFileTool(Path.Join(_run, "repo", ".claude", "settings.local.json"), _run, _run).ShouldNotBeNull();
-        ScopedWriteGuard.CheckFileTool(Path.Join(_run, ".claude", "settings.json"), _run, _run).ShouldNotBeNull();
+        File(Path.Join(_root, "base-122", "x.mjs")).ShouldNotBeNull();
+        File("../x.txt").ShouldNotBeNull();
+        File("~/.bashrc").ShouldNotBeNull();
+        File(Path.Join(_run, "repo", ".git", "hooks", "pre-commit")).ShouldNotBeNull();
+        File(Path.Join(_run, "repo", ".git", "config")).ShouldNotBeNull();
+        File(Path.Join(_run, "repo", ".husky", "pre-commit")).ShouldNotBeNull();
+        File(Path.Join(_run, "repo", ".claude", "settings.local.json")).ShouldNotBeNull();
+        File(Path.Join(_run, ".claude", "settings.json")).ShouldNotBeNull();
         Bash("echo '#!/bin/sh' > repo/.git/hooks/pre-commit").ShouldNotBeNull();
+        Bash("echo 'npm test' > repo/.husky/pre-push").ShouldNotBeNull();
     }
 
     [Fact]
@@ -248,7 +449,7 @@ public sealed class ScopedWriteGuardTests : IDisposable
         var drive = char.ToLowerInvariant(_run[0]);
         var gitBash = "/" + drive + _run[2..].Replace('\\', '/') + "/repo/a.txt";
 
-        ScopedWriteGuard.CheckFileTool(gitBash, _run, _run).ShouldBeNull();
+        File(gitBash).ShouldBeNull();
         Bash($"mkdir \"/{drive}/Users/x\"").ShouldNotBeNull();
     }
 
@@ -278,11 +479,32 @@ public sealed class ScopedWriteGuardTests : IDisposable
         using var input = new StringReader(HookJson(tool, field, value));
         using var error = new StringWriter();
 
-        var code = ScopedWriteGuard.Run(input, error, _run);
+        var code = ScopedWriteGuard.Run(input, error, _run, _tmp);
 
         code.ShouldBe(expected);
         if (expected == 2) { error.ToString().ShouldStartWith("Blocked by the AgentOS.NET runner:"); }
         else { error.ToString().ShouldBeEmpty(); }
+    }
+
+    // The ledger: an allowed call's write targets are appended; a later call can't pass the ignored file off as a build output.
+    [Fact]
+    public void Run_Ledger_RemembersWhatEarlierCallsWrote()
+    {
+        var ledger = Path.Join(_root, "run.ledger");
+        Directory.CreateDirectory(Path.Join(_run, "repo", "dist"));
+        var evil = Path.Join(_run, "repo", "dist", "evil.js");
+        using (var write = new StringReader(HookJson("Write", "file_path", evil)))
+        using (var error = new StringWriter())
+        {
+            ScopedWriteGuard.Run(write, error, _run, _tmp, ledger).ShouldBe(0);
+        }
+        System.IO.File.WriteAllText(evil, "x");
+
+        System.IO.File.ReadAllText(ledger).ShouldContain("evil.js");
+        using var run = new StringReader(HookJson("Bash", "command", "node repo/dist/evil.js"));
+        using var runError = new StringWriter();
+        // The real git check: not a repository here, so the file is refused either way — the ledger decides for ignored ones.
+        ScopedWriteGuard.Run(run, runError, _run, _tmp, ledger).ShouldBe(2);
     }
 
     [Fact]
@@ -331,36 +553,44 @@ public sealed class ScopedWriteGuardTests : IDisposable
     public void AppliesTo_ClaudeButNotCodex(string command, bool expected) => ScopedWriteGuard.AppliesTo(command).ShouldBe(expected);
 
     [Fact]
-    public void WriteSettings_LandsOutsideTheRunFolder()
+    public void WriteSettings_AndLedger_LandOutsideTheRunFolder_TempBesideIt()
     {
         var folder = Path.Join(_root, "settings");
 
         var path = ScopedWriteGuard.WriteSettings(folder, _run, "\"x\" guard");
 
         ScopedWriteGuard.IsInside(path, _run).ShouldBeFalse();
-        File.ReadAllText(path).ShouldContain("PreToolUse");
+        ScopedWriteGuard.IsInside(ScopedWriteGuard.LedgerPath(folder, _run), _run).ShouldBeFalse();
+        System.IO.File.ReadAllText(path).ShouldContain("PreToolUse");
+        ScopedWriteGuard.TempFolderFor(_run).ShouldBe(_run + ".tmp");
+        RunsRootWatch.IsRunnersOwn(Path.GetFileName(ScopedWriteGuard.TempFolderFor(_run))).ShouldBeTrue();
     }
 
-    // ── the repository-script check, against real git ────────────────────────────────────────────────────────
+    // ── what git says, against real git ──────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void IsCleanRepoFile_CommittedUnchanged_Yes_WrittenOrChanged_No()
+    public void ScriptStateOf_RealGit_CleanTrackedUntrackedIgnoredMissing()
     {
         var repo = Path.Join(_run, "repo");
         if (!Git(repo, "init", "-q")) { return; } // no git on this machine
-        File.WriteAllText(Path.Join(repo, "tools", "gen.mjs"), "console.log(1)\n");
+        System.IO.File.WriteAllText(Path.Join(repo, "tools", "gen.mjs"), "console.log(1)\n");
+        System.IO.File.WriteAllText(Path.Join(repo, ".gitignore"), "dist/\n");
         Git(repo, "add", ".").ShouldBeTrue();
         Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "init").ShouldBeTrue();
-        File.WriteAllText(Path.Join(repo, "helper.mjs"), "x");
+        System.IO.File.WriteAllText(Path.Join(repo, "helper.mjs"), "x");
+        Directory.CreateDirectory(Path.Join(repo, "dist"));
+        System.IO.File.WriteAllText(Path.Join(repo, "dist", "server.js"), "x");
 
-        ScopedWriteGuard.IsCleanRepoFile(Path.Join(repo, "tools", "gen.mjs")).ShouldBeTrue();
-        ScopedWriteGuard.IsCleanRepoFile(Path.Join(repo, "helper.mjs")).ShouldBeFalse();     // untracked
+        ScopedWriteGuard.ScriptStateOf(Path.Join(repo, "tools", "gen.mjs")).ShouldBe(ScriptState.Clean);
+        ScopedWriteGuard.ScriptStateOf(Path.Join(repo, "helper.mjs")).ShouldBe(ScriptState.Untracked);
+        ScopedWriteGuard.ScriptStateOf(Path.Join(repo, "dist", "server.js")).ShouldBe(ScriptState.Ignored);
         Git(repo, "add", "helper.mjs").ShouldBeTrue();
-        ScopedWriteGuard.IsCleanRepoFile(Path.Join(repo, "helper.mjs")).ShouldBeFalse();     // staged, not committed
-        File.AppendAllText(Path.Join(repo, "tools", "gen.mjs"), "require('fs')\n");
-        ScopedWriteGuard.IsCleanRepoFile(Path.Join(repo, "tools", "gen.mjs")).ShouldBeFalse(); // changed by the run
-        ScopedWriteGuard.IsCleanRepoFile(Path.Join(repo, "missing.mjs")).ShouldBeFalse();
-        ScopedWriteGuard.IsCleanRepoFile(Path.Join(_root, "outside.mjs")).ShouldBeFalse();
+        ScopedWriteGuard.ScriptStateOf(Path.Join(repo, "helper.mjs")).ShouldBe(ScriptState.Tracked);       // staged
+        System.IO.File.AppendAllText(Path.Join(repo, "tools", "gen.mjs"), "require('fs')\n");
+        ScopedWriteGuard.ScriptStateOf(Path.Join(repo, "tools", "gen.mjs")).ShouldBe(ScriptState.Tracked);  // changed by the run
+        ScopedWriteGuard.ScriptStateOf(Path.Join(repo, "missing.mjs")).ShouldBe(ScriptState.Missing);
+        System.IO.File.WriteAllText(Path.Join(_root, "outside.mjs"), "x");
+        ScopedWriteGuard.ScriptStateOf(Path.Join(_root, "outside.mjs")).ShouldBe(ScriptState.NotInRepo);
     }
 
     private static bool Git(string dir, params string[] args)
