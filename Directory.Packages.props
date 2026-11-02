@@ -113,7 +113,7 @@
          Both packages MUST move in lockstep: ModelContextProtocol.AspNetCore pins the core package
          to its exact version (= x.y.z), so bumping one without the other trips NU1107. -->
     <PackageVersion Include="ModelContextProtocol" Version="2.3.0" />
-    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
 
     <!-- Benchmarks (tests/AgentOs.Benchmarks — not run by `dotnet test`; see .github/workflows/perf.yml).
          0.15.8 is the latest stable as of 2026-11-01 (0.16 is preview-only). -->
