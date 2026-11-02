@@ -99,6 +99,22 @@ public sealed class AutopilotSettingsTests : IClassFixture<AgentOsPageFixture>
     }
 
     [Fact]
+    public async Task Autopilot_TicketDiscussion_ShowsHowManyCommentsTheAgentsRead_AndWhoseCount()
+    {
+        if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
+
+        var win = await OpenAsync();
+        var panel = win.Locator(".panel", new() { HasTextString = "Ticket comments the agents read" });
+
+        await Assertions.Expect(panel.Locator(".prefs-label strong").GetByText("Ticket comments the agents read", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(panel.Locator("input[aria-label=\"Ticket comments the agents read\"]")).ToHaveValueAsync("20");
+        await Assertions.Expect(panel).ToContainTextAsync("the newest one wins over the description");
+        await Assertions.Expect(panel).ToContainTextAsync("Anyone else's comment is context only.");
+        await panel.ScrollIntoViewIfNeededAsync();
+        await _fx.Page.ScreenshotAsync(new() { Path = System.IO.Path.Join(System.IO.Path.GetTempPath(), "agentos-autopilot-ticket-discussion.png") });
+    }
+
+    [Fact]
     public async Task CtrlK_FixRounds_OpensSettingsAutopilot()
     {
         if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }

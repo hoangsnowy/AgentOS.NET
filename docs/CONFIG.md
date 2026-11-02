@@ -200,6 +200,7 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Autopilot:TestWhileTrying` | *(empty)* | project names or ids, comma-separated | *Try the app* panel. Projects whose acceptance testing keeps running while someone tries the app — only safe when the app keeps its data separately for each copy (e.g. a database volume per checkout). Empty = every project holds testing while a preview runs, as before. |
 | `Preview:IdleMinutes` | `120` | 10–1440 | *Try the app* panel. A preview nobody has had open (no connection to its port) for this long is stopped by the computer. Sent with each start; a preview keeps its value across a runner restart. |
 | `Autopilot:RecoverMissingReply` | `true` | on / off | *Ask again for a missing reply* — a Coding, Reviewer or Testing run that ends without its JSON reply is asked once for it instead of discarded (below). |
+| `Autopilot:TicketDiscussionComments` | `20` | 0–50 | *The ticket's discussion* panel. How many of a ticket's newest comments written by people the Coding, Reviewer, Testing and Designer agents read with its description (below). `0` = the description only. |
 | `TicketFiles:MaxFileMegabytes` | `10` | 1–100 | *Files for the AI* — the largest single file a person can attach to a ticket ([ADR-0015](adr/0015-ticket-files.md)). |
 | `TicketFiles:MaxTotalMegabytes` | `50` | 1–500 | All files of one ticket together. They are copied to the computer for every run of the ticket. |
 | `TicketFiles:MaxFiles` | `500` | 1–2000 | Files per ticket (an uploaded folder counts each file in it). |
@@ -217,6 +218,23 @@ then starts nothing, retries nothing and spends no fix round until the reset (+1
 no time), logs one line in the Autopilot activity, shows it on Board › Autopilot and Board › Computers, and picks the
 cut-short work up again afterwards. The wait is in memory: after a restart the next run meets the limit again (an
 immediate answer) and the wait is back.
+
+**The ticket's discussion** (`Autopilot:TicketDiscussionComments`, 20 by default). Product owners decide in a ticket's
+comments as often as in its body (VNChess: "default theme is Tối" on #122, a scope change on #108). Every Board agent run
+reads the ticket's current body **and** its newest comments in one GitHub GraphQL call (`comments(last: 3×N)`, at most
+100, so AgentOS.NET's own comments can't crowd people out) and keeps the newest *N* written by people:
+AgentOS.NET's own comments (recognised by their `<sub>Run/Asked/Posted/Closed by the AgentOS.NET …` signature line or
+`### ✅/🔁/❌/👀/❓ AgentOS.NET review/acceptance/design check/needs you` heading — never by author, since they are posted
+with the board's token) and `[bot]`/app authors are left out; an Orchestrator question stays only when a person
+answered it, as context for the answer. Comments by the repository's `OWNER`, `MEMBER` or `COLLABORATOR`
+(`authorAssociation`) are **maintainer decisions**: the prompt tells the agent they are part of the ticket, to follow
+them like acceptance criteria, and that the newest one wins over the body where they conflict — the Reviewer and
+Testing agents judge against body + maintainer comments. Anyone else's comment is **discussion** (context only).
+Each comment is fenced on its own as `<untrusted kind="ticket-discussion">` with its author and authority stated
+outside the fence; each is clipped at 3,000 characters and all of them at ≈12,000 (oldest discussion dropped first,
+then oldest decisions). The task's feed says what was read (`… 3 comment(s) … (2 by maintainers …; ≈840 tokens)`, an
+estimate) or why comments couldn't be read (Azure DevOps work items: not read yet). The Thorough engine's story and the
+Orchestrator agent's epics get the maintainer decisions only. ([threat model](security/threat-model.md))
 
 **A run that ends without its reply** (`Autopilot:RecoverMissingReply`, on by default). A Board agent run on a member's
 computer sometimes ends without the JSON its prompt asks for — the CLI ran out of turns or context after doing real

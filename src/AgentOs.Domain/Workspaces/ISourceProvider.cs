@@ -58,6 +58,17 @@ public interface ISourceProvider
     /// </summary>
     Task<string?> ReadTicketBodyAsync(WorkspaceDescriptor repo, int number, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Read ticket <paramref name="number"/>'s current body together with its newest comments (at most
+    /// <paramref name="maxComments"/> written by people, oldest first; 0 = the body only) — the product owner's decisions
+    /// often live in the comments. The comments come back unfiltered; <see cref="TicketDiscussion.ForAgents"/> picks the
+    /// ones the agents read. Like the body they are third-party input: callers fence them before they reach a prompt. A
+    /// backend that can't read comments returns the body with <see cref="TicketContent.CommentsNote"/> saying so.
+    /// </summary>
+    async Task<TicketContent> ReadTicketAsync(WorkspaceDescriptor repo, int number, int maxComments, CancellationToken cancellationToken = default) =>
+        TicketContent.BodyOnly(await ReadTicketBodyAsync(repo, number, cancellationToken).ConfigureAwait(false),
+            maxComments > 0 ? "This source doesn't provide a ticket's comments — the agents work from its description only." : null);
+
     // ── Writes (bootstrap) ───────────────────────────────────────────────────────────────────────
     // The first write members: stamping a standard label taxonomy and creating tickets from a
     // generated RequirementSpec. Labels are repo-scoped, so they take a WorkspaceDescriptor.

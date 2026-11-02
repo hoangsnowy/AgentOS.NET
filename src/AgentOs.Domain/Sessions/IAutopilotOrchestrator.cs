@@ -25,7 +25,12 @@ public sealed record OrchestratorStuckTask(Guid SessionId, int IssueNumber, stri
 }
 
 /// <summary>An open umbrella ticket (labelled for a person) the agent may close once its scope is fully delivered.</summary>
-public sealed record OrchestratorEpic(int IssueNumber, string Title, string Body);
+public sealed record OrchestratorEpic(int IssueNumber, string Title, string Body)
+{
+    /// <summary>The maintainer decisions in the epic's comments (<see cref="AgentOs.Domain.Workspaces.TicketDiscussion.MaintainerDigest"/>),
+    /// newest last — a scope change written as a comment changes what "fully delivered" means. Empty when there are none.</summary>
+    public string Decisions { get; init; } = string.Empty;
+}
 
 /// <summary>Everything the Orchestrator agent sees on one board.</summary>
 /// <param name="Project">Board / repository name.</param>

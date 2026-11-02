@@ -80,6 +80,71 @@ internal static class GitHubProjectsClient
         }
         """;
 
+    // A ticket's body and its newest comments in ONE round trip — `comments(last:N)` bounds it on GitHub's side (the REST
+    // listing would page through every comment). The author's __typename tells a Bot (whose GraphQL login has no
+    // "[bot]" suffix); authorAssociation is OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR / NONE / ….
+    private const string TicketQuery = """
+        query($owner:String!,$name:String!,$number:Int!,$last:Int!){
+          repository(owner:$owner, name:$name){
+            issueOrPullRequest(number:$number){
+              __typename
+              ... on Issue       { body comments(last:$last){ nodes{ author{ __typename login } authorAssociation createdAt body } } }
+              ... on PullRequest { body comments(last:$last){ nodes{ author{ __typename login } authorAssociation createdAt body } } }
+            }
+          }
+        }
+        """;
+
+    /// <summary>The most comments one ticket read asks GitHub for (its page limit).</summary>
+    internal const int MaxCommentsPerRead = 100;
+
+    /// <summary>Read a ticket's body and its newest <paramref name="last"/> comments (1–100). Null when the repository or
+    /// ticket isn't there. Throws <see cref="InvalidOperationException"/> / <see cref="HttpRequestException"/> on a
+    /// GitHub error.</summary>
+    public static async Task<TicketContent?> ReadTicketAsync(WorkspaceDescriptor repo, int number, int last, CancellationToken ct)
+    {
+        var data = await PostAsync(TicketQuery,
+            new { owner = repo.Owner, name = repo.Repo, number, last = Math.Clamp(last, 1, MaxCommentsPerRead) },
+            repo.AccessToken, repo.Host, ct).ConfigureAwait(false);
+        return ParseTicket(data);
+    }
+
+    /// <summary>Map the <c>data</c> of <see cref="TicketQuery"/> to a ticket (comments oldest first). Null when the
+    /// repository or the ticket is missing — the unit-test seam.</summary>
+    internal static TicketContent? ParseTicket(JsonElement data)
+    {
+        if (!data.TryGetProperty("repository", out var repo) || repo.ValueKind != JsonValueKind.Object
+            || !repo.TryGetProperty("issueOrPullRequest", out var ticket) || ticket.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        var body = ticket.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
+        var comments = new List<TicketDiscussionComment>();
+        if (ticket.TryGetProperty("comments", out var cs) && cs.ValueKind == JsonValueKind.Object
+            && cs.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
+        {
+            comments.AddRange(nodes.EnumerateArray().Where(n => n.ValueKind == JsonValueKind.Object).Select(MapComment));
+        }
+        return new TicketContent(string.IsNullOrWhiteSpace(body) ? null : body, comments.OrderBy(c => c.CreatedAt).ToList());
+    }
+
+    private static TicketDiscussionComment MapComment(JsonElement n)
+    {
+        string login = string.Empty;
+        var bot = false;
+        // A deleted account ("ghost") comes back as a null author.
+        if (n.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object)
+        {
+            login = author.TryGetProperty("login", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() ?? string.Empty : string.Empty;
+            bot = author.TryGetProperty("__typename", out var t) && t.ValueKind == JsonValueKind.String && t.GetString() == "Bot";
+        }
+        var association = n.TryGetProperty("authorAssociation", out var a) && a.ValueKind == JsonValueKind.String ? a.GetString() ?? "NONE" : "NONE";
+        var created = n.TryGetProperty("createdAt", out var c) && c.ValueKind == JsonValueKind.String && c.TryGetDateTimeOffset(out var at)
+            ? at : DateTimeOffset.MinValue;
+        var text = n.TryGetProperty("body", out var bd) && bd.ValueKind == JsonValueKind.String ? bd.GetString() ?? string.Empty : string.Empty;
+        return new TicketDiscussionComment(login, association, created, text, bot);
+    }
+
     /// <summary>Add an issue/PR (by its content node id) to a board; returns the new board ITEM node id.</summary>
     public static async Task<string> AddItemToBoardAsync(
         string projectNodeId, string contentNodeId, string token, string? host, CancellationToken ct)

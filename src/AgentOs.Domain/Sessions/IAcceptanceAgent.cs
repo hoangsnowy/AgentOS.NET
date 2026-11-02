@@ -23,6 +23,10 @@ public sealed record AcceptanceRequest(
     /// <summary>The files a person attached to the ticket (ADR-0015) — copied into the run's working folder.</summary>
     public IReadOnlyList<AgentOs.Domain.Files.RunFile> Files { get; init; } = [];
 
+    /// <summary>The ticket's discussion (people's comments, oldest first). The Reviewer and Testing agents judge against the
+    /// body together with the maintainer decisions in it — a scope change written as a comment is part of the ticket.</summary>
+    public IReadOnlyList<AgentOs.Domain.Workspaces.TicketDiscussionComment> Discussion { get; init; } = [];
+
     /// <summary>The ticket's flow runs the Design gate (ADR-0016): take screenshots of the changed screens and send them
     /// back to this scope. Null = no screenshots.</summary>
     public DesignCapture? Design { get; init; }

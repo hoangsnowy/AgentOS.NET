@@ -73,6 +73,14 @@ public sealed class AzureDevOpsSourceProvider : ISourceProvider
     public Task<string?> ReadTicketBodyAsync(WorkspaceDescriptor repo, int number, CancellationToken cancellationToken = default)
         => Task.FromResult<string?>(null);
 
+    /// <summary>The note on a ticket read from Azure DevOps: work item comments aren't read (boards are a later milestone).</summary>
+    internal const string CommentsNotSupportedNote =
+        "Azure DevOps work item comments aren't read yet — the agents work from the ticket's description only.";
+
+    // …and no comments either: said on the task's feed, so nobody expects a decision in a comment to be followed.
+    public Task<TicketContent> ReadTicketAsync(WorkspaceDescriptor repo, int number, int maxComments, CancellationToken cancellationToken = default)
+        => Task.FromResult(TicketContent.BodyOnly(null, maxComments > 0 ? CommentsNotSupportedNote : null));
+
     public Task<LabelSyncResult> EnsureLabelsAsync(WorkspaceDescriptor repo, IReadOnlyList<LabelSpec> labels, CancellationToken cancellationToken = default)
         => throw new NotSupportedException(BoardsNotSupportedMessage);
 

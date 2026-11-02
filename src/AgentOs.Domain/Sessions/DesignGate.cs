@@ -120,6 +120,10 @@ public sealed record DesignRequest(
 {
     /// <summary>The repository's design skill(s) — <c>.claude/skills/*design*/SKILL.md</c> on its default branch, budgeted.</summary>
     public IReadOnlyList<RepoInstructionFile> DesignSkills { get; init; } = [];
+
+    /// <summary>The ticket's discussion (people's comments, oldest first) — a maintainer's decision there (a default, a
+    /// wording) is part of the ticket the screens are judged against.</summary>
+    public IReadOnlyList<TicketDiscussionComment> Discussion { get; init; } = [];
 }
 
 /// <summary>Checks a UI change against its screenshots. Read-only: it never edits, commits or pushes.</summary>

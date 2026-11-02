@@ -141,6 +141,12 @@ public sealed class AutopilotOrchestratorAgent(ILlmClientFactory factory, ILogge
             {
                 sb.Append("- #").Append(e.IssueNumber.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(e.Title).Append(": ")
                   .Append(UntrustedText.Wrap("epic-body", e.Body, maxChars: 1_500)).Append('\n');
+                if (!string.IsNullOrWhiteSpace(e.Decisions))
+                {
+                    // Maintainer comments only, newest last: they change the epic's scope like an edit of its body would.
+                    sb.Append("  Maintainer decisions in its comments (the newest wins over the body): ")
+                      .Append(UntrustedText.Wrap("ticket-discussion", e.Decisions, maxChars: 1_500)).Append('\n');
+                }
             }
         }
         sb.Append("\nYour recent decisions (newest first):\n");
