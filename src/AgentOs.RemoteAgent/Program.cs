@@ -36,6 +36,10 @@
 //                                 (default 2); their own lane, so they never queue behind a long work run
 //   REMOTE_AGENT_DATA   test data the agents may read: "NAME=C:\path;OTHER=/data/x" → env vars of each scoped run,
 //                       names (not paths) told to the agent, read-only to it (see TestData in ScopedAutonomy.cs)
+//   REMOTE_AGENT_KEEP_CONTAINERS  "1" keeps the containers a run's Aspire AppHost started (default: when a run ends, its
+//                       processes are stopped and its app's containers removed — volumes kept; see RunCleanup.cs). A scoped
+//                       claude run can't write outside its folder either: a PreToolUse hook checks every shell command and
+//                       file edit (`AgentOs.RemoteAgent guard`, ScopedWriteGuard.cs) — ADR-0018.
 //   REMOTE_AGENT_KEEP_AWAKE  "off" lets the computer idle-sleep mid-run (default: while a run or preview is in flight,
 //                       the idle timer is reset so the machine doesn't sleep under the agent — see KeepAwake.cs)
 //   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks
@@ -68,6 +72,15 @@ using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
 
 const int MaxOutputBytes = 32 * 1024; // 32 KB cap on tool output
+
+// `AgentOs.RemoteAgent guard` — the PreToolUse hook of a scoped claude run (ScopedWriteGuard.cs): one tool call as JSON on
+// stdin; exit 2 blocks it (the reason on stderr goes back to the agent). Runs before anything else: no hub, no pairing.
+if (args.Length > 0 && string.Equals(args[0], "guard", StringComparison.Ordinal))
+{
+    using var hookInput = new StreamReader(Console.OpenStandardInput(), System.Text.Encoding.UTF8);
+    Environment.Exit(AgentOs.RemoteAgent.ScopedWriteGuard.Run(hookInput, Console.Error,
+        Environment.GetEnvironmentVariable(AgentOs.RemoteAgent.ScopedWriteGuard.RunDirVariable)));
+}
 
 var policy = AgentOs.RemoteAgent.RunnerCommandPolicy.FromSetting(Environment.GetEnvironmentVariable("REMOTE_AGENT_ALLOW"));
 var commandTimeout = TimeSpan.FromSeconds(int.TryParse(Environment.GetEnvironmentVariable("REMOTE_AGENT_TIMEOUT_SECONDS"), out var t) && t > 0 ? t : 600);
@@ -322,10 +335,18 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
     // Every CLI run starts in its OWN empty directory — never the runner's current directory, which is usually
     // a checkout of something else (the agent once saw "file access limited to D:\Github\AgentOs").
-    var runDir = resumed?.Folder ?? AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(
-        Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT") ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot(),
-        request.Id);
+    var customWorkRoot = Environment.GetEnvironmentVariable("REMOTE_AGENT_WORKROOT");
+    var workRoot = customWorkRoot ?? AgentOs.RemoteAgent.ScopedAutonomy.DefaultRoot();
+    var runDir = resumed?.Folder ?? AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(workRoot, request.Id);
     var keepRun = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_RUNS"));
+    // A scoped claude run's writes stay in its folder: a PreToolUse hook checks every shell / file-tool call (ScopedWriteGuard.cs).
+    var guarded = scoped && !yolo && argsEnv is null && AgentOs.RemoteAgent.ScopedWriteGuard.AppliesTo(cmd);
+    string? guardSettings = null;
+    // What the run leaves behind goes when it ends (RunCleanup.cs): its processes, its Aspire app's containers, and
+    // anything it put next to the run folders.
+    var cleanup = AgentOs.RemoteAgent.CleanupOptions.FromSetting(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_CONTAINERS"));
+    void Log(string line) => Console.WriteLine($"[agent] {request.Id}: {line}");
+    AgentOs.RemoteAgent.ProcessJob? job = null;
     // Set when this run's reply looked unfinished: its folder is kept for one follow-up instead of deleted. A follow-up
     // itself is never kept — one attempt.
     var park = false;
@@ -338,6 +359,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         ? request.UserPrompt
         : request.SystemPrompt + "\n\n" + request.UserPrompt) + AgentOs.RemoteAgent.TestData.PromptNote(data);
 
+    AgentOs.RemoteAgent.RunsRootWatch.Shared.Begin(DateTime.UtcNow);
     try
     {
         // Ticket files (ADR-0015) land in <run dir>/.agentos/files BEFORE the CLI starts; a refused one fails the run.
@@ -350,6 +372,13 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
             }
             // The one way the agent may copy them into its checkout (the scoped rules allow exactly this script).
             AgentOs.RemoteAgent.RunFiles.WriteCopyHelper(runDir);
+        }
+
+        if (guarded)
+        {
+            guardSettings = AgentOs.RemoteAgent.ScopedWriteGuard.WriteSettings(
+                AgentOs.RemoteAgent.ScopedWriteGuard.SettingsFolder(), runDir, AgentOs.RemoteAgent.ScopedWriteGuard.CurrentGuardCommand());
+            args = [.. args, "--settings", guardSettings];
         }
 
         var psi = new ProcessStartInfo(ResolveExecutable(cmd))
@@ -373,6 +402,7 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         {
             psi.Environment[name] = path;
         }
+        if (guarded) { psi.Environment[AgentOs.RemoteAgent.ScopedWriteGuard.RunDirVariable] = runDir; }
         // Claude reads the prompt from stdin (`claude -p`); Codex takes it as a positional arg (`codex exec "<prompt>"`).
         if (!profile.PromptViaStdin)
         {
@@ -383,9 +413,11 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{cmd}'. Is the {cli} CLI installed and on PATH?");
-        // Whatever the run starts in the background (dev servers, test hosts) ends with it — see ProcessJob.cs.
-        using var job = AgentOs.RemoteAgent.ProcessJob.Create();
-        job.Add(process);
+        // Whatever the run starts in the background (dev servers, test hosts, an Aspire AppHost) ends with it — see
+        // ProcessJob.cs; sampled every few seconds so the cleanup knows which containers this run's AppHost created.
+        var runJob = job = AgentOs.RemoteAgent.ProcessJob.Create();
+        runJob.Add(process);
+        using var sampler = new Timer(_ => runJob.Sample(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3));
         RunningCli[request.Id] = process;
 
         if (profile.PromptViaStdin)
@@ -494,12 +526,25 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     finally
     {
         RunningCli.TryRemove(request.Id, out _);
+        // Ok, failed, stopped or timed out: the run's processes and its app's containers go before its folder does.
+        if (job is not null)
+        {
+            try { await AgentOs.RemoteAgent.RunCleanup.EndAsync(job, Docker, cleanup, Log).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Log("cleanup failed: " + ex.Message); }
+        }
+        if (guardSettings is not null)
+        {
+            try { File.Delete(guardSettings); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _ = ex; } // the temp folder's own cleanup
+        }
         if (park && !keepRun)
         {
             AgentOs.RemoteAgent.RunContinuation.Mark(runDir);
             continuations.Park(request.Id, runDir, parkSession, parkContextFull, DateTimeOffset.UtcNow);
         }
         else if (!keepRun) { AgentOs.RemoteAgent.ScopedAutonomy.TryDelete(runDir); }
+        // Defence in depth: what a run put next to the run folders goes when the last run in flight ends.
+        AgentOs.RemoteAgent.RunsRootWatch.Shared.End(workRoot, remove: customWorkRoot is null, Log);
     }
 
     // Design gate (ADR-0016): a run asked for screenshots sends the images its agent listed back to the server — checked
@@ -604,6 +649,7 @@ async Task<bool> ApproveAsync(string command, string reason)
 static async Task<RunnerToolResult> ExecuteToolAsync(
     RunnerToolCall call, AgentOs.RemoteAgent.RunnerCommandPolicy policy, TimeSpan timeout, Func<string, string, Task<bool>> approve)
 {
+    AgentOs.RemoteAgent.ProcessJob? job = null;
     try
     {
         if (!string.Equals(call.ToolName, "shell", StringComparison.OrdinalIgnoreCase))
@@ -650,8 +696,9 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start shell process.");
-        using var job = AgentOs.RemoteAgent.ProcessJob.Create();
-        job.Add(process);
+        var toolJob = job = AgentOs.RemoteAgent.ProcessJob.Create();
+        toolJob.Add(process);
+        using var sampler = new Timer(_ => toolJob.Sample(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3));
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
@@ -696,6 +743,20 @@ static async Task<RunnerToolResult> ExecuteToolAsync(
     catch (InvalidOperationException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
     catch (TimeoutException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
     catch (JsonException ex) { return new RunnerToolResult(call.RequestId, call.ToolCallId, false, string.Empty, ex.Message); }
+    finally
+    {
+        // Like a CLI run: what the command left running, and its Aspire app's containers, go (RunCleanup.cs).
+        if (job is not null)
+        {
+            try
+            {
+                await AgentOs.RemoteAgent.RunCleanup.EndAsync(job, Docker,
+                    AgentOs.RemoteAgent.CleanupOptions.FromSetting(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_CONTAINERS")),
+                    line => Console.WriteLine($"[agent] {call.ToolCallId}: {line}")).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Console.WriteLine($"[agent] {call.ToolCallId}: cleanup failed: {ex.Message}"); }
+        }
+    }
 }
 
 // Ticket files (ADR-0015): one piece of a file of the request this computer is running. The server answers only the
@@ -782,6 +843,9 @@ internal static partial class Program
 
     // Every pipe to and from a CLI is UTF-8 without a BOM (a BOM on stdin would reach the model as a stray character).
     internal static readonly System.Text.Encoding Utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+    // The docker CLI the end-of-run cleanup asks for the containers a run's Aspire app left (RunCleanup.cs).
+    internal static readonly AgentOs.RemoteAgent.IDockerCli Docker = new AgentOs.RemoteAgent.DockerCli();
 
     // Requests stopped while they waited for a CLI slot — skipped instead of started.
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> CancelledBeforeStart = new(StringComparer.Ordinal);

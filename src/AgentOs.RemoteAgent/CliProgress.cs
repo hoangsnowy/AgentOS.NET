@@ -215,14 +215,20 @@ internal static class CliProgress
 
     // A tool_result the CLI's permissions produced instead of running the tool: "Claude requested permissions to use
     // Bash, but you haven't granted it yet." (no allow rule matched) or "Permission to use Bash with command … has been
-    // denied." (a deny rule). A tool's own "Permission denied" (a file mode) is an ordinary error, not a refusal.
+    // denied." (a deny rule), or the runner's write guard (ScopedWriteGuard.cs) blocking it from a PreToolUse hook
+    // ("PreToolUse:Bash hook error: […]: Blocked by the AgentOS.NET runner: …"). A tool's own "Permission denied" (a file
+    // mode) is an ordinary error, not a refusal.
     internal static bool IsPermissionRefusal(JsonElement toolResult)
     {
         var text = ResultText(toolResult);
         return text.StartsWith("Claude requested permissions to use", StringComparison.Ordinal)
             || text.Contains("haven't granted it yet", StringComparison.Ordinal)
-            || (text.StartsWith("Permission to use ", StringComparison.Ordinal) && text.Contains("has been denied", StringComparison.Ordinal));
+            || (text.StartsWith("Permission to use ", StringComparison.Ordinal) && text.Contains("has been denied", StringComparison.Ordinal))
+            || IsGuardBlock(text);
     }
+
+    private static bool IsGuardBlock(string text) =>
+        text.Contains("PreToolUse:", StringComparison.Ordinal) && text.Contains(ScopedWriteGuard.BlockedPrefix, StringComparison.Ordinal);
 
     // The leading text of a tool_result: a string, or the first text block of an array. Only read here — never sent.
     private static string ResultText(JsonElement toolResult)

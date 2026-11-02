@@ -54,6 +54,15 @@ public sealed class CliToolCallsTests
         CliProgress.Read(DenyRuleRefused).Outcomes.ShouldHaveSingleItem().Denied.ShouldBeTrue();
     }
 
+    // The runner's write guard blocks from a PreToolUse hook (ADR-0018) — the tool never ran: a refusal, not an error.
+    [Fact]
+    public void Read_WriteGuardBlock_IsARefusal()
+    {
+        const string blocked = """{"type":"user","message":{"content":[{"type":"tool_result","content":"PreToolUse:Bash hook error: [\"C:/r/AgentOs.RemoteAgent.exe\" guard]: Blocked by the AgentOS.NET runner: 'mkdir ../x' is refused: '../x' is outside the run folder.","is_error":true,"tool_use_id":"toolu_05E"}]}}""";
+
+        CliProgress.Read(blocked).Outcomes.ShouldHaveSingleItem().ShouldBe(new CliProgress.ToolOutcome("toolu_05E", true, true));
+    }
+
     [Fact]
     public void Read_AToolsOwnPermissionDeniedError_IsNotARefusal() =>
         CliProgress.Read(FileModeError).Outcomes.ShouldHaveSingleItem().Denied.ShouldBeFalse();

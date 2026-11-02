@@ -124,8 +124,17 @@ non-interactively. So that request (and only that one) asks the runner for **sco
 run starts in its own empty directory under `%LOCALAPPDATA%\AgentOS.NET\runs` (deleted afterwards), file edits
 are auto-approved only inside it (`--permission-mode acceptEdits`), and the shell is an allowlist of git /
 gh pr / dotnet / npm / read-only commands with force-push, branch deletion, `git config`/`remote`,
-`gh auth`/`api` and web access denied (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`). Pushes use the
-machine's own git credentials. Every other request (spec generation, the 5-agent pipeline) stays
+`gh auth`/`api` and web access denied (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`). A PreToolUse hook
+(`AgentOs.RemoteAgent guard`, `ScopedWriteGuard.cs`) refuses any shell command or file edit that would write outside
+the run folder (`cd ..`, `git worktree add ../x`, `> ../out.txt`, a helper script the agent wrote and then ran); the
+agent gets the reason, and the call shows as *refused* in Settings › Activity log › On a member's computer. When a run ends (ok, failed, stopped, timed out) the runner
+lets the run's Aspire orchestrator (DCP) stop its containers, kills what is left, and removes the containers whose DCP
+creator was one of **that run's** processes (`docker rm -f`, volumes kept) — the lab stack's own Postgres/Keycloak/
+MailHog and a *Try the app* preview's are never touched; it also removes anything a run created next to the run
+folders. The console logs each step (`[agent] <id>: removed 4 container(s) …`). `REMOTE_AGENT_KEEP_CONTAINERS=1` keeps a
+run's containers ([ADR-0018](adr/0018-runs-leave-nothing-behind.md)). Leftovers from runs before this change (old
+`aspire-container-network-tunnelproxy-*` containers, `runs\base-122`, `runs\trx84`) are not attributable to a run and
+stay until you remove them. Pushes use the machine's own git credentials. Every other request (spec generation, the 5-agent pipeline) stays
 answer-only. It is still code from a ticket running on your box; the machine's owner can refuse scoped runs
 with `REMOTE_AGENT_AUTONOMY=off`. With the runner paired, `RUN_AGENTOS_E2E_REAL=true AGENTOS_REAL_URL=https://lab.dev.localhost:6180 AGENTOS_E2E_RUN_TIMEOUT_SECONDS=1200 dotnet test --project tests/AgentOs.E2E.Tests --filter-class "*WorkflowAppRealAuthTests"` runs the full 5-agent pipeline live.
 
