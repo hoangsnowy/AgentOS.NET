@@ -63,6 +63,16 @@ public sealed class CliToolCallsTests
         CliProgress.Read(blocked).Outcomes.ShouldHaveSingleItem().ShouldBe(new CliProgress.ToolOutcome("toolu_05E", true, true));
     }
 
+    // A protected path (.git, .claude outside its skills…): claude -p can't ask, so it refuses — the wording Claude Code
+    // 2.1.283 prints, captured from a live run.
+    [Fact]
+    public void Read_ProtectedPathRefusal_IsARefusal()
+    {
+        const string sensitive = """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"Claude requested permissions to edit C:\\Users\\m\\runs\\r1\\.claude\\hooks\\a.sh which is a sensitive file.","is_error":true,"tool_use_id":"toolu_06F"}]},"session_id":"5f3c"}""";
+
+        CliProgress.Read(sensitive).Outcomes.ShouldHaveSingleItem().ShouldBe(new CliProgress.ToolOutcome("toolu_06F", true, true));
+    }
+
     [Fact]
     public void Read_AToolsOwnPermissionDeniedError_IsNotARefusal() =>
         CliProgress.Read(FileModeError).Outcomes.ShouldHaveSingleItem().Denied.ShouldBeFalse();

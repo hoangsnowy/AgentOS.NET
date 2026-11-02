@@ -41,7 +41,9 @@
 //                       the named volumes they mounted that were created during the run; see RunCleanup.cs).
 //   REMOTE_AGENT_KEEP_VOLUMES     "1" keeps just the volumes. A scoped claude run can't write outside its folder either: a
 //                       PreToolUse hook checks every shell command and file edit (`AgentOs.RemoteAgent guard`,
-//                       ScopedWriteGuard.cs; a guard rail — it fails open) — ADR-0018.
+//                       ScopedWriteGuard.cs; a guard rail — it fails open) — ADR-0018. The same command, as a
+//                       PermissionRequest hook, lets the run edit the project's skills (.claude/skills/**, a path claude
+//                       protects) and nothing else under .claude/ or .git/.
 //   REMOTE_AGENT_KEEP_AWAKE  "off" lets the computer idle-sleep mid-run (default: while a run or preview is in flight,
 //                       the idle timer is reset so the machine doesn't sleep under the agent — see KeepAwake.cs)
 //   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks
@@ -82,10 +84,13 @@ if (args.Length > 0 && string.Equals(args[0], "guard", StringComparison.Ordinal)
     using var hookInput = new StreamReader(Console.OpenStandardInput(), System.Text.Encoding.UTF8);
     // UTF-8 back to claude whatever the console code page ("—" and "…" in the reason reached the agent as "-" and ".").
     using var hookError = new StreamWriter(Console.OpenStandardError(), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false)) { AutoFlush = true };
+    // A PermissionRequest answer (approving a write to the project's skills — the only one it gives) goes on stdout.
+    using var hookOutput = new StreamWriter(Console.OpenStandardOutput(), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false)) { AutoFlush = true };
     Environment.Exit(AgentOs.RemoteAgent.ScopedWriteGuard.Run(hookInput, hookError,
         Environment.GetEnvironmentVariable(AgentOs.RemoteAgent.ScopedWriteGuard.RunDirVariable),
         Environment.GetEnvironmentVariable(AgentOs.RemoteAgent.ScopedWriteGuard.RunTempVariable),
-        Environment.GetEnvironmentVariable(AgentOs.RemoteAgent.ScopedWriteGuard.LedgerVariable)));
+        Environment.GetEnvironmentVariable(AgentOs.RemoteAgent.ScopedWriteGuard.LedgerVariable),
+        hookOutput));
 }
 
 var policy = AgentOs.RemoteAgent.RunnerCommandPolicy.FromSetting(Environment.GetEnvironmentVariable("REMOTE_AGENT_ALLOW"));
@@ -349,7 +354,8 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
     var runDir = resumed?.Folder ?? AgentOs.RemoteAgent.ScopedAutonomy.CreateRunDirectory(workRoot, request.Id);
     var keepRun = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REMOTE_AGENT_KEEP_RUNS"));
     // A scoped claude run's writes stay in its folder: a PreToolUse hook checks every shell / file-tool call (ScopedWriteGuard.cs).
-    var guarded = scoped && !yolo && argsEnv is null && AgentOs.RemoteAgent.ScopedWriteGuard.AppliesTo(cmd);
+    // The same hook also approves writes to the project's skills (.claude/skills — a protected path claude -p can't ask about).
+    var guarded = AgentOs.RemoteAgent.ScopedWriteGuard.Guards(scoped, yolo, argsEnv is not null, cmd);
     string? guardSettings = null;
     string? guardLedger = null;
     // The run's own temp folder (TEMP / TMP / TMPDIR of the CLI): beside the run folder — the agent clones into the run

@@ -123,6 +123,11 @@ public interface IPrCreationService
     /// <summary>Close issue or pull request <paramref name="number"/> after posting <paramref name="comment"/>. Never throws.</summary>
     Task<bool> CloseAsync(WorkspaceDescriptor workspace, int number, string comment, CancellationToken ct = default) =>
         Task.FromResult(false);
+
+    /// <summary>The repository-relative paths pull request <paramref name="number"/> changes (a rename counts with both
+    /// names). Null when it can't tell (a provider that can't, a network or API failure). Never throws.</summary>
+    Task<IReadOnlyList<string>?> ListChangedFilesAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<string>?>(null);
 }
 
 /// <summary>A comment on an issue or pull request.</summary>

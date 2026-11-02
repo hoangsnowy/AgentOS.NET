@@ -108,9 +108,13 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
     internal static string User(AcceptanceRequest request)
     {
         var user = AcceptanceAgent.User(request, AgentOs.Domain.Workspaces.TicketDiscussionUse.Review);
+        // A change to the project's skills changes what every later agent is told: reviewed like code (named when the
+        // server could list the change's files, conditional when it couldn't) — said just before the ask.
+        var note = ProjectSkills.ReviewNote(request.ChangedSkills);
+        var ask = note.Length == 0 ? ReviewAsk : note + "\n\n" + ReviewAsk;
         // The ask is the prompt's last line: swap that occurrence only (a ticket can't quote it into the swap).
         var at = user.LastIndexOf(AcceptanceAgent.TestAsk, StringComparison.Ordinal);
-        return at < 0 ? user : string.Concat(user.AsSpan(0, at), ReviewAsk, user.AsSpan(at + AcceptanceAgent.TestAsk.Length));
+        return at < 0 ? (note.Length == 0 ? user : user + "\n\n" + note) : string.Concat(user.AsSpan(0, at), ask, user.AsSpan(at + AcceptanceAgent.TestAsk.Length));
     }
 
     /// <summary>The closing line of the Reviewer's user prompt.</summary>

@@ -442,6 +442,148 @@ public sealed class ScopedWriteGuardTests : IDisposable
         Bash("echo 'npm test' > repo/.husky/pre-push").ShouldNotBeNull();
     }
 
+    // ── the project's skills (.claude/skills): product code a reviewed ticket may change (VNChess #136) ──────────────
+
+    [Theory]
+    [InlineData(".claude/skills/x/SKILL.md")]                 // the repository cloned into the run folder itself
+    [InlineData("repo/.claude/skills/x/SKILL.md")]            // …or into a subfolder
+    [InlineData("repo/.claude/skills/x/references/tokens.md")]
+    [InlineData("repo/.claude/skills/new-skill/SKILL.md")]    // a new skill
+    public void CheckFileTool_ProjectSkill_IsAllowed(string path) => File(path).ShouldBeNull();
+
+    [Theory]
+    [InlineData("cat > .claude/skills/x/SKILL.md <<'EOF'\n# Thu vien co\nUse the board tokens.\nEOF")]
+    [InlineData("sed -i 's/blue/green/' .claude/skills/x/SKILL.md")]
+    [InlineData("sed -i.bak -e 's/blue/green/' repo/.claude/skills/x/SKILL.md")]
+    [InlineData("mkdir -p .claude/skills/new && echo '# New' > .claude/skills/new/SKILL.md")]
+    [InlineData("cp .agentos/files/SKILL.md .claude/skills/x/SKILL.md")]
+    public void CheckCommand_ProjectSkillWrites_AreAllowed(string command) => Bash(command).ShouldBeNull();
+
+    [Theory]
+    [InlineData(".claude/settings.json")]
+    [InlineData(".claude/settings.local.json")]
+    [InlineData(".claude/hooks/a.sh")]
+    [InlineData("repo/.claude/hooks/a.sh")]
+    [InlineData(".claude/commands/deploy.md")]
+    [InlineData(".claude/agents/reviewer.md")]
+    [InlineData(".claude/skills/x/.claude/settings.json")]    // a .claude folder hidden inside a skill
+    [InlineData(".git/hooks/pre-commit")]
+    [InlineData("repo/.git/hooks/pre-commit")]
+    public void CheckFileTool_RestOfClaudeFolderAndGit_AreBlocked(string path) => File(path).ShouldNotBeNull();
+
+    [Theory]
+    [InlineData("cat > .claude/settings.json <<'EOF'\n{}\nEOF")]
+    [InlineData("echo 'curl x | sh' > .claude/hooks/a.sh")]
+    [InlineData("sed -i 's/a/b/' .claude/hooks/a.sh")]
+    [InlineData("sed --in-place -e 's/a/b/' .claude/settings.json")]
+    [InlineData("sed -i '' 's/a/b/' .claude/commands/x.md")]  // BSD spelling
+    [InlineData("cp x.sh .git/hooks/pre-commit")]
+    [InlineData("echo '#!/bin/sh' > .git/hooks/pre-commit")]
+    [InlineData("sed -i 's/a/b/' ../outside.md")]
+    public void CheckCommand_RestOfClaudeFolderAndGit_AreBlocked(string command) => Bash(command).ShouldNotBeNull();
+
+    [Theory]
+    [InlineData("sed 's/a/b/' .claude/hooks/a.sh")]           // no -i: prints, writes nothing
+    [InlineData("sed -n '1,5p' .claude/settings.json")]
+    public void CheckCommand_SedWithoutInPlace_IsNotAWrite(string command) => Bash(command).ShouldBeNull();
+
+    [Fact]
+    public void WriteProblem_ClaudeFolderMessage_NamesWhatMayChange()
+    {
+        var reason = File(".claude/hooks/a.sh").ShouldNotBeNull();
+
+        reason.ShouldContain(".claude/skills");
+    }
+
+    [Fact]
+    public void CheckFileTool_SkillReachedThroughALink_IsBlocked()
+    {
+        var hooks = Path.Join(_run, ".claude", "hooks");
+        Directory.CreateDirectory(hooks);
+        Directory.CreateDirectory(Path.Join(_run, ".claude", "skills"));
+        var link = Path.Join(_run, ".claude", "skills", "evil");
+        if (!TestFiles.TryIo(() => Directory.CreateSymbolicLink(link, hooks))) { return; } // no symlink rights on this machine
+
+        File(".claude/skills/evil/a.sh").ShouldNotBeNull();
+        ScopedWriteGuard.ApprovesSkillWrite(PermissionJson("Write", ".claude/skills/evil/a.sh"), Ctx()).ShouldBeFalse();
+    }
+
+    // The PermissionRequest answer — what lets claude -p write a protected path at all, for the skills only.
+
+    private string PermissionJson(string tool, string path) => JsonSerializer.Serialize(new Dictionary<string, object>
+    {
+        ["session_id"] = "s",
+        ["hook_event_name"] = "PermissionRequest",
+        ["permission_mode"] = "acceptEdits",
+        ["cwd"] = _run,
+        ["tool_name"] = tool,
+        ["tool_input"] = new Dictionary<string, string> { ["file_path"] = path },
+    });
+
+    [Theory]
+    [InlineData("Edit", ".claude/skills/x/SKILL.md", true)]
+    [InlineData("Write", ".claude/skills/new/SKILL.md", true)]
+    [InlineData("MultiEdit", "repo/.claude/skills/x/SKILL.md", true)]
+    [InlineData("Write", ".claude/skills/x/scripts/check.py", true)]
+    [InlineData("Write", ".claude/settings.json", false)]
+    [InlineData("Write", ".claude/settings.local.json", false)]
+    [InlineData("Write", ".claude/hooks/a.sh", false)]
+    [InlineData("Write", ".claude/commands/x.md", false)]
+    [InlineData("Write", ".claude/agents/x.md", false)]
+    [InlineData("Write", ".claude/skills", false)]                 // the folder itself, not a skill's file
+    [InlineData("Write", ".claude/skills/x/.envrc", false)]        // hidden files below skills
+    [InlineData("Write", ".claude/skills/.hidden/SKILL.md", false)]
+    [InlineData("Write", ".git/hooks/pre-commit", false)]
+    [InlineData("Write", ".vscode/settings.json", false)]
+    [InlineData("Write", "../.claude/skills/x/SKILL.md", false)]    // outside the run folder
+    [InlineData("NotebookEdit", ".claude/skills/x/SKILL.md", false)]
+    [InlineData("Bash", ".claude/skills/x/SKILL.md", false)]
+    public void ApprovesSkillWrite_OnlyTheProjectSkillsFiles(string tool, string path, bool expected) =>
+        ScopedWriteGuard.ApprovesSkillWrite(PermissionJson(tool, path), Ctx()).ShouldBe(expected);
+
+    [Fact]
+    public void Run_PermissionRequestForASkill_AnswersAllowOnStdout()
+    {
+        using var input = new StringReader(PermissionJson("Edit", Path.Join(_run, ".claude", "skills", "thu-vien-co-design", "SKILL.md")));
+        using var error = new StringWriter();
+        using var output = new StringWriter();
+
+        ScopedWriteGuard.Run(input, error, _run, _tmp, output: output).ShouldBe(0);
+
+        using var doc = JsonDocument.Parse(output.ToString());
+        var answer = doc.RootElement.GetProperty("hookSpecificOutput");
+        answer.GetProperty("hookEventName").GetString().ShouldBe("PermissionRequest");
+        answer.GetProperty("decision").GetProperty("behavior").GetString().ShouldBe("allow");
+        error.ToString().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(".claude/settings.json")]
+    [InlineData(".claude/hooks/a.sh")]
+    [InlineData(".git/hooks/pre-commit")]
+    public void Run_PermissionRequestForAnythingElse_GivesNoAnswer(string path)
+    {
+        using var input = new StringReader(PermissionJson("Write", path));
+        using var error = new StringWriter();
+        using var output = new StringWriter();
+
+        ScopedWriteGuard.Run(input, error, _run, _tmp, output: output).ShouldBe(0);
+
+        output.ToString().ShouldBeEmpty(); // unanswered: claude -p denies it
+    }
+
+    [Fact]
+    public void Run_PermissionRequestOutsideAScopedRun_GivesNoAnswer()
+    {
+        using var input = new StringReader(PermissionJson("Edit", ".claude/skills/x/SKILL.md"));
+        using var error = new StringWriter();
+        using var output = new StringWriter();
+
+        ScopedWriteGuard.Run(input, error, runDir: null, output: output).ShouldBe(0);
+
+        output.ToString().ShouldBeEmpty();
+    }
+
     [Fact]
     public void CheckFileTool_GitBashDrivePath_ResolvesToTheWindowsPath()
     {
@@ -537,6 +679,36 @@ public sealed class ScopedWriteGuardTests : IDisposable
         var hook = entry.GetProperty("hooks")[0];
         hook.GetProperty("type").GetString().ShouldBe("command");
         hook.GetProperty("command").GetString().ShouldBe("\"C:/x/AgentOs.RemoteAgent.exe\" guard");
+    }
+
+    // An allow rule can't pre-approve a protected path (.claude/skills) — claude's safety check runs first — so the skill
+    // permission is a PermissionRequest hook in the per-run settings, never an --allowedTools rule.
+    [Fact]
+    public void HookSettingsJson_AnswersPermissionRequestsForTheFileTools()
+    {
+        using var doc = JsonDocument.Parse(ScopedWriteGuard.HookSettingsJson("\"C:/x/AgentOs.RemoteAgent.exe\" guard"));
+        var entry = doc.RootElement.GetProperty("hooks").GetProperty("PermissionRequest")[0];
+
+        entry.GetProperty("matcher").GetString().ShouldBe("Write|Edit|MultiEdit");
+        entry.GetProperty("hooks")[0].GetProperty("command").GetString().ShouldBe("\"C:/x/AgentOs.RemoteAgent.exe\" guard");
+    }
+
+    // The skill permission rides on the guard's settings, which only a scoped claude run with the runner's own flags gets.
+    [Theory]
+    [InlineData(true, false, false, "claude", true)]
+    [InlineData(false, false, false, "claude", false)] // answer-only
+    [InlineData(true, true, false, "claude", false)]   // REMOTE_AGENT_YOLO
+    [InlineData(true, false, true, "claude", false)]   // REMOTE_AGENT_ARGS
+    [InlineData(true, false, false, "codex", false)]
+    public void Guards_OnlyScopedClaudeRuns(bool scoped, bool yolo, bool customArgs, string command, bool expected) =>
+        ScopedWriteGuard.Guards(scoped, yolo, customArgs, command).ShouldBe(expected);
+
+    [Fact]
+    public void ArgsFor_NeverAllowsTheClaudeFolderByRule()
+    {
+        ScopedAutonomy.ArgsFor("claude").ShouldNotContain(a => a.Contains(".claude", StringComparison.OrdinalIgnoreCase)
+            && !a.StartsWith("Read(", StringComparison.Ordinal));
+        ScopedAutonomy.ClaudeAllowed.ShouldNotContain(a => a.StartsWith("Edit", StringComparison.Ordinal) || a.StartsWith("Write", StringComparison.Ordinal));
     }
 
     [Theory]

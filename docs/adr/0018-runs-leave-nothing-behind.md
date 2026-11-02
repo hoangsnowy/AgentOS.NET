@@ -90,8 +90,9 @@ only — the lab and most members run native Windows — and it restricts the ne
      (`git add <file> && git commit -m "…"`) — it then ships in the pull request — and run it again."* Inline code
      (`node -e`, `python -c`, a heredoc or pipe into an interpreter) is refused. This is what closes the `../base-122`
      path: the incident script was a new untracked file.
-   - refuses writes inside the run folder to `.git/` internals, `.husky/` hooks and `.claude/settings*.json` (a hook or
-     a permission a follow-up run resumed in the folder would load);
+   - refuses writes inside the run folder to `.git/` internals, `.husky/` hooks and `.claude/` — its settings (a hook or
+     a permission a follow-up run resumed in the folder would load), hooks, commands and agents — all but the project's
+     skills, `.claude/skills/**` (see the addendum below);
    - fails closed on unexpected input (exit 2). Verified live with `claude -p` 2.1.283 on Windows: the hook runs, the
      model receives the block reason. Note that Claude Code itself already refuses shell redirections to `/tmp` or
      `$TEMP` in these runs (*"needs approval … outside the working directories"*), so agents write logs inside the run
@@ -119,3 +120,47 @@ only — the lab and most members run native Windows — and it restricts the ne
   leaves beside the run folders, not elsewhere. The real boundary for that is an OS sandbox: enable the Claude Code
   sandbox on macOS / Linux runners once its network allowlist covers clone / restore / push, and a Windows equivalent
   (AppContainer / a restricted token) — tracked under GAP-07.
+
+## Addendum (2026-11-03) — a run may edit the project's skills (`.claude/skills/**`)
+
+**Context.** On the lab, VNChess #136 needed a one-section edit to `.claude/skills/thu-vien-co-design/SKILL.md` and the
+Orchestrator had to ask the owner: the scoped `claude -p` run could not write it. Project skills are product code for
+these repositories — the design skill steers every UI agent and the Design gate (ADR-0016) — so changing one through a
+reviewed ticket must work.
+
+**Why it was refused** (measured with Claude Code 2.1.283, the runner's own flags, a throwaway run folder):
+`.claude/` is one of Claude Code's **protected paths**. In `acceptEdits` mode a write there is never auto-approved; it
+needs a prompt, and in `claude -p` nobody answers, so the Edit came back *"Claude requested permissions to edit
+…\.claude\skills\demo\SKILL.md which is a sensitive file."* (a `permission_denials` entry). Allow rules do not help: the
+safety check runs before them, and `--allowedTools "Edit(**/.claude/skills/**)"`, `"Edit(./repo/.claude/skills/**)"`,
+an absolute `"Edit(//C:/…/**/.claude/skills/**)"` and `--add-dir <run>/.claude/skills` were each still refused. A
+PreToolUse hook answering `"allow"` doesn't either (documented: safety checks still apply). The write guard itself never
+refused it — it only blocked `.claude/settings*.json`.
+
+**Decision.**
+1. The guard's settings install the same `AgentOs.RemoteAgent guard` command as a **PermissionRequest** hook for
+   `Write|Edit|MultiEdit`. It answers `{"decision":{"behavior":"allow"}}` only for a file below a `.claude/skills/`
+   folder of the run folder (the checkout at its root or in a subfolder) — no hidden file or folder below `skills/`,
+   nothing reached through a symbolic link or junction, and nothing the write rules refuse. Every other prompt gets no
+   answer, so it stays denied: `.claude/settings*.json`, `hooks/`, `commands/`, `agents/`, `.git/`, `.husky/`, `.vscode/`
+   and the rest of Claude Code's protected list. Shell writes to a skill (`cat >`, `sed -i`) still need a prompt Claude
+   Code can't get — skills change through the file tools. Verified end to end: Edit and Write of a skill succeed; Write to
+   `.claude/commands/x.md`, Edit of `.claude/hooks/a.sh` and Write to `.git/hooks/pre-commit` are refused.
+2. The PreToolUse guard now refuses everything under `.claude/` **except** `.claude/skills/**` (it used to refuse only the
+   settings files), including through `sed -i`, redirections and the file-writing commands, and refuses a skill path that
+   passes through a link.
+3. Only a guarded run gets either hook: a scoped claude run with the runner's own flags — never an answer-only run, YOLO,
+   `REMOTE_AGENT_ARGS` or codex (`ScopedWriteGuard.Guards`).
+4. **Governance.** A skill is an instruction every later agent follows, so a change to one is reviewed like code: the
+   server lists the pull request's files (`IPrCreationService.ListChangedFilesAsync`), the task's feed names every skill
+   file the change touches (*"… this change edits the project's skills …: .claude/skills/…/SKILL.md. They are reviewed like
+   code."*), and the Reviewer's prompt says to review the skill diff as carefully as code — must-fix for anything that
+   weakens governance, exfiltrates, tells agents to ignore earlier instructions, contradicts `AGENTS.md` / `CLAUDE.md`, or
+   was not asked for by the ticket (named files when the files are known, a conditional instruction when they are not).
+   The Coding agent's prompt says skills may change only when the ticket asks. The Design gate keeps reading skills from
+   the **default branch** only, so an unmerged skill change never steers a check.
+
+**Consequences.** A ticket can change a project skill without a person at the computer. The approval is a hook like the
+guard, so it shares its failure mode in the safe direction: if the hook can't run, the prompt goes unanswered and the
+skill write is denied. The new attack surface — a skill as a persistence vector for prompt injection — is in the threat
+model (P-5).
