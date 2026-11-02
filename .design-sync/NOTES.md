@@ -33,3 +33,7 @@
   `--warn-text` / `--ok-text` tokens, to be designed in Claude Design first.
 - Sub-agents can't call DesignSync: fetch `styles.css` + `tokens/*.css` (and a template card) yourself into the local
   mirror before delegating card authoring.
+- 2026-11-02: pushed `sign-up-closed.html` (#309 — "Sign-up is closed" card + the login footer line) and
+  `settings-github.html` (#311 — Remove saved token + confirm dialog, Removed / Test results). More token gaps: no
+  backdrop-dim token (cards use `rgba(0,0,0,.32)`), and white text on dark `--err` (#ff7b63) is low contrast — the
+  running app's danger button has the same issue, so it needs a token fix designed in Claude Design.
