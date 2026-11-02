@@ -8,7 +8,9 @@
 //     against the catalog: a mapped table whose column is missing (renamed) fails the export
 //     (TenantExportRefusedException → 409) instead of leaking it.
 //   • Purge runs in ONE transaction: tables in foreign-key order (children before parents, Kahn's algorithm over
-//     pg_constraint), then the registry row; Keycloak users of the tenant after commit; audited under _platform.
+//     pg_constraint), then the registry row; after commit the tenant's live runner connections on this instance are cut
+//     off (GAP-04 — their rows are gone; another host's are cut by its 30 s revalidation), then its Keycloak users;
+//     audited under _platform.
 // Runs on a raw connection (no RLS role switch); every statement is filtered by the tenant explicitly.
 
 using System;
@@ -58,7 +60,8 @@ public interface ITenantDataService
 }
 
 internal sealed partial class TenantDataService(
-    string? connectionString, IKeycloakAdminClient keycloak, IAuditLog audit, TimeProvider clock, ILogger<TenantDataService> logger) : ITenantDataService
+    string? connectionString, IKeycloakAdminClient keycloak, IAuditLog audit, TimeProvider clock, ILogger<TenantDataService> logger,
+    AgentOs.Domain.Sessions.IRunnerDisconnector? runners = null) : ITenantDataService
 {
     // Columns never exported: encrypted secrets and credential material (GAP-08). Checked against the catalog on
     // every export — a renamed column fails closed instead of silently exporting (the old map named "Value" for the
@@ -170,6 +173,9 @@ internal sealed partial class TenantDataService(
             await tx.CommitAsync(ct).ConfigureAwait(false);
         }
 
+        // The data is gone, so are the runner rows: their live connections (and the work in flight on them) end now.
+        var computers = runners?.DisconnectTenant(tenantId) ?? 0;
+
         // Identity after the data: a failure here leaves users without data, never data without an owner record.
         var users = 0;
         foreach (var user in await keycloak.ListUsersByTenantAsync(tenantId, max: 1000, ct).ConfigureAwait(false))
@@ -180,7 +186,7 @@ internal sealed partial class TenantDataService(
 
         var report = new TenantPurgeReport(tenantId, deleted, users, clock.GetUtcNow());
         await audit.WriteAsync(new AuditEntry(Guid.NewGuid(), AuditScopes.Platform, actor, AuditActions.TenantPurged,
-            $"{tenantId}: {report.TotalRows} rows in {deleted.Count} tables, {users} users", null, null, report.AtUtc), ct).ConfigureAwait(false);
+            $"{tenantId}: {report.TotalRows} rows in {deleted.Count} tables, {users} users, {computers} computer connections cut", null, null, report.AtUtc), ct).ConfigureAwait(false);
         LogPurged(logger, tenantId, report.TotalRows, users);
         return report;
     }

@@ -4,6 +4,7 @@
 // returned TokenHash before trusting TenantId / OwnerUserId. The id alone grants nothing.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,9 +33,21 @@ internal sealed class EfRunnerDirectory : IRunnerDirectory
     public async Task<bool> MarkPairedAsync(Guid runnerId, CancellationToken cancellationToken = default)
     {
         // Same tenant-filter bypass as the lookup: the handshake has no authenticated tenant, and the
-        // caller has already verified the presented token against this row's hash. Tracked load +
-        // SaveChanges rather than ExecuteUpdate — the connect path touches exactly one row, so the
-        // extra round-trip is irrelevant, and it keeps the provider surface small.
+        // caller has already verified the presented token against this row's hash.
+        // ONE conditional UPDATE (… WHERE Status <> 'Revoked'): a load-then-save would write "Paired" over a revoke that
+        // landed in between and un-revoke the runner (GAP-04). The in-memory test provider has no ExecuteUpdate, so it
+        // keeps the tracked path (single-threaded there, no race to lose).
+        if (_db.Database.IsRelational())
+        {
+            var now = DateTimeOffset.UtcNow;
+            var updated = await _db.Runners
+                .IgnoreQueryFilters()
+                .Where(r => r.Id == runnerId && r.Status != "Revoked")
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.Status, "Paired").SetProperty(r => r.LastSeenUtc, now), cancellationToken)
+                .ConfigureAwait(false);
+            return updated > 0;
+        }
+
         var row = await _db.Runners
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken)
@@ -74,5 +87,34 @@ internal sealed class EfRunnerDirectory : IRunnerDirectory
         foreach (var r in retired) { r.Status = "Revoked"; }
         if (retired.Count > 0) { await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
         return retired.Count;
+    }
+
+    public async Task<IReadOnlyList<Guid>> RevokeForMemberAsync(string tenantId, string ownerUserId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        // Tenant-explicit (a member is removed from one tenant; the caller may be a circuit without an ambient tenant).
+        var rows = await _db.Runners
+            .IgnoreQueryFilters()
+            .Where(r => r.TenantId == tenantId && r.OwnerUserId == ownerUserId && r.Status != "Revoked")
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var r in rows) { r.Status = "Revoked"; }
+        if (rows.Count > 0) { await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
+        return rows.Select(r => r.Id).ToList();
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, string>> FindStatusesAsync(IReadOnlyCollection<Guid> runnerIds, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(runnerIds);
+        if (runnerIds.Count == 0) { return new Dictionary<Guid, string>(); }
+        // One WHERE Id IN (…) per revalidation sweep, tenant-unfiltered like the handshake lookup (the sweep spans tenants).
+        var ids = runnerIds.ToArray();
+        return await _db.Runners
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(r => ids.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, r => r.Status, cancellationToken)
+            .ConfigureAwait(false);
     }
 }

@@ -138,6 +138,62 @@ public sealed class TenantExportRedactionTests
         }
     }
 
+    // GAP-04: a purge deletes the tenant's runner rows; its live connections on this instance are cut off right after the
+    // commit (the other host's by its 30 s revalidation), and the audit row says how many.
+    [Fact]
+    public async Task Purge_OnRealPostgres_DisconnectsTheTenantsLiveRunners()
+    {
+        var server = ServerConnection ?? string.Empty;
+        if (server.Length == 0) { Assert.Skip("RUN_AGENTOS_E2E_REAL + AGENTOS_PG_CONN required."); }
+
+        var database = "agentos_purge_" + Guid.NewGuid().ToString("N")[..12];
+        var admin = new NpgsqlConnectionStringBuilder(server) { Database = "postgres", Pooling = false }.ConnectionString;
+        var cs = new NpgsqlConnectionStringBuilder(server) { Database = database, Pooling = false }.ConnectionString;
+        await Exec(admin, $"CREATE DATABASE \"{database}\"");
+        try
+        {
+            await using (var db = new SessionsDbContext(new DbContextOptionsBuilder<SessionsDbContext>()
+                .UseNpgsql(cs, n => n.MigrationsHistoryTable("__EFMigrationsHistory", "sessions")).Options))
+            {
+                await db.Database.MigrateAsync();
+            }
+            await using (var db = new TenantsDbContext(new DbContextOptionsBuilder<TenantsDbContext>()
+                .UseNpgsql(cs, n => n.MigrationsHistoryTable("__EFMigrationsHistory", "tenants")).Options))
+            {
+                await db.Database.MigrateAsync();
+            }
+            await Exec(cs, """
+                INSERT INTO sessions.runners ("Id","TenantId","OwnerUserId","Label","TokenHash","Status","CreatedAtUtc")
+                VALUES (gen_random_uuid(), 'acme', 'u1', 'laptop', 'h', 'Paired', now()),
+                       (gen_random_uuid(), 'other', 'u2', 'laptop', 'h', 'Paired', now());
+                """);
+
+            var broker = new AgentOs.Modules.RemoteAgent.InProcessRemoteAgentBroker();
+            var acme = new AgentOs.Modules.RemoteAgent.RunnerConnection(Guid.NewGuid(), "acme", "u1");
+            var other = new AgentOs.Modules.RemoteAgent.RunnerConnection(Guid.NewGuid(), "other", "u2");
+            using var acmeConnection = broker.RegisterRunner("conn-acme", acme, () => { });
+            using var otherConnection = broker.RegisterRunner("conn-other", other, () => { });
+            var keycloak = Substitute.For<IKeycloakAdminClient>();
+            keycloak.ListUsersByTenantAsync("acme", Arg.Any<int>(), Arg.Any<System.Threading.CancellationToken>())
+                .Returns(Task.FromResult<System.Collections.Generic.IReadOnlyList<KeycloakUser>>([]));
+            var audit = Substitute.For<IAuditLog>();
+            var service = new TenantDataService(cs, keycloak, audit, TimeProvider.System, NullLogger<TenantDataService>.Instance, broker);
+
+            var report = await service.PurgeAsync("acme", "platform-admin");
+
+            report.Tables.ShouldContain(t => t.Table == "sessions.runners" && t.Rows == 1);
+            broker.IsConnected(acme.RunnerId).ShouldBeFalse();
+            broker.IsConnected(other.RunnerId).ShouldBeTrue();
+            await audit.Received(1).WriteAsync(
+                Arg.Is<AuditEntry>(e => e.Action == AuditActions.TenantPurged && e.Target!.Contains("1 computer connections cut", StringComparison.Ordinal)),
+                Arg.Any<System.Threading.CancellationToken>());
+        }
+        finally
+        {
+            await Exec(admin, $"DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
+        }
+    }
+
     private static async Task Exec(string cs, string sql)
     {
         await using var conn = new NpgsqlConnection(cs);
