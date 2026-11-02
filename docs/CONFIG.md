@@ -251,7 +251,10 @@ live feed, and Insights › Delivery counts them (*Replies asked again*). On the
 lane (one at a time) so its 2 minutes aren't spent queued behind long coding runs; a kept folder that is never asked
 for is deleted within a minute of its 15 minutes, every kept folder is deleted when the runner stops, and the next
 start deletes those a crashed runner left. `REMOTE_AGENT_KEEP_RUNS` (keep every run folder, for debugging) turns
-keeping-for-a-follow-up off: a follow-up then starts in a fresh folder.
+keeping-for-a-follow-up off: a follow-up then starts in a fresh folder. `REMOTE_AGENT_KEEP_CONTAINERS=1` keeps the
+containers, networks and volumes a run's Aspire AppHost created (by default the runner removes them when the run ends —
+named volumes only when they were created during the run); `REMOTE_AGENT_KEEP_VOLUMES=1` keeps just the volumes
+([ADR-0018](adr/0018-runs-leave-nothing-behind.md)).
 
 ### Workflow › Ticket flow
 

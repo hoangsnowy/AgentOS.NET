@@ -108,6 +108,12 @@ page turns *Connected* by itself; later starts need no arguments. Connecting the
 name) retires its old offline entry and token. While the AI works on it (a task, a test, a preview), the computer doesn't idle-sleep;
 `REMOTE_AGENT_KEEP_AWAKE=off` turns that off. Board tasks set to *On my computer* then
 clone, edit, build, test and push in a private per-task folder (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`).
+A run leaves nothing behind: a hook checks every shell command and file edit the AI makes and refuses writes outside
+that folder — and running a new script it wrote without committing it first (`ScopedWriteGuard.cs`; a guard rail, not a
+sandbox) — and when the run ends — finished, failed or stopped — the runner stops what it left running, removes the
+containers, network and new data volumes its Aspire AppHost created (never the lab's or a preview's;
+`REMOTE_AGENT_KEEP_CONTAINERS=1` / `REMOTE_AGENT_KEEP_VOLUMES=1` keep them), its temp folder, and anything it put next to
+the run folders ([ADR-0018](docs/adr/0018-runs-leave-nothing-behind.md)).
 
 **Files for the AI** (Board → Tasks → *Files*, the *Work on this* dialog, or the New idea steps) — the agent on a
 computer can't download anything, so this is how it gets a logo, art, a sample data file or a skill folder to vendor:

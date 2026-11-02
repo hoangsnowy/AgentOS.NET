@@ -17,6 +17,7 @@ Format: Status · Context · Decision · Consequences. Keep them terse.
 | [0015](0015-ticket-files.md) | Ticket files: the only way files reach an agent | Accepted |
 | [0016](0016-design-gate.md) | Design gate: UI tickets are checked against screenshots before merge | Accepted |
 | [0017](0017-member-computer-tool-evidence.md) | Tool calls made on a member's computer are evidence | Accepted |
+| [0018](0018-runs-leave-nothing-behind.md) | A run on a member's computer leaves nothing behind (processes, Aspire containers, writes outside its folder) | Accepted |
 
 > ADRs 0001–0004 (modular monolith, LLM gateway, multi-tenant isolation,
 > one-engine-three-surfaces) are scheduled as a back-fill in [ROADMAP.md](../../ROADMAP.md) Q2;

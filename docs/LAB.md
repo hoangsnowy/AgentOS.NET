@@ -124,8 +124,23 @@ non-interactively. So that request (and only that one) asks the runner for **sco
 run starts in its own empty directory under `%LOCALAPPDATA%\AgentOS.NET\runs` (deleted afterwards), file edits
 are auto-approved only inside it (`--permission-mode acceptEdits`), and the shell is an allowlist of git /
 gh pr / dotnet / npm / read-only commands with force-push, branch deletion, `git config`/`remote`,
-`gh auth`/`api` and web access denied (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`). Pushes use the
-machine's own git credentials. Every other request (spec generation, the 5-agent pipeline) stays
+`gh auth`/`api` and web access denied (`src/AgentOs.RemoteAgent/ScopedAutonomy.cs`). A PreToolUse hook
+(`AgentOs.RemoteAgent guard`, `ScopedWriteGuard.cs`) refuses any shell command or file edit that would write outside
+the run folder (`cd ..`, `git worktree add ../x`, `> ../out.txt`) and running a new script the agent wrote before it is
+committed (*"Commit it first … and run it again"* — committed or edited scripts of the repository and gitignored build
+outputs run as before); the agent gets the reason, and the call shows as *refused* in Settings › Activity log › On a
+member's computer. The hook fails open (Claude Code runs the call when the hook can't run), so it is a guard rail, not a
+sandbox. Each run's `TEMP`/`TMP`/`TMPDIR` is its own `runs\<run>.tmp`, removed with it. When a run ends (ok, failed, stopped, timed out) the runner
+lets the run's Aspire orchestrator (DCP) stop its containers, kills what is left, and removes the containers and
+`aspire-session-network-*` networks whose DCP creator was one of **that run's** processes (`docker rm -f -v`,
+`docker network rm`), then the named volumes those containers mounted that were created during the run (each run folder
+gives the AppHost a new volume name) — the lab stack's own Postgres/Keycloak/MailHog, its network and volumes and a
+*Try the app* preview's are never touched; it also removes anything a run created next to the run folders. The console
+logs each step (`[agent] <id>: removed 4 container(s) …`, `removed 1 network(s) …`, `removed 1 volume(s) …`).
+Orphaned session networks matter: Docker's default pools hold ~31 bridge networks, then every AppHost start fails.
+`REMOTE_AGENT_KEEP_CONTAINERS=1` keeps a run's containers, networks and volumes, `REMOTE_AGENT_KEEP_VOLUMES=1` its volumes ([ADR-0018](adr/0018-runs-leave-nothing-behind.md)). Leftovers from runs before this change (old
+`aspire-container-network-tunnelproxy-*` containers, `aspire-session-network-*` networks, `thuvienco-*-data-*` volumes,
+`runs\base-122`, `runs\trx84`) are not attributable to a run and stay until you remove them. Pushes use the machine's own git credentials. Every other request (spec generation, the 5-agent pipeline) stays
 answer-only. It is still code from a ticket running on your box; the machine's owner can refuse scoped runs
 with `REMOTE_AGENT_AUTONOMY=off`. With the runner paired, `RUN_AGENTOS_E2E_REAL=true AGENTOS_REAL_URL=https://lab.dev.localhost:6180 AGENTOS_E2E_RUN_TIMEOUT_SECONDS=1200 dotnet test --project tests/AgentOs.E2E.Tests --filter-class "*WorkflowAppRealAuthTests"` runs the full 5-agent pipeline live.
 

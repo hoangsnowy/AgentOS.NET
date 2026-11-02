@@ -3,7 +3,10 @@
 // an issue-work run can't even clone), or REMOTE_AGENT_YOLO (--dangerously-skip-permissions — anything, anywhere
 // on the box). Scoped autonomy is the middle: every CLI run gets its OWN empty working directory, file edits
 // are auto-approved only inside it, and the shell is limited to the build / test / VCS commands a coding agent
-// needs, with history-rewriting and credential-touching git commands denied outright.
+// needs, with history-rewriting and credential-touching git commands denied outright. A rule is a prefix match on the
+// command line, so the paths a command writes are checked by a PreToolUse hook the runner installs for every scoped
+// claude run (ScopedWriteGuard.cs): nothing may be written outside the run directory. When the run ends, what it left
+// running — and its Aspire app's containers — is cleaned up (RunCleanup.cs, ADR-0018).
 //
 //   The server asks for it per request (RemoteExecRequest.Autonomy = "scoped") only for a Board "Run on my
 //   machine" session; every other request runs answer-only.
