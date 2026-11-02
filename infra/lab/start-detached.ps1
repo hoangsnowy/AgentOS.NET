@@ -9,9 +9,11 @@
     terminals — ending the session kills the lab and the runner with it, and the lab then sits "down" for hours.
 
     On Windows this starts the process through WMI (Win32_Process.Create): WmiPrvSE creates it, so it is in none of the
-    caller's jobs and survives the caller. A WMI-created process does not inherit the caller's environment, so the
-    caller's whole environment block is handed over in the same call (Win32_ProcessStartup.EnvironmentVariables) — it
-    travels in memory only: a pairing token in it never reaches a command line or a file. Output redirection lives in a
+    caller's jobs and survives the caller. A WMI-created process does not inherit the caller's environment, so a clean
+    block is handed over in the same call (Win32_ProcessStartup.EnvironmentVariables): the user's logon environment
+    (registry Machine + User, Path = Machine;User) plus only the lab's own variables (REMOTE_AGENT_*, PW_*, LAB_*,
+    ASPNETCORE_*, DOTNET_*, …) — never the caller's shell session (MSYS / Claude Code variables broke the runner's tools).
+    It travels in memory only: a pairing token in it never reaches a command line or a file. Output redirection lives in a
     small generated launcher (<StateDir>\<Name>.launch.cmd: working directory, command, log paths — never environment
     values), and the pid file gets the REAL process's pid (the launcher cmd's child), so stop / status keep working.
 
@@ -73,10 +75,38 @@ $launcher = Join-Path $pidDir "$Name.launch.cmd"
     "$commandLine $redirect $(ConvertTo-CmdToken $StdOut) $errPart"
 ) -join "`r`n" | Set-Content -Path $launcher -Encoding utf8NoBOM -NoNewline
 
-# The whole current environment, in memory only — a WMI-created process otherwise gets the user's registry defaults.
-$environment = [string[]]@([System.Environment]::GetEnvironmentVariables().GetEnumerator() |
-    Where-Object { $_.Key -and -not "$($_.Key)".StartsWith('=') } |
-    ForEach-Object { "$($_.Key)=$($_.Value)" })
+# A clean environment, in memory only: what a fresh logon gives this user (Machine + User registry variables, Path =
+# Machine;User, expanded) plus the process variables Windows sets at logon, plus only the variables the lab itself
+# passes on (runner pairing, Playwright, ASP.NET/.NET settings). Handing over the caller's WHOLE block broke the runner:
+# a Git Bash / Claude Code shell carries MSYS and session variables and its own Path spelling, and the WMI-created
+# runner's tools then failed ("git" not found in Bash, "The command line is too long" in PowerShell).
+function Get-LabEnvironment {
+    $vars = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($scope in 'Machine', 'User') {
+        $block = [System.Environment]::GetEnvironmentVariables($scope)
+        foreach ($key in $block.Keys) {
+            if ("$key" -ieq 'Path') { continue }
+            $vars["$key"] = [System.Environment]::ExpandEnvironmentVariables([string]$block[$key])
+        }
+    }
+    $paths = @('Machine', 'User') | ForEach-Object { [System.Environment]::GetEnvironmentVariable('Path', $_) } | Where-Object { $_ }
+    $vars['Path'] = [System.Environment]::ExpandEnvironmentVariables(($paths -join ';'))
+    $logon = 'SystemRoot', 'windir', 'SystemDrive', 'COMPUTERNAME', 'USERNAME', 'USERDOMAIN', 'USERDOMAIN_ROAMINGPROFILE',
+        'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramData', 'ALLUSERSPROFILE', 'PUBLIC',
+        'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)',
+        'CommonProgramW6432', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'NUMBER_OF_PROCESSORS', 'OS', 'PATHEXT',
+        'ComSpec', 'SESSIONNAME', 'LOGONSERVER'
+    foreach ($key in $logon) {
+        $value = [System.Environment]::GetEnvironmentVariable($key)
+        if ($value -and -not $vars.ContainsKey($key)) { $vars[$key] = $value }
+    }
+    $passOn = '^(REMOTE_AGENT_|AGENTOS_|LAB_|PW_|ASPNETCORE_|DOTNET_|NUGET_|CLAUDE_CODE_GIT_BASH_PATH$|STATE_DIR$|RUNNER_EXE$)'
+    foreach ($entry in [System.Environment]::GetEnvironmentVariables().GetEnumerator()) {
+        if ("$($entry.Key)" -match $passOn) { $vars["$($entry.Key)"] = [string]$entry.Value }
+    }
+    return $vars
+}
+$environment = [string[]]@((Get-LabEnvironment).GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
 $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
     ShowWindow           = [uint16]0   # SW_HIDE: no console window on the desktop
     EnvironmentVariables = $environment
