@@ -87,10 +87,14 @@ public sealed class LlmModule : IModule
                 : LiveSettings.Read(settings, LlmSettings.AzureModel, LiveSettings.CurrentTenant(sp)) ?? opts.Value.AzureOpenAi.Model;
             return new PooledChatLlmClient(
                 "AzureOpenAI",
-                (key, model) => SdkChatClients.CreateAzure(
-                    key,
-                    !string.IsNullOrWhiteSpace(ov.AzureEndpoint) ? ov.AzureEndpoint! : opts.Value.AzureOpenAi.Endpoint,
-                    string.IsNullOrWhiteSpace(model) ? DefaultDeployment() : model),
+                (key, model) =>
+                {
+                    // GAP-01: a Settings endpoint must be an Azure host and is called through SsrfGuard — and never
+                    // with the platform's key (re-checked here in case the endpoint changed after the key was chosen).
+                    var endpoint = AzureEndpoints.Resolve(ov.AzureEndpoint, opts.Value.AzureOpenAi.Endpoint);
+                    AzureEndpoints.EnsureKeyMayGoTo(endpoint, key, PlatformAzureKeys(opts.Value.AzureOpenAi), "AzureOpenAI");
+                    return SdkChatClients.CreateAzure(key, endpoint, string.IsNullOrWhiteSpace(model) ? DefaultDeployment() : model);
+                },
                 ct => AzureKeyPoolAsync(opts.Value.AzureOpenAi, ov, ct),
                 sp.GetRequiredService<ApiKeyRouter>(),
                 SdkChatClients.IsRateLimited,
@@ -183,11 +187,16 @@ public sealed class LlmModule : IModule
         return tenantKeys.Count > 0 ? tenantKeys : Collect(opts.ApiKey, opts.ApiKeys);
     }
 
-    private static async ValueTask<IReadOnlyList<string>> AzureKeyPoolAsync(AzureOpenAiOptions opts, IRuntimeOverrides ov, CancellationToken ct)
+    // Azure adds one rule (GAP-01): the platform key is only a fallback for the PLATFORM's endpoint. A tenant that set its
+    // own endpoint in Settings must also set its own key — else the call is refused before any request is made.
+    internal static async ValueTask<IReadOnlyList<string>> AzureKeyPoolAsync(AzureOpenAiOptions opts, IRuntimeOverrides ov, CancellationToken ct)
     {
         var tenantKeys = await ov.GetAzureApiKeysAsync(ct).ConfigureAwait(false);
-        return tenantKeys.Count > 0 ? tenantKeys : Collect(opts.ApiKey, opts.ApiKeys);
+        var endpoint = AzureEndpoints.Resolve(ov.AzureEndpoint, opts.Endpoint);
+        return AzureEndpoints.KeysFor(endpoint, tenantKeys, PlatformAzureKeys(opts), "AzureOpenAI");
     }
+
+    private static List<string> PlatformAzureKeys(AzureOpenAiOptions opts) => Collect(opts.ApiKey, opts.ApiKeys);
 
     private static List<string> Collect(string? singleKey, IEnumerable<string> pool)
     {

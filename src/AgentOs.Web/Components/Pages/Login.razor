@@ -1,6 +1,7 @@
 @page "/login"
 @layout AuthLayout
 @attribute [AllowAnonymous]
+@inject AgentOs.Modules.Tenants.ITenantSignupService SignupSvc
 
 <PageTitle>Sign in — AgentOS.NET</PageTitle>
 
@@ -18,15 +19,27 @@
             <span class="btn-ic"><Icon Name="lock" Size="14" /></span>
             Sign in with Keycloak
         </a>
-        <div class="login-hint">
-            Don't have an account?
-            <a href="/signup">Create one</a>
-        </div>
+        @if (_openSignup)
+        {
+            <div class="login-hint">
+                Don't have an account?
+                <a href="/signup">Create one</a>
+            </div>
+        }
+        else
+        {
+            <div class="login-hint">Don't have an account? Ask your administrator for an invitation.</div>
+        }
     </div>
 </div>
 
 @code {
     [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+
+    // GAP-01: the "Create one" link shows only when the platform allows open self-signup.
+    private bool _openSignup;
+
+    protected override async Task OnInitializedAsync() => _openSignup = await SignupSvc.IsOpenSignupEnabledAsync();
 
     private string LoginHref => string.IsNullOrWhiteSpace(ReturnUrl)
         ? "/account/login"

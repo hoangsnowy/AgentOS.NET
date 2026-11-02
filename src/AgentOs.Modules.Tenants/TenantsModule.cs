@@ -53,6 +53,9 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
         }
 
         services.AddScoped<ITenantSignupService, TenantSignupService>();
+        // GAP-01: open self-signup is a platform setting, on in Development only by default.
+        services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor>(
+            new Settings.TenantsSettings(AgentOs.SharedKernel.Modularity.ModuleEnvironment.IsDevelopment(configuration)));
 
         // App-sent email (invitation links). Real MailKit sender when an SMTP host is configured
         // (full stack injects MailHog; prod injects a real provider via secrets); otherwise a no-op

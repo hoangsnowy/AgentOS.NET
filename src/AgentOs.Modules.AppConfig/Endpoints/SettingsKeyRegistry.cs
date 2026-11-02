@@ -23,7 +23,8 @@ internal static class SettingsKeyRegistry
         [AppConfigKeys.LlmForceProvider] = ValidProvider,
         [AppConfigKeys.LlmClaudeApiKey] = _ => null,
         [AppConfigKeys.LlmAzureApiKey] = _ => null,
-        [AppConfigKeys.LlmAzureEndpoint] = ValidHttpsUrl,
+        // GAP-01: an Azure OpenAI resource host only — a tenant admin must not aim server-side calls at another host.
+        [AppConfigKeys.LlmAzureEndpoint] = AgentOs.SharedKernel.Security.AzureOpenAiEndpoint.Validate,
         [AppConfigKeys.GithubPat] = ValidGitHubPat,
         [AppConfigKeys.GithubRepoOwner] = ValidGitHubName,
         [AppConfigKeys.GithubRepoName] = ValidGitHubName,
@@ -80,11 +81,6 @@ internal static class SettingsKeyRegistry
         value is "Claude" or "AzureOpenAI" or "MAF" or "RemoteAgent" or "Anthropic"
             ? null
             : "ForceProvider must be one of: Claude (alias: Anthropic), AzureOpenAI, MAF, RemoteAgent.";
-
-    private static string? ValidHttpsUrl(string value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
-            ? null
-            : "Endpoint must be an absolute https:// URL.";
 
     private static string? ValidGitHubPat(string value) =>
         value.StartsWith("ghp_", StringComparison.Ordinal)

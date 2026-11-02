@@ -26,25 +26,52 @@ internal sealed partial class TenantSignupService : ITenantSignupService
     private readonly IAuditLog _audit;
     private readonly ITimeLimitedDataProtector _protector;
     private readonly ILogger<TenantSignupService> _logger;
+    private readonly AgentOs.Domain.Configuration.ISettings? _settings;
 
     public TenantSignupService(
         ITenantsRepository repo,
         IKeycloakAdminClient kc,
         IAuditLog audit,
         IDataProtectionProvider dp,
-        ILogger<TenantSignupService> logger)
+        ILogger<TenantSignupService> logger,
+        AgentOs.Domain.Configuration.ISettings? settings = null)
     {
         ArgumentNullException.ThrowIfNull(dp);
         _repo = repo;
         _kc = kc;
         _audit = audit;
         _logger = logger;
+        _settings = settings;
         _protector = dp.CreateProtector(ProtectorPurpose).ToTimeLimitedDataProtector();
+    }
+
+    public async Task<bool> IsOpenSignupEnabledAsync(CancellationToken ct = default)
+    {
+        // Fail closed: no settings registry (or an unreadable value) means no open signup.
+        if (_settings is null) { return false; }
+        try
+        {
+            var value = await _settings.GetAsync(Settings.TenantsSettings.OpenSignupKey, tenantId: null, ct).ConfigureAwait(false);
+            return bool.TryParse(value.Value, out var open) && open;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The login and signup pages ask this on load — a settings-store outage must not take them down. Closed
+            // is the safe answer: invitations still work, and a new workspace waits until the store is back.
+            _logger.LogWarning(ex, "Could not read {Setting}; treating open self-signup as off.", Settings.TenantsSettings.OpenSignupKey);
+            return false;
+        }
     }
 
     public async Task<TenantSignupOutcome> SignupAsync(TenantSignupRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        // GAP-01: creating a NEW workspace (and becoming its admin) needs open signup; an invitation always works.
+        if (string.IsNullOrWhiteSpace(request.InviteToken) && !await IsOpenSignupEnabledAsync(ct).ConfigureAwait(false))
+        {
+            throw new SignupClosedException();
+        }
 
         var (pwdOk, pwdErr) = SignupValidation.ValidatePassword(request.Password);
         if (!pwdOk) { throw new InvalidOperationException(pwdErr!); }

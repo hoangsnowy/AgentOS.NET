@@ -21,10 +21,11 @@ Tick every box before exposing a deployment to people outside the team that oper
       install creates `agentos-admin` for you).
 - [ ] **Turn on brute-force detection, a password policy and OTP for admins** in the realm (Realm settings →
       Security defenses / Authentication). None is set in the realm file. **(manual — GAP-03)**
-- [ ] **Decide on self-registration.** The realm has `registrationAllowed: true` and AgentOS.NET's `/signup`
-      lets an anonymous caller create a tenant and become its admin (`src/AgentOs.Modules.Tenants/TenantSignupService.cs:77-96`).
-      For a closed deployment disable realm registration and put `/signup` + `POST /tenants/register` behind your
-      edge (WAF / IP allowlist / CAPTCHA). **(manual — GAP-01)**
+- [ ] **Decide on self-registration.** AgentOS.NET's open self-signup (`/signup`, `POST /tenants/register`) is the
+      platform setting `Tenants:OpenSignup`, **off by default outside Development** (GAP-01): only invitations create
+      accounts. If you turn it on, put those routes behind your edge (WAF / rate limit / CAPTCHA), because the caller
+      becomes admin of the new tenant. Separately, the realm has `registrationAllowed: true`: disable it for a
+      closed deployment. **(manual — GAP-03)**
 - [ ] **Set a stable public hostname** (`KC_HOSTNAME`) and keep `Auth:Keycloak:RequireHttpsMetadata=true`
       (default; pinned in `src/AgentOs.Web/appsettings.Production.json:6-10`). The ACA template sets it `false` only
       for the internal back-channel metadata address.
@@ -84,8 +85,9 @@ Tick every box before exposing a deployment to people outside the team that oper
       encrypted.
 - [ ] **Restrict who is a tenant admin.** A tenant admin can replace or remove the tenant's LLM keys and GitHub PAT.
       Reading them back is no longer possible: `GET /settings/{prefix}` masks every value whose key is not known to be
-      non-secret (fail closed — GAP-08, fixed). Until GAP-01 is closed, also see the platform-key fallback note on G-1
-      in the [threat model](threat-model.md): don't set a platform Azure OpenAI key on a deployment with open signup.
+      non-secret (fail closed — GAP-08, fixed). The platform Azure OpenAI key is only ever sent to the platform's own
+      endpoint: a tenant that sets its own endpoint must also set its own key (GAP-01, fixed — G-1 / L-3 in the
+      [threat model](threat-model.md)).
 - [ ] **Treat tenant exports as sensitive.** They hold the tenant's full business data. Secrets are excluded:
       `app_config` ciphertext and runner / API-token hashes are dropped, and the export is refused (HTTP 409, nothing
       written, not audited as an export) if a redacted column is renamed (GAP-08, fixed).
