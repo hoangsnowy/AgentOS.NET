@@ -4,16 +4,18 @@
 //   1. signs in to the lab desktop as the seeded operator (lab-only test credentials, local .localhost host);
 //   2. Board → Computers → registers a runner, reads the one-time pairing token from the readout;
 //   3. Settings → AI → Routing → Force provider = RemoteAgent;
-//   4. starts the runner DETACHED with the token in its environment only — the token is never printed or
-//      written to disk; its console output goes to .lab/runner.log, its pid to .lab/runner.pid.
+//   4. starts the runner DETACHED — outside this shell's job object, so it outlives the session (startRunner) — with
+//      the token in its environment only: the token is never printed or written to disk; its console output goes to
+//      .lab/runner.log, its pid to .lab/runner.pid.
 // The runner runs in prompt→answer mode (no --dangerously-skip-permissions): agents get model output; any
 // server-driven shell command outside the allowlist is denied (no console to approve).
 //
-// Env: PW_PACKAGE (Playwright package dir), LAB_URL, RUNNER_EXE, STATE_DIR; UNPAIR=1 only resets Force provider.
+// Env: PW_PACKAGE (Playwright package dir), LAB_URL, RUNNER_EXE, STATE_DIR, LAB_PWSH (pwsh for start-detached.ps1,
+// default "pwsh"); UNPAIR=1 only resets Force provider.
 
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const pw = require(process.env.PW_PACKAGE);
 
 const labUrl = process.env.LAB_URL || 'https://lab.dev.localhost:6180';
@@ -91,15 +93,29 @@ async function setForceProvider(page, value) {
     await browser.close();
   }
 
-  fs.mkdirSync(stateDir, { recursive: true });
-  const log = fs.openSync(path.join(stateDir, 'runner.log'), 'a');
-  const child = spawn(runnerExe, [], {
-    env: { ...process.env, REMOTE_AGENT_HUB: labUrl + '/hubs/remote-agent', REMOTE_AGENT_ID: id, REMOTE_AGENT_TOKEN: token, REMOTE_AGENT_CLI: 'claude' },
-    detached: true,
-    stdio: ['ignore', log, log],
-    windowsHide: true,
-  });
-  child.unref();
-  fs.writeFileSync(path.join(stateDir, 'runner.pid'), String(child.pid));
-  console.log(`Paired runner ${id} (pid ${child.pid}); lab agents now use RemoteAgent → claude -p on this machine.`);
+  const runnerPid = startRunner({ ...process.env, REMOTE_AGENT_HUB: labUrl + '/hubs/remote-agent', REMOTE_AGENT_ID: id, REMOTE_AGENT_TOKEN: token, REMOTE_AGENT_CLI: 'claude' });
+  console.log(`Paired runner ${id} (pid ${runnerPid}); lab agents now use RemoteAgent → claude -p on this machine.`);
 })().catch(e => { console.error(e.message); process.exit(1); });
+
+// Start the runner so it OUTLIVES this script and the shell that ran lab.ps1. A spawn({ detached: true }) child stays in
+// the caller's Windows job object, so ending that session (a Claude Code session's tool shell kills its job) killed the
+// runner and Autopilot stalled silently. On Windows start-detached.ps1 creates it through WMI instead (outside every
+// job of this shell); the environment — the token included — reaches it in memory through that call only: never on a
+// command line, never in the generated launcher file. Elsewhere: the plain detached spawn.
+function startRunner(env) {
+  fs.mkdirSync(stateDir, { recursive: true });
+  const logPath = path.join(stateDir, 'runner.log');
+  const pidPath = path.join(stateDir, 'runner.pid');
+  if (process.platform === 'win32') {
+    const r = spawnSync(process.env.LAB_PWSH || 'pwsh', ['-NoProfile', '-NonInteractive', '-File', path.join(__dirname, 'start-detached.ps1'),
+      '-FilePath', runnerExe, '-WorkingDirectory', stateDir, '-StdOut', logPath, '-Append', '-PidFile', pidPath, '-Name', 'runner'],
+    { env, stdio: ['ignore', 'ignore', 'inherit'], windowsHide: true });
+    if (r.error || r.status !== 0) { throw new Error(`could not start the runner (${r.error ? r.error.message : `start-detached.ps1 exit ${r.status}`}) — see ${logPath}`); }
+    return Number(fs.readFileSync(pidPath, 'utf8').trim());
+  }
+  const log = fs.openSync(logPath, 'a');
+  const child = spawn(runnerExe, [], { env, detached: true, stdio: ['ignore', log, log], windowsHide: true });
+  child.unref();
+  fs.writeFileSync(pidPath, String(child.pid));
+  return child.pid;
+}
