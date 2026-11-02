@@ -113,7 +113,12 @@ that folder — and running a new script it wrote without committing it first (`
 sandbox) — and when the run ends — finished, failed or stopped — the runner stops what it left running, removes the
 containers, network and new data volumes its Aspire AppHost created (never the lab's or a preview's;
 `REMOTE_AGENT_KEEP_CONTAINERS=1` / `REMOTE_AGENT_KEEP_VOLUMES=1` keep them), its temp folder, and anything it put next to
-the run folders ([ADR-0018](docs/adr/0018-runs-leave-nothing-behind.md)).
+the run folders ([ADR-0018](docs/adr/0018-runs-leave-nothing-behind.md)). Inside the folder, git's own `.git/` and
+Claude Code's `.claude/` settings, hooks, commands and agents stay off limits — but the project's **skills**
+(`.claude/skills/**`) are product code and may change through a ticket: Claude Code protects every `.claude/` path and
+`claude -p` can't ask anyone, so the same hook answers that one permission prompt (file edits to a skill, nothing else).
+A change that touches a skill is named on the task's feed and the Reviewer agent reviews the skill diff like code
+(nothing that weakens governance, exfiltrates, or contradicts the repo's `AGENTS.md`).
 
 **Files for the AI** (Board → Tasks → *Files*, the *Work on this* dialog, or the New idea steps) — the agent on a
 computer can't download anything, so this is how it gets a logo, art, a sample data file or a skill folder to vendor:

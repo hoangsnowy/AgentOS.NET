@@ -30,6 +30,10 @@ public sealed record AcceptanceRequest(
     /// <summary>The ticket's flow runs the Design gate (ADR-0016): take screenshots of the changed screens and send them
     /// back to this scope. Null = no screenshots.</summary>
     public DesignCapture? Design { get; init; }
+
+    /// <summary>The project-skill files (<c>.claude/skills/**</c>) the change touches — the Reviewer reviews them like code
+    /// (<see cref="ProjectSkills.ReviewNote"/>). Empty = none; null = the changed files couldn't be listed.</summary>
+    public IReadOnlyList<string>? ChangedSkills { get; init; }
 }
 
 /// <summary>One acceptance criterion's result: <c>pass</c>, <c>fail</c> or <c>not-checked</c> (with the reason).</summary>

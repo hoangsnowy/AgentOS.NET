@@ -15,7 +15,7 @@
 //   - `cd` / `pushd` / Set-Location out of the run folder, and any command run from a folder outside it;
 //   - redirections (`>`, `>>`, `2>`, `&>`, `>&file`, `<>`, `*>`) — except /dev/null, NUL, $null;
 //   - file-writing commands (mkdir, touch, cp, mv, rm, ln, tar, unzip, tee, New-Item, Copy-Item, Set-Content, Out-File…):
-//     every argument that isn't an option, attached values too (`tar -C../x`, `cp -t../x`);
+//     every argument that isn't an option, attached values too (`tar -C../x`, `cp -t../x`), and the files `sed -i` rewrites;
 //   - git: `-C <dir>`, `--git-dir` / `--work-tree`, `worktree add <path>`, `clone <repo> <dir>`, `init <dir>`,
 //     `archive -o`, `format-patch -o`, `bundle create`; gh: `repo clone <repo> <dir>`;
 //   - dotnet / npm / pnpm / yarn / curl / wget output options (`-o`, `-o:`, `--output`, `-so<file>`, `--prefix`,
@@ -30,6 +30,19 @@
 // A path that is computed in a way the guard can't follow (`$VAR`, an unknown `$(…)`) where a write goes is refused.
 // Every write target an allowed call names is appended to the run's ledger (AGENTOS_GUARD_LEDGER), so an ignored file the
 // agent wrote can't later pass as a build output.
+// Inside the run folder, git's own folder (.git), husky's hooks (.husky) and Claude Code's project folder (.claude) are
+// off limits too — except the project's skills (.claude/skills/**), which are product code for these repositories: they
+// steer every agent that works on the project, so a reviewed ticket must be able to change them (ADR-0018 addendum).
+//
+// The project's skills, though, are one of Claude Code's PROTECTED paths: it never auto-approves a write under `.claude/`
+// in acceptEdits mode ("Claude requested permissions to edit <path> which is a sensitive file."), an allow rule
+// (`--allowedTools "Edit(…/.claude/skills/**)"`, relative or `//` absolute) does not pre-approve it — the safety check
+// runs before the allow rules — and a PreToolUse "allow" doesn't either; in `claude -p` nobody can answer the prompt, so
+// the write was denied (VNChess #136, 2026-11). What does answer it is a PermissionRequest hook: the same `guard`
+// command, installed for that event too, approves a Write / Edit / MultiEdit of a file under the run folder's
+// `.claude/skills/` (no hidden file, nothing reached through a link) and nothing else — every other prompt stays
+// unanswered, so every other protected path (.claude/settings*, hooks, commands, agents, .git, .husky, .vscode …) stays
+// denied. Verified against Claude Code 2.1.283 with the runner's own flags.
 //
 // The hook is a guard rail, not a sandbox: Claude Code runs the tool call anyway when the hook can't run (the runner's
 // executable gone mid-run, a crash, a timeout, `disableAllHooks`) — only exit 2 blocks. And what a build tool does with
@@ -129,6 +142,12 @@ internal static partial class ScopedWriteGuard
     /// <summary>The tools the hook is asked about.</summary>
     internal const string Matcher = "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit";
 
+    /// <summary>The tools whose permission prompts the hook may answer (a project skill's file, nothing else).</summary>
+    internal const string PermissionMatcher = "Write|Edit|MultiEdit";
+
+    /// <summary>The hook event Claude Code raises when a call needs a permission nobody can give in <c>claude -p</c>.</summary>
+    internal const string PermissionRequestEvent = "PermissionRequest";
+
     /// <summary>A ledger holds at most this many paths; past it, every ignored script counts as written by the run.</summary>
     internal const int MaxLedgerLines = 20_000;
 
@@ -204,25 +223,48 @@ internal static partial class ScopedWriteGuard
     private static readonly string[] GitStatusArgs = ["status", "--porcelain", "--ignored", "--"];
 
     // Files inside the run folder that are still off limits: git's own folder (a hook there runs on the next commit),
-    // husky's hooks (the same, through the repository), and claude's project settings (a follow-up run resumed in this
-    // folder would load their permissions and hooks).
+    // husky's hooks (the same, through the repository), and claude's project folder — its settings (a follow-up run
+    // resumed in this folder would load their permissions and hooks), hooks, commands and agents — all but its skills.
     private static readonly string[] ProtectedFiles = ["settings.json", "settings.local.json"];
+
+    private const string ClaudeFolder = ".claude";
+    private const string SkillsFolder = "skills";
 
     // ── the hook ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-    /// <summary><c>AgentOs.RemoteAgent guard</c>: read the hook's JSON from <paramref name="input"/>; 0 = allow, 2 = block
-    /// (the reason on <paramref name="error"/> goes back to the agent). Anything unexpected blocks — but note that Claude
-    /// Code itself runs the call when the hook can't run at all (fail-open; see the header).</summary>
-    internal static int Run(TextReader input, TextWriter error, string? runDir, string? tempDir = null, string? ledgerPath = null)
+    /// <summary><c>AgentOs.RemoteAgent guard</c>: read the hook's JSON from <paramref name="input"/>. For PreToolUse: 0 =
+    /// allow, 2 = block (the reason on <paramref name="error"/> goes back to the agent); anything unexpected blocks — but note
+    /// that Claude Code itself runs the call when the hook can't run at all (fail-open; see the header). For
+    /// PermissionRequest: always 0; the approval of a project skill's file goes to <paramref name="output"/>, and anything
+    /// else (or anything unexpected) writes nothing, which leaves the prompt unanswered — denied in <c>claude -p</c>.</summary>
+    internal static int Run(TextReader input, TextWriter error, string? runDir, string? tempDir = null, string? ledgerPath = null,
+        TextWriter? output = null)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(error);
         if (string.IsNullOrWhiteSpace(runDir)) { return 0; } // not a scoped run: nothing to confine
+        var json = input.ReadToEnd();
+        if (IsPermissionRequest(json))
+        {
+            try
+            {
+                if (output is not null && ApprovesSkillWrite(json, new GuardContext(runDir, tempDir)))
+                {
+                    output.Write(SkillApprovalJson());
+                    output.Flush();
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _ = ex; // no answer = the CLI's own decision: denied
+            }
+            return 0;
+        }
         try
         {
             var ledger = Ledger.Load(ledgerPath);
             var ctx = new GuardContext(runDir, tempDir) { WrittenEarlier = ledger.Contains };
-            if (CheckHookInput(input.ReadToEnd(), ctx) is not { } reason)
+            if (CheckHookInput(json, ctx) is not { } reason)
             {
                 ledger.Append(ctx.Written);
                 return 0;
@@ -285,12 +327,137 @@ internal static partial class ScopedWriteGuard
         {
             return $"'{shown}' is a git hook (.husky) — hooks run on the member's computer; they can't be changed in a run.";
         }
-        if (segments.Length >= 2 && segments[^2].Equals(".claude", StringComparison.OrdinalIgnoreCase)
+        if (segments.Length >= 2 && segments[^2].Equals(ClaudeFolder, StringComparison.OrdinalIgnoreCase)
             && ProtectedFiles.Contains(segments[^1], StringComparer.OrdinalIgnoreCase))
         {
             return $"'{shown}' is Claude Code's settings file — a run may not change its own permissions.";
         }
+        // Inside a .claude folder only its skills may change: not its hooks, commands, agents or anything else there.
+        for (var i = 0; i + 1 < segments.Length; i++)
+        {
+            if (segments[i].Equals(ClaudeFolder, StringComparison.OrdinalIgnoreCase)
+                && !segments[i + 1].Equals(SkillsFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"'{shown}' is in Claude Code's own folder (.claude) — a run may change the project's skills "
+                    + "(.claude/skills) but not its settings, hooks, commands or agents.";
+            }
+        }
+        if (IsProjectSkill(full, ctx.RunDir) && ThroughLink(full, ctx.RunDir))
+        {
+            return $"'{shown}' reaches the project's skills through a link — write the skill's own files.";
+        }
         return null;
+    }
+
+    // ── the project's skills (.claude/skills) ──────────────────────────────────────────────────────────────────────
+
+    /// <summary>Whether <paramref name="full"/> is a file or folder below a <c>.claude/skills</c> folder inside
+    /// <paramref name="runDir"/> (the run's checkout may sit in the run folder itself or in a subfolder of it).</summary>
+    internal static bool IsProjectSkill(string full, string runDir) => SkillsAt(RelativeSegments(full, runDir)) >= 0;
+
+    // The index of the "skills" segment of the first ".claude/skills" with something below it; -1 when there is none.
+    private static int SkillsAt(string[] segments)
+    {
+        for (var i = 0; i + 2 < segments.Length; i++)
+        {
+            if (segments[i].Equals(ClaudeFolder, StringComparison.OrdinalIgnoreCase)
+                && segments[i + 1].Equals(SkillsFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                return i + 1;
+            }
+        }
+        return -1;
+    }
+
+    // The path's folders and name below the run folder; empty when it is not inside it.
+    private static string[] RelativeSegments(string full, string runDir) =>
+        IsInside(full, runDir)
+            ? Path.GetRelativePath(Path.GetFullPath(FromGitBash(runDir)), Path.GetFullPath(FromGitBash(full)))
+                .Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries)
+            : [];
+
+    /// <summary>Whether a symbolic link or junction lies on the way from <paramref name="root"/> (exclusive) to
+    /// <paramref name="full"/> (inclusive) — a skill file reached through one could really be a hook or a setting.
+    /// Unreadable counts as a link.</summary>
+    internal static bool ThroughLink(string full, string root)
+    {
+        var r = Path.GetFullPath(FromGitBash(root)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var p = Path.GetFullPath(FromGitBash(full)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        while (p.Length > r.Length && IsInside(p, r))
+        {
+            try
+            {
+                if (new FileInfo(p).LinkTarget is not null || new DirectoryInfo(p).LinkTarget is not null) { return true; }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _ = ex;
+                return true;
+            }
+            if (Path.GetDirectoryName(p) is not { } parent) { break; }
+            p = parent;
+        }
+        return false;
+    }
+
+    /// <summary>Whether the hook input is a PermissionRequest (a prompt the CLI would show a person).</summary>
+    internal static bool IsPermissionRequest(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("hook_event_name", out var e) && e.ValueKind == JsonValueKind.String
+                && e.GetString() == PermissionRequestEvent;
+        }
+        catch (JsonException ex)
+        {
+            _ = ex;
+            return false;
+        }
+    }
+
+    /// <summary>Whether to answer a PermissionRequest with "allow": a Write / Edit / MultiEdit of a file below the run
+    /// folder's <c>.claude/skills/</c> — no hidden file or folder below it, nothing reached through a link, and nothing the
+    /// write rules refuse. Everything else gets no answer (denied in <c>claude -p</c>).</summary>
+    internal static bool ApprovesSkillWrite(string json, GuardContext ctx)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) { return false; }
+        var tool = root.TryGetProperty("tool_name", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+        if (tool is not ("Write" or "Edit" or "MultiEdit")) { return false; }
+        if (!root.TryGetProperty("tool_input", out var toolInput) || toolInput.ValueKind != JsonValueKind.Object
+            || !toolInput.TryGetProperty("file_path", out var fp) || fp.ValueKind != JsonValueKind.String
+            || fp.GetString() is not { Length: > 0 } path)
+        {
+            return false;
+        }
+        var cwd = root.TryGetProperty("cwd", out var c) && c.ValueKind == JsonValueKind.String && c.GetString() is { Length: > 0 } dir ? dir : ctx.RunDir;
+        if (Resolve(path, cwd, ctx.TempDir) is not { } full) { return false; }
+        var segments = RelativeSegments(full, ctx.RunDir);
+        var skills = SkillsAt(segments);
+        if (skills < 0 || segments.Skip(skills + 1).Any(s => s.StartsWith('.'))) { return false; }
+        return WriteProblem(full, path, ctx) is null && !ThroughLink(full, ctx.RunDir);
+    }
+
+    /// <summary>The PermissionRequest answer that approves the call.</summary>
+    internal static string SkillApprovalJson()
+    {
+        using var buffer = new MemoryStream();
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartObject();
+            w.WriteStartObject("hookSpecificOutput");
+            w.WriteString("hookEventName", PermissionRequestEvent);
+            w.WriteStartObject("decision");
+            w.WriteString("behavior", "allow");
+            w.WriteEndObject();
+            w.WriteEndObject();
+            w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     // ── shell commands ───────────────────────────────────────────────────────────────────────────────────────────
@@ -383,6 +550,7 @@ internal static partial class ScopedWriteGuard
             "dotnet" => CheckDotnet(args, simple, cwd, ctx),
             "msbuild" => CheckMsBuildProperties(args, cwd, ctx),
             "curl" or "wget" => CheckDownload(program, args, cwd, ctx),
+            "sed" => CheckSed(args, cwd, ctx),
             "cmd" => CheckCmd(args, simple, cwd, ctx, depth),
             "." or "source" => args.Count > 0 ? CheckScript(program, args[0], cwd, ctx) : null,
             "iex" or "invoke-expression" => CheckIex(args, cwd, ctx, depth),
@@ -403,7 +571,7 @@ internal static partial class ScopedWriteGuard
     private static readonly HashSet<string> GuardedTools = new(StringComparer.OrdinalIgnoreCase)
     {
         "git", "gh", "xargs", "find", "dotnet", "msbuild", "curl", "wget", "cmd", ".", "source", "iex", "invoke-expression",
-        "start-process", "saps",
+        "start-process", "saps", "sed",
     };
 
     // Leading assignments (FOO=1), wrappers (env, sudo, nohup, timeout 10…) and shell keywords (then, do, {).
@@ -868,6 +1036,46 @@ internal static partial class ScopedWriteGuard
             ? CheckPaths("curl", OptionValues(args, CurlOutputs, "oDc"), cwd, ctx, record: true)
             : CheckPaths("wget", OptionValues(args, WgetOutputs, "OPoa"), cwd, ctx, record: true);
 
+    // `sed -i` / `--in-place` rewrites its file operands (the first operand is the script unless -e / -f gave one). GNU
+    // takes the backup suffix attached (`-i.bak`), BSD as the next word (`-i ''`).
+    private static string? CheckSed(List<ShellWords.Word> args, string cwd, GuardContext ctx)
+    {
+        var inPlace = false;
+        var scriptGiven = false;
+        var endOfOptions = false;
+        var operands = new List<ShellWords.Word>();
+        for (var i = 0; i < args.Count; i++)
+        {
+            var text = args[i].Text;
+            if (!endOfOptions && text == "--") { endOfOptions = true; continue; }
+            if (endOfOptions || !text.StartsWith('-') || text == "-") { operands.Add(args[i]); continue; }
+            if (text.StartsWith("--", StringComparison.Ordinal))
+            {
+                var eq = text.IndexOf('=', StringComparison.Ordinal);
+                var name = eq > 0 ? text[..eq] : text;
+                if (name == "--in-place") { inPlace = true; }
+                else if (name is "--expression" or "--file") { scriptGiven = true; if (eq < 0) { i++; } }
+                else if (name == "--line-length" && eq < 0) { i++; }
+                continue;
+            }
+            for (var k = 1; k < text.Length; k++)
+            {
+                var letter = text[k];
+                if (letter == 'i')
+                {
+                    inPlace = true;
+                    if (text == "-i" && i + 1 < args.Count && args[i + 1].Text.Length == 0) { i++; } // BSD: -i ''
+                    break; // the rest is the backup suffix
+                }
+                if (letter is 'e' or 'f') { scriptGiven = true; if (k == text.Length - 1) { i++; } break; }
+                if (letter == 'l') { if (k == text.Length - 1) { i++; } break; }
+            }
+        }
+        if (!inPlace) { return null; }
+        if (!scriptGiven && operands.Count > 0) { operands.RemoveAt(0); }
+        return CheckPaths("sed -i", operands, cwd, ctx, record: true);
+    }
+
     // ── code the run could have written ─────────────────────────────────────────────────────────────────────────
 
     private static readonly HashSet<string> InlineCode = new(StringComparer.Ordinal) { "-e", "--eval", "-p", "--print", "-c" };
@@ -1249,7 +1457,14 @@ internal static partial class ScopedWriteGuard
     /// <summary>The guard command for this running runner.</summary>
     internal static string CurrentGuardCommand() => GuardCommand(Environment.ProcessPath, Assembly.GetEntryAssembly()?.Location);
 
-    /// <summary>The <c>--settings</c> JSON that installs the guard as a PreToolUse hook.</summary>
+    /// <summary>Whether a run gets the guard (and with it the skill-write approver): a scoped claude run with the runner's
+    /// own flags — never an answer-only run, YOLO (<c>REMOTE_AGENT_YOLO</c>), custom flags (<c>REMOTE_AGENT_ARGS</c>) or
+    /// codex.</summary>
+    internal static bool Guards(bool scoped, bool yolo, bool customArgs, string command) =>
+        scoped && !yolo && !customArgs && AppliesTo(command);
+
+    /// <summary>The <c>--settings</c> JSON that installs the guard as a PreToolUse hook, and as the PermissionRequest hook
+    /// that approves writes to the project's skills (the only protected path a run may change).</summary>
     internal static string HookSettingsJson(string guardCommand)
     {
         using var buffer = new MemoryStream();
@@ -1257,22 +1472,28 @@ internal static partial class ScopedWriteGuard
         {
             w.WriteStartObject();
             w.WriteStartObject("hooks");
-            w.WriteStartArray("PreToolUse");
+            WriteHook(w, "PreToolUse", Matcher, guardCommand);
+            WriteHook(w, PermissionRequestEvent, PermissionMatcher, guardCommand);
+            w.WriteEndObject();
+            w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
+
+        static void WriteHook(Utf8JsonWriter w, string hookEvent, string matcher, string command)
+        {
+            w.WriteStartArray(hookEvent);
             w.WriteStartObject();
-            w.WriteString("matcher", Matcher);
+            w.WriteString("matcher", matcher);
             w.WriteStartArray("hooks");
             w.WriteStartObject();
             w.WriteString("type", "command");
-            w.WriteString("command", guardCommand);
+            w.WriteString("command", command);
             w.WriteNumber("timeout", 30);
             w.WriteEndObject();
             w.WriteEndArray();
             w.WriteEndObject();
             w.WriteEndArray();
-            w.WriteEndObject();
-            w.WriteEndObject();
         }
-        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     /// <summary>Write the run's settings file (outside the run folder, so it is not part of the checkout) and return its

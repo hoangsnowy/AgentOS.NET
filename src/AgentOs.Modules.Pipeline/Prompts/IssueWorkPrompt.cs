@@ -116,6 +116,9 @@ internal static class IssueWorkPrompt
            (Only if the current directory is not empty: clone into a new subdirectory and work there.)
            Use the machine's existing git/gh credentials — do NOT embed any token in the URL.
            Stay inside this directory: files outside it and other repositories are off limits.
+           Inside it, git's own folder (.git) and Claude Code's settings, hooks, commands and agents (.claude/) can't be
+           changed. The project's skills (.claude/skills/**) can: change one only when the ticket asks for it, and name
+           it in the pull request description — a skill steers every later agent, so it is reviewed like code.
 
         2. Understand the codebase: read the relevant files (structure, key modules, tests).
            Read only what is needed — do not dump entire file trees.

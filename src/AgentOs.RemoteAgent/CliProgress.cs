@@ -221,7 +221,8 @@ internal static class CliProgress
     internal static bool IsPermissionRefusal(JsonElement toolResult)
     {
         var text = ResultText(toolResult);
-        return text.StartsWith("Claude requested permissions to use", StringComparison.Ordinal)
+        // "…to edit <path> which is a sensitive file." is a protected path (.git, .claude outside its skills, .vscode…).
+        return text.StartsWith("Claude requested permissions to ", StringComparison.Ordinal)
             || text.Contains("haven't granted it yet", StringComparison.Ordinal)
             || (text.StartsWith("Permission to use ", StringComparison.Ordinal) && text.Contains("has been denied", StringComparison.Ordinal))
             || IsGuardBlock(text);

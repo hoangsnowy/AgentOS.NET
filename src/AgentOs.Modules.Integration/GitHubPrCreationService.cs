@@ -229,6 +229,26 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<string>?> ListChangedFilesAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return null; }
+        try
+        {
+            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            ct.ThrowIfCancellationRequested();
+            var files = await client.PullRequest.Files(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            return files.SelectMany(f => f.PreviousFileName is { Length: > 0 } previous ? new[] { f.FileName, previous } : new[] { f.FileName })
+                .Where(p => !string.IsNullOrEmpty(p)).Distinct(StringComparer.Ordinal).ToList();
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Listing the changed files failed on {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<OpenPullRequest>> ListOpenPullRequestsAsync(WorkspaceDescriptor workspace, string headPrefix, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);

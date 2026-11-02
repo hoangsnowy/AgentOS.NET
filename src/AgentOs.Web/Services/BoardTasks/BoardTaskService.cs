@@ -268,11 +268,15 @@ public sealed class BoardTaskService(
             foreach (var change in changes)
             {
                 var repoLabel = $"{change.Owner}/{change.Repo}";
+                // A change to the project's skills (.claude/skills) is reviewed like code: the Reviewer is told which files.
+                var skills = await ChangedSkillsAsync(prs, RepoDescriptor(board, tenantId, change.Owner, change.Repo, change.DefaultBranch, pat),
+                    PrNumber(change.PrUrl), stopLease.Token).ConfigureAwait(false);
                 // The Reviewer judges against the body AND the maintainer decisions in the comments (a scope change written
                 // as a comment is part of the ticket — VNChess #108, 2026-11).
                 var verdict = await reviewer.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
                     new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
-                    session.IssueNumber ?? 0, session.Title, ticket.Body ?? "", cliProfile) { Files = ticketFiles, Discussion = ticket.Comments },
+                    session.IssueNumber ?? 0, session.Title, ticket.Body ?? "", cliProfile)
+                    { Files = ticketFiles, Discussion = ticket.Comments, ChangedSkills = skills },
                     stopLease.Token).ConfigureAwait(false);
                 if (!verdict.Ran)
                 {
@@ -722,6 +726,28 @@ public sealed class BoardTaskService(
         isFollowUp && !string.IsNullOrEmpty(prUrl)
         && (status == "Blocked" || AgentOs.Web.Services.Orchestration.ProjectOrchestrator.HoldsAProposedChange(status));
 
+    /// <summary>The project-skill files (<c>.claude/skills/**</c>) pull request <paramref name="number"/> changes: empty when
+    /// none, null when its files couldn't be listed (no number, a provider that can't tell, an API failure).</summary>
+    internal static async Task<IReadOnlyList<string>?> ChangedSkillsAsync(IPrCreationService prs, WorkspaceDescriptor descriptor, int? number,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(prs);
+        if (number is not > 0) { return null; }
+        var files = await prs.ListChangedFilesAsync(descriptor, number.Value, ct).ConfigureAwait(false);
+        return files is null ? null : ProjectSkills.Of(files);
+    }
+
+    // The task's feed names every project-skill file the change touches — instructions every later agent follows.
+    private async Task PublishSkillChangesAsync(IPrCreationService prs, WorkspaceDescriptor descriptor, int? number, string tenantId,
+        Guid sessionId, string repoLabel)
+    {
+        if (await ChangedSkillsAsync(prs, descriptor, number).ConfigureAwait(false) is { Count: > 0 } skills)
+        {
+            feed.Publish(new SessionRunEvent(tenantId, sessionId, SessionRunEventKind.Step, ProjectSkills.FeedNote(repoLabel, skills),
+                DateTimeOffset.UtcNow, repoLabel));
+        }
+    }
+
     public static int? PrNumber(string? url)
     {
         if (string.IsNullOrEmpty(url)) { return null; }
@@ -866,6 +892,8 @@ public sealed class BoardTaskService(
                     Publish(SessionRunEventKind.RepoDone,
                         described ? $"{repoLabel} — proposed change and its description updated" : $"{repoLabel} — proposed change updated",
                         repoLabel, "Done", child.PrUrl);
+                    await PublishSkillChangesAsync(prService, RepoDescriptor(board, tenantId, outcome.Owner, outcome.Repo, child.DefaultBranch ?? "main", pat),
+                        PrNumber(child.PrUrl), tenantId, session.Id, repoLabel).ConfigureAwait(false);
                     continue;
                 }
 
@@ -891,6 +919,11 @@ public sealed class BoardTaskService(
                     Publish(SessionRunEventKind.RepoDone,
                         prResult.Ok ? $"{repoLabel} — PR opened" : $"{repoLabel} — PR failed: {prResult.Error}",
                         repoLabel, prResult.Ok ? "Done" : "Failed", prResult.HtmlUrl);
+                    if (prResult.Ok)
+                    {
+                        await PublishSkillChangesAsync(prService, descriptor, prResult.Number ?? PrNumber(prResult.HtmlUrl), tenantId, session.Id, repoLabel)
+                            .ConfigureAwait(false);
+                    }
                 }
                 catch (Exception prEx) when (prEx is System.Net.Http.HttpRequestException or System.Text.Json.JsonException
                                               or InvalidOperationException or System.IO.IOException or TimeoutException)
