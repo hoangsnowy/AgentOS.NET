@@ -385,8 +385,9 @@ in the desktop and applies on the next call:
   changed (390 / 1280 px, light / dark), the computer sends them back to the tenant's file store (never into git), and
   the **Designer** agent checks them against the repo's `.claude/skills/*design*/SKILL.md` and the ticket — pass,
   changes (screen · problem · fix, back to Coding as a fix round) or needs a person. **Board › Tasks → Design** shows
-  the screenshot grid, the verdict and *Approve design* / *Ask for changes*, which override the agent; Autopilot
-  merges such a ticket only after a pass or your approval. A ticket that runs Design must run Test.
+  the screenshot grid, the verdict and *Approve design* / *Ask for changes*, which override the agent — offered only
+  once the screenshots are in (until then it says *Waiting for screenshots*; new screenshots clear an earlier
+  approval); Autopilot merges such a ticket only after a pass or your approval. A ticket that runs Design must run Test.
   ([ADR-0016](docs/adr/0016-design-gate.md))
 - **Settings → Audit log** — who changed what (settings, keys — never their values —, members, sign-in), CSV export.
 

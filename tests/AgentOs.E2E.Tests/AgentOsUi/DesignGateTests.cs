@@ -1,7 +1,8 @@
 // The Design gate (ADR-0016) in the standalone desktop (DevAutoLogin = an admin; no database). Board › Tasks shows the
 // Design checks — the standalone run seeds one clearly-labelled sample into the in-memory stores, as it has no tasks —
 // with the screenshot grid (phone / desktop × light / dark, served by the tenant-scoped REST route as real images),
-// the Designer agent's verdict and findings, and the owner's "Approve design" / "Ask for changes", which override it.
+// the Designer agent's verdict and findings, and the owner's "Approve design" / "Ask for changes", which override it —
+// offered only once there are screenshots (a second sample, #8, is still waiting for them and offers no decision).
 // Workflow › Ticket flow shows the Design step off, limited to area:ui, and refuses Design without Test.
 // Re-runnable: every decision sets the state it asserts. Set AGENTOS_E2E_SCREENSHOTS to a folder to capture the panel in
 // light and dark (never committed).
@@ -117,6 +118,50 @@ public sealed class DesignGateTests : IClassFixture<AgentOsPageFixture>
 
         // Hide it again.
         await open.ClickAsync();
+        await Assertions.Expect(panel).ToHaveCountAsync(0);
+    }
+
+    // No blind approvals: a check whose test hasn't sent screenshots back (the sample #8, Pending, none) says it is waiting
+    // for them and offers neither Approve design nor Ask for changes — there is nothing to look at yet.
+    [Fact]
+    public async Task BoardTasks_DesignPanel_WithoutScreenshots_WaitsForThem_AndOffersNoDecision()
+    {
+        if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
+
+        await _fx.GotoDesktopAsync();
+        await Assertions.Expect(_fx.Page.Locator("#components-reconnect-modal")).Not.ToBeVisibleAsync(new() { Timeout = 30_000 });
+        await _fx.Page.Locator(".dock-item[title=\"Board\"]").First.ClickAsync();
+        var win = _fx.Page.Locator(".appwin.focused");
+        await Assertions.Expect(win.Locator(".appwin-title")).ToHaveTextAsync("Board");
+        await win.Locator(".board-tab", new() { HasTextString = "Tasks" }).ClickAsync();
+
+        var checks = win.Locator("[data-testid=design-checks]");
+        await Assertions.Expect(checks).ToBeVisibleAsync();
+        var row = checks.Locator(".design-checks-row", new() { HasTextString = "#8" });
+        await Assertions.Expect(row).ToContainTextAsync("Waiting for screenshots");
+        await Assertions.Expect(row).ToContainTextAsync("0 screenshot(s)");
+
+        var open = checks.GetByRole(AriaRole.Button, new() { Name = "Open the design check of #8" });
+        await open.ClickAsync();
+        var panel = win.Locator("[data-testid=design-panel]");
+        await Assertions.Expect(panel).ToBeVisibleAsync();
+        await Assertions.Expect(panel.Locator(".design-panel-title")).ToContainTextAsync("Waiting for screenshots");
+
+        var waiting = panel.Locator("[data-testid=design-waiting]");
+        await Assertions.Expect(waiting).ToBeVisibleAsync();
+        await Assertions.Expect(waiting).ToHaveAttributeAsync("role", "status");
+        await Assertions.Expect(waiting).ToContainTextAsync("Waiting for screenshots");
+        await Assertions.Expect(waiting).ToContainTextAsync("The Testing agent takes them during Test");
+
+        // Nothing to decide on: no Approve design, no Ask for changes, no grid; no Check again either (the check didn't fail).
+        await Assertions.Expect(panel.GetByRole(AriaRole.Button, new() { Name = "Approve the design of #8" })).ToHaveCountAsync(0);
+        await Assertions.Expect(panel.GetByRole(AriaRole.Button, new() { Name = "Ask for design changes on #8" })).ToHaveCountAsync(0);
+        await Assertions.Expect(panel.GetByRole(AriaRole.Button, new() { Name = "Run the design check of #8 again" })).ToHaveCountAsync(0);
+        await Assertions.Expect(panel.Locator("[data-testid=design-grid]")).ToHaveCountAsync(0);
+        await Assertions.Expect(panel.Locator("[data-testid=design-decision]")).ToHaveCountAsync(0);
+        await ShotAsync(panel, "waiting");
+
+        await checks.GetByRole(AriaRole.Button, new() { Name = "Hide the design check of #8" }).ClickAsync();
         await Assertions.Expect(panel).ToHaveCountAsync(0);
     }
 

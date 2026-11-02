@@ -1,8 +1,9 @@
 // Design gate (ADR-0016) — a sample design check for the standalone desktop. `dotnet run --project src/AgentOs.Web` has
 // no database and therefore no tasks, so the Design panel could never be seen (or end-to-end tested) there. In
 // Development with dev auto-login and no database ONLY, this seeds one clearly-labelled sample check into the
-// in-memory stores: four generated screenshots (phone / desktop × light / dark) and a Designer verdict with findings.
-// The owner buttons work on it for real (the in-memory review store). Never registered anywhere else.
+// in-memory stores: four generated screenshots (phone / desktop × light / dark) and a Designer verdict with findings —
+// plus a second check still waiting for its screenshots (#8), which offers no Approve / Ask for changes. The owner
+// buttons work on the first for real (the in-memory review store). Never registered anywhere else.
 
 using System;
 using System.Buffers.Binary;
@@ -33,6 +34,12 @@ public sealed class DesignGateSample(IServiceScopeFactory scopes) : IHostedServi
     /// <summary>The sample's summary — says what it is.</summary>
     public const string Summary = "Sample design check (standalone Development only) — the dark checkout button is hard to read and the phone layout scrolls sideways.";
 
+    /// <summary>The second sample's task id: a check still waiting for its screenshots (nothing to approve yet).</summary>
+    public static readonly Guid WaitingSessionId = new("5a3c1e00-de51-4e00-9a7e-000000000008");
+
+    /// <summary>The second sample's ticket number.</summary>
+    public const int WaitingIssueNumber = 8;
+
     /// <inheritdoc />
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -41,6 +48,9 @@ public sealed class DesignGateSample(IServiceScopeFactory scopes) : IHostedServi
         var files = scope.ServiceProvider.GetService<IScopedFileStore>();
         if (reviews is null || files is null) { return; }
         var tenant = ITenantContext.DefaultTenantId;
+        // A check whose test hasn't sent screenshots back yet: the panel waits, with no Approve / Ask for changes.
+        await reviews.EnsureAsync(DesignReview.New(tenant, BoardId, WaitingSessionId, WaitingIssueNumber, 0, DesignReviewStatus.Pending)
+            with { UpdatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5) }, cancellationToken).ConfigureAwait(false);
         if (await reviews.GetAsync(tenant, SessionId, 0, cancellationToken).ConfigureAwait(false) is not null) { return; }
 
         var review = DesignReview.New(tenant, BoardId, SessionId, IssueNumber, 0, DesignReviewStatus.Changes);

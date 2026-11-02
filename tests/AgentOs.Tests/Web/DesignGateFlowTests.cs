@@ -272,9 +272,18 @@ public sealed class DesignGateFlowTests
     [InlineData(DesignReviewStatus.NeedsPerson, 0, null, false)]
     public void Review_CanRetryAutomatically_OnlyForACheckThatCouldntRun(DesignReviewStatus status, int retries, DesignDecision? decision, bool expected)
     {
-        (DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, status) with { Retries = retries, Decision = decision })
+        (DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, status) with { Retries = retries, Decision = decision, Shots = Shots })
             .CanRetryAutomatically.ShouldBe(expected);
     }
+
+    [Fact]
+    public void Review_CanRetryAutomatically_ABlindApprovalDoesNotStopTheRetries()
+    {
+        (DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, DesignReviewStatus.NotRun) with { Decision = DesignDecision.Approved })
+            .CanRetryAutomatically.ShouldBeTrue();
+    }
+
+    private static readonly DesignShot[] Shots = [new(".agentos/screenshots/checkout-390-dark.png", "Checkout", 390, "dark")];
 
     [Fact]
     public void Planner_TheTestRun_TakesScreenshots_OnlyWhenTheTicketRunsDesign()
@@ -312,8 +321,40 @@ public sealed class DesignGateFlowTests
     [InlineData(DesignReviewStatus.NeedsPerson, DesignDecision.Approved, DesignGateState.Passed)]
     public void Review_Gate_OwnerDecisionOverridesTheAgent(DesignReviewStatus status, DesignDecision? decision, DesignGateState expected)
     {
-        var review = DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, status) with { Decision = decision };
+        var review = DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, status) with { Decision = decision, Shots = Shots };
         review.Gate.ShouldBe(expected);
+    }
+
+    // The lab's two blind approvals (Status Pending + Decision Approved, no screenshots): an approval with nothing behind
+    // it never passes the gate — the agent's side decides, as if nobody had approved.
+    [Theory]
+    [InlineData(DesignReviewStatus.Pending, DesignGateState.NotChecked)]
+    [InlineData(DesignReviewStatus.Checking, DesignGateState.Checking)]
+    [InlineData(DesignReviewStatus.NeedsPerson, DesignGateState.NeedsPerson)]
+    [InlineData(DesignReviewStatus.NotRun, DesignGateState.NeedsPerson)]
+    [InlineData(DesignReviewStatus.Changes, DesignGateState.ChangesRequested)]
+    public void Review_Gate_ABlindApproval_IsNotPassed(DesignReviewStatus status, DesignGateState expected)
+    {
+        var review = DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, status) with
+        {
+            Decision = DesignDecision.Approved, DecidedBy = "owner", DecidedAtUtc = System.DateTimeOffset.UtcNow,
+        };
+        review.BlindApproval.ShouldBeTrue();
+        review.OwnerDecided.ShouldBeFalse();
+        review.CanDecide.ShouldBeFalse();
+        review.Gate.ShouldBe(expected);
+        review.Gate.ShouldNotBe(DesignGateState.Passed);
+    }
+
+    [Fact]
+    public void Review_Gate_AskForChanges_WithoutScreenshots_StillHoldsTheMergeBack()
+    {
+        var review = DesignReview.New("t", System.Guid.NewGuid(), System.Guid.NewGuid(), 7, 0, DesignReviewStatus.Pass) with
+        {
+            Decision = DesignDecision.ChangesAsked, DecisionNote = "Stack it.",
+        };
+        review.OwnerDecided.ShouldBeTrue();
+        review.Gate.ShouldBe(DesignGateState.ChangesRequested);
     }
 
     [Fact]

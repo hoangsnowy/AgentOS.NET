@@ -6,7 +6,9 @@
 // No whole-row writes after the row exists: the agent's side and the owner's decision are separate, narrow updates (EF
 // sends only the columns it changed). A Designer verdict that lands half an hour after the owner pressed "Ask for
 // changes" therefore can't erase that decision (which would let the ticket merge), and a decision made from a stale
-// page can't erase a verdict.
+// page can't erase a verdict. Two rules keep the owner's approval honest: a decision on a row without screenshots is
+// refused (nobody approves what they can't see), and new screenshots clear an earlier approval (it stands only on the
+// screens it was given on) — "Ask for changes" is never cleared.
 
 using System;
 using System.Collections.Concurrent;
@@ -60,9 +62,17 @@ internal static class DesignReviewRows
         return e;
     }
 
-    /// <summary>The agent's side only — the decision columns are never touched here.</summary>
+    /// <summary>The agent's side. The decision columns are touched in one case only: new screenshots clear an earlier
+    /// APPROVAL — a new test run's capture (<see cref="DesignVerdictUpdate.NewCapture"/>), or the first screenshots of a
+    /// review that was approved with none (made blind, before the gate refused that). An approval stands only on the
+    /// screens it was given on; "Ask for changes" is always kept.</summary>
     internal static void ApplyVerdict(DesignReviewEntity e, DesignVerdictUpdate u, DateTimeOffset at)
     {
+        if (string.Equals(e.Decision, nameof(DesignDecision.Approved), StringComparison.Ordinal)
+            && (u.NewCapture || (u.Shots is { Count: > 0 } && !HasShots(e))))
+        {
+            ClearDecision(e);
+        }
         e.Status = u.Status.ToString();
         if (u.Summary is not null) { e.Summary = Clip(u.Summary, 4000)!; }
         if (u.Findings is not null)
@@ -78,6 +88,23 @@ internal static class DesignReviewRows
         e.Error = Clip(u.Error, 2000);
         if (u.CountRetry) { e.Retries++; }
         e.UpdatedAtUtc = at;
+    }
+
+    /// <summary>The row has screenshots (a person has something to look at).</summary>
+    internal static bool HasShots(DesignReviewEntity e) => Read(e.ShotsJson, DesignReviewJson.Default.ListShotRow).Count > 0;
+
+    /// <summary>Nobody decides on a design they can't see: a decision on a row without screenshots is refused.</summary>
+    internal static void EnsureDecidable(DesignReviewEntity e)
+    {
+        if (!HasShots(e)) { throw new InvalidOperationException(DesignReview.NothingToDecideYet); }
+    }
+
+    private static void ClearDecision(DesignReviewEntity e)
+    {
+        e.Decision = null;
+        e.DecisionNote = null;
+        e.DecidedBy = null;
+        e.DecidedAtUtc = null;
     }
 
     /// <summary>The owner's decision only.</summary>
@@ -175,6 +202,7 @@ internal sealed class EfDesignReviewStore(SessionsDbContext db) : IDesignReviewS
         ArgumentNullException.ThrowIfNull(decision);
         var row = await Of(tenantId).FirstOrDefaultAsync(r => r.SessionId == sessionId && r.Run == run, ct).ConfigureAwait(false);
         if (row is null) { return null; }
+        DesignReviewRows.EnsureDecidable(row);
         DesignReviewRows.ApplyDecision(row, decision);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         return DesignReviewRows.ToDomain(row);
@@ -257,6 +285,7 @@ internal sealed class InMemoryDesignReviewStore : IDesignReviewStore
         lock (_gate)
         {
             if (!_rows.TryGetValue((tenantId, sessionId, run), out var row)) { return Task.FromResult<DesignReview?>(null); }
+            DesignReviewRows.EnsureDecidable(row);
             DesignReviewRows.ApplyDecision(row, decision);
             return Task.FromResult<DesignReview?>(DesignReviewRows.ToDomain(row));
         }
