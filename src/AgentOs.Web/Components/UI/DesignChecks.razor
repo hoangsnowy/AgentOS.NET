@@ -17,7 +17,7 @@
                 var open = _open == r.Id;
                 <div class="design-checks-row" @key="r.Id">
                     <strong>#@r.IssueNumber</strong>
-                    <Badge Variant="@Variant(r.Gate)">@Label(r.Gate)</Badge>
+                    <Badge Variant="@Variant(r.Gate)">@Label(r)</Badge>
                     <span class="muted">@r.Shots.Count screenshot(s) · @r.UpdatedAtUtc.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture)</span>
                     <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => _open = open ? null : r.Id)" aria-expanded="@(open ? "true" : "false")"
                          aria-label="@($"{(open ? "Hide" : "Open")} the design check of #{r.IssueNumber}")">
@@ -86,8 +86,9 @@
         if (i >= 0) { _reviews[i] = stored; }
     }
 
-    private static string Label(DesignGateState gate) => gate switch
+    private static string Label(DesignReview review) => review.Gate switch
     {
+        DesignGateState.NotChecked when !review.HasShots => "Waiting for screenshots",
         DesignGateState.Passed => "Passed",
         DesignGateState.ChangesRequested => "Changes requested",
         DesignGateState.NeedsPerson => "Needs you",

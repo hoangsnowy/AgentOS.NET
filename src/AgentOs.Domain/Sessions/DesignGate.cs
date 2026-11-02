@@ -3,8 +3,10 @@
 // takes Playwright screenshots of the screens it touches (390 / 1280 px, light / dark); the runner sends them back to
 // the tenant's file store under a design scope (never into git). The Designer agent then looks at them — with the
 // repository's own design skill and the ticket — and says pass, changes (findings: screen, problem, fix) or
-// needs-person. The owner can override it on Board › Tasks (Approve design / Ask for changes). Autopilot merges a
-// ticket whose flow runs Design only after a pass or an owner approval; "changes" go back to Coding as a fix round.
+// needs-person. The owner can override it on Board › Tasks (Approve design / Ask for changes) — only once there are
+// screenshots to look at: a decision on a review without any is refused, an approval stands only on the screens it was
+// given on (new screenshots clear it). Autopilot merges a ticket whose flow runs Design only after a pass or an owner
+// approval; "changes" go back to Coding as a fix round.
 
 using System;
 using System.Collections.Generic;
@@ -219,7 +221,25 @@ public sealed record DesignReview(
     public const int MaxAutomaticRetries = 2;
 
     /// <summary>The check couldn't run, nobody decided yet, and Autopilot may run it again (once a computer is there).</summary>
-    public bool CanRetryAutomatically => Status == DesignReviewStatus.NotRun && Decision is null && Retries < MaxAutomaticRetries;
+    public bool CanRetryAutomatically => Status == DesignReviewStatus.NotRun && !OwnerDecided && Retries < MaxAutomaticRetries;
+
+    /// <summary>What a person is told when they try to decide on a review with nothing to look at.</summary>
+    public const string NothingToDecideYet =
+        "There is nothing to look at yet — the Testing agent takes the screenshots during Test. Approve or ask for changes once they're in.";
+
+    /// <summary>The Testing agent's screenshots are in: there is something to look at.</summary>
+    public bool HasShots => Shots.Count > 0;
+
+    /// <summary>A person may approve or ask for changes only on what they can see: the review has screenshots.</summary>
+    public bool CanDecide => HasShots;
+
+    /// <summary>An approval recorded while the review had no screenshots (before the gate refused that): it was made
+    /// without seeing anything, so it never passes the gate.</summary>
+    public bool BlindApproval => Decision == DesignDecision.Approved && !HasShots;
+
+    /// <summary>The owner's decision counts: "Ask for changes" always (it can only hold a merge back), an approval only
+    /// when there are screenshots it was made on.</summary>
+    public bool OwnerDecided => Decision == DesignDecision.ChangesAsked || (Decision == DesignDecision.Approved && HasShots);
 
     /// <summary>Where the screenshots of this review live.</summary>
     public string ScopeKey => DesignScope.For(BoardId, IssueNumber, Run);
@@ -228,10 +248,11 @@ public sealed record DesignReview(
     public static DesignReview New(string tenantId, Guid boardId, Guid sessionId, int issueNumber, int run, DesignReviewStatus status) =>
         new(Guid.NewGuid(), tenantId, boardId, sessionId, issueNumber, run, status, string.Empty, [], [], null, null, null, null, null, DateTimeOffset.UtcNow);
 
-    /// <summary>The gate: the owner's decision wins over the agent's verdict.</summary>
+    /// <summary>The gate: the owner's decision wins over the agent's verdict — but an approval with no screenshots behind
+    /// it (<see cref="BlindApproval"/>) counts for nothing; the agent's side decides until the owner looks again.</summary>
     public DesignGateState Gate => Decision switch
     {
-        DesignDecision.Approved => DesignGateState.Passed,
+        DesignDecision.Approved when HasShots => DesignGateState.Passed,
         DesignDecision.ChangesAsked => DesignGateState.ChangesRequested,
         _ => Status switch
         {
@@ -257,8 +278,11 @@ public sealed record DesignReview(
 /// <param name="Shots">The screenshots, or null to keep them.</param>
 /// <param name="Error">Why the check couldn't run; null clears it.</param>
 /// <param name="CountRetry">This run is an automatic re-run of a check that couldn't run: count it.</param>
+/// <param name="NewCapture">The screenshots come from a new test run (they replace whatever the review showed): an owner
+/// approval recorded before them was made on other screens, or on none, so the store clears it — the owner decides on
+/// what they can see. "Ask for changes" is kept (it can only hold a merge back).</param>
 public sealed record DesignVerdictUpdate(DesignReviewStatus Status, string? Summary = null, IReadOnlyList<DesignFinding>? Findings = null,
-    IReadOnlyList<DesignShot>? Shots = null, string? Error = null, bool CountRetry = false);
+    IReadOnlyList<DesignShot>? Shots = null, string? Error = null, bool CountRetry = false, bool NewCapture = false);
 
 /// <summary>The owner's decision on a review.</summary>
 public sealed record DesignOwnerDecision(DesignDecision Decision, string? Note, string DecidedBy, DateTimeOffset DecidedAtUtc);
@@ -268,7 +292,9 @@ public sealed record DesignOwnerDecision(DesignDecision Decision, string? Note, 
 /// There is no whole-row save: the agent's side (<see cref="SaveVerdictAsync"/>) and the owner's decision
 /// (<see cref="DecideAsync"/>) are written by narrow updates that touch only their own columns, so a verdict that lands
 /// after the owner decided (a check runs for up to half an hour) can never erase the decision — and a decision made
-/// from a stale page can never erase a verdict.
+/// from a stale page can never erase a verdict. One exception, by design: new screenshots clear an earlier APPROVAL
+/// (<see cref="DesignVerdictUpdate.NewCapture"/>, or the first screenshots of a review approved before it had any) —
+/// an approval stands only on the screens it was given on.
 /// </summary>
 public interface IDesignReviewStore
 {
@@ -288,10 +314,14 @@ public interface IDesignReviewStore
     /// existing one, untouched.</summary>
     Task<DesignReview> EnsureAsync(DesignReview fresh, CancellationToken ct = default);
 
-    /// <summary>Write the agent's side of a review (status, summary, findings, screenshots, error, retries) — never the
-    /// owner's decision. Null when there is no such review.</summary>
+    /// <summary>Write the agent's side of a review (status, summary, findings, screenshots, error, retries). The owner's
+    /// decision is never written here, except that an approval is cleared when new screenshots arrive
+    /// (<see cref="DesignVerdictUpdate.NewCapture"/>, or a review approved with none gets its first). Null when there is
+    /// no such review.</summary>
     Task<DesignReview?> SaveVerdictAsync(string tenantId, Guid sessionId, int run, DesignVerdictUpdate update, CancellationToken ct = default);
 
     /// <summary>Write the owner's decision — nothing else. Null when there is no such review.</summary>
+    /// <exception cref="InvalidOperationException">The review has no screenshots yet (<see cref="DesignReview.NothingToDecideYet"/>):
+    /// nobody decides on a design they can't see.</exception>
     Task<DesignReview?> DecideAsync(string tenantId, Guid sessionId, int run, DesignOwnerDecision decision, CancellationToken ct = default);
 }

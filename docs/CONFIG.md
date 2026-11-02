@@ -273,7 +273,10 @@ run also takes Playwright screenshots (390 / 1280 px, light / dark) that the run
 under `design:{board}:{issue}:{fix round}` (one folder per repo of the task) — fixed caps: 16 files, 5 MB each, 40 MB a
 run, png / jpg / webp only, and at most 8 runs' worth (320 MB) in flight on the server at once. The Designer agent's
 verdict and the owner's *Approve design* / *Ask for changes* are rows in `sessions.design_reviews` (RLS), written by
-separate narrow updates so neither can erase the other. On a server provider the screenshots go as images within fixed
+separate narrow updates so neither can erase the other. A decision on a review without screenshots is refused (the panel
+shows *Waiting for screenshots* instead of the buttons), an approval counts only with screenshots behind it, and a test
+run that sends new screenshots clears an earlier approval (audited as `design.approval_cleared`; decisions as
+`design.decided`). On a server provider the screenshots go as images within fixed
 limits (≤ 16, ≤ 3.75 MB and ≤ 8000 px each, ≤ 32 MB together — from Anthropic's vision docs); an image over them is left
 out and the prompt says why. The Designer reads `.claude/skills/*design*/SKILL.md` from the repo's default branch.
 Autopilot merges the ticket only after a pass or an owner approval; changes count on the task's fix rounds; a check

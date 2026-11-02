@@ -47,6 +47,12 @@ public static class AuditActions
     public const string ApiTokenCreated = "apitoken.created";
     public const string ApiTokenRevoked = "apitoken.revoked";
     public const string TicketFlowChanged = "ticketflow.changed";
+
+    /// <summary>The owner approved a design, or asked for design changes (Board › Tasks, ADR-0016).</summary>
+    public const string DesignDecided = "design.decided";
+
+    /// <summary>New screenshots cleared an earlier design approval — it stands only on the screens it was given on.</summary>
+    public const string DesignApprovalCleared = "design.approval_cleared";
 }
 
 /// <summary>Audit "tenant" ids that are not tenants.</summary>

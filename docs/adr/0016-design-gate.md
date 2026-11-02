@@ -82,6 +82,25 @@ the evidence is one Playwright call away — but it never left that computer, an
    agent. The images load from `GET /tasks/{session}/design/{run}/shots/{path}` (Member policy, tenant from the
    token / cookie; only a path the review lists, an image type, whose bytes are that image; `nosniff`) — the bytes
    never ride the Blazor circuit. `GET /tasks/{session}/design` lists the task's reviews (queried by task).
+   **No blind decisions** (amended 2026-11-02, after an owner approved two tickets whose reviews were still *Pending*
+   — the Testing agent hadn't run, there was nothing to see — and those approvals passed the gate):
+   - *UI:* while a review has no screenshots the panel shows **Waiting for screenshots** ("the Testing agent takes
+     them during Test") instead of *Approve design* / *Ask for changes*; *Check again* stays only for a check that
+     couldn't run (`NotRun`). The *Design checks* list labels such a check *Waiting for screenshots* too.
+   - *Server:* `IDesignReviewStore.DecideAsync` (both stores, on the stored row) and the Board service
+     (`BoardTaskService.DecideAsync` / `DecideDesignAsync`, on the copy the person looked at as well) refuse either
+     decision on a review without screenshots with a plain-language `InvalidOperationException`
+     (`DesignReview.NothingToDecideYet`); `DecideDesignAsync` no longer creates an empty review just to hold a
+     decision. Owner decisions are audited (`design.decided`).
+   - *Gate:* an approval counts only with screenshots behind it — `Gate` maps `Approved` to *Passed* only when the
+     review has shots (`DesignReview.BlindApproval` / `OwnerDecided`); otherwise the agent's side decides, so the two
+     existing blind approvals on the lab (Pending + Approved, no shots) read *not checked*, never *Passed*.
+     *Ask for changes* always counts — it can only hold a merge back.
+   - *New screenshots clear an approval:* a test run that sends screenshots back writes them with
+     `DesignVerdictUpdate.NewCapture`, and the store clears an earlier **approval** on that review in the same write
+     (and also when a review approved with none gets its first screenshots, whoever brings them). The Board service
+     audits it (`design.approval_cleared`) and says it on the task's feed, so the owner decides on what they can see.
+     *Ask for changes* is never cleared. No migration — the rule is derived from the shots column.
 9. **Both engines honour it.** Step by step (`AutopilotPlanner`): after testing passed, *not checked* → run the
    Designer (a slot, the member's computer); *changes* (the agent's or the owner's) → back to Coding with the findings
    on the persisted `FixRounds` (the same cap as every fix; out of rounds → a person); *needs-person* / *checking* →
@@ -100,7 +119,10 @@ the evidence is one Playwright call away — but it never left that computer, an
 - The Testing run gets slightly longer (four screenshots per screen) only for those tickets.
 - A Designer on a server provider bills image input tokens like any other call (metrics and the budget gate apply);
   on the member's computer it costs 0 server tokens.
-- The standalone desktop (no database) seeds one clearly-labelled sample check (`DesignGateSample`, Development + dev
-  auto-login + no database only) so the panel can be seen and E2E-tested without tasks.
+- The standalone desktop (no database) seeds two clearly-labelled sample checks (`DesignGateSample`, Development + dev
+  auto-login + no database only) — one with screenshots and findings (#7), one still waiting for its screenshots (#8)
+  — so the panel and its waiting state can be seen and E2E-tested without tasks.
+- An owner can't approve a design they haven't seen; a re-test of the same fix round asks them to approve again (the
+  screenshots they approved were replaced).
 - Pending: the panel and the ticket-flow card are hand-built in the repo; they still have to be pushed to the Claude
   Design project (`ui_kits/agentos/board-tasks-design.html`).

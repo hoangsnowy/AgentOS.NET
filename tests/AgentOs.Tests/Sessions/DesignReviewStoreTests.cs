@@ -31,6 +31,8 @@ public sealed class DesignReviewStoreTests
             Shots = [new DesignShot(".agentos/screenshots/checkout-390-dark.png", "Checkout", 390, "dark")],
         };
 
+    internal static readonly DesignShot[] Shots = [new(".agentos/screenshots/checkout-390-dark.png", "Checkout", 390, "dark")];
+
     private static StoredFileInfo Shot(string tenant, string scope, string path) =>
         new(Guid.NewGuid(), tenant, scope, path, Png.Length, RunFile.Hash(Png), "image/png", "Testing agent", DateTimeOffset.UtcNow);
 
@@ -92,12 +94,12 @@ public sealed class DesignReviewStoreTests
     // Designer runs (up to 30 minutes), then the Designer returns PASS. The decision must stand — or the ticket merges.
     internal static async Task DecisionMadeWhileTheCheckRuns_SurvivesAPassVerdict(IDesignReviewStore reviews, string tenant, Guid board, Guid session)
     {
-        await reviews.EnsureAsync(DesignReview.New(tenant, board, session, 7, 0, DesignReviewStatus.Pending));
+        await reviews.EnsureAsync(DesignReview.New(tenant, board, session, 7, 0, DesignReviewStatus.Pending) with { Shots = Shots });
         var started = (await reviews.SaveVerdictAsync(tenant, session, 0, new DesignVerdictUpdate(DesignReviewStatus.Checking)))!;
         started.Decision.ShouldBeNull();                                       // what the running check holds
 
         await reviews.DecideAsync(tenant, session, 0, new DesignOwnerDecision(DesignDecision.ChangesAsked, "Stack the form on the phone.", "Ann", DateTimeOffset.UtcNow));
-        var after = await reviews.SaveVerdictAsync(tenant, session, started.Run, new DesignVerdictUpdate(DesignReviewStatus.Pass, "Looks right.", [], []));
+        var after = await reviews.SaveVerdictAsync(tenant, session, started.Run, new DesignVerdictUpdate(DesignReviewStatus.Pass, "Looks right.", [], Shots));
 
         after!.Status.ShouldBe(DesignReviewStatus.Pass);                       // the verdict is recorded…
         after.Decision.ShouldBe(DesignDecision.ChangesAsked);                  // …and the owner's decision stands
@@ -111,9 +113,9 @@ public sealed class DesignReviewStoreTests
     // erase a verdict that landed since.
     internal static async Task ADecisionFromAStalePage_KeepsTheVerdict(IDesignReviewStore reviews, string tenant, Guid board, Guid session)
     {
-        var stale = await reviews.EnsureAsync(DesignReview.New(tenant, board, session, 7, 0, DesignReviewStatus.Pending));
+        var stale = await reviews.EnsureAsync(DesignReview.New(tenant, board, session, 7, 0, DesignReviewStatus.Pending) with { Shots = Shots });
         await reviews.SaveVerdictAsync(tenant, session, 0, new DesignVerdictUpdate(DesignReviewStatus.Changes, "Two problems.",
-            [new DesignFinding("Checkout · phone · dark", "Unreadable", "Accent token")], []));
+            [new DesignFinding("Checkout · phone · dark", "Unreadable", "Accent token")], Shots));
 
         var decided = await AgentOs.Web.Services.BoardTasks.BoardTaskService.DecideAsync(reviews, stale, DesignDecision.Approved, null, "Ann");
 
@@ -122,6 +124,62 @@ public sealed class DesignReviewStoreTests
         decided.Summary.ShouldBe("Two problems.");
         decided.Gate.ShouldBe(DesignGateState.Passed);
     }
+
+    // ── No blind approvals: nobody decides on what they can't see, and an approval stands only on its screens ──
+
+    internal static async Task NoDecisionWithoutScreenshots_AndNewScreenshotsClearAnApproval(IDesignReviewStore reviews, string tenant, Guid board)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        // Nothing to look at yet (the Testing agent hasn't run): both decisions are refused, in plain words; nothing stored.
+        var task = Guid.NewGuid();
+        await reviews.EnsureAsync(DesignReview.New(tenant, board, task, 7, 0, DesignReviewStatus.Pending));
+        var refused = await Should.ThrowAsync<InvalidOperationException>(() =>
+            reviews.DecideAsync(tenant, task, 0, new DesignOwnerDecision(DesignDecision.Approved, null, "Ann", now)));
+        refused.Message.ShouldBe(DesignReview.NothingToDecideYet);
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            reviews.DecideAsync(tenant, task, 0, new DesignOwnerDecision(DesignDecision.ChangesAsked, "Stack it.", "Ann", now)));
+        var untouched = (await reviews.GetAsync(tenant, task, 0))!;
+        untouched.Decision.ShouldBeNull();
+        untouched.Gate.ShouldBe(DesignGateState.NotChecked);
+
+        // The screenshots arrive; the owner approves what they see — and a Designer verdict on the same screens keeps it
+        // (the approve-after-screenshots path is unchanged: the owner's decision wins over the agent).
+        await reviews.SaveVerdictAsync(tenant, task, 0, new DesignVerdictUpdate(DesignReviewStatus.Pending, string.Empty, [], Shots, NewCapture: true));
+        (await reviews.DecideAsync(tenant, task, 0, new DesignOwnerDecision(DesignDecision.Approved, null, "Ann", now)))!.Gate.ShouldBe(DesignGateState.Passed);
+        var verdict = (await reviews.SaveVerdictAsync(tenant, task, 0, new DesignVerdictUpdate(DesignReviewStatus.Changes, "Unreadable.", [], Shots)))!;
+        verdict.Decision.ShouldBe(DesignDecision.Approved);
+        verdict.Gate.ShouldBe(DesignGateState.Passed);
+
+        // A re-test sends new screenshots: the approval was given on other screens, so it is cleared — the owner decides again.
+        var recaptured = (await reviews.SaveVerdictAsync(tenant, task, 0, new DesignVerdictUpdate(DesignReviewStatus.Pending, string.Empty, [], Shots, NewCapture: true)))!;
+        recaptured.Decision.ShouldBeNull();
+        recaptured.DecidedBy.ShouldBeNull();
+        recaptured.DecidedAtUtc.ShouldBeNull();
+        recaptured.Gate.ShouldBe(DesignGateState.NotChecked);
+
+        // "Ask for changes" is never cleared by new screenshots: it can only hold a merge back.
+        await reviews.DecideAsync(tenant, task, 0, new DesignOwnerDecision(DesignDecision.ChangesAsked, "Stack it.", "Ann", now));
+        var kept = (await reviews.SaveVerdictAsync(tenant, task, 0, new DesignVerdictUpdate(DesignReviewStatus.Pending, string.Empty, [], Shots, NewCapture: true)))!;
+        kept.Decision.ShouldBe(DesignDecision.ChangesAsked);
+        kept.Gate.ShouldBe(DesignGateState.ChangesRequested);
+
+        // A blind approval stored before the refusal existed (the lab's #122 / #123: Pending + Approved, no screenshots):
+        // never Passed, and the first screenshots clear it — whoever brings them (here the Designer's verdict).
+        var legacy = Guid.NewGuid();
+        var row = await reviews.EnsureAsync(DesignReview.New(tenant, board, legacy, 7, 0, DesignReviewStatus.Pending)
+            with { Decision = DesignDecision.Approved, DecidedBy = "owner", DecidedAtUtc = now });
+        row.Decision.ShouldBe(DesignDecision.Approved);
+        row.BlindApproval.ShouldBeTrue();
+        row.Gate.ShouldBe(DesignGateState.NotChecked);
+        var firstShots = (await reviews.SaveVerdictAsync(tenant, legacy, 0, new DesignVerdictUpdate(DesignReviewStatus.NeedsPerson, "Taste call.", [], Shots)))!;
+        firstShots.Decision.ShouldBeNull();
+        firstShots.Gate.ShouldBe(DesignGateState.NeedsPerson);
+    }
+
+    [Fact]
+    public Task InMemory_NoDecisionWithoutScreenshots_AndNewScreenshotsClearAnApproval() =>
+        NoDecisionWithoutScreenshots_AndNewScreenshotsClearAnApproval(new InMemoryDesignReviewStore(), "t", Guid.NewGuid());
 
     [Fact]
     public Task InMemory_DecisionMadeWhileTheCheckRuns_SurvivesAPassVerdict() =>
@@ -217,14 +275,14 @@ public sealed class DesignReviewStoreTests
             await using (var check = new SessionsDbContext(options))
             {
                 var checkStore = new EfDesignReviewStore(check);
-                await checkStore.EnsureAsync(DesignReview.New("tenant-a", board, raced, 7, 0, DesignReviewStatus.Pending));
+                await checkStore.EnsureAsync(DesignReview.New("tenant-a", board, raced, 7, 0, DesignReviewStatus.Pending) with { Shots = Shots });
                 (await checkStore.SaveVerdictAsync("tenant-a", raced, 0, new DesignVerdictUpdate(DesignReviewStatus.Checking)))!.Decision.ShouldBeNull();
                 await using (var owner = new SessionsDbContext(options))
                 {
                     await new EfDesignReviewStore(owner).DecideAsync("tenant-a", raced, 0,
                         new DesignOwnerDecision(DesignDecision.ChangesAsked, "Stack the form on the phone.", "Ann", DateTimeOffset.UtcNow));
                 }
-                await checkStore.SaveVerdictAsync("tenant-a", raced, 0, new DesignVerdictUpdate(DesignReviewStatus.Pass, "Looks right.", [], []));
+                await checkStore.SaveVerdictAsync("tenant-a", raced, 0, new DesignVerdictUpdate(DesignReviewStatus.Pass, "Looks right.", [], Shots));
             }
             await using (var read = new SessionsDbContext(options))
             {
@@ -237,6 +295,10 @@ public sealed class DesignReviewStoreTests
             await using (var db = new SessionsDbContext(options))
             {
                 await ADecisionFromAStalePage_KeepsTheVerdict(new EfDesignReviewStore(db), "tenant-a", board, Guid.NewGuid());
+            }
+            await using (var db = new SessionsDbContext(options))
+            {
+                await NoDecisionWithoutScreenshots_AndNewScreenshotsClearAnApproval(new EfDesignReviewStore(db), "tenant-a", board);
             }
 
             // The unique (tenant, task, run) index refuses a raw twin row.
@@ -254,7 +316,7 @@ public sealed class DesignReviewStoreTests
             await using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText = "SELECT count(*) FROM sessions.design_reviews";
-                ((long)(await cmd.ExecuteScalarAsync())!).ShouldBe(3L);   // tenant A's three reviews; never B's
+                ((long)(await cmd.ExecuteScalarAsync())!).ShouldBe(5L);   // tenant A's five reviews; never B's
             }
             var refused = await Should.ThrowAsync<PostgresException>(() => Exec(conn, $"""
                 INSERT INTO sessions.design_reviews ("Id","TenantId","BoardId","SessionId","IssueNumber","Run","Status","Summary","FindingsJson","ShotsJson","Retries","UpdatedAtUtc")

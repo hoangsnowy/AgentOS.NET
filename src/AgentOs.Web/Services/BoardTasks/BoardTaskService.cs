@@ -17,6 +17,7 @@ using AgentOs.Modules.Pipeline.Pipeline;
 using AgentOs.Modules.Pipeline.Sessions;
 using AgentOs.Modules.Sessions.Persistence;
 using AgentOs.Modules.Sessions.Persistence.Entities;
+using AgentOs.Modules.Tenants;
 using AgentOs.Modules.Workspaces.Persistence;
 using AgentOs.Modules.Workspaces.Persistence.Entities;
 using Microsoft.Extensions.DependencyInjection;
@@ -373,9 +374,12 @@ public sealed class BoardTaskService(
                 DesignOutcome.Changes => DesignReviewStatus.Changes,
                 _ => DesignReviewStatus.NeedsPerson,
             };
-            // The agent's side only: a decision the owner made while the check ran (Ask for changes / Approve) stands.
-            await reviews.SaveVerdictAsync(tenantId, review.SessionId, review.Run, new DesignVerdictUpdate(status, verdict.Summary, verdict.Findings,
-                screenshots.Select(s => s.Shot).ToList(), verdict.Error)).ConfigureAwait(false);
+            // The agent's side only: a decision the owner made while the check ran (Ask for changes / Approve) stands. The one
+            // exception is an approval recorded when the review had no screenshots at all — it was blind, and these are the
+            // first screens there are, so the store clears it (audited here).
+            var current = await reviews.GetAsync(tenantId, review.SessionId, review.Run).ConfigureAwait(false) ?? review;
+            await SaveVerdictClearingStaleApprovalAsync(scope, reviews, current, new DesignVerdictUpdate(status, verdict.Summary, verdict.Findings,
+                screenshots.Select(s => s.Shot).ToList(), verdict.Error), "it was made before there were any screenshots").ConfigureAwait(false);
             if (verdict.Ran)
             {
                 var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
@@ -428,6 +432,8 @@ public sealed class BoardTaskService(
     /// Autopilot merge it, <see cref="DesignDecision.ChangesAsked"/> sends <paramref name="note"/> back to the Coding agent
     /// (a fix round). Returns the stored review, or null when the task isn't found.
     /// </summary>
+    /// <exception cref="InvalidOperationException">The task's current change has no screenshots yet
+    /// (<see cref="DesignReview.NothingToDecideYet"/>) — nobody decides on a design they can't see.</exception>
     public async Task<DesignReview?> DecideDesignAsync(string tenantId, Guid sessionId, DesignDecision decision, string? note, string decidedBy,
         CancellationToken ct = default)
     {
@@ -441,15 +447,18 @@ public sealed class BoardTaskService(
             .FirstOrDefault(s => s.Id == sessionId);
         if (session is null || session.IssueNumber is not > 0) { return null; }
         var reviews = scope.ServiceProvider.GetRequiredService<IDesignReviewStore>();
-        var review = await reviews.EnsureAsync(
-            DesignReview.New(tenantId, session.WorkspaceId, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending), ct).ConfigureAwait(false);
-        return await DecideAsync(reviews, review, decision, note, decidedBy, ct).ConfigureAwait(false);
+        // No review yet = no screenshots yet: nothing to decide on (and no empty review is created just to hold a decision).
+        var review = await reviews.GetAsync(tenantId, session.Id, session.FixRounds, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException(DesignReview.NothingToDecideYet);
+        return await DecideAsync(reviews, review, decision, note, decidedBy, scope.ServiceProvider.GetService<IAuditLog>(), ct).ConfigureAwait(false);
     }
 
     /// <summary>The owner's decision on <paramref name="review"/> (also one shown without its task) — written by the
-    /// decision-only update, so a page that shows an older copy of the review never overwrites the agent's verdict.</summary>
+    /// decision-only update, so a page that shows an older copy of the review never overwrites the agent's verdict.
+    /// Refused while the review has no screenshots (the store checks the stored row too); audited when recorded.</summary>
+    /// <exception cref="InvalidOperationException">No screenshots yet (<see cref="DesignReview.NothingToDecideYet"/>).</exception>
     public static async Task<DesignReview?> DecideAsync(IDesignReviewStore reviews, DesignReview review, DesignDecision decision, string? note, string decidedBy,
-        CancellationToken ct = default)
+        IAuditLog? audit = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(reviews);
         ArgumentNullException.ThrowIfNull(review);
@@ -457,8 +466,38 @@ public sealed class BoardTaskService(
         {
             throw new ArgumentException("Say what should change.", nameof(note));
         }
-        return await reviews.DecideAsync(review.TenantId, review.SessionId, review.Run,
+        // The copy the person looked at had nothing to look at: refuse, even if screenshots landed since (they haven't seen them).
+        if (!review.CanDecide) { throw new InvalidOperationException(DesignReview.NothingToDecideYet); }
+        var stored = await reviews.DecideAsync(review.TenantId, review.SessionId, review.Run,
             new DesignOwnerDecision(decision, note, decidedBy, DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
+        if (stored is not null && audit is not null)
+        {
+            await audit.WriteAsync(new AuditEntry(Guid.NewGuid(), stored.TenantId, decidedBy, AuditActions.DesignDecided,
+                $"design of #{stored.IssueNumber} (run {stored.Run}, {stored.Shots.Count} screenshot(s)) — "
+                + (decision == DesignDecision.Approved ? "approved" : "changes asked"), null, null, DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
+        }
+        return stored;
+    }
+
+    // The agent's side of a review, saved — and when that cleared an earlier owner approval (new screenshots: it stands
+    // only on the screens it was given on), the clearing is audited and said on the task's feed. Best-effort audit.
+    private async Task<DesignReview?> SaveVerdictClearingStaleApprovalAsync(IServiceScope scope, IDesignReviewStore reviews, DesignReview before,
+        DesignVerdictUpdate update, string why)
+    {
+        var after = await reviews.SaveVerdictAsync(before.TenantId, before.SessionId, before.Run, update).ConfigureAwait(false);
+        if (before.Decision == DesignDecision.Approved && after is { Decision: null })
+        {
+            if (scope.ServiceProvider.GetService<IAuditLog>() is { } audit)
+            {
+                await audit.WriteAsync(new AuditEntry(Guid.NewGuid(), before.TenantId, null, AuditActions.DesignApprovalCleared,
+                    $"design of #{before.IssueNumber} (run {before.Run}) — approval by {before.DecidedBy ?? "the owner"} cleared: {why}",
+                    null, null, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            }
+            feed.Publish(new SessionRunEvent(before.TenantId, before.SessionId, SessionRunEventKind.Step,
+                $"#{before.IssueNumber}: new screenshots are in — the earlier design approval was cleared. Look at them and decide again.",
+                DateTimeOffset.UtcNow));
+        }
+        return after;
     }
 
     // The repository's design skill(s) from its default branch. Best-effort: none on any failure.
@@ -537,13 +576,15 @@ public sealed class BoardTaskService(
             if (capture is not null && allPassed && session.IssueNumber is > 0
                 && scope.ServiceProvider.GetService<IDesignReviewStore>() is { } reviews)
             {
-                // Same fix round = same code: a re-test refreshes the screenshots and waits for the Designer again, but an
-                // owner's decision on this round stands (narrow writes only).
+                // Same fix round = same code: a re-test refreshes the screenshots and waits for the Designer again. An
+                // owner's "Ask for changes" on this round stands; an earlier APPROVAL is cleared (audited) — it was made on
+                // other screens, or on none, and the owner decides on what they can see.
                 var fresh = shots.DistinctBy(s => s.Path, StringComparer.OrdinalIgnoreCase).ToList();
-                await reviews.EnsureAsync(DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending))
+                var before = await reviews.EnsureAsync(DesignReview.New(tenantId, board.Id, session.Id, session.IssueNumber.Value, session.FixRounds, DesignReviewStatus.Pending))
                     .ConfigureAwait(false);
-                await reviews.SaveVerdictAsync(tenantId, session.Id, session.FixRounds,
-                    new DesignVerdictUpdate(DesignReviewStatus.Pending, string.Empty, [], fresh)).ConfigureAwait(false);
+                await SaveVerdictClearingStaleApprovalAsync(scope, reviews, before,
+                    new DesignVerdictUpdate(DesignReviewStatus.Pending, string.Empty, [], fresh, NewCapture: true),
+                    $"the Testing agent took {fresh.Count} new screenshot(s)").ConfigureAwait(false);
                 feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step,
                     shots.Count > 0 ? $"{shots.Count} screenshot(s) ready for the design check." : "No screenshots came back — the design check will need you.",
                     DateTimeOffset.UtcNow));
