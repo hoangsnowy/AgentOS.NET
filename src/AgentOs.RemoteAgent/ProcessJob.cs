@@ -184,19 +184,15 @@ internal sealed partial class ProcessJob : IRunProcessTree
     {
         if (pids.Count == 0) { return []; }
         var wanted = new HashSet<int>(pids);
-        var all = Process.GetProcesses();
         var result = new List<RunProcess>(pids.Count);
-        try
+        foreach (var process in Process.GetProcesses())
         {
-            foreach (var p in all.Where(p => wanted.Contains(p.Id)))
+            using (process)
             {
-                try { result.Add(new RunProcess(p.Id, p.StartTime.ToUniversalTime(), p.ProcessName)); }
+                if (!wanted.Contains(process.Id)) { continue; }
+                try { result.Add(new RunProcess(process.Id, process.StartTime.ToUniversalTime(), process.ProcessName)); }
                 catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException) { _ = ex; } // exited
             }
-        }
-        finally
-        {
-            foreach (var p in all) { p.Dispose(); }
         }
         return result;
     }
