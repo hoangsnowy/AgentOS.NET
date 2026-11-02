@@ -454,15 +454,9 @@ internal static class ScopedWriteGuard
     internal static string? Resolve(string path, string cwd)
     {
         if (path.Length == 0) { return null; }
-        var p = path;
-        if (p == "~" || p.StartsWith("~/", StringComparison.Ordinal) || p.StartsWith("~\\", StringComparison.Ordinal))
-        {
-            p = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), p[1..]);
-        }
-        else
-        {
-            p = NormalizeCwd(p);
-        }
+        var p = IsHomePath(path)
+            ? Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[1..])
+            : NormalizeCwd(path);
         try
         {
             var baseDir = NormalizeCwd(cwd);
@@ -474,6 +468,9 @@ internal static class ScopedWriteGuard
             return null;
         }
     }
+
+    private static bool IsHomePath(string path) =>
+        path == "~" || path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal);
 
     // Windows: a Git Bash drive path ("/c" or "/c/Users/…") is "C:\…". Anything else is returned as it is.
     private static string NormalizeCwd(string path) =>

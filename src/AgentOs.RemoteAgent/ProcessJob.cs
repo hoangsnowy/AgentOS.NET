@@ -130,12 +130,7 @@ internal sealed partial class ProcessJob : IRunProcessTree
             lock (_roots) { pids = [.. _rootPids]; }
             if (!OperatingSystem.IsWindows()) { pids = Descendants(pids); }
         }
-        var result = new List<RunProcess>(pids.Count);
-        foreach (var pid in pids)
-        {
-            if (Describe(pid) is { } p) { result.Add(p); }
-        }
-        return result;
+        return [.. pids.Select(Describe).OfType<RunProcess>()];
     }
 
     /// <inheritdoc />

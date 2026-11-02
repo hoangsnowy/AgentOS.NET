@@ -130,7 +130,7 @@ internal static class RunCleanup
 
         var stoppedItself = false;
         int left;
-        try
+        using (tree) // force on the way out: whatever is still running goes
         {
             tree.Sample();
             var alive = tree.Members();
@@ -150,10 +150,6 @@ internal static class RunCleanup
                     ? "the app's orchestrator (Aspire DCP) stopped its containers itself"
                     : $"the app's orchestrator (Aspire DCP) did not stop within {options.GracefulWait.TotalSeconds:0} s — forcing");
             }
-        }
-        finally
-        {
-            tree.Dispose(); // force: whatever is still running goes
         }
         if (left > 0) { log($"stopped {left} process(es) the run left running"); }
 
@@ -188,18 +184,18 @@ internal static class RunCleanup
         [.. containers.Where(c => runProcesses.Any(p => p.Is(c.CreatorPid, c.CreatorStartedUtc)))];
 
     /// <summary>Parse <see cref="ListArgs"/> output (<c>id|name|pid|start</c> per line); unparsable lines are skipped.</summary>
-    internal static IReadOnlyList<DcpContainer> Parse(string output)
+    internal static IReadOnlyList<DcpContainer> Parse(string output) =>
+        [.. output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(ParseLine).OfType<DcpContainer>()];
+
+    private static DcpContainer? ParseLine(string line)
     {
-        var result = new List<DcpContainer>();
-        foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var parts = line.Split('|');
-            if (parts.Length != 4 || parts[0].Length == 0 || !parts[0].All(char.IsAsciiHexDigit)) { continue; }
-            if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)) { continue; }
-            if (!DateTimeOffset.TryParse(parts[3], CultureInfo.InvariantCulture, DateTimeStyles.None, out var started)) { continue; }
-            result.Add(new DcpContainer(parts[0], parts[1], pid, started.UtcDateTime));
-        }
-        return result;
+        var parts = line.Split('|');
+        if (parts.Length != 4 || parts[0].Length == 0 || !parts[0].All(char.IsAsciiHexDigit)) { return null; }
+        if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)) { return null; }
+        return DateTimeOffset.TryParse(parts[3], CultureInfo.InvariantCulture, DateTimeStyles.None, out var started)
+            ? new DcpContainer(parts[0], parts[1], pid, started.UtcDateTime)
+            : null;
     }
 
     // Console-safe: no control characters (a crafted container name can't forge a log line), bounded.
