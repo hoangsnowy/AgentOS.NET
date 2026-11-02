@@ -240,6 +240,11 @@ The owner's standing instructions. They apply to every change; the execution pla
   it on every circuit event.
 - **Blazor circuit handlers:** an inbound-activity handler must keep the circuit's dispatcher — `ConfigureAwait(true)`,
   never `false` (renderer thread affinity).
+- **A background process outlives its shell only outside the shell's job.** `Start-Process` / node
+  `spawn({ detached: true })` children stay in the caller's Windows job object, and a Claude Code session's tool shell
+  is killed with its job when the session ends — the lab and its runner died that way and Autopilot stalled silently.
+  Long-running lab processes start through `infra/lab/start-detached.ps1` (WMI `Win32_Process.Create`, env handed over
+  in memory, real pid in the pid file); see docs/LAB.md.
 - **Live agent runs on the lab without an API key:** `pwsh infra/lab/lab.ps1 pair` pairs this machine's `claude -p`
   (prompt mode, no YOLO) and forces RemoteAgent for the lab tenant; `unpair` reverts it. Live runs need
   `AGENTOS_E2E_RUN_TIMEOUT_SECONDS` (e.g. 1200) on the Workflow real-auth test.

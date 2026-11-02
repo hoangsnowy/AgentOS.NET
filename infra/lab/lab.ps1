@@ -12,6 +12,10 @@
         Keycloak https://labkc.dev.localhost:9080    MailHog http://localhost:9025
         Aspire   https://localhost:18050
 
+    The AppHost and the paired runner are started outside this shell's job object (start-detached.ps1, via WMI on
+    Windows), so they keep running when the shell — or the Claude Code session that ran it — ends. Their pids are in
+    .lab\apphost.pid / .lab\runner.pid; `down` / `unpair` stop them.
+
     Commands:
         up       create the worktree if needed, build, start in the background, wait until healthy
         update   stop, move the worktree to the latest origin/main (or -Ref), rebuild, start
@@ -43,6 +47,7 @@ $LabDir = [System.IO.Path]::GetFullPath($LabDir)
 $StateDir = Join-Path $LabDir '.lab'
 $PidFile = Join-Path $StateDir 'apphost.pid'
 $LogFile = Join-Path $StateDir 'apphost.log'
+$StartDetached = Join-Path $PSScriptRoot 'start-detached.ps1'
 $WebUrl = 'https://lab.dev.localhost:6180'
 $KeycloakUrl = 'https://labkc.dev.localhost:9080'
 
@@ -122,10 +127,10 @@ function Start-Lab {
     Write-Host 'Building lab…'
     dotnet build (Join-Path $LabDir 'infra/AgentOs.AppHost') -c Debug --nologo -v q
     if ($LASTEXITCODE -ne 0) { throw 'Lab build failed.' }
-    $p = Start-Process dotnet -PassThru -WindowStyle Hidden -WorkingDirectory $LabDir `
+    # Outside this shell's job object (start-detached.ps1): the lab must outlive the session that started it.
+    $null = & $StartDetached -FilePath dotnet -WorkingDirectory $LabDir `
         -ArgumentList @('run', '--project', 'infra/AgentOs.AppHost', '--launch-profile', 'lab', '--no-build') `
-        -RedirectStandardOutput $LogFile -RedirectStandardError "$LogFile.err"
-    $p.Id | Set-Content $PidFile
+        -StdOut $LogFile -StdErr "$LogFile.err" -PidFile $PidFile -Name 'apphost'
     Write-Host -NoNewline 'Waiting for the lab to be healthy'
     for ($i = 0; $i -lt 90; $i++) {
         if (Test-Web) { Write-Host ''; Sync-LabRealm; Show-Status; return }
@@ -188,6 +193,8 @@ switch ($Command) {
         $env:LAB_URL = $WebUrl
         $env:RUNNER_EXE = Join-Path $LabDir 'src/AgentOs.RemoteAgent/bin/Release/net10.0/AgentOs.RemoteAgent.exe'
         $env:STATE_DIR = $StateDir
+        # pair-runner.js starts the runner through start-detached.ps1 (so it outlives this shell) with this pwsh.
+        $env:LAB_PWSH = (Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
         if ($Data) { $env:REMOTE_AGENT_DATA = $Data; Write-Host "== Test data for the agents: $(($Data -split ';' | ForEach-Object { ($_ -split '=')[0] }) -join ', ')" }
         else { Remove-Item Env:REMOTE_AGENT_DATA -ErrorAction SilentlyContinue }
         & (Join-Path $pwDir 'node/win32_x64/node.exe') (Join-Path $PSScriptRoot 'pair-runner.js')

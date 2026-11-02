@@ -37,6 +37,31 @@ pwsh infra/lab/lab.ps1 status | logs | down
 pwsh infra/lab/lab.ps1 reset                   # wipe lab data (asks first)
 ```
 
+### The lab outlives the shell that started it
+
+`up` / `update` start the AppHost, and `pair` starts the runner, **outside the launching shell's job object**
+(`infra/lab/start-detached.ps1`), so closing that terminal — or ending the Claude Code session whose tool ran
+`lab.ps1` — leaves the lab and its runner running. Only `down` / `unpair` (or `update` / `pair`, which restart them)
+stop them.
+
+*Symptom this fixes — "the lab died with the session":* the desktop reports `down` in `lab.ps1 status`, the lab
+log just stops (no error, no shutdown lines), `.lab\apphost.pid` / `.lab\runner.pid` point at processes that no
+longer exist, and Autopilot quietly makes no progress — all from about the moment the session that last ran
+`lab.ps1 up | update | pair` ended. A child started with `Start-Process` or node's `spawn({ detached: true })` stays in
+its parent's Windows job object, and a session's tool shell runs in a job that is killed when the session ends; the
+AppHost (with its Aspire processes) and the runner went down with it. Recovery for an older checkout:
+`lab.ps1 up` then `lab.ps1 pair` from a terminal you keep open.
+
+How it works (Windows): the process is created through WMI (`Win32_Process.Create`), so its parent is `WmiPrvSE`
+and it is in none of the caller's jobs. A WMI-created process does not inherit the caller's environment, so the
+caller's whole environment block is handed over in that same call — in memory only: the runner's pairing token in
+it never appears on a command line or in a file. Output redirection lives in a generated launcher,
+`.lab\<name>.launch.cmd` (working directory, command, log paths — no environment values), run by a hidden `cmd.exe`;
+the pid files hold the real `dotnet` / `AgentOs.RemoteAgent` pid (the launcher's child), so `status`, `down`,
+`update`, `pair`, `unpair` and `reset` work as before and `down` still kills the AppHost's whole process tree. Without
+WMI (not Windows) `lab.ps1` falls back to `Start-Process` and `pair` to node's detached spawn, which do not survive a
+job that kills its processes.
+
 ## One-time setup (you)
 
 Run the `dotnet user-secrets` commands **in your own terminal** — not in the AI chat (not even with `!`),
@@ -87,8 +112,9 @@ pwsh infra/lab/lab.ps1 unpair   # stop it and its Try-the-app previews (disconne
 ```
 
 `pair` signs in to the lab as the seeded operator, registers a runner, sets **Force provider = RemoteAgent**
-for the lab tenant and starts the runner in the background (log: `.lab/runner.log`). The pairing token goes
-straight into the runner's environment — it is never printed or written to disk. Runs use your Claude
+for the lab tenant and starts the runner in the background, outside the shell's job so it keeps running when the
+session ends (log: `.lab/runner.log`, see [above](#the-lab-outlives-the-shell-that-started-it)). The pairing token
+goes straight into the runner's environment — it is never printed or written to disk. Runs use your Claude
 subscription through `claude -p` in prompt mode (no `--dangerously-skip-permissions`); a server-driven shell
 command outside the runner allowlist is denied.
 
