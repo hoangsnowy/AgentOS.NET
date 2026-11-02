@@ -73,15 +73,25 @@ public sealed class RemoteAgentHub : Hub
         var identity = await _runners.FindForPairingAsync(runnerId, Context.ConnectionAborted).ConfigureAwait(false);
         if (identity is null
             || string.Equals(identity.Status, "Revoked", StringComparison.Ordinal)
-            || !_pairing.Verify(presentedToken, identity.TokenHash))
+            || !_pairing.Verify(presentedToken, identity.TokenHash)
+            || _broker.IsRevoked(identity.RunnerId))   // revoked here after its row was read (GAP-04)
         {
             Context.Abort();
             return;
         }
 
+        // The abort callback lets a revoke cut this connection off at once (GAP-04) instead of at its next handshake.
+        var context = Context;
         Registrations[Context.ConnectionId] = _broker.RegisterRunner(
             Context.ConnectionId,
-            new RunnerConnection(identity.RunnerId, identity.TenantId, identity.OwnerUserId));
+            new RunnerConnection(identity.RunnerId, identity.TenantId, identity.OwnerUserId),
+            abort: context.Abort);
+        // A revoke that landed between the check above and the registration: the broker refused it and aborted the
+        // connection — nothing to mark paired.
+        if (_broker.IsRevoked(identity.RunnerId))
+        {
+            return;
+        }
 
         // Promote Pending → Paired now that the token has been verified, so the Runners table reflects
         // reality: before this, a machine that connected successfully still read "Pending" forever and
