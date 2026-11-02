@@ -69,7 +69,9 @@ public class ProcessJobTests
         else
         {
             psi.ArgumentList.Add("-c");
-            psi.ArgumentList.Add("sleep 120 & echo $!; sleep 60");
+            // `wait` reaps the child once it is killed (a killed child its parent never reaps stays a zombie, which still
+            // "runs" by pid); the shell itself then keeps running.
+            psi.ArgumentList.Add("sleep 120 & echo $!; wait; sleep 60");
         }
 
         using var job = ProcessJob.Create();

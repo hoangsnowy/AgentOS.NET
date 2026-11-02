@@ -544,7 +544,9 @@ internal static class ScopedWriteGuard
     {
         static string Quote(string path) => "\"" + path.Replace('\\', '/') + "\"";
         var exe = processPath ?? "AgentOs.RemoteAgent";
-        return string.Equals(Path.GetFileNameWithoutExtension(exe), "dotnet", StringComparison.OrdinalIgnoreCase) && entryAssemblyPath is { Length: > 0 }
+        // Either separator: a Windows path must read the same on any OS (Path only splits on '/' off Windows).
+        var name = Path.GetFileNameWithoutExtension(exe[(exe.LastIndexOfAny(['/', '\\']) + 1)..]);
+        return string.Equals(name, "dotnet", StringComparison.OrdinalIgnoreCase) && entryAssemblyPath is { Length: > 0 }
             ? Quote(exe) + " " + Quote(entryAssemblyPath) + " guard"
             : Quote(exe) + " guard";
     }
