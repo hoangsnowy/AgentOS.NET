@@ -169,9 +169,10 @@ public sealed partial class ProjectOrchestrator
     internal static string ClosedByAgent(string reason) =>
         $"Closing — {reason}\n\n<sub>Closed by the AgentOS.NET Orchestrator agent: everything this ticket covers is delivered. Reopen it if anything is missing.</sub>\n";
 
-    private readonly ConcurrentDictionary<(Guid Board, int Issue), (DateTimeOffset At, string Body)> _epicBodies = new();
+    private readonly ConcurrentDictionary<(Guid Board, int Issue), (DateTimeOffset At, string Body, string Decisions)> _epicBodies = new();
 
-    // Open umbrella tickets (labelled for a person) with their text — read at most every 10 minutes each.
+    // Open umbrella tickets (labelled for a person) with their text and the maintainer decisions in their comments — read
+    // at most every 10 minutes each, body and comments in one call.
     private async Task<List<OrchestratorEpic>> EpicsAsync(WorkspaceEntity board, string tenant, string pat, IReadOnlyList<BoardTicket> tickets,
         IServiceProvider sp, CancellationToken ct)
     {
@@ -184,20 +185,23 @@ public sealed partial class ProjectOrchestrator
             var number = t.Number.GetValueOrDefault();
             if (!_epicBodies.TryGetValue((board.Id, number), out var cached) || DateTimeOffset.UtcNow - cached.At > TimeSpan.FromMinutes(10))
             {
-                string body;
+                TicketContent ticket;
                 try
                 {
-                    body = await provider.ReadTicketBodyAsync(BoardTaskService.RepoDescriptor(board, tenant, t.RepoOwner!, t.RepoName!, "main", pat), number, ct)
-                        .ConfigureAwait(false) ?? "";
+                    var max = sp.GetService<AgentOs.Domain.Configuration.ISettings>() is { } settings
+                        ? await AutopilotSettings.ReadTicketDiscussionCommentsAsync(settings, tenant, ct).ConfigureAwait(false)
+                        : TicketDiscussion.DefaultMaxComments;
+                    ticket = await provider.ReadTicketAsync(BoardTaskService.RepoDescriptor(board, tenant, t.RepoOwner!, t.RepoName!, "main", pat), number, max, ct)
+                        .ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or Octokit.ApiException or InvalidOperationException or TaskCanceledException)
                 {
                     continue;
                 }
-                cached = (DateTimeOffset.UtcNow, body);
+                cached = (DateTimeOffset.UtcNow, ticket.Body ?? "", TicketDiscussion.MaintainerDigest(ticket.Comments, 1_500));
                 _epicBodies[(board.Id, number)] = cached;
             }
-            epics.Add(new OrchestratorEpic(number, t.Title, cached.Body));
+            epics.Add(new OrchestratorEpic(number, t.Title, cached.Body) { Decisions = cached.Decisions });
         }
         return epics;
     }
@@ -268,9 +272,7 @@ public sealed partial class ProjectOrchestrator
                 {
                     continue;
                 }
-                var closed = await prs.CloseAsync(desc, open.Number,
-                    $"Superseded by #{known.Pr} — a later attempt at #{issue}.\n\n<sub>Closed by the AgentOS.NET Orchestrator: an earlier attempt's pull request that a newer one replaces.</sub>\n",
-                    ct).ConfigureAwait(false);
+                var closed = await prs.CloseAsync(desc, open.Number, SupersededComment(known.Pr, issue), ct).ConfigureAwait(false);
                 if (closed) { log.Add(board.TenantId, board.Id, $"Closed PR #{open.Number}: an earlier attempt at #{issue}, superseded by #{known.Pr}."); }
             }
         }
@@ -351,10 +353,17 @@ public sealed partial class ProjectOrchestrator
     {
         if (session.IssueNumber is not { } issue || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName)) { return; }
         var repo = BoardTaskService.RepoDescriptor(board, board.TenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat);
-        await sp.GetRequiredService<IPrCreationService>().CommentAsync(repo, issue,
-            $"### ❓ AgentOS.NET needs you\n\n{question}\n\n<sub>Asked by the AgentOS.NET Orchestrator agent. Answer here or in the task, then press Try again.</sub>\n",
-            ct).ConfigureAwait(false);
+        await sp.GetRequiredService<IPrCreationService>().CommentAsync(repo, issue, QuestionComment(question), ct).ConfigureAwait(false);
     }
+
+    /// <summary>The comment that asks a person a question on a ticket — signed, so the agents' view of the ticket's discussion
+    /// (<see cref="TicketDiscussion"/>) keeps it only as context for the answer, never as a person's word.</summary>
+    internal static string QuestionComment(string question) =>
+        $"{TicketDiscussion.QuestionHeading}\n\n{question}\n\n<sub>Asked by the AgentOS.NET Orchestrator agent. Answer here or in the task, then press Try again.</sub>\n";
+
+    /// <summary>The comment on an earlier attempt's pull request that a newer one replaces.</summary>
+    internal static string SupersededComment(int newerPr, int issue) =>
+        $"Superseded by #{newerPr} — a later attempt at #{issue}.\n\n<sub>Closed by the AgentOS.NET Orchestrator: an earlier attempt's pull request that a newer one replaces.</sub>\n";
 
     internal static string Signature(IEnumerable<string> moves, IEnumerable<string> stuck, int freeSlots)
     {

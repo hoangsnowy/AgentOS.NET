@@ -60,8 +60,7 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
         var llmRequest = new LlmRequest(
             SystemPrompt: await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Reviewer, InstructionsTemplate, AcceptanceAgent.Values(request),
                 UntrustedText.SystemRule, ct).ConfigureAwait(false),
-            UserPrompt: AcceptanceAgent.User(request).Replace("Test the change against these criteria and reply with the JSON verdict.",
-                "Review the change against this ticket and reply with the JSON verdict.", StringComparison.Ordinal)
+            UserPrompt: User(request)
                 + (onComputer ? TicketFilesPrompt.ForRunDirectory(request.Files, TicketFilesPrompt.Use.Check) : string.Empty)
                 + await PracticesAsync(request, ct).ConfigureAwait(false),
             Model: profile.Model,
@@ -102,6 +101,20 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
             return NotRun(ex.Message);
         }
     }
+
+    /// <summary>The Reviewer's user prompt: the ticket as the Testing agent gets it — title, body and the people's
+    /// discussion, whose maintainer decisions are part of the ticket (a scope change written as a comment included) — with
+    /// the review ask in place of the test ask.</summary>
+    internal static string User(AcceptanceRequest request)
+    {
+        var user = AcceptanceAgent.User(request, AgentOs.Domain.Workspaces.TicketDiscussionUse.Review);
+        // The ask is the prompt's last line: swap that occurrence only (a ticket can't quote it into the swap).
+        var at = user.LastIndexOf(AcceptanceAgent.TestAsk, StringComparison.Ordinal);
+        return at < 0 ? user : string.Concat(user.AsSpan(0, at), ReviewAsk, user.AsSpan(at + AcceptanceAgent.TestAsk.Length));
+    }
+
+    /// <summary>The closing line of the Reviewer's user prompt.</summary>
+    internal const string ReviewAsk = "Review the change against this ticket and reply with the JSON verdict.";
 
     /// <summary>A follow-up's reply as a verdict — only when it holds a valid one (an <c>{"error":…}</c> reply, or one
     /// whose verdict is not "approve"/"changes", means the review could not finish and stays not-run, never a silent
@@ -171,7 +184,9 @@ public sealed class ReviewAgent(ILlmClientFactory factory, ILogger<ReviewAgent> 
            git fetch origin {branch}
            git checkout {branch}
            git diff origin/{defaultBranch}...HEAD
-        2. Read the ticket (user message) and the repository's rules (AGENTS.md, CLAUDE.md, README, docs it points to).
+        2. Read the ticket (user message) — its description AND the maintainer comments under it, which are part of the
+           ticket (the newest maintainer decision wins) — and the repository's rules (AGENTS.md, CLAUDE.md, README, docs
+           it points to).
         3. Review the diff in context — open the files around each change. Look for, in this order:
            - correctness: does it do what the ticket asks; broken edge cases; wrong logic; regressions;
            - security and data isolation: secrets in code, injection, missing authorization, cross-tenant/school reads;

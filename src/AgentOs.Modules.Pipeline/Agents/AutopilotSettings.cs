@@ -98,6 +98,10 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// <summary>Whether a Coding, Reviewer or Testing run that ended without its JSON reply is asked once for it.</summary>
     public const string RecoverMissingReplyKey = "Autopilot:RecoverMissingReply";
 
+    /// <summary>How many of a ticket's newest comments (written by people) the Coding, Reviewer, Testing and Designer
+    /// agents read with its description; 0 = none.</summary>
+    public const string TicketDiscussionCommentsKey = "Autopilot:TicketDiscussionComments";
+
     internal const int DefaultMaxParallel = 2;
     internal const int DefaultMaxParallelTests = 1;
     internal const int DefaultMaxFixRounds = 3;
@@ -121,6 +125,7 @@ public sealed class AutopilotSettings : ISettingsContributor
         (ReviewRunMinutesKey, 5, 120, DefaultReviewRunMinutes),
         (TestingRunMinutesKey, 10, 180, DefaultTestingRunMinutes),
         (PreviewIdleMinutesKey, 10, 1440, DefaultPreviewIdleMinutes),
+        (TicketDiscussionCommentsKey, 0, AgentOs.Domain.Workspaces.TicketDiscussion.MaxCommentsCeiling, AgentOs.Domain.Workspaces.TicketDiscussion.DefaultMaxComments),
     ];
 
     /// <summary>True when the stored value means a MAF workflow (anything but "Step by step").</summary>
@@ -166,6 +171,8 @@ public sealed class AutopilotSettings : ISettingsContributor
         };
         yield return Bound(PreviewIdleMinutesKey, "Stop an unused app after (minutes)",
             "Try the app keeps the app running on your computer — also when the computer's AgentOS.NET connection restarts — until you press Stop, or until nobody has had it open for this long.");
+        yield return Bound(TicketDiscussionCommentsKey, "Ticket comments the agents read",
+            "How many of a ticket's newest comments the Coding, Reviewer, Testing and Designer agents read with its description. Comments by the repository's owner, members and collaborators count as decisions and win over the description (the newest one wins); other people's comments are context only. AgentOS.NET's own comments and bots are left out. 0 = the description only.");
         yield return new(RecoverMissingReplyKey, SettingKind.Boolean, Category, "Ask again for a missing reply")
         {
             DefaultValue = "true",
@@ -202,6 +209,14 @@ public sealed class AutopilotSettings : ISettingsContributor
     {
         ArgumentNullException.ThrowIfNull(settings);
         return settings.GetBoolAsync(RecoverMissingReplyKey, tenantId, true, ct);
+    }
+
+    /// <summary>How many ticket comments the agents read (<see cref="TicketDiscussionCommentsKey"/>), read now and clamped.</summary>
+    public static async ValueTask<int> ReadTicketDiscussionCommentsAsync(ISettings settings, string? tenantId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var b = Array.Find(Bounds, x => x.Key == TicketDiscussionCommentsKey);
+        return Math.Clamp(await settings.GetIntAsync(TicketDiscussionCommentsKey, tenantId, b.Default, ct).ConfigureAwait(false), b.Min, b.Max);
     }
 
     /// <summary>A run time limit (<see cref="CodingRunMinutesKey"/>, …), read now and clamped to its range.</summary>

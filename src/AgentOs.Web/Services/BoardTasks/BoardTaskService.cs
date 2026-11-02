@@ -263,14 +263,17 @@ public sealed class BoardTaskService(
             var sessRepo = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
             var reviewer = scope.ServiceProvider.GetRequiredService<IReviewAgent>();
             var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
-            var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            var ticket = await ReadTicketAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
             var ticketFiles = await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false);
             foreach (var change in changes)
             {
                 var repoLabel = $"{change.Owner}/{change.Repo}";
+                // The Reviewer judges against the body AND the maintainer decisions in the comments (a scope change written
+                // as a comment is part of the ticket — VNChess #108, 2026-11).
                 var verdict = await reviewer.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
                     new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
-                    session.IssueNumber ?? 0, session.Title, body, cliProfile) { Files = ticketFiles }, stopLease.Token).ConfigureAwait(false);
+                    session.IssueNumber ?? 0, session.Title, ticket.Body ?? "", cliProfile) { Files = ticketFiles, Discussion = ticket.Comments },
+                    stopLease.Token).ConfigureAwait(false);
                 if (!verdict.Ran)
                 {
                     await sessRepo.UpdateRepoRunResultAsync(tenantId, change.Id, "Done", change.BranchName, change.PrUrl, null).ConfigureAwait(false);
@@ -362,11 +365,12 @@ public sealed class BoardTaskService(
                 .Select(f => new DesignScreenshot(described.TryGetValue(f.Info.Path, out var shot) ? shot : DesignShot.FromPath(f.Info.Path), f.Content, f.Info.ContentType))
                 .OrderBy(s => s.Shot.Screen, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.Shot.IsPhone ? 0 : 1).ThenBy(s => s.Shot.IsDark ? 1 : 0)
                 .ToList();
-            var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            var ticket = await ReadTicketAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
             var skills = await ReadDesignSkillsAsync(scope, board, tenantId, primary, pat).ConfigureAwait(false);
             var verdict = await designer.RunAsync(new DesignRequest(session.Id, tenantId, session.MemberUserId,
                 new WorkRepo(primary.Id, primary.Owner, primary.Repo, primary.DefaultBranch, primary.BranchName),
-                session.IssueNumber ?? 0, session.Title, body, screenshots, cliProfile) { DesignSkills = skills }, stopLease.Token).ConfigureAwait(false);
+                session.IssueNumber ?? 0, session.Title, ticket.Body ?? "", screenshots, cliProfile) { DesignSkills = skills, Discussion = ticket.Comments },
+                stopLease.Token).ConfigureAwait(false);
 
             var status = !verdict.Ran ? DesignReviewStatus.NotRun : verdict.Outcome switch
             {
@@ -533,7 +537,7 @@ public sealed class BoardTaskService(
                 : (await AgentOs.Modules.Pipeline.Agents.AutopilotSettings.ReadLimitsAsync(settings, tenantId, stopLease.Token).ConfigureAwait(false)).MaxParallelTests;
             using var _slot = await _testGate.EnterAsync(tenantId + "/" + session.MemberUserId, testCap, stopLease.Token).ConfigureAwait(false);
             var prs = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
-            var body = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false) ?? "";
+            var ticket = await ReadTicketAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
             var ticketFiles = await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false);
             var shots = new List<DesignShot>();
             var allPassed = changes.Count > 0;
@@ -542,9 +546,11 @@ public sealed class BoardTaskService(
                 var repoLabel = $"{change.Owner}/{change.Repo}";
                 var verdict = await tester.RunAsync(new AcceptanceRequest(session.Id, tenantId, session.MemberUserId,
                     new WorkRepo(change.Id, change.Owner, change.Repo, change.DefaultBranch, change.BranchName),
-                    session.IssueNumber ?? 0, session.Title, body, cliProfile)
+                    session.IssueNumber ?? 0, session.Title, ticket.Body ?? "", cliProfile)
                 {
                     Files = ticketFiles,
+                    // The acceptance criteria as the maintainer decisions in the comments change them.
+                    Discussion = ticket.Comments,
                     // Each repo's screenshots under its own folder of the task's design scope — two repos never overwrite each other.
                     Design = capture is null ? null : capture with { PathPrefix = DesignCapture.PrefixFor(change.Id) },
                 }, stopLease.Token).ConfigureAwait(false);
@@ -747,7 +753,7 @@ public sealed class BoardTaskService(
 
             var agent = scope.ServiceProvider.GetRequiredService<IIssueWorkAgent>();
             var prService = scope.ServiceProvider.GetRequiredService<IPrCreationService>();
-            var issueBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
+            var ticket = await ReadTicketAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
             var ticketFiles = await TicketFilesAsync(scope, tenantId, session).ConfigureAwait(false);
             if (ticketFiles.Count > 0)
             {
@@ -773,7 +779,7 @@ public sealed class BoardTaskService(
                 Repos: workRepos,
                 IssueNumber: session.IssueNumber ?? 0,
                 IssueTitle: session.Title,
-                IssueBody: issueBody ?? "",
+                IssueBody: ticket.Body ?? "",
                 TicketKind: session.TicketKind ?? "Issue",
                 ProviderOverride: session.RunOnMachine ? "RemoteAgent" : null,
                 CliProfile: session.RunOnMachine ? cliProfile : null,
@@ -781,6 +787,8 @@ public sealed class BoardTaskService(
                 ChangeRequest: change)
             {
                 Files = ticketFiles,
+                // The product owner's decisions in the ticket's comments (the newest maintainer comment wins over the body).
+                Discussion = ticket.Comments,
                 // A run whose summary had to be asked for again counts only when its branch reached the remote; the
                 // board's credentials stay here.
                 BranchExists = (r, branch, ct) => prService.BranchExistsAsync(
@@ -989,8 +997,8 @@ public sealed class BoardTaskService(
             Publish(SessionRunEventKind.Step, "The files attached to this ticket are used by runs on a computer — the Thorough engine works on our servers without them.", repoLabel);
         }
 
-        var ticketBody = await ReadTicketBodyAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
-        var story = IssueToStoryAdapter.ToUserStory(session.Title, ticketBody, QualityNMax());
+        var ticket = await ReadTicketAsync(scope, board, tenantId, session, pat).ConfigureAwait(false);
+        var story = IssueToStoryAdapter.ToUserStory(session.Title, ticket.Body, QualityNMax(), discussion: ticket.Comments);
 
         // E0.7: the repo's own agent instructions guide every agent of this run; the feed says which files were used.
         var guidance = await ReadRepoGuidanceAsync(scope, board, tenantId, primary, pat).ConfigureAwait(false);
@@ -1068,29 +1076,53 @@ public sealed class BoardTaskService(
             string.IsNullOrWhiteSpace(defaultBranch) ? "main" : defaultBranch, pat);
     }
 
-    // The ticket's CURRENT body (third-party text — the agent prompts fence it as untrusted data). Best-effort: null on
-    // any failure, and the run proceeds on the title alone.
-    private static async Task<string?> ReadTicketBodyAsync(
+    // The ticket's CURRENT body and its human discussion — the newest comments people wrote (Settings › Autopilot ›
+    // "Ticket comments the agents read"), AgentOS.NET's own and bots' left out (TicketDiscussion.ForAgents). Both are
+    // third-party text: the agent prompts fence them as untrusted data, and only maintainer comments get precedence over
+    // the body. The feed says what was read (≈ tokens) or why the comments weren't. Best-effort: an empty ticket on any
+    // failure, and the run proceeds on the title alone.
+    private async Task<TicketContent> ReadTicketAsync(
         IServiceScope scope, WorkspaceEntity board, string tenantId, RemoteSessionEntity session, string pat)
     {
         if (session.IssueNumber is not > 0 || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName))
         {
-            return null;
+            return TicketContent.BodyOnly(null);
         }
         var resolver = scope.ServiceProvider.GetRequiredService<ISourceProviderResolver>();
         if (!resolver.TryResolve(board.Kind, out var provider) || provider is null)
         {
-            return null;
+            return TicketContent.BodyOnly(null);
         }
         var repo = RepoDescriptor(board, tenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat);
         try
         {
-            return await provider.ReadTicketBodyAsync(repo, session.IssueNumber.Value).ConfigureAwait(false);
+            var settings = scope.ServiceProvider.GetService<AgentOs.Domain.Configuration.ISettings>();
+            var max = settings is null ? TicketDiscussion.DefaultMaxComments
+                : await AgentOs.Modules.Pipeline.Agents.AutopilotSettings.ReadTicketDiscussionCommentsAsync(settings, tenantId).ConfigureAwait(false);
+            var ticket = await provider.ReadTicketAsync(repo, session.IssueNumber.Value, max).ConfigureAwait(false);
+            var discussion = TicketDiscussion.ForAgents(ticket.Comments, max);
+            if (DiscussionLine(session.IssueNumber.Value, discussion, ticket.CommentsNote) is { } line)
+            {
+                feed.Publish(new SessionRunEvent(tenantId, session.Id, SessionRunEventKind.Step, line, DateTimeOffset.UtcNow));
+            }
+            return ticket with { Comments = discussion };
         }
         catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or Octokit.ApiException or InvalidOperationException or TaskCanceledException)
         {
-            return null;
+            return TicketContent.BodyOnly(null);
         }
+    }
+
+    /// <summary>What the task's feed says about the discussion an agent got: how many comments, how many are maintainer
+    /// decisions, and their estimated size (≈, an estimate — the run's real usage is metered as it runs). The provider's
+    /// note when the comments couldn't be read; null when there is nothing to say.</summary>
+    internal static string? DiscussionLine(int issueNumber, IReadOnlyList<TicketDiscussionComment> discussion, string? note)
+    {
+        if (discussion.Count == 0) { return note; }
+        var maintainers = discussion.Count(c => c.Role == TicketCommentRole.Maintainer);
+        var tokens = TicketDiscussion.EstimateTokens(TicketDiscussion.PromptBlock(issueNumber, discussion, TicketDiscussionUse.Implement));
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"The agent reads {discussion.Count} comment(s) from the ticket's discussion ({maintainers} by maintainers — they count like the ticket, the newest wins; ≈{tokens} tokens).");
     }
 
     // Ticket files (ADR-0015): what a person attached to this task's ticket, sent with every run of it. Best-effort: a

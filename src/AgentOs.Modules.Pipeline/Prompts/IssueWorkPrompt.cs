@@ -163,9 +163,9 @@ internal static class IssueWorkPrompt
         {4}
 
         Ticket #{3} — description:
-        {5}
+        {5}{6}
 
-        {6}
+        {7}
         """,
         repo.Owner,
         repo.Repo,
@@ -175,6 +175,8 @@ internal static class IssueWorkPrompt
         string.IsNullOrWhiteSpace(req.IssueBody)
             ? "(no description provided)"
             : UntrustedText.Wrap("ticket-body", req.IssueBody),
+        // The product owner's decisions in the ticket's comments (newest maintainer comment wins over the body).
+        AgentOs.Domain.Workspaces.TicketDiscussion.PromptBlock(req.IssueNumber, req.Discussion, AgentOs.Domain.Workspaces.TicketDiscussionUse.Implement),
         Instruction(req, repo));
 
     // Ask for changes: the branch of the open pull request, checked out instead of a new one.

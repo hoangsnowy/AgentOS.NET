@@ -17,6 +17,7 @@ using AgentOs.Domain.Files;
 using AgentOs.Domain.Llm;
 using AgentOs.Domain.Memory;
 using AgentOs.Domain.Sessions;
+using AgentOs.Domain.Workspaces;
 using AgentOs.Modules.Pipeline.Prompts;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -203,8 +204,9 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
            git fetch origin {branch}
            git checkout {branch}
            (default branch: {defaultBranch})
-        2. Read the ticket (user message), the repository's agent instructions (AGENTS.md, CLAUDE.md, README) and
-           docs/ACCEPTANCE.md if present — criterion IDs such as F-4 or LIB-1 refer to it.
+        2. Read the ticket (user message) — its description AND the maintainer comments under it, which change its
+           criteria (the newest maintainer decision wins) — the repository's agent instructions (AGENTS.md, CLAUDE.md,
+           README) and docs/ACCEPTANCE.md if present — criterion IDs such as F-4 or LIB-1 refer to it.
         3. Build and run the unit tests the way the repository does (e.g. `dotnet build` + `dotnet test`,
            `npm ci` + `npm test` in each web folder).
         4. Check EVERY acceptance criterion of the ticket the way the criterion says — a Playwright spec, an
@@ -226,7 +228,12 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
         "result" is one of "pass", "fail", "not-checked".
         """;
 
-    internal static string User(AcceptanceRequest r) => string.Format(
+    /// <summary>The closing line of the Testing agent's user prompt (the Reviewer agent swaps it for its own).</summary>
+    internal const string TestAsk = "Test the change against these criteria and reply with the JSON verdict.";
+
+    /// <summary>The user prompt: the ticket — title, body and the people's discussion (the maintainer decisions in it
+    /// change the criteria) — then <see cref="TestAsk"/>. <paramref name="use"/> picks the discussion's closing rule.</summary>
+    internal static string User(AcceptanceRequest r, TicketDiscussionUse use = TicketDiscussionUse.Test) => string.Format(
         CultureInfo.InvariantCulture,
         """
         Repository: {0}/{1}  — proposed change on branch `{2}` for ticket #{3}.
@@ -235,13 +242,15 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
         {4}
 
         Ticket #{3} — description and acceptance criteria:
-        {5}
+        {5}{6}
 
-        Test the change against these criteria and reply with the JSON verdict.
+        {7}
         """,
         r.Repo.Owner, r.Repo.Repo, r.Repo.ExistingBranch, r.IssueNumber,
         UntrustedText.Wrap("ticket-title", r.IssueTitle, maxChars: 512),
-        string.IsNullOrWhiteSpace(r.IssueBody) ? "(no description provided)" : UntrustedText.Wrap("ticket-body", r.IssueBody));
+        string.IsNullOrWhiteSpace(r.IssueBody) ? "(no description provided)" : UntrustedText.Wrap("ticket-body", r.IssueBody),
+        TicketDiscussion.PromptBlock(r.IssueNumber, r.Discussion, use),
+        TestAsk);
 
     /// <summary>Reads the agent's JSON verdict (the last JSON object in the reply). A pass is only trusted when no
     /// criterion failed — a "pass" verdict with a failing criterion is a fail.</summary>

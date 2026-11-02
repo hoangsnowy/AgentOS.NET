@@ -81,6 +81,36 @@ public sealed class GitHubLabTests
     }
 
     [Fact]
+    public async Task ReadTicket_ReturnsBodyAndPeoplesComments_WithAuthority_AndCleansUp()
+    {
+        // The agents read the ticket's discussion: one GraphQL call returns the body and the newest comments with each
+        // author's association. A comment by the token's owner is a maintainer decision; an AgentOS.NET-signed one (posted
+        // with the same token) is left out. Both comments are deleted afterwards — zero residue.
+        SkipUnlessConfigured();
+        var marker = "lab-discussion-" + Guid.NewGuid().ToString("N")[..6];
+        var octo = Octo();
+        var person = await octo.Issue.Comment.Create(LabConfig.GitHubOwner, LabConfig.GitHubRepo, 1, $"Decision ({marker}): ship it free.");
+        var signed = await octo.Issue.Comment.Create(LabConfig.GitHubOwner, LabConfig.GitHubRepo, 1,
+            $"Thanks — {marker}\n\n<sub>Posted by the AgentOS.NET Orchestrator agent after your answer.</sub>\n");
+        try
+        {
+            var ticket = await _github.ReadTicketAsync(Repo(), 1, TicketDiscussion.DefaultMaxComments);
+
+            ticket.CommentsNote.ShouldBeNull();
+            ticket.Body.ShouldNotBeNull().ShouldContain("ship free");
+            var kept = TicketDiscussion.ForAgents(ticket.Comments).Where(c => c.Body.Contains(marker, StringComparison.Ordinal)).ToList();
+            var decision = kept.ShouldHaveSingleItem();
+            decision.Role.ShouldBe(TicketCommentRole.Maintainer);
+            TicketDiscussion.IsMaintainerAssociation(decision.AuthorAssociation).ShouldBeTrue(decision.AuthorAssociation);
+        }
+        finally
+        {
+            await octo.Issue.Comment.Delete(LabConfig.GitHubOwner, LabConfig.GitHubRepo, person.Id);
+            await octo.Issue.Comment.Delete(LabConfig.GitHubOwner, LabConfig.GitHubRepo, signed.Id);
+        }
+    }
+
+    [Fact]
     public async Task EnsureLabels_IsIdempotent_AndCleansUp()
     {
         SkipUnlessConfigured();

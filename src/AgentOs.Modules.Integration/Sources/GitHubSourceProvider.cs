@@ -223,6 +223,32 @@ public sealed class GitHubSourceProvider : ISourceProvider
         }
     }
 
+    /// <summary>The note when GitHub wouldn't give the comments (the body still came through REST).</summary>
+    internal const string CommentsUnreadableNote =
+        "The ticket's comments couldn't be read from GitHub — the agents work from its description only this time.";
+
+    // Body + newest comments in one GraphQL call. More comments are asked for than the agents read (3×, at most 100):
+    // AgentOS.NET's own comments and bots' are dropped afterwards and must not crowd out a person's.
+    public async Task<TicketContent> ReadTicketAsync(WorkspaceDescriptor repo, int number, int maxComments, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(repo);
+        if (number <= 0) { return TicketContent.BodyOnly(null); }
+        if (maxComments <= 0)
+        {
+            return TicketContent.BodyOnly(await ReadTicketBodyAsync(repo, number, cancellationToken).ConfigureAwait(false));
+        }
+        try
+        {
+            return await GitHubProjectsClient.ReadTicketAsync(repo, number, Math.Min(maxComments * 3, GitHubProjectsClient.MaxCommentsPerRead), cancellationToken)
+                .ConfigureAwait(false) ?? TicketContent.BodyOnly(null);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or System.Text.Json.JsonException)
+        {
+            // GraphQL refused (an Enterprise server without it, a token scope) — the body alone, over REST, and the feed says so.
+            return TicketContent.BodyOnly(await ReadTicketBodyAsync(repo, number, cancellationToken).ConfigureAwait(false), CommentsUnreadableNote);
+        }
+    }
+
     // ── Writes (bootstrap) ───────────────────────────────────────────────────────────────────────
 
     public async Task<LabelSyncResult> EnsureLabelsAsync(WorkspaceDescriptor repo, IReadOnlyList<LabelSpec> labels, CancellationToken cancellationToken = default)

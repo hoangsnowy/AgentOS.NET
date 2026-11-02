@@ -380,6 +380,12 @@ in the desktop and applies on the next call:
   discarded; a recovered branch counts only once it is on the remote, an approval or pass only from the run's own
   resumed session (with every criterion checked), and Insights counts how often it happens
   (`Autopilot:RecoverMissingReply`, on by default — [CONFIG](docs/CONFIG.md#settings--autopilot)).
+  The agents read the **ticket's discussion**, not only its description: the Coding, Reviewer, Testing and Designer
+  agents get the newest comments people wrote (AgentOS.NET's own comments and bots left out). A comment by the repo's
+  owner, a member or a collaborator is a **maintainer decision** — part of the ticket, followed like an acceptance
+  criterion, and the newest one wins over the description (so a scope change written as a comment is what the Reviewer
+  and Testing agents judge against); anyone else's comment is context only. Each comment is fenced as untrusted text and
+  bounded (`Autopilot:TicketDiscussionComments`, 20 by default; ≈12k characters in all).
 - **Workflow › Ticket flow** — the steps Autopilot runs for every ticket (Code → Checks → Review → Test → Merge by
   default), drawn as a graph with a table view: an admin turns Review or Test off, picks the agent per step and skips a
   step for tickets with a label (e.g. no Review for `type:chore`); per tenant with an optional per-project flow,

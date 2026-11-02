@@ -200,7 +200,9 @@ public sealed class DesignAgent(ILlmClientFactory factory, ILogger<DesignAgent> 
         sb.Append("Ticket #").Append(r.IssueNumber.ToString(CultureInfo.InvariantCulture)).Append(" — title:\n")
           .Append(UntrustedText.Wrap("ticket-title", r.IssueTitle, maxChars: 512)).Append("\n\n");
         sb.Append("Ticket #").Append(r.IssueNumber.ToString(CultureInfo.InvariantCulture)).Append(" — description and acceptance criteria:\n")
-          .Append(string.IsNullOrWhiteSpace(r.IssueBody) ? "(no description provided)" : UntrustedText.Wrap("ticket-body", r.IssueBody)).Append("\n\n");
+          .Append(string.IsNullOrWhiteSpace(r.IssueBody) ? "(no description provided)" : UntrustedText.Wrap("ticket-body", r.IssueBody))
+          // The maintainer decisions in the ticket's comments (a default, a wording) are part of what the screens must show.
+          .Append(TicketDiscussion.PromptBlock(r.IssueNumber, r.Discussion, TicketDiscussionUse.Design)).Append("\n\n");
 
         // The list (paths and captions come from the Testing agent's reply) is fenced like the ticket: data, not instructions.
         sb.Append("## Screenshots\n");
