@@ -80,7 +80,7 @@ public sealed partial class PublicLinkTests
         await using var app = await StartAsync(services =>
         {
             var signup = Substitute.For<ITenantSignupService>();
-            signup.CreateInvitation("acme", "member", null, Arg.Any<TimeSpan>())
+            signup.CreateInvitation("acme", MemberRoles.DefaultRole, null, Arg.Any<TimeSpan>())   // RBAC v2 default: developer
                 .Returns(new InvitationToken("tok/1", DateTimeOffset.UtcNow.AddHours(1)));
             services.AddSingleton(signup);
             services.AddSingleton(Substitute.For<IAuditLog>());

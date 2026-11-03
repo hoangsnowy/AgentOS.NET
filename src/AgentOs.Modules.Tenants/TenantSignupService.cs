@@ -123,8 +123,9 @@ internal sealed partial class TenantSignupService : ITenantSignupService
             createTenantRow = true;
         }
 
-        // An invited approver is a member too (TenantRoles.Expand).
-        var roles = TenantRoles.Expand([role]).ToArray();
+        // RBAC v2: the invitation's role as-is (MemberRoles); an approver is NOT also made a member — approver alone
+        // already passes every read (Member policy = ViewWork) and must not gain RunAgents/ManageWorkspaces.
+        var roles = MemberRoles.Sanitize([role]) is { Count: > 0 } allowed ? allowed.ToArray() : [MemberRoles.DefaultRole];
         var sendVerify = !string.IsNullOrWhiteSpace(request.Email);
 
         string kcUserId = await _kc.CreateUserAsync(

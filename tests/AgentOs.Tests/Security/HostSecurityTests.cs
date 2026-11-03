@@ -103,6 +103,32 @@ public sealed class HostSecurityTests
             .Order(StringComparer.Ordinal),
     ];
 
+    // Routes that are, by design, open to ANY signed-in caller whatever their role — reviewed (RBAC v2). Adding one here
+    // is a decision, not a fix for a failing test: almost every route belongs behind a perm:* policy.
+    // Web: the desktop's pages and Blazor's framework routes — every app inside gates itself through the matrix
+    // (DesktopApp.Requires, WindowHost, the pages' own checks).
+    private static readonly string[] WebAuthenticatedOnly =
+    [
+        "GET /_framework/opaque-redirect", "GET|HEAD {**path:file}", "GET|POST /", "GET|POST /_/components", "GET|POST /settings",
+    ];
+
+    // Api: /tenants/me reports the caller's own tenant, roles and permissions — meaningful for every role.
+    private static readonly string[] ApiAuthenticatedOnly = ["GET /tenants/me"];
+
+    /// <summary>Endpoints that state NO authorization of their own — neither an explicit <c>AllowAnonymous</c> nor a named
+    /// policy / role (RBAC v2's <c>perm:*</c> policies, Admin, PlatformAdmin, …). They are protected only by #331's fallback
+    /// (any signed-in caller), i.e. by omission: a viewer could call them. Each "method route" is listed.</summary>
+    private static string[] ImplicitlyAuthorizedRoutes(IServiceProvider services) =>
+    [
+        .. services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()
+            .Where(e => e.Metadata.GetMetadata<IAllowAnonymous>() is null)
+            .Where(e => !e.Metadata.GetOrderedMetadata<IAuthorizeData>().Any(a => a.Policy is { Length: > 0 } || a.Roles is { Length: > 0 }))
+            .Where(e => !IsStaticFile(e.RoutePattern.RawText ?? string.Empty))
+            .Select(e => $"{string.Join('|', e.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? ["*"])} {e.RoutePattern.RawText}")
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal),
+    ];
+
     // MapStaticAssets maps one endpoint per file (and per fingerprinted / compressed variant): a file name has an extension.
     private static bool IsStaticFile(string raw) => raw.Contains('.', StringComparison.Ordinal) && !raw.Contains('{', StringComparison.Ordinal);
 
@@ -167,6 +193,15 @@ public sealed class HostSecurityTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.Redirect);
         response.Headers.Location!.ToString().ShouldStartWith(WebHostFactory.Authority);
+    }
+
+    [Fact]
+    public async Task Web_EveryEndpoint_NamesItsAuthorization_OrIsExplicitlyAnonymous()
+    {
+        // RBAC v2 x GAP-13: the fallback catches a forgotten route, but a route that relies on it lets every role in.
+        await using var factory = new WebHostFactory();
+        _ = factory.Server; // build the host
+        ImplicitlyAuthorizedRoutes(factory.Services).ShouldBe(WebAuthenticatedOnly);
     }
 
     [Fact]
@@ -357,6 +392,14 @@ public sealed class HostSecurityTests
             using var response = await SendAsync(client, method, path);
             response.StatusCode.ShouldBe(status, $"{method} {path}");
         }
+    }
+
+    [Fact]
+    public async Task Api_EveryEndpoint_NamesItsAuthorization_OrIsExplicitlyAnonymous()
+    {
+        await using var factory = new ApiHostFactory();
+        _ = factory.Server; // build the host
+        ImplicitlyAuthorizedRoutes(factory.Services).ShouldBe(ApiAuthenticatedOnly);
     }
 
     [Fact]

@@ -4,6 +4,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using AgentOs.SharedKernel.Identity;
 using AgentOs.Web.Components.Pages;
 using AgentOs.Web.Shell.Services;
 
@@ -32,16 +33,16 @@ public static class AppCatalog
         new("files",    "Files",    "folder", "Browse a connected repo's files (read-only)", "Agents", 880, 600, Pinned: false, ComponentType: typeof(FilesApp), Color: "#4a86d8"),
         // ── unpinned: reachable via the Settings hub, Activities search, or in-app deep links ──
         // (Workspaces + Sessions were standalone admin windows fully subsumed by Board → deleted.)
-        new("users",    "Users",    "user",  "Manage tenant members + roles", "Admin", 880, 600, Pinned: false, AdminOnly: true, ComponentType: typeof(UsersApp), Color: "#e5a50a"),
-        new("evidence", "Evidence", "scroll",  "Tool-invocation audit trail",   "Admin", 960, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(EvidenceApp), Color: "#c01c28"),
-        new("tokens",   "API tokens", "tag", "Service-account tokens for CI, scripts and MCP clients", "Admin", 980, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(ApiTokensApp), Color: "#1c71d8"),
-        new("data",     "Data", "floppy-disk", "Export this workspace; platform admins purge tenants", "Admin", 900, 600, Pinned: false, AdminOnly: true, ComponentType: typeof(DataApp), Color: "#26a269"),
-        new("audit",    "Audit log", "clock-counter", "Who changed what — settings, members, sign-in", "Admin", 980, 640, Pinned: false, AdminOnly: true, ComponentType: typeof(AuditLogApp), Color: "#865e3c"),
-        new("policy",   "Policy",   "shield",  "Per-tenant tool allowlist",     "Admin", 900, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(PolicyApp), Color: "#613583"),
-        new("prompts",  "Prompts",  "lightning", "Tune the agents' prompts",   "Admin", 1000, 680, Pinned: false, AdminOnly: true, ComponentType: typeof(PromptsApp), Color: "#c061cb"),
-        new("agents",   "Agent profiles", "diamond", "Model + limits per agent",  "Admin", 1100, 620, Pinned: false, AdminOnly: true, ComponentType: typeof(AgentProfilesApp), Color: "#1c71d8"),
+        new("users",    "Users",    "user",  "Manage tenant members + roles", "Admin", 880, 600, Pinned: false, ComponentType: typeof(UsersApp), Color: "#e5a50a", Requires: Permission.ManageMembers),
+        new("evidence", "Evidence", "scroll",  "Tool-invocation audit trail",   "Admin", 960, 620, Pinned: false, ComponentType: typeof(EvidenceApp), Color: "#c01c28", Requires: Permission.ViewAudit),
+        new("tokens",   "API tokens", "tag", "Service-account tokens for CI, scripts and MCP clients", "Admin", 980, 620, Pinned: false, ComponentType: typeof(ApiTokensApp), Color: "#1c71d8", Requires: Permission.ManageApiTokens),
+        new("data",     "Data", "floppy-disk", "Export this workspace; platform admins purge tenants", "Admin", 900, 600, Pinned: false, ComponentType: typeof(DataApp), Color: "#26a269", Requires: Permission.ExportData),
+        new("audit",    "Audit log", "clock-counter", "Who changed what — settings, members, sign-in", "Admin", 980, 640, Pinned: false, ComponentType: typeof(AuditLogApp), Color: "#865e3c", Requires: Permission.ViewAudit),
+        new("policy",   "Policy",   "shield",  "Per-tenant tool allowlist",     "Admin", 900, 620, Pinned: false, ComponentType: typeof(PolicyApp), Color: "#613583", Requires: Permission.ManageSettings),
+        new("prompts",  "Prompts",  "lightning", "Tune the agents' prompts",   "Admin", 1000, 680, Pinned: false, ComponentType: typeof(PromptsApp), Color: "#c061cb", Requires: Permission.ManageSettings),
+        new("agents",   "Agent profiles", "diamond", "Model + limits per agent",  "Admin", 1100, 620, Pinned: false, ComponentType: typeof(AgentProfilesApp), Color: "#1c71d8", Requires: Permission.ManageSettings),
         new("plugins",  "Plugins",  "squares-stack", "Installed extensions",  "System", 860, 600, Pinned: false, ComponentType: typeof(PluginsApp), Color: "#5e5c64"),
-        new("mcp",      "MCP",      "arrow-square-out", "Upstream MCP tool servers", "System", 860, 600, Pinned: false, AdminOnly: true, ComponentType: typeof(McpApp), Color: "#1a5fb4"),
+        new("mcp",      "MCP",      "arrow-square-out", "Upstream MCP tool servers", "System", 860, 600, Pinned: false, ComponentType: typeof(McpApp), Color: "#1a5fb4", Requires: Permission.ManageSettings),
         new("system",   "System",   "wrench","OS appearance, themes, about",  "System", 760, 600, Pinned: false, ComponentType: typeof(SystemApp), Color: "#3d3846"),
     };
 
@@ -68,11 +69,11 @@ public static class AppCatalog
     public static DesktopApp? Find(string key) =>
         All.FirstOrDefault(a => a.Key == key);
 
-    /// <summary>All apps visible to a user with the given admin status (filters out <see cref="DesktopApp.AdminOnly"/>).</summary>
-    public static IEnumerable<DesktopApp> VisibleAll(bool isAdmin) =>
-        All.Where(a => isAdmin || !a.AdminOnly);
+    /// <summary>All apps a user granted <paramref name="granted"/> may see (RBAC v2: each app's <see cref="DesktopApp.Requires"/>).</summary>
+    public static IEnumerable<DesktopApp> VisibleAll(Permission granted) =>
+        All.Where(a => a.IsVisibleTo(granted));
 
-    /// <summary>Pinned apps visible to a user with the given admin status.</summary>
-    public static IEnumerable<DesktopApp> VisiblePinned(bool isAdmin) =>
-        Pinned.Where(a => isAdmin || !a.AdminOnly);
+    /// <summary>Pinned apps a user granted <paramref name="granted"/> may see.</summary>
+    public static IEnumerable<DesktopApp> VisiblePinned(Permission granted) =>
+        Pinned.Where(a => a.IsVisibleTo(granted));
 }

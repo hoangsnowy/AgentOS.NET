@@ -222,14 +222,14 @@ app.MapGet("/health/llm", (IOptions<LlmOptions> llm) =>
    .WithName("HealthLlm")
    .WithSummary("LLM provider configuration readiness (not a pod-recycle signal)")
    .WithTags("Meta")
-   .RequireAuthorization();
+   .RequirePermission(Permission.ManageSettings);   // RBAC v2: provider configuration is a settings read
 
 app.MapModuleEndpoints();
 
 // Epic E4 — MCP HTTP endpoint at /mcp. Streamable HTTP per spec. RequireAuthorization so an
 // anonymous caller can't drive the full 5-agent LLM pipeline (uncapped spend) or read another
 // tenant's runs — every sibling REST route is gated, this one must be too.
-app.MapMcp("/mcp").RequireAuthorization();
+app.MapMcp("/mcp").RequirePermission(Permission.RunAgents);
 
 // Settings "Test" — probe one provider (?provider=, from the Model keys cards; allow-listed by LlmProbe) or, with
 // none named, the Orchestrator's configured provider, with a minimal call.
@@ -304,6 +304,6 @@ app.MapPost("/llm/test", async ([Microsoft.AspNetCore.Mvc.FromQuery(Name = "prov
    .WithName("LlmTest")
    .WithSummary("Probe the configured LLM provider with a minimal call")
    .WithTags("Settings")
-   .RequireAuthorization();
+   .RequirePermission(Permission.ManageSettings);
 
 app.Run();

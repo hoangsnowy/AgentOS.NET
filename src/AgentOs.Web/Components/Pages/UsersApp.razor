@@ -1,14 +1,18 @@
 @* UsersApp — tenant-admin member management desktop window (Windows Server "Users" / GNOME
-   Users vibe). Lists the current tenant's Keycloak members and lets an Admin change roles, send a
-   password-reset email, remove a member, or mint an invitation URL. Admin-gated: the app is
-   AdminOnly in AppCatalog, and the page itself re-checks the admin role (defence in depth). Tenant
-   + role are read from the circuit's AuthenticationState — HttpContext is null in interactive
-   Server, so ITenantContext can't be used in a component. *@
+   Users vibe). Lists the current tenant's Keycloak members and lets an Admin change roles (RBAC v2: viewer ·
+   developer · approver · auditor · admin, see PermissionMatrix), send a password-reset email, remove a member,
+   mint an invitation URL, and give members a role on one board (Board access — the first membership restricts the
+   board to its members). Gated on ManageMembers: AppCatalog hides the app, WindowHost refuses it, and the page
+   re-checks (defence in depth); every change is audited. Tenant + role are read from the circuit's
+   AuthenticationState — HttpContext is null in interactive Server, so ITenantContext can't be used in a component. *@
 
 @using System.Security.Claims
 @using Microsoft.AspNetCore.Components.Authorization
 @using AgentOs.Modules.Tenants
 @using AgentOs.Modules.Tenants.Keycloak
+@using AgentOs.Modules.Workspaces.Access
+@using AgentOs.Modules.Workspaces.Persistence
+@using AgentOs.Modules.Workspaces.Persistence.Entities
 @inject AgentOs.Modules.Tenants.Keycloak.IKeycloakAdminClient Kc
 @inject AgentOs.Modules.Tenants.ITenantSignupService Signup
 @inject AgentOs.Modules.Tenants.Email.IEmailSender Email
@@ -35,7 +39,7 @@ else
     <header class="page-head">
         <div>
             <h1 class="page-title">Users · <code>@_tenantId</code></h1>
-            <p class="page-sub">@(_members?.Count ?? 0) member(s) · roles + lifecycle managed via Keycloak</p>
+            <p class="page-sub">@(_members?.Count ?? 0) member(s) · roles + lifecycle managed via Keycloak · roles are additive; admin and auditor apply on every board</p>
         </div>
         <Btn OnClick="Reload" Disabled="_loading">
             <Icon Name="arrow-clockwise" Size="14" /> Refresh
@@ -71,11 +75,16 @@ else
                             <td>@m.Username @(isSelf ? "(you)" : "")</td>
                             <td>@(m.Email ?? "—")</td>
                             <td>
-                                <select class="prefs-select" disabled="@(_busyId == m.Id || isSelf)"
+                                <select class="prefs-select" disabled="@(_busyId == m.Id || isSelf)" aria-label="@($"Role of {m.Username}")"
                                         value="@PrimaryRole(m)" @onchange="@(e => ChangeRole(m, e))">
-                                    <option value="admin">Admin</option>
-                                    <option value="approver">Approver</option>
-                                    <option value="member">Member</option>
+                                    @if (PrimaryRole(m) == UserRoles.LegacyMember)
+                                    {
+                                        <option value="@UserRoles.LegacyMember">@UserRoles.Label(UserRoles.LegacyMember)</option>
+                                    }
+                                    @foreach (var role in UserRoles.Assignable)
+                                    {
+                                        <option value="@role" title="@UserRoles.Describe(role)">@UserRoles.Label(role)</option>
+                                    }
                                 </select>
                             </td>
                             <td>
@@ -111,9 +120,10 @@ else
                 </Field>
                 <Field Label="Role">
                     <select @bind="_inviteRole" class="prefs-select">
-                        <option value="member">Member</option>
-                        <option value="approver">Approver</option>
-                        <option value="admin">Admin</option>
+                        @foreach (var role in UserRoles.Assignable)
+                        {
+                            <option value="@role">@UserRoles.Label(role) — @UserRoles.Describe(role)</option>
+                        }
                     </select>
                 </Field>
                 <Field Label="TTL (hours)">
@@ -136,6 +146,97 @@ else
             @if (_inviteError is not null)
             {
                 <div class="login-error">@_inviteError</div>
+            }
+        </Panel>
+
+        <Panel Title="Board access">
+            @if (_boards is null)
+            {
+                <Spinner />
+            }
+            else if (_boards.Count == 0)
+            {
+                <p class="muted">No boards connected yet. Once a board is connected (Board app), give members a role on it here.</p>
+            }
+            else
+            {
+                <div class="form-grid">
+                    <Field Label="Board">
+                        <select class="prefs-select" value="@(_boardId?.ToString() ?? "")" @onchange="OnBoardChanged">
+                            @foreach (var b in _boards)
+                            {
+                                <option value="@b.Id">@b.Name</option>
+                            }
+                        </select>
+                    </Field>
+                </div>
+                <p class="page-sub">
+                    @if (_boardMembers.Count == 0)
+                    {
+                        <span>Open — everyone in <code>@_tenantId</code> works on this board with their workspace role. Add a member to restrict it.</span>
+                    }
+                    else
+                    {
+                        <span>Restricted — only the @_boardMembers.Count member(s) below, admins and auditors can see this board.</span>
+                    }
+                </p>
+                <table class="data-table">
+                    <thead>
+                        <tr><th>Member</th><th>Board role</th><th class="actions">Actions</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var bm in _boardMembers)
+                        {
+                            <tr>
+                                <td>@MemberName(bm.UserId)</td>
+                                <td>
+                                    <select class="prefs-select" value="@bm.Role" disabled="@(_busyId == bm.UserId)"
+                                            aria-label="@($"Board role of {MemberName(bm.UserId)}")"
+                                            @onchange="@(e => SetBoardRole(bm.UserId, e.Value?.ToString()))">
+                                        @foreach (var role in UserRoles.WorkspaceAssignable)
+                                        {
+                                            <option value="@role">@UserRoles.Label(role)</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td class="actions">
+                                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" Disabled="@(_busyId == bm.UserId)"
+                                         OnClick="@(() => RemoveBoardRole(bm.UserId))">
+                                        <Icon Name="x" Size="13" /> Remove
+                                    </Btn>
+                                </td>
+                            </tr>
+                        }
+                        @if (_boardMembers.Count == 0)
+                        {
+                            <tr><td colspan="3" class="data-empty">No board members — the board is open to the whole workspace.</td></tr>
+                        }
+                    </tbody>
+                </table>
+                <div class="form-grid">
+                    <Field Label="Member">
+                        <select class="prefs-select" @bind="_addUserId">
+                            <option value="">Choose a member…</option>
+                            @foreach (var m in _members.Where(m => _boardMembers.All(b => b.UserId != m.Id)))
+                            {
+                                <option value="@m.Id">@m.Username</option>
+                            }
+                        </select>
+                    </Field>
+                    <Field Label="Board role">
+                        <select class="prefs-select" @bind="_addRole">
+                            @foreach (var role in UserRoles.WorkspaceAssignable)
+                            {
+                                <option value="@role">@UserRoles.Label(role) — @UserRoles.Describe(role)</option>
+                            }
+                        </select>
+                    </Field>
+                </div>
+                <div class="form-actions">
+                    <Btn Variant="Btn.ButtonVariant.Primary" OnClick="AddBoardMember" Disabled="@(string.IsNullOrEmpty(_addUserId) || _busyId is not null)">
+                        Add to board
+                    </Btn>
+                </div>
             }
         </Panel>
     }
@@ -172,7 +273,14 @@ else
     private bool _removing;
 
     private string _inviteEmail = "";
-    private string _inviteRole = "member";
+    private string _inviteRole = MemberRoles.DefaultRole;
+
+    // Board access (RBAC v2 per-board memberships).
+    private IReadOnlyList<WorkspaceEntity>? _boards;
+    private Guid? _boardId;
+    private IReadOnlyList<WorkspaceMember> _boardMembers = [];
+    private string _addUserId = "";
+    private string _addRole = UserRoles.Developer;
     private int _inviteTtl = 24;
     private bool _busy;
     private string? _inviteUrl;
@@ -185,7 +293,7 @@ else
         {
             var state = await AuthState;
             var user = state.User;
-            _isAdmin = user.IsAdmin();
+            _isAdmin = user.Can(Permission.ManageMembers); // RBAC v2 re-check (PermissionMatrix)
             // No silent `default`: a signed-in principal with no tenant claim is a malformed token, not a
             // licence to manage the default tenant's members. Empty → the admin gate below blocks the UI.
             _tenantId = user.GetTenantId() ?? string.Empty;
@@ -196,11 +304,88 @@ else
         if (_isAdmin && _tenantId.Length > 0)
         {
             await LoadMembersAsync();
+            await LoadBoardsAsync();
         }
     }
 
-    // Admin over approver over member (an approver is a member who may also approve the steps an approval policy holds).
-    private static string PrimaryRole(KeycloakUser m) => AgentOs.Modules.Tenants.TenantRoles.Primary(m.Roles);
+    private static string PrimaryRole(KeycloakUser m) => MemberRoles.Primary(m.Roles) ?? UserRoles.Viewer;
+
+    private string MemberName(string userId) =>
+        _members?.FirstOrDefault(m => m.Id == userId)?.Username ?? userId;
+
+    // Each operation gets its own scope (its own DbContext), never the circuit's long-lived one.
+    private async Task LoadBoardsAsync()
+    {
+        await CircuitSafe.RunAsync(
+            async () =>
+            {
+                await using var scope = Scopes.CreateAsyncScope();
+                _boards = await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>().ListForTenantAsync(_tenantId);
+                _boardId ??= _boards.FirstOrDefault()?.Id;
+                await LoadBoardMembersAsync(scope.ServiceProvider);
+            },
+            ex => { _boards = []; Toasts.Show("Users", $"Could not load boards: {ex.Message}", ToastKind.Err); });
+    }
+
+    private async Task LoadBoardMembersAsync(IServiceProvider services)
+    {
+        _boardMembers = _boardId is { } id
+            ? await services.GetRequiredService<IWorkspaceMembershipStore>().ListAsync(_tenantId, id)
+            : [];
+    }
+
+    private async Task OnBoardChanged(ChangeEventArgs e)
+    {
+        _boardId = Guid.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        await using var scope = Scopes.CreateAsyncScope();
+        await CircuitSafe.RunAsync(() => LoadBoardMembersAsync(scope.ServiceProvider),
+            ex => Toasts.Show("Users", $"Could not load the board's members: {ex.Message}", ToastKind.Err));
+    }
+
+    private Task AddBoardMember() => SetBoardRole(_addUserId, _addRole);
+
+    private async Task SetBoardRole(string? userId, string? role)
+    {
+        // Server-side re-check (GAP-17): the handler, not only the hidden UI, refuses a caller without ManageMembers.
+        if (!_isAdmin || _boardId is not { } boardId || string.IsNullOrEmpty(userId) || !UserRoles.IsWorkspaceAssignable(role)) { return; }
+        if (_members?.Any(m => m.Id == userId) != true) { return; }   // only members of THIS tenant
+        _busyId = userId;
+        await CircuitSafe.RunAsync(
+            async () =>
+            {
+                await using var scope = Scopes.CreateAsyncScope();
+                var services = scope.ServiceProvider;
+                await services.GetRequiredService<IWorkspaceMembershipStore>().SetAsync(_tenantId, boardId, userId, role, _myUserId);
+                await services.GetRequiredService<IAuditLog>().WriteAsync(new AuditEntry(Guid.NewGuid(), _tenantId, _myUserId,
+                    AuditActions.BoardRoleSet, $"board={boardId},user={userId},role={role}", null, null, DateTimeOffset.UtcNow));
+                Toasts.Show("Users", $"{MemberName(userId)} is a {UserRoles.Label(role)} on this board.", ToastKind.Ok);
+                _addUserId = "";
+                await LoadBoardMembersAsync(services);
+            },
+            ex => Toasts.Show("Users", $"Board role change failed: {ex.Message}", ToastKind.Err));
+        _busyId = null;
+    }
+
+    private async Task RemoveBoardRole(string userId)
+    {
+        if (!_isAdmin || _boardId is not { } boardId) { return; }
+        _busyId = userId;
+        await CircuitSafe.RunAsync(
+            async () =>
+            {
+                await using var scope = Scopes.CreateAsyncScope();
+                var services = scope.ServiceProvider;
+                if (await services.GetRequiredService<IWorkspaceMembershipStore>().RemoveAsync(_tenantId, boardId, userId))
+                {
+                    await services.GetRequiredService<IAuditLog>().WriteAsync(new AuditEntry(Guid.NewGuid(), _tenantId, _myUserId,
+                        AuditActions.BoardRoleRemoved, $"board={boardId},user={userId}", null, null, DateTimeOffset.UtcNow));
+                    Toasts.Show("Users", $"{MemberName(userId)} was taken off this board.", ToastKind.Ok);
+                }
+                await LoadBoardMembersAsync(services);
+            },
+            ex => Toasts.Show("Users", $"Remove failed: {ex.Message}", ToastKind.Err));
+        _busyId = null;
+    }
 
     private async Task LoadMembersAsync()
     {
@@ -218,15 +403,25 @@ else
 
     private async Task ChangeRole(KeycloakUser m, ChangeEventArgs e)
     {
-        var role = e.Value?.ToString() ?? "member";
-        if (string.Equals(PrimaryRole(m), role, StringComparison.Ordinal)) { return; }
+        var role = e.Value?.ToString() ?? MemberRoles.DefaultRole;
+        if (!_isAdmin || string.Equals(PrimaryRole(m), role, StringComparison.Ordinal)) { return; }
+        // Same rules as PATCH /tenants/{id}/members/{userId}: allowed roles only, never strip your own admin role.
+        var roles = MemberRoles.Sanitize([role]);
+        if (MemberRoles.Check(_myUserId, m.Id, roles) is { } refused)
+        {
+            Toasts.Show("Users", refused, ToastKind.Err);
+            return;
+        }
         _busyId = m.Id;
         // Keycloak transport/Polly faults must surface as a toast, never tear down the circuit.
         await CircuitSafe.RunAsync(
             async () =>
             {
-                await Kc.UpdateUserRolesAsync(m.Id, AgentOs.Modules.Tenants.TenantRoles.Expand([role]));
-                Toasts.Show("Users", $"{m.Username} is now {role}.", ToastKind.Ok);
+                await Kc.UpdateUserRolesAsync(m.Id, roles);
+                await using var scope = Scopes.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<IAuditLog>().WriteAsync(new AuditEntry(Guid.NewGuid(), _tenantId, _myUserId,
+                    AuditActions.MemberRoleChanged, $"user={m.Id},roles={string.Join('+', roles)}", null, null, DateTimeOffset.UtcNow));
+                Toasts.Show("Users", $"{m.Username} is now {UserRoles.Label(role)}.", ToastKind.Ok);
                 await LoadMembersAsync();
             },
             ex => Toasts.Show("Users", $"Role change failed: {ex.Message}", ToastKind.Err));
@@ -307,6 +502,12 @@ else
         if (email.Length == 0 || !email.Contains('@', StringComparison.Ordinal))
         {
             _inviteError = "Enter the invitee's email address (must contain '@').";
+            return;
+        }
+
+        if (!MemberRoles.IsAllowed(_inviteRole))
+        {
+            _inviteError = "Pick a role for the invitee.";
             return;
         }
 

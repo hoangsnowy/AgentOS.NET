@@ -17,5 +17,5 @@ internal sealed class AppCatalogRegistry : IAppRegistry
 
     public IReadOnlyList<DesktopApp> Pinned => AppCatalog.Pinned;
 
-    public IReadOnlyList<DesktopApp> VisiblePinned(bool isAdmin) => AppCatalog.VisiblePinned(isAdmin).ToList();
+    public IReadOnlyList<DesktopApp> VisiblePinned(AgentOs.SharedKernel.Identity.Permission granted) => AppCatalog.VisiblePinned(granted).ToList();
 }

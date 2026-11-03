@@ -241,14 +241,16 @@ public sealed class ApprovalDecisionTests
     // ── Roles and who can approve ──
 
     [Fact]
-    public void TenantRoles_AnApproverIsAMemberToo()
+    public void MemberRoles_AnApproverStaysAnApprover_UnderRbacV2()
     {
-        TenantRoles.Expand(["approver"]).ShouldBe(["approver", "member"]);
-        TenantRoles.Expand(["admin", "approver"]).ShouldBe(["admin", "approver"]);
-        TenantRoles.Expand(["root", "member"]).ShouldBe(["member"]);
-        TenantRoles.Primary(["member", "approver"]).ShouldBe("approver");
-        TenantRoles.Primary(["admin", "approver", "member"]).ShouldBe("admin");
-        TenantRoles.Primary([]).ShouldBe("member");
+        // RBAC v2 (E1.2): approver alone already reads everything (Member policy = ViewWork) — it is no longer expanded
+        // into member, which would hand it RunAgents + ManageWorkspaces (separation of duties).
+        MemberRoles.Sanitize(["approver"]).ShouldBe(["approver"]);
+        MemberRoles.Sanitize(["admin", "approver"]).ShouldBe(["admin", "approver"]);
+        MemberRoles.Sanitize(["root", "member"]).ShouldBe(["member"]);
+        MemberRoles.Primary(["member", "approver"]).ShouldBe("approver");
+        MemberRoles.Primary(["admin", "approver", "member"]).ShouldBe("admin");
+        MemberRoles.Primary([]).ShouldBeNull();
     }
 
     private static IApproverDirectory Directory(IKeycloakAdminClient keycloak)

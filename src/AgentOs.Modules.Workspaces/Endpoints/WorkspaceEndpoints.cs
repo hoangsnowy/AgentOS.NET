@@ -1,7 +1,7 @@
 // M2 / board reshape — Workspaces HTTP endpoints. Connect a GitHub Projects v2 board (or, later, an
 // ADO board) as a workspace, list/get/remove boards, manage the repos under a board, list connectable
-// repos/boards for a token, and read a repo's context to ground the Requirement agent. Auth: Member
-// policy; tenant resolved from the token by ITenantContext.
+// repos/boards for a token, and read a repo's context to ground the Requirement agent. Auth: RBAC v2 permissions
+// (ViewWork to read, ManageWorkspaces to change) + per-board memberships; tenant resolved by ITenantContext.
 //
 // Secret handling: the access token is validated, then stored ONLY in the encrypted AppConfig store
 // under the board's CredentialRef. It is never written to a row and never returned in any DTO.
@@ -30,24 +30,30 @@ internal static class WorkspaceEndpoints
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        var group = endpoints.MapGroup("/workspaces").RequireAuthorization("Member");
+        // RBAC v2 (E1.2): reads need ViewWork, changing boards/repos ManageWorkspaces; every {id} route is re-checked
+        // against that board's memberships (a restricted board is 404 to an outsider).
+        var group = endpoints.MapGroup("/workspaces").RequireAuthorization("Member")
+            .RequireWorkspacePermission("id", Permission.ManageWorkspaces);
 
         group.MapGet(string.Empty, ListAsync);
         group.MapGet("/{id:guid}", GetAsync);
-        group.MapPost(string.Empty, ConnectAsync);
-        group.MapDelete("/{id:guid}", RemoveAsync);
-        group.MapPost("/repos", ListReposForTokenAsync);
-        group.MapPost("/boards", ListBoardsForTokenAsync);
+        group.MapPost(string.Empty, ConnectAsync).RequirePermission(Permission.ManageWorkspaces);
+        group.MapDelete("/{id:guid}", RemoveAsync).RequirePermission(Permission.ManageWorkspaces);
+        group.MapPost("/repos", ListReposForTokenAsync).RequirePermission(Permission.ManageWorkspaces);
+        group.MapPost("/boards", ListBoardsForTokenAsync).RequirePermission(Permission.ManageWorkspaces);
         group.MapGet("/{id:guid}/repos", ListBoardReposAsync);
-        group.MapPost("/{id:guid}/repos", AddRepoAsync);
-        group.MapDelete("/{id:guid}/repos/{repoId:guid}", RemoveRepoAsync);
+        group.MapPost("/{id:guid}/repos", AddRepoAsync).RequirePermission(Permission.ManageWorkspaces);
+        group.MapDelete("/{id:guid}/repos/{repoId:guid}", RemoveRepoAsync).RequirePermission(Permission.ManageWorkspaces);
         group.MapGet("/{id:guid}/context", ContextAsync);
     }
 
-    private static async Task<IResult> ListAsync(IWorkspaceRepository repo, CancellationToken ct, int? limit = null, int? offset = null)
+    private static async Task<IResult> ListAsync(
+        IWorkspaceRepository repo, IWorkspaceAccess access, ITenantContext tenant, System.Security.Claims.ClaimsPrincipal user,
+        CancellationToken ct, int? limit = null, int? offset = null)
     {
         var rows = await repo.ListAsync(limit ?? Page.DefaultLimit, offset ?? 0, ct).ConfigureAwait(false);
-        return Results.Ok(rows.Select(WorkspaceDto.From).ToList());
+        var map = await access.ForUserAsync(tenant.TenantId, user, ct).ConfigureAwait(false);
+        return Results.Ok(rows.Where(r => map.CanSee(r.Id)).Select(WorkspaceDto.From).ToList());
     }
 
     private static async Task<IResult> GetAsync(Guid id, IWorkspaceRepository repo, CancellationToken ct)

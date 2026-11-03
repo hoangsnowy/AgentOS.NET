@@ -6,6 +6,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using AgentOs.SharedKernel.Identity;
 
 namespace AgentOs.Web.Services;
 
@@ -17,7 +18,8 @@ namespace AgentOs.Web.Services;
 public sealed record ShellAction(string Id, string Title, string Caption, string Icon)
 {
     internal string Keywords { get; init; } = string.Empty;
-    internal bool AdminOnly { get; init; }
+    /// <summary>RBAC v2: the permission the action needs (<see cref="Permission.None"/> = everyone).</summary>
+    internal Permission Requires { get; init; }
 }
 
 /// <summary>The action catalogue + search.</summary>
@@ -44,21 +46,26 @@ public static class ShellActions
     [
         new(Run, "Run the agent pipeline", "Home · describe a change, the 5 agents build it", "play") { Keywords = "run start execute pipeline workflow agents build story" },
         new(Idea, "Start from an idea", "Board · turn an idea into a plan and tasks", "git-pull-request") { Keywords = "new idea ticket story issue plan board decompose" },
-        new(AddKey, "Connect an AI account", "Settings › AI › Model keys", "key") { Keywords = "add model key api connect account llm provider anthropic openai gemini xai azure", AdminOnly = true },
-        new(Invite, "Invite a member", "Settings › People & data › Users", "user") { Keywords = "invite add user member people team", AdminOnly = true },
-        new(Token, "Create an API token", "Settings › People & data › API tokens", "tag") { Keywords = "create new api token service account ci machine", AdminOnly = true },
-        new(Export, "Export workspace data", "Settings › People & data › Data", "floppy-disk") { Keywords = "export download backup data workspace", AdminOnly = true },
+        new(AddKey, "Connect an AI account", "Settings › AI › Model keys", "key") { Keywords = "add model key api connect account llm provider anthropic openai gemini xai azure", Requires = Permission.ManageSettings },
+        new(Invite, "Invite a member", "Settings › People & data › Users", "user") { Keywords = "invite add user member people team", Requires = Permission.ManageMembers },
+        new(Token, "Create an API token", "Settings › People & data › API tokens", "tag") { Keywords = "create new api token service account ci machine", Requires = Permission.ManageApiTokens },
+        new(Export, "Export workspace data", "Settings › People & data › Data", "floppy-disk") { Keywords = "export download backup data workspace", Requires = Permission.ExportData },
         new(Theme, "Switch light / dark theme", "Appearance", "moon") { Keywords = "theme dark light mode toggle switch appearance night" },
         new(SignOut, "Sign out", "End this session", "power") { Keywords = "sign out log out logout exit leave" },
     ];
 
     /// <summary>Actions whose title or keywords contain every query term; title-prefix matches first.</summary>
     public static IReadOnlyList<ShellAction> Find(string query, bool isAdmin, int max = 4)
+        => Find(query, isAdmin ? PermissionMatrix.All : Permission.ViewWork, max);
+
+    /// <summary>Actions the user granted <paramref name="granted"/> may run whose title or keywords contain every query
+    /// term; title-prefix matches first.</summary>
+    public static IReadOnlyList<ShellAction> Find(string query, Permission granted, int max = 4)
     {
         var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (terms.Length == 0) { return []; }
         return All
-            .Where(a => (isAdmin || !a.AdminOnly) && terms.All(t => (a.Title + " " + a.Keywords).Contains(t, StringComparison.OrdinalIgnoreCase)))
+            .Where(a => (a.Requires == Permission.None || granted.Has(a.Requires)) && terms.All(t => (a.Title + " " + a.Keywords).Contains(t, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(a => a.Title.StartsWith(terms[0], StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .Take(max)
             .ToList();

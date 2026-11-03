@@ -43,6 +43,11 @@ When reporting, include: affected component, reproduction steps, and impact.
 - **Operator locks** — Production pins the riskiest settings so the Settings UI cannot change them
   ([CONFIG.md](docs/CONFIG.md#production-locks-appsettingsproductionjson-api--web)); platform-wide
   settings require the `platform-admin` role.
+- **Role-based access (RBAC v2)** — five tenant roles (viewer · developer · approver · auditor · admin) map onto
+  permissions in one matrix in code (`PermissionMatrix`), enforced by authorization policies on every endpoint and
+  re-checked in every desktop handler — hiding a button is never the only gate. Boards can be restricted to their
+  members (per-board role); admins and auditors stay tenant-wide. Role and membership changes are audited. Matrix
+  and the legacy `member` mapping: [CONFIG.md](docs/CONFIG.md#roles-and-permissions-rbac-v2).
 - **Audit trail** — every settings change (old → new, secrets masked), every direct config write (LLM keys,
   tokens, prompts, tool policy, budget — recorded as *set / cleared*, never the value), member lifecycle,
   invitations and sign-in land in an append-only audit log, viewable in **Settings → Audit log** and

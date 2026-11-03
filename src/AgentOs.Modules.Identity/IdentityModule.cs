@@ -3,6 +3,7 @@
 // host wires cookie + OIDC explicitly. No DbContext; tenant state lives in JWT/cookie claims.
 
 using System;
+using AgentOs.Modules.Identity.Authorization;
 using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
 using Microsoft.AspNetCore.Authorization;
@@ -29,10 +30,13 @@ public sealed class IdentityModule : IModule
             // static assets) opt out with an explicit AllowAnonymous — a new route can no longer be public by omission.
             options.FallbackPolicy = FallbackPolicy;
             options.AddPolicy("Admin", policy => policy.RequireRole("admin"));
-            options.AddPolicy("Member", policy => policy.RequireRole("admin", "member"));
+            // RBAC v2 (E1.2): "Member" = any role of the tenant (ViewWork); writes use the "perm:*" policies.
+            options.AddPolicy("Member", policy => policy.RequirePermission(Permission.ViewWork));
             options.AddPolicy("PlatformAdmin", policy => policy.RequireRole(ClaimNames.PlatformAdminRole));
             // E1.5: approve or reject a step an approval policy holds (an admin may too).
             options.AddPolicy("Approver", policy => policy.RequireRole(ClaimNames.ApproverRole, ClaimNames.AdminRole));
+            options.AddPermissionPolicies();
         });
+        services.AddRbac();
     }
 }

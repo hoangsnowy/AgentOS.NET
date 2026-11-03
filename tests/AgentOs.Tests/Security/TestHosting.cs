@@ -17,6 +17,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using AgentOs.Modules.Identity.Authorization;
 
 namespace AgentOs.Tests.Security;
 
@@ -54,12 +55,15 @@ internal static class TestHosting
             .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, _ => { })
             .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Cookies", _ => { })
             .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("OpenIdConnect", _ => { });
+        // The production policy set (IdentityModule): the named policies + RBAC v2's "perm:*" permission policies.
         services.AddAuthorization(o =>
         {
             o.AddPolicy("Admin", p => p.RequireRole("admin"));
-            o.AddPolicy("Member", p => p.RequireRole("admin", "member"));
+            o.AddPolicy("Member", p => p.RequirePermission(AgentOs.SharedKernel.Identity.Permission.ViewWork));
             o.AddPolicy("PlatformAdmin", p => p.RequireRole("platform-admin"));
+            o.AddPermissionPolicies();
         });
+        services.AddRbac();
         return recorder;
     }
 }

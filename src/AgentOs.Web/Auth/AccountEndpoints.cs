@@ -63,7 +63,7 @@ public static class AccountEndpoints
             // then reloads so the new principal takes effect. Available only because devAutoLogin is on.
             app.MapGet("/dev/view-as", (HttpContext ctx, string? role) =>
             {
-                if (role is "admin" or "member")
+                if (AgentOs.SharedKernel.Identity.UserRoles.IsAssignable(role) || role is "member")
                 {
                     ctx.Response.Cookies.Append(DevAutoAuthHandler.ViewAsCookie, role, new CookieOptions
                     {

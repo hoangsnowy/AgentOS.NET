@@ -17,9 +17,9 @@
 {
     <Spinner />
 }
-else if (!_isAdmin)
+else if (!_canView)
 {
-    <div class="login-error">Admin role required to view the evidence trail.</div>
+    <div class="login-error">Auditor or admin role required to view the evidence trail.</div>
 }
 else
 {
@@ -105,7 +105,7 @@ else
     private (string?, string?) _appliedParameters;
     private bool OnComputer => _origin == ToolEvidenceOrigins.MemberComputer;
     private bool _resolved;
-    private bool _isAdmin;
+    private bool _canView;
     private bool _loading;
     private string _tenantId = "default";
     private IReadOnlyList<EvidenceRow>? _rows;
@@ -129,11 +129,11 @@ else
         if (AuthState is not null)
         {
             var state = await AuthState;
-            _isAdmin = state.User.IsAdmin();
+            _canView = state.User.Can(Permission.ViewAudit); // RBAC v2 re-check (PermissionMatrix)
             _tenantId = state.User.GetTenantId() ?? string.Empty;
         }
         _resolved = true;
-        if (_isAdmin && _tenantId.Length > 0) { await LoadAsync(); }
+        if (_canView && _tenantId.Length > 0) { await LoadAsync(); }
     }
 
     // A deep link (a task's activity panel) arrives as new parameters — also while this view is already open.
@@ -143,7 +143,7 @@ else
         _appliedParameters = (Origin, SessionId);
         _origin = Origin == ToolEvidenceOrigins.MemberComputer ? Origin : null;
         _sessionId = string.IsNullOrWhiteSpace(SessionId) ? null : SessionId;
-        if (_resolved && _isAdmin && _tenantId.Length > 0) { await LoadAsync(); }
+        if (_resolved && _canView && _tenantId.Length > 0) { await LoadAsync(); }
     }
 
     private async Task SetOrigin(string? origin)

@@ -29,13 +29,13 @@ internal static class SettingsEndpoints
         .WithName("SettingsList")
         .WithSummary("Read every key beneath a prefix (Llm, Github); secret values are masked")
         .WithTags("Settings")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageSettings);
 
         app.MapPost("/settings/Github/test", TestGitHubAsync)
         .WithName("SettingsGithubTest")
         .WithSummary("Probe GitHub with the saved (or a just-typed) Pipeline auto-PR token; never returns the token")
         .WithTags("Settings")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageSettings);
 
         app.MapPost("/settings", async (SetEntryRequest? body, IAppConfigStore store, CancellationToken ct) =>
         {
@@ -66,7 +66,7 @@ internal static class SettingsEndpoints
         .WithName("SettingsSet")
         .WithSummary("Set a single key (overwrite if present)")
         .WithTags("Settings")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageSettings);
 
         app.MapDelete("/settings/{key}", async (string key, IAppConfigStore store, CancellationToken ct) =>
         {
@@ -82,7 +82,7 @@ internal static class SettingsEndpoints
         .WithName("SettingsDelete")
         .WithSummary("Delete a key")
         .WithTags("Settings")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageSettings);
 
         return app;
     }

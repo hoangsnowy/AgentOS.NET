@@ -194,6 +194,49 @@ namespace AgentOs.Modules.Workspaces.Persistence.Migrations
                     b.ToTable("workspaces", "workspaces");
                 });
 
+            modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.WorkspaceMemberEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AddedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AddedByUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("WorkspaceId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkspaceId");
+
+                    b.HasIndex("TenantId", "UserId");
+
+                    b.HasIndex("TenantId", "WorkspaceId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("workspace_members", "workspaces");
+                });
+
             modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.WorkspaceRepoEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -241,6 +284,15 @@ namespace AgentOs.Modules.Workspaces.Persistence.Migrations
                     b.HasIndex("TenantId", "WorkspaceId");
 
                     b.ToTable("workspace_repos", "workspaces");
+                });
+
+            modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.WorkspaceMemberEntity", b =>
+                {
+                    b.HasOne("AgentOs.Modules.Workspaces.Persistence.Entities.WorkspaceEntity", null)
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AgentOs.Modules.Workspaces.Persistence.Entities.WorkspaceRepoEntity", b =>

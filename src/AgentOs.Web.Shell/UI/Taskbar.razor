@@ -9,7 +9,7 @@
 
 @* ===== Dock (floating bottom-center pill) ===== *@
 <div class="dock" role="toolbar" aria-label="Application dash">
-    @foreach (var app in Registry.VisiblePinned(_isAdmin))
+    @foreach (var app in Registry.VisiblePinned(_granted))
     {
         var isOpen = WM.Open.Any(o => o.AppKey == app.Key);
         // Focused = this app owns the front-most (highest-Z, non-minimized) window ON THE ACTIVE
@@ -50,7 +50,7 @@
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private string? _user;
-    private bool _isAdmin;
+    private Permission _granted;
     private string AvatarLetter => string.IsNullOrEmpty(_user) ? "?" : _user[..1].ToUpperInvariant();
 
     protected override void OnInitialized()
@@ -66,7 +66,7 @@
         if (AuthState is not null)
         {
             var state = await AuthState;
-            _isAdmin = state.User.IsAdmin();
+            _granted = state.User.GetPermissions();
         }
     }
 

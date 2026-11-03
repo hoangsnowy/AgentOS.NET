@@ -39,10 +39,10 @@ public static class PairingEndpoints
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        endpoints.MapGet("/pair/vscode", ApprovePage).RequireAuthorization("Member");
+        endpoints.MapGet("/pair/vscode", ApprovePage).RequirePermission(Permission.RunAgents);
         // GAP-19: the approve form carries an antiforgery token (ApprovePage) and the POST validates it — a cross-site
         // form can no longer provision a runner for the signed-in member (SameSite=Lax was the only defence).
-        endpoints.MapPost("/pair/vscode", ApproveAsync).RequireAuthorization("Member");
+        endpoints.MapPost("/pair/vscode", ApproveAsync).RequirePermission(Permission.RunAgents);
         // Anonymous — gated by the one-time code. A typed code is short (≈39 bits), so the host rate-limits this
         // route per client under ExchangeRateLimitPolicy (the Web registers it).
         endpoints.MapPost("/runner/pair/exchange", ExchangeAsync).AllowAnonymous().RequireRateLimiting(ExchangeRateLimitPolicy);

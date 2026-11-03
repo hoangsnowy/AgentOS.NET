@@ -70,7 +70,7 @@
                 <span class="syn-live-tag" title="@ChipTitle" data-testid="llm-chip-live"><Icon Name="lightning" Size="11" /> Live · @ActiveProvider</span>
             }
             <button class="syn-btn" @onclick="Save" title="Save workflow"><Icon Name="floppy-disk" Size="13" /> Save</button>
-            <button class="syn-btn green" @onclick="Run" disabled="@_running" title="Run workflow"><Icon Name="play" Size="13" /> @(_running ? "Running…" : "Run")</button>
+            <button class="syn-btn green" @onclick="Run" disabled="@(_running || !_canRun)" title="@(_canRun ? "Run workflow" : "Your role can't run agents")"><Icon Name="play" Size="13" /> @(_running ? "Running…" : "Run")</button>
 
             <div class="syn-menu">
                 <button class="syn-btn ghost syn-menu-btn" @onclick="ToggleMenu" title="More actions" aria-label="More actions" aria-haspopup="true" aria-expanded="@_menuOpen">⋯</button>
@@ -403,6 +403,8 @@
     private const int DefaultQaCap = 3;
 
     private bool _isAdmin;
+    // RBAC v2: running the pipeline needs RunAgents (viewers, approvers and auditors read only); Run() re-checks.
+    private bool _canRun;
     private string? _userName;
 
     // The studio's two views. "ticket-flow" (optionally "ticket-flow:<boardId>") is also the launch tab Board ›
@@ -622,6 +624,7 @@
         _userId = user.GetUserId();
         _userName = user.Identity?.Name;
         _isAdmin = user.IsAdmin();
+        _canRun = user.Can(Permission.RunAgents);
         return user.GetTenantId() ?? string.Empty;
     }
 
@@ -875,7 +878,7 @@
     /// node types are refused (painted Skipped) before any agent runs; the QA gate's fail edge loops.</summary>
     private async Task Run()
     {
-        if (_running)
+        if (_running || !_canRun)
         {
             return;
         }

@@ -43,6 +43,7 @@ public static partial class RowLevelSecurity
         ("sessions", "design_reviews"), ("sessions", "approvals"),
         ("tools", "tool_invocations"),
         ("workspaces", "workspaces"), ("workspaces", "workspace_repos"), ("workspaces", "autopilot_events"), ("workspaces", "ticket_flows"),
+        ("workspaces", "workspace_members"),
         ("memory", "nodes"), ("memory", "edges"),
     ];
 

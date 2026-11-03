@@ -21,7 +21,8 @@ namespace AgentOs.Web.Endpoints;
 /// <summary>Maps <c>/cost/export</c>, <c>/tenant/export</c> and <c>/audit/export</c>.</summary>
 public static class ExportEndpoints
 {
-    /// <summary>Map the export routes (each requires an authenticated admin with a tenant claim).</summary>
+    /// <summary>Map the export routes (RBAC v2: cost + tenant export need ExportData, the audit CSV ViewAudit — admin or
+    /// auditor; each also needs a tenant claim).</summary>
     public static IEndpointRouteBuilder MapExportEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -29,7 +30,7 @@ public static class ExportEndpoints
         // Cost CSV export for the admin Cost app; `days` (0/absent = all time) sets the cutoff.
         app.MapGet("/cost/export", async (HttpContext http, IPipelineRunRepository runs, int? days) =>
         {
-            if (!http.User.IsAdmin() || http.User.GetTenantId() is not { } tenant)
+            if (!http.User.Can(Permission.ExportData) || http.User.GetTenantId() is not { } tenant)
             {
                 return Results.Forbid();
             }
@@ -37,14 +38,14 @@ public static class ExportEndpoints
             var summary = await runs.GetCostSummaryForTenantAsync(tenant, since);
             var bytes = System.Text.Encoding.UTF8.GetBytes(AgentOs.Modules.Pipeline.Cost.CostCsv.ToCsv(summary));
             return Results.File(bytes, "text/csv", "agentos-cost.csv");
-        }).RequireAuthorization();
+        }).RequirePermission(Permission.ExportData);
 
         // Tenant data export (Settings → Data, E1.4): one JSON document of every row the tenant owns, secrets excluded,
         // streamed. A tenant admin exports their own tenant; ?tenant= another one needs platform-admin. Audited only once
         // the export has been written — a refused export (a secret column it can't safely redact) is a 409.
         app.MapGet("/tenant/export", async (HttpContext http, ITenantDataService data, IAuditLog audit, ILoggerFactory loggers, string? tenant) =>
         {
-            if (!http.User.IsAdmin() || http.User.GetTenantId() is not { } own) { return Results.Forbid(); }
+            if (!http.User.Can(Permission.ExportData) || http.User.GetTenantId() is not { } own) { return Results.Forbid(); }
             var target = string.IsNullOrWhiteSpace(tenant) ? own : tenant;
             if (!string.Equals(target, own, StringComparison.Ordinal) && !http.User.IsPlatformAdmin()) { return Results.Forbid(); }
             if (!data.IsAvailable) { return Results.NotFound("No database in this run — nothing to export."); }
@@ -68,14 +69,14 @@ public static class ExportEndpoints
             await audit.WriteAsync(new AuditEntry(Guid.NewGuid(), target, http.User.Identity?.Name,
                 AuditActions.TenantExported, $"export of {target}", null, null, DateTimeOffset.UtcNow), CancellationToken.None);
             return Results.Empty;
-        }).RequireAuthorization();
+        }).RequirePermission(Permission.ExportData);
 
         // Audit CSV export (Settings → Audit log). A tenant admin exports their own tenant; scope=platform (platform
         // settings changes) needs platform-admin.
         app.MapGet("/audit/export", async (HttpContext http, IAuditLog audit, string? scope) =>
         {
             var platform = string.Equals(scope, "platform", StringComparison.Ordinal);
-            if (!http.User.IsAdmin() || (platform && !http.User.IsPlatformAdmin()))
+            if (!http.User.Can(Permission.ViewAudit) || (platform && !http.User.IsPlatformAdmin()))
             {
                 return Results.Forbid();
             }
@@ -87,7 +88,7 @@ public static class ExportEndpoints
             var rows = await audit.ListAsync(tenant, 10_000);
             var bytes = System.Text.Encoding.UTF8.GetBytes(AuditCsv.ToCsv(rows));
             return Results.File(bytes, "text/csv", platform ? "agentos-audit-platform.csv" : $"agentos-audit-{tenant}.csv");
-        }).RequireAuthorization();
+        }).RequirePermission(Permission.ViewAudit);
 
         return app;
     }

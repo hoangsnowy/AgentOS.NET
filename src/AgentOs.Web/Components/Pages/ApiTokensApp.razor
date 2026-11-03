@@ -37,8 +37,10 @@ else
             </Field>
             <Field Label="Role">
                 <select class="prefs-select" @bind="_role">
-                    <option value="member">Member — run pipelines, read results</option>
-                    <option value="admin">Admin — also manage this workspace</option>
+                    @foreach (var role in UserRoles.Assignable)
+                    {
+                        <option value="@role">@UserRoles.Label(role) — @UserRoles.Describe(role)</option>
+                    }
                 </select>
             </Field>
             <Field Label="Expires in">
@@ -112,7 +114,7 @@ else
     private string? _tenantId;
     private string _actor = "admin";
     private string _name = string.Empty;
-    private string _role = "member";
+    private string _role = UserRoles.Developer;
     private int _days = 90;
     private string? _newToken;
     private IReadOnlyList<ApiTokenInfo>? _rows;
@@ -122,7 +124,7 @@ else
         if (AuthState is not null)
         {
             var state = await AuthState;
-            _isAdmin = state.User.IsAdmin();
+            _isAdmin = state.User.Can(Permission.ManageApiTokens); // RBAC v2 re-check (PermissionMatrix)
             _tenantId = state.User.GetTenantId();
             _actor = state.User.Identity?.Name ?? "admin";
         }

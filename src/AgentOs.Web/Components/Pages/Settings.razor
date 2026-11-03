@@ -259,7 +259,7 @@ dotnet user-secrets set "Llm:AzureOpenAi:Endpoint" "https://your-resource.openai
         if (AuthState is not null)
         {
             var user = (await AuthState).User;
-            _isAdmin = user.IsAdmin();
+            _isAdmin = user.Can(Permission.ManageSettings); // RBAC v2 re-check (PermissionMatrix)
             _tenantId = user.GetTenantId() ?? string.Empty;
             _userId = user.GetUserId();
         }

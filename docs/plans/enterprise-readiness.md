@@ -74,7 +74,7 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 |---|---|---|---|---|---|
 | 1 | SSO | Entra ID / Okta / ADFS / Google via OIDC or SAML, MFA policy, JIT provisioning | ❌ Keycloak local users only | realm has no `identityProviders` | **E1.1** |
 | 2 | Provisioning | SCIM 2.0 create/update/**deprovision** → sessions revoked | ❌ | — | **E2.1** |
-| 3 | RBAC | viewer · developer · approver · admin · auditor; per-workspace scope; custom roles later | 🟡 4 roles (admin · approver · member · platform-admin) | `IdentityModule.cs`; `TenantRoles.cs` | **E1.2** |
+| 3 | RBAC | viewer · developer · approver · admin · auditor; per-workspace scope; custom roles later | 🟡 5 roles + permission matrix + per-board memberships shipped (E1.2), enforced on endpoints + desktop; pending lab / full-stack verification per role; custom roles later | `PermissionMatrix.cs`, `WorkspaceMemberships.cs`, [CONFIG.md](../CONFIG.md#roles-and-permissions-rbac-v2) | **E1.2** |
 | 4 | Machine access | API tokens / service accounts, scoped + expiring, for CI and the CLI | ❌ JWT only | — | **E1.3** |
 | 5 | API contract | versioned REST (`/v1`), published OpenAPI, deprecation policy | 🟡 unversioned | Scalar UI on Api | **E1.3** |
 | 6 | Tenant isolation | DB-enforced, proven by test | 🟡 EF filters + E2E (#192), no RLS | plan 0.9 | **E0.1** |

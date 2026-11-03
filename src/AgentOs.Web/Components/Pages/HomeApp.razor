@@ -41,8 +41,8 @@
         </p>
     }
     <div class="form-actions">
-        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RunNow" Disabled="@(string.IsNullOrWhiteSpace(_story))"><Icon Name="play" Size="13" /> Run now</Btn>
-        <Btn OnClick="PlanAsTickets" Disabled="@(string.IsNullOrWhiteSpace(_story))"><Icon Name="git-pull-request" Size="13" /> Plan as tickets</Btn>
+        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RunNow" Disabled="@(string.IsNullOrWhiteSpace(_story) || !_canRun)"><Icon Name="play" Size="13" /> Run now</Btn>
+        <Btn OnClick="PlanAsTickets" Disabled="@(string.IsNullOrWhiteSpace(_story) || !_canRun)"><Icon Name="git-pull-request" Size="13" /> Plan as tickets</Btn>
         @if (_isAdmin)
         {
             <Btn OnClick="@(() => { _scheduling = !_scheduling; _scheduleError = null; })" Disabled="@(string.IsNullOrWhiteSpace(_story))">
@@ -194,6 +194,8 @@
     private string _story = string.Empty;
     private string _tenantId = string.Empty;
     private bool _isAdmin;
+    // RBAC v2: Run now / Plan as tickets need RunAgents; Workflow and Board re-check before anything runs.
+    private bool _canRun;
     private string _actor = "admin";
 
     // Schedule form.
@@ -220,6 +222,7 @@
         {
             var user = (await AuthState).User;
             _isAdmin = user.IsAdmin();
+            _canRun = user.Can(Permission.RunAgents);
             _actor = user.Identity?.Name ?? "admin";
             _tenantId = user.GetTenantId() ?? string.Empty;
         }
@@ -261,7 +264,7 @@
     // Run now = the Workflow app, prefilled with the story and told to start (one click to a running pipeline).
     private void RunNow()
     {
-        if (string.IsNullOrWhiteSpace(_story)) { return; }
+        if (string.IsNullOrWhiteSpace(_story) || !_canRun) { return; }
         WM.RequestLaunchPayload("workflow", _story.Trim());
         WM.RequestLaunchTab("workflow", WorkflowAutoRun);
         Open("workflow");

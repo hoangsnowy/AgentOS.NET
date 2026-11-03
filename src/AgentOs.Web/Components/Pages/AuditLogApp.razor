@@ -11,9 +11,9 @@
 {
     <Spinner />
 }
-else if (!_isAdmin)
+else if (!_canView)
 {
-    <div class="login-error">Admin role required to view the audit log.</div>
+    <div class="login-error">Auditor or admin role required to view the audit log.</div>
 }
 else if (_tenantId is null)
 {
@@ -84,7 +84,7 @@ else
 
     private const int Max = 500;
     private bool _resolved;
-    private bool _isAdmin;
+    private bool _canView;
     private bool _isPlatformAdmin;
     private bool _platformScope;
     private bool _loading;
@@ -102,12 +102,12 @@ else
         if (AuthState is not null)
         {
             var state = await AuthState;
-            _isAdmin = state.User.IsAdmin();
+            _canView = state.User.Can(Permission.ViewAudit); // RBAC v2 re-check (PermissionMatrix)
             _isPlatformAdmin = state.User.IsPlatformAdmin();
             _tenantId = state.User.GetTenantId();
         }
         _resolved = true;
-        if (_isAdmin && _tenantId is not null) { await LoadAsync(); }
+        if (_canView && _tenantId is not null) { await LoadAsync(); }
     }
 
     private async Task LoadAsync()

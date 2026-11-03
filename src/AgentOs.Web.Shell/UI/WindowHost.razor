@@ -19,7 +19,13 @@
 @foreach (var w in WM.Open)
 {
         <AppFrame W="@w" @key="w.Id">
-            @if (Registry.ResolveComponent(w.AppKey) is { } appComponent)
+            @if (Registry.Find(w.AppKey) is { } app && !app.IsVisibleTo(_granted))
+            {
+                @* RBAC v2: a deep link / restored window for an app this user's roles don't allow renders a refusal,
+                   never the app — the app's own page re-checks too (defence in depth). *@
+                <div class="appwin-blank" role="alert">You don't have access to <strong>@app.Title</strong>. Ask an admin for a role that includes it.</div>
+            }
+            else if (Registry.ResolveComponent(w.AppKey) is { } appComponent)
             {
                 <DynamicComponent Type="appComponent" />
             }
@@ -31,9 +37,21 @@
 }
 
 @code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthState { get; set; }
+
+    private Permission _granted;
+
     protected override void OnInitialized()
     {
         WM.Changed += OnChanged;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            _granted = (await AuthState).User.GetPermissions();
+        }
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);

@@ -477,7 +477,7 @@ The most used routes:
 | `POST` | `/llm/test` | signed in | Probe the configured provider with a minimal call |
 | — | `/mcp` | signed in | AgentOS.NET as an MCP server |
 | `GET`  | `/health` · `/alive` | none | Readiness, liveness |
-| `GET`  | `/health/llm` | signed in | Provider-key readiness |
+| `GET`  | `/health/llm` | admin (`ManageSettings`) | Provider-key readiness |
 
 ## Extending
 

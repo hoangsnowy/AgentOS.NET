@@ -67,13 +67,22 @@ case "$code" in
   *)   echo "WARN: Could not ensure realm role platform-admin (HTTP $code)." ;;
 esac
 
-# 2c. Realm role approver (E1.5 approval policies): approves or rejects the steps a policy holds. Same idempotent ensure.
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${auth[@]}" "$KC_URL/admin/realms/$REALM/roles"   -d '{"name":"approver","description":"Tenant approver - approves or rejects plan, diff, pull request and merge steps"}')
-case "$code" in
-  201) echo "Realm role approver created." ;;
-  409) echo "Realm role approver already present." ;;
-  *)   echo "WARN: Could not ensure realm role approver (HTTP $code)." ;;
-esac
+# 2c. RBAC v2 realm roles (E1.2): viewer / developer / approver / auditor. Same reason as 2b (no re-import); the hosts
+#     also create a missing one on first assignment, this just makes them visible in Keycloak from day one.
+ensure_role() {
+  local name="$1" desc="$2" rc
+  rc=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${auth[@]}" "$KC_URL/admin/realms/$REALM/roles" \
+    -d "$(jq -n --arg n "$name" --arg d "$desc" '{name:$n,description:$d}')")
+  case "$rc" in
+    201) echo "Realm role $name created." ;;
+    409) echo "Realm role $name already present." ;;
+    *)   echo "WARN: Could not ensure realm role $name (HTTP $rc)." ;;
+  esac
+}
+ensure_role viewer    "Read-only access to the tenant's work"
+ensure_role developer "Runs agents and works tickets"
+ensure_role approver  "Approves plan, diff, pull request and merge steps; decides design checks"
+ensure_role auditor   "Read-only audit log and evidence"
 
 # 3. Seed users: rotate imported placeholder passwords
 rotate_user() {

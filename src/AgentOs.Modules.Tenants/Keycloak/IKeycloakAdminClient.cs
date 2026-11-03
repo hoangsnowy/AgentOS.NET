@@ -32,8 +32,9 @@ public interface IKeycloakAdminClient
     /// need a server-side search rewrite — call out the limit in the response if you display it.</summary>
     Task<IReadOnlyList<KeycloakUser>> ListUsersByTenantAsync(string tenantId, int max = 200, CancellationToken ct = default);
 
-    /// <summary>Set a member's realm roles to exactly <paramref name="roles"/> (managed set:
-    /// <c>admin</c> + <c>member</c>). Diffs against the user's current mappings — grants the missing
+    /// <summary>Set a member's realm roles to exactly <paramref name="roles"/> (managed set: the RBAC v2 roles
+    /// <c>viewer</c>/<c>developer</c>/<c>approver</c>/<c>auditor</c>/<c>admin</c> + the legacy <c>member</c>; a missing
+    /// managed realm role is created on first use). Diffs against the user's current mappings — grants the missing
     /// ones, revokes the managed ones no longer desired, leaves unrelated roles untouched. Throws
     /// <see cref="System.InvalidOperationException"/> on a non-success response.</summary>
     Task UpdateUserRolesAsync(string userId, IReadOnlyList<string> roles, CancellationToken ct = default);

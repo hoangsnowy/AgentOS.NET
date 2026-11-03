@@ -19,6 +19,6 @@ public interface IAppRegistry
     /// <summary>Apps that appear in the dock and the pinned grid.</summary>
     System.Collections.Generic.IReadOnlyList<DesktopApp> Pinned { get; }
 
-    /// <summary>Pinned apps visible to a user with the given admin status (filters out admin-only apps).</summary>
-    System.Collections.Generic.IReadOnlyList<DesktopApp> VisiblePinned(bool isAdmin);
+    /// <summary>Pinned apps visible to a user granted <paramref name="granted"/> (RBAC v2 — see <see cref="DesktopApp.IsVisibleTo"/>).</summary>
+    System.Collections.Generic.IReadOnlyList<DesktopApp> VisiblePinned(AgentOs.SharedKernel.Identity.Permission granted);
 }

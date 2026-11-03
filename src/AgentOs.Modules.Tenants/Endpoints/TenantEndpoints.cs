@@ -1,6 +1,7 @@
 // Tenant identity + admin endpoints. /tenants/me is open to any authenticated user (returns the
-// resolved context); /tenants list + create + member invite require the Admin policy and reach
-// into Keycloak via IKeycloakAdminClient to provision realm users.
+// resolved context + permissions); /tenants list + create need platform-admin; member management (invite, roles,
+// board memberships) needs the ManageMembers permission and reaches into Keycloak via IKeycloakAdminClient; the
+// audit trail needs ViewAudit (RBAC v2, E1.2 — see PermissionMatrix).
 
 using System;
 using System.Collections.Generic;
@@ -9,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants.Email;
 using AgentOs.Modules.Tenants.Keycloak;
+using AgentOs.Modules.Workspaces.Access;
 using AgentOs.SharedKernel.Hosting;
 using AgentOs.SharedKernel.Identity;
 using Microsoft.AspNetCore.Builder;
@@ -29,7 +31,8 @@ internal static class TenantEndpoints
             tenant.UserName,
             tenant.Roles,
             tenant.IsAuthenticated,
-            tenant.IsAdmin)))
+            tenant.IsAdmin,
+            PermissionNames(tenant.IsAuthenticated ? PermissionMatrix.For(tenant.Roles) : Permission.None))))
         .WithName("TenantMe")
         .WithSummary("Resolved tenant + user + roles for the current request")
         .WithTags("Tenants")
@@ -149,10 +152,10 @@ internal static class TenantEndpoints
             {
                 return Results.Forbid();
             }
-            var role = string.IsNullOrWhiteSpace(body.Role) ? "member" : body.Role;
-            if (!TenantRoles.IsKnown(role))
+            var role = string.IsNullOrWhiteSpace(body.Role) ? MemberRoles.DefaultRole : body.Role;
+            if (!MemberRoles.IsAllowed(role))
             {
-                return Results.BadRequest(new { error = "role must be 'admin', 'approver' or 'member'" });
+                return Results.BadRequest(new { error = $"role must be one of: {string.Join(", ", UserRoles.Assignable)}" });
             }
             var ttl = TimeSpan.FromHours(body.TtlHours is > 0 and <= 168 ? body.TtlHours.Value : 24);
             var minted = signup.CreateInvitation(tenantId, role, body.Email, ttl);
@@ -196,7 +199,7 @@ internal static class TenantEndpoints
         .WithName("TenantsCreateInvitation")
         .WithSummary("Mint a signup invitation URL for the tenant (admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageMembers);
 
         // Public preview: decode an invitation token (no side effects). Lets the signup page show
         // the inviter's tenant + email before the user fills the form.
@@ -231,7 +234,7 @@ internal static class TenantEndpoints
         .WithName("TenantsListMembers")
         .WithSummary("List the members of the current tenant (tenant Admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageMembers);
 
         // Change a member's roles (admin/member). Tenant-scoped: an Admin can only touch members of
         // their own tenant, and cannot strip their own last admin role (lock-out guard).
@@ -249,16 +252,10 @@ internal static class TenantEndpoints
             {
                 return Results.Forbid();
             }
-            // An approver is a member too (TenantRoles.Expand); unknown roles are dropped.
-            var roles = TenantRoles.Expand(body.Roles).ToList();
-            if (roles.Count == 0)
+            var roles = MemberRoles.Sanitize(body.Roles);
+            if (MemberRoles.Check(ctx.UserId, userId, roles) is { } refused)
             {
-                return Results.BadRequest(new { error = "roles must contain at least one of: admin, approver, member" });
-            }
-            // Lock-out guard: an Admin editing themselves must keep the admin role.
-            if (string.Equals(ctx.UserId, userId, StringComparison.Ordinal) && !roles.Contains("admin", StringComparer.Ordinal))
-            {
-                return Results.BadRequest(new { error = "You cannot remove your own admin role." });
+                return Results.BadRequest(new { error = refused });
             }
             try
             {
@@ -283,7 +280,7 @@ internal static class TenantEndpoints
         .WithName("TenantsUpdateMemberRoles")
         .WithSummary("Change a member's roles (tenant Admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageMembers);
 
         // Remove a member from the tenant (deletes the Keycloak user). Cannot remove yourself. Their paired computers are
         // revoked and disconnected too (GAP-04) — a departed member's runner must not keep taking (or answering) work.
@@ -291,7 +288,7 @@ internal static class TenantEndpoints
         .WithName("TenantsRemoveMember")
         .WithSummary("Remove a member from the tenant (tenant Admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageMembers);
 
         // Trigger a password-reset action email for a member (Keycloak owns the new password).
         app.MapPost("/tenants/{tenantId}/members/{userId}/reset-password", async (
@@ -330,7 +327,7 @@ internal static class TenantEndpoints
         .WithName("TenantsResetMemberPassword")
         .WithSummary("Send a member a password-reset email (tenant Admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageMembers);
 
         app.MapGet("/tenants/{tenantId}/audit", async (
             string tenantId,
@@ -347,9 +344,9 @@ internal static class TenantEndpoints
             return Results.Ok(rows);
         })
         .WithName("TenantsAudit")
-        .WithSummary("Audit trail for the current tenant (tenant Admin only)")
+        .WithSummary("Audit trail for the current tenant (admin or auditor)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ViewAudit);
 
         app.MapPost("/tenants/{tenantId}/members", async (
             string tenantId,
@@ -374,9 +371,11 @@ internal static class TenantEndpoints
             {
                 return Results.NotFound(new { error = $"Tenant '{tenantId}' not found" });
             }
-            var roles = body.Roles is { Count: > 0 }
-                ? body.Roles.Where(r => r is "admin" or "member").Distinct(StringComparer.Ordinal).ToList()
-                : new List<string> { "member" };
+            IReadOnlyList<string> roles = body.Roles is { Count: > 0 } ? MemberRoles.Sanitize(body.Roles) : [MemberRoles.DefaultRole];
+            if (roles.Count == 0)
+            {
+                return Results.BadRequest(new { error = $"roles must contain at least one of: {string.Join(", ", UserRoles.Assignable)}" });
+            }
             try
             {
                 var userId = await kc.CreateUserAsync(
@@ -405,9 +404,82 @@ internal static class TenantEndpoints
         .WithName("TenantsInviteMember")
         .WithSummary("Invite a member into a tenant (admin only)")
         .WithTags("Tenants")
-        .RequireAuthorization("Admin");
+        .RequirePermission(Permission.ManageMembers);
 
+        MapBoardMemberEndpoints(app);
         return app;
+    }
+
+    // RBAC v2 (E1.2): a member's role per board (workspace). The first membership makes a board restricted — only its
+    // members (and tenant-wide admins/auditors) see it. Tenant-scoped like every member route: {tenantId} must be the
+    // caller's own tenant, and the target user must belong to it.
+    private static void MapBoardMemberEndpoints(IEndpointRouteBuilder app)
+    {
+        app.MapGet("/tenants/{tenantId}/boards/{boardId:guid}/members", async (
+            string tenantId, Guid boardId, [Microsoft.AspNetCore.Mvc.FromServices] IWorkspaceMembershipStore store, ITenantContext ctx, CancellationToken ct) =>
+        {
+            if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal)) { return Results.Forbid(); }
+            var rows = await store.ListAsync(tenantId, boardId, ct).ConfigureAwait(false);
+            return Results.Ok(rows);
+        })
+        .WithName("TenantsListBoardMembers")
+        .WithSummary("List a board's members and their board roles (admin only)")
+        .WithTags("Tenants")
+        .RequirePermission(Permission.ManageMembers);
+
+        app.MapPut("/tenants/{tenantId}/boards/{boardId:guid}/members/{userId}", async (
+            string tenantId, Guid boardId, string userId, SetBoardRoleRequest body, [Microsoft.AspNetCore.Mvc.FromServices] IWorkspaceMembershipStore store,
+            IKeycloakAdminClient kc, IAuditLog audit, ITenantContext ctx, HttpContext http, CancellationToken ct) =>
+        {
+            if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal)) { return Results.Forbid(); }
+            if (!UserRoles.IsWorkspaceAssignable(body.Role))
+            {
+                return Results.BadRequest(new { error = $"role must be one of: {string.Join(", ", UserRoles.WorkspaceAssignable)}" });
+            }
+            try
+            {
+                if (!await UserInTenantAsync(kc, userId, tenantId, ct).ConfigureAwait(false)) { return Results.NotFound(); }
+                var row = await store.SetAsync(tenantId, boardId, userId, body.Role, ctx.UserId, ct).ConfigureAwait(false);
+                await audit.WriteAsync(new AuditEntry(
+                    Guid.NewGuid(), tenantId, ctx.UserId, AuditActions.BoardRoleSet,
+                    Target: $"board={boardId},user={userId},role={body.Role}",
+                    IpAddress: http.Connection.RemoteIpAddress?.ToString(),
+                    UserAgent: http.Request.Headers.UserAgent.ToString(),
+                    TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
+                return Results.Ok(row);
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(title: "Keycloak lookup failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+        })
+        .WithName("TenantsSetBoardRole")
+        .WithSummary("Give a member a role on one board (admin only)")
+        .WithTags("Tenants")
+        .RequirePermission(Permission.ManageMembers);
+
+        app.MapDelete("/tenants/{tenantId}/boards/{boardId:guid}/members/{userId}", async (
+            string tenantId, Guid boardId, string userId, [Microsoft.AspNetCore.Mvc.FromServices] IWorkspaceMembershipStore store, IAuditLog audit,
+            ITenantContext ctx, HttpContext http, CancellationToken ct) =>
+        {
+            if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal)) { return Results.Forbid(); }
+            if (!await store.RemoveAsync(tenantId, boardId, userId, ct).ConfigureAwait(false)) { return Results.NotFound(); }
+            await audit.WriteAsync(new AuditEntry(
+                Guid.NewGuid(), tenantId, ctx.UserId, AuditActions.BoardRoleRemoved,
+                Target: $"board={boardId},user={userId}",
+                IpAddress: http.Connection.RemoteIpAddress?.ToString(),
+                UserAgent: http.Request.Headers.UserAgent.ToString(),
+                TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
+            return Results.NoContent();
+        })
+        .WithName("TenantsRemoveBoardRole")
+        .WithSummary("Take a member off one board (admin only)")
+        .WithTags("Tenants")
+        .RequirePermission(Permission.ManageMembers);
     }
 
     private static readonly string[] AdminRole = new[] { "admin" };
@@ -468,6 +540,10 @@ internal static class TenantEndpoints
     /// on an arbitrary user id — this confirms the target actually belongs to the caller's tenant before a
     /// re-role / delete / password-reset. Throws <see cref="InvalidOperationException"/> if Keycloak is
     /// unreachable (callers map it to 502, same as the mutating call).</summary>
+    /// <summary>The single permissions in <paramref name="granted"/>, by name (RBAC v2 — what /tenants/me reports).</summary>
+    internal static IReadOnlyList<string> PermissionNames(Permission granted) =>
+        [.. PermissionMatrix.Each.Where(p => granted.Has(p)).Select(p => p.ToString())];
+
     private static async Task<bool> UserInTenantAsync(
         IKeycloakAdminClient kc, string userId, string tenantId, CancellationToken ct)
     {
@@ -476,6 +552,9 @@ internal static class TenantEndpoints
     }
 }
 
+/// <summary>Body of PUT /tenants/{tenantId}/boards/{boardId}/members/{userId}.</summary>
+public sealed record SetBoardRoleRequest(string Role);
+
 /// <summary>Response shape for GET /tenants/me.</summary>
 public sealed record TenantMeResponse(
     string TenantId,
@@ -483,7 +562,8 @@ public sealed record TenantMeResponse(
     string? UserName,
     IReadOnlyList<string> Roles,
     bool IsAuthenticated,
-    bool IsAdmin);
+    bool IsAdmin,
+    IReadOnlyList<string> Permissions);
 
 /// <summary>Body for POST /tenants.</summary>
 public sealed record CreateTenantRequest(string Id, string? Name, string AdminUsername, string? AdminEmail);

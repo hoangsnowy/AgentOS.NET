@@ -32,10 +32,32 @@ public sealed class WorkspacesDbContext : DbContext
 
     public DbSet<TicketFlowVersionEntity> TicketFlows => Set<TicketFlowVersionEntity>();
 
+    public DbSet<WorkspaceMemberEntity> WorkspaceMembers => Set<WorkspaceMemberEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.HasDefaultSchema("workspaces");
+
+        // RBAC v2 (E1.2): a member's role per board. Rows cascade with their board.
+        modelBuilder.Entity<WorkspaceMemberEntity>(e =>
+        {
+            e.ToTable("workspace_members");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.WorkspaceId).IsRequired();
+            e.Property(x => x.UserId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Role).IsRequired().HasMaxLength(32);
+            e.Property(x => x.AddedByUserId).HasMaxLength(64);
+            e.Property(x => x.AddedAtUtc).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.UserId }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.UserId });
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
+            e.HasOne<WorkspaceEntity>()
+                .WithMany()
+                .HasForeignKey(x => x.WorkspaceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         // Ticket flows (ADR-0014): append-only versions; BoardId = Guid.Empty is the tenant's default flow.
         modelBuilder.Entity<TicketFlowVersionEntity>(e =>

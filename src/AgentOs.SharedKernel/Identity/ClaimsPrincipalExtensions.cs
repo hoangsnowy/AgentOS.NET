@@ -60,7 +60,7 @@ public static class ClaimsPrincipalExtensions
     /// <summary>True when the user may approve or reject a step held by an approval policy: the <c>approver</c> or the
     /// <c>admin</c> realm role (E1.5).</summary>
     public static bool CanApprove(this ClaimsPrincipal user)
-        => user.IsInRole(ClaimNames.ApproverRole) || user.IsInRole(ClaimNames.AdminRole);
+        => user.Can(Permission.ApproveWork);   // RBAC v2: PermissionMatrix decides (approver, admin)
 }
 
 /// <summary>GAP-17 — a signed-in principal without a <c>tenant</c> claim is a misconfigured token, never "the shared
