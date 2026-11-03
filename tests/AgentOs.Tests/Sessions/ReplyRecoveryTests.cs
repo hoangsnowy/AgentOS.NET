@@ -304,6 +304,10 @@ public sealed class ReplyRecoveryTests
         var prompt = followUp.SystemPrompt + followUp.UserPrompt;
         followUp.UserPrompt.ShouldContain("acme/chess");
         followUp.UserPrompt.ShouldContain("issue-102-ai-fix");
+        // Unpushed work is pushed before the checkout is deleted — only the run's own branch, never forced.
+        followUp.UserPrompt.ShouldContain("git push -u origin issue-102-ai-fix");
+        followUp.UserPrompt.ShouldContain("never with --force");
+        followUp.UserPrompt.ShouldContain("do not commit anything new");
         followUp.UserPrompt.ShouldContain("the end, no JSON.");                 // the tail of what it said
         followUp.SystemPrompt.ShouldStartWith("You are the Coding Agent of AgentOS.NET");
         followUp.SystemPrompt.ShouldContain(UntrustedText.SystemRule);
