@@ -16,6 +16,11 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 
 ### Added
 
+- **Ticket trackers (E1.8).** A board's tickets can come from **Azure DevOps Boards** (WIQL by area / iteration /
+  state / tags) or **Jira Cloud** (REST v3, JQL) while its code stays on GitHub / Azure Repos. Comments are the
+  ticket's discussion with the maintainer rule mapped to project roles; a run moves the ticket on start and merge,
+  links its pull request and asks its questions there. API tokens are stored encrypted. See docs/INTEGRATIONS.md.
+
 - **Board + Autopilot.** A Projects-style board that spans many repositories: tickets with dependencies,
   file attachments, live plain-language progress, Stop / Try again / Ask for changes / Fix the failing
   checks. Autopilot runs each ticket as a Microsoft Agent Framework workflow (drawn as a graph in the Workflow

@@ -25,6 +25,28 @@ public static partial class PullRequestText
         return issueNumber is { } n ? $"{prefix}: {title} (#{n})" : $"{prefix}: {title}";
     }
 
+    /// <summary>"feat: Add checkout (SHOP-12)" — a ticket from an external tracker (E1.8) is named by its key, which is
+    /// also what Jira's and Azure Boards' GitHub integrations link on. Without a tracker, <see cref="Title(int?, string, string?)"/>.</summary>
+    public static string Title(int? issueNumber, string ticketTitle, string? ticketType, TrackerBinding? tracker)
+    {
+        if (tracker is null || issueNumber is not { } n) { return Title(issueNumber, ticketTitle, ticketType); }
+        var plain = Title(null, ticketTitle, ticketType);
+        return $"{plain} ({tracker.TicketKey(n)})";
+    }
+
+    /// <summary>The body for a ticket from an external tracker (E1.8): the description, then a link to the ticket — and
+    /// never <c>Closes #N</c>, which would close an unrelated GitHub issue with the same number on merge (the tracker is
+    /// moved to its done state by AgentOS.NET instead). Without a tracker, <see cref="Body(int?, string?, string?)"/>.</summary>
+    public static string Body(int? issueNumber, string? summary, string? description, TrackerBinding? tracker)
+    {
+        if (tracker is null || issueNumber is not { } n) { return Body(issueNumber, summary, description); }
+        var text = Body(null, summary, description);
+        var key = tracker.TicketKey(n);
+        return text.Contains(key, StringComparison.OrdinalIgnoreCase) && text.Contains(tracker.TicketUrl(n), StringComparison.Ordinal)
+            ? text
+            : $"{text}\n\nTicket: [{key}]({tracker.TicketUrl(n)})";
+    }
+
     /// <summary>The longest agent-written description kept (GitHub caps a body at 65,536 characters).</summary>
     public const int MaxDescriptionLength = 60_000;
 

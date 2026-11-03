@@ -166,7 +166,7 @@ public sealed partial class ProjectOrchestrator(
             var boardDesc = new BoardDescriptor(board.Id, tenant, board.Kind, board.ProjectOwner, board.ProjectScope,
                 board.ProjectNumber, board.ProjectNodeId, pat, board.Project);
             var tickets = (await sp.GetRequiredService<IBoardTicketService>().ListTicketsAsync(boardDesc, ct).ConfigureAwait(false)).Items
-                .Where(t => t.Kind != BoardTicketKind.DraftIssue && t.Number is not null && t.RepoOwner is not null && t.RepoName is not null)
+                .Where(IsWorkable)
                 .ToList();
             var sessions = (await sessionsRepo.ListForTenantAsync(tenant, ct).ConfigureAwait(false)).Where(s => s.WorkspaceId == board.Id).ToList();
             var repos = (await sessionsRepo.ListAllReposForTenantAsync(tenant, ct).ConfigureAwait(false)).ToLookup(r => r.SessionId);
@@ -211,6 +211,8 @@ public sealed partial class ProjectOrchestrator(
                     {
                         await sessionsRepo.UpdateRepoRunResultAsync(tenant, r.Id, "Merged", r.BranchName, r.PrUrl, null, ct).ConfigureAwait(false);
                         await sessionsRepo.RecomputeSessionStatusForTenantAsync(tenant, s.Id, ct).ConfigureAwait(false);
+                        // Merged by a person: the tracker ticket follows (GitHub closes its issue from "Closes #N").
+                        await TicketWrites.MoveAsync(sp, board, desc, s.IssueNumber, TicketMilestone.Merged, ct).ConfigureAwait(false);
                         continue;
                     }
                     var checks = s.Status == "Done" ? await prs.GetChecksStateAsync(desc, number, ct).ConfigureAwait(false) : PrChecksState.Pending;
@@ -264,12 +266,9 @@ public sealed partial class ProjectOrchestrator(
             var planTickets = new List<PlanTicket>();
             foreach (var t in tickets)
             {
-                var open = !string.Equals(t.State, "CLOSED", StringComparison.OrdinalIgnoreCase);
-                var ai = t.Labels.Contains(StandardLabels.AiReady);
                 var live = liveIssues.Contains((t.Number, t.RepoOwner, t.RepoName));
-                var deps = open && ai && !live ? await DependenciesAsync(provider, board, tenant, pat, t, ct).ConfigureAwait(false) : [];
-                var priority = t.Labels.Contains("p0") ? 0 : t.Labels.Contains("p1") ? 1 : 2;
-                planTickets.Add(new PlanTicket(t.Number!.Value, open, ai, priority, deps, live));
+                var deps = NeedsDependencies(t, live) ? await DependenciesAsync(provider, board, tenant, pat, t, ct).ConfigureAwait(false) : [];
+                planTickets.Add(PlanTicketOf(t, live, deps));
             }
 
             // The Testing agent needs the member's computer (a browser, containers, the repo's toolchain).
@@ -404,6 +403,11 @@ public sealed partial class ProjectOrchestrator(
                     await sessions.UpdateRepoRunResultAsync(tenant, repo.Id, "Merged", repo.BranchName, repo.PrUrl, null, ct).ConfigureAwait(false);
                     await sessions.RecomputeSessionStatusForTenantAsync(tenant, merge.SessionId, ct).ConfigureAwait(false);
                     log.Add(tenant, board.Id, merge.Why);
+                    if (await TicketWrites.MoveAsync(sp, board, desc, merge.IssueNumber, TicketMilestone.Merged, ct).ConfigureAwait(false)
+                        && TicketWrites.Tracker(board) is { } tracker)
+                    {
+                        log.Add(tenant, board.Id, $"{tracker.TicketKey(merge.IssueNumber)} moved to {tracker.DoneState}.");
+                    }
                     // Self-improvement: what this ticket taught becomes the project's practices.
                     retrospectives.AfterMerge(tenant, member, board.Id, $"{repo.Owner}/{repo.Repo}", $"#{merge.IssueNumber}");
                 }
@@ -500,6 +504,25 @@ public sealed partial class ProjectOrchestrator(
         var deps = TicketDependencies.Parse(body);
         _deps[key] = (DateTimeOffset.UtcNow, deps);
         return deps;
+    }
+
+    /// <summary>A ticket Autopilot can work on: a real ticket (not a draft) with a number and a repository for its code —
+    /// a tracker ticket (Jira / Azure DevOps) gets its repository from the board (TrackerRepoMap).</summary>
+    internal static bool IsWorkable(BoardTicket t) =>
+        t.Kind != BoardTicketKind.DraftIssue && t.Number is not null && t.RepoOwner is not null && t.RepoName is not null;
+
+    // Only an open, approved ticket without a task has its dependencies read (one ticket read each, cached).
+    internal static bool NeedsDependencies(BoardTicket t, bool live) =>
+        !live && !string.Equals(t.State, "CLOSED", StringComparison.OrdinalIgnoreCase) && t.Labels.Contains(StandardLabels.AiReady);
+
+    /// <summary>The planner's view of a ticket: open, approved (<c>ai:ready</c>), its priority label, what it waits for.</summary>
+    internal static PlanTicket PlanTicketOf(BoardTicket t, bool live, IReadOnlyList<int> deps)
+    {
+        ArgumentNullException.ThrowIfNull(t);
+        var open = !string.Equals(t.State, "CLOSED", StringComparison.OrdinalIgnoreCase);
+        var ai = t.Labels.Contains(StandardLabels.AiReady);
+        var priority = t.Labels.Contains("p0") ? 0 : t.Labels.Contains("p1") ? 1 : 2;
+        return new PlanTicket(t.Number!.Value, open, ai, priority, open && ai && !live ? deps : [], live);
     }
 
     // Each ticket's labels by (repo, number) — what a task's ticket flow is resolved for.

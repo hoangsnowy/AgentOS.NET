@@ -55,6 +55,33 @@ public sealed class BoardAppTests : IClassFixture<AgentOsPageFixture>
         await Assertions.Expect(win.GetByRole(AriaRole.Button, new() { Name = "Connect" })).ToBeVisibleAsync();
     }
 
+    // E1.8 — tickets from Jira or Azure DevOps Boards: the tracker's own fields appear, GitHub's board number goes; the
+    // code host stays selectable. Back to GitHub Projects restores the original form.
+    [Fact]
+    public async Task Board_ConnectForm_TicketsFromATracker_ShowsItsFields()
+    {
+        if (!AgentOsPageFixture.IsEnabled) { Assert.Skip(AgentOsPageFixture.SkipReason); }
+
+        var win = await OpenBoardAsync();
+        await win.Locator(".board-tab", new() { HasTextString = "Projects" }).ClickAsync();
+        var from = win.Locator("[data-testid=connect-tickets-from]");
+
+        await from.SelectOptionAsync("Jira");
+        await Assertions.Expect(win.Locator("[data-testid=connect-tracker-jira]")).ToBeVisibleAsync();
+        await Assertions.Expect(win.GetByPlaceholder("https://contoso.atlassian.net")).ToBeVisibleAsync();
+        await Assertions.Expect(win.GetByLabel("Transition when work starts")).ToHaveValueAsync("In Progress");
+        await Assertions.Expect(win.GetByRole(AriaRole.Button, new() { Name = "Find boards" })).ToHaveCountAsync(0);
+        await Assertions.Expect(win.Locator("[data-testid=connect-code-in]")).ToBeEnabledAsync();
+
+        await from.SelectOptionAsync("AzureBoards");
+        await Assertions.Expect(win.Locator("[data-testid=connect-tracker-ado]")).ToBeVisibleAsync();
+        await Assertions.Expect(win.GetByLabel("State when work starts")).ToHaveValueAsync("Active");
+
+        await from.SelectOptionAsync("GitHubProjects");
+        await Assertions.Expect(win.GetByPlaceholder("ghp_… (needs repo + read:project)")).ToBeVisibleAsync();
+        await Assertions.Expect(win.Locator("[data-testid=connect-code-in]")).ToBeDisabledAsync();
+    }
+
     // Register a runner and confirm the one-time pairing token (REMOTE_AGENT_ID/TOKEN) is shown.
     [Fact]
     public async Task Board_RegisterRunner_ShowsOneTimePairingToken()

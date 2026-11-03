@@ -89,6 +89,7 @@ public sealed class BoardTicketSteps(BoardTaskService tasks, IServiceScopeFactor
             var repo = (await sessions.ListReposForTenantAsync(flow.TenantId, flow.SessionId, ct).ConfigureAwait(false)).First(r => r.Id == change.RepoId);
             await sessions.UpdateRepoRunResultAsync(flow.TenantId, repo.Id, "Merged", repo.BranchName, repo.PrUrl, null, ct).ConfigureAwait(false);
             await sessions.RecomputeSessionStatusForTenantAsync(flow.TenantId, flow.SessionId, ct).ConfigureAwait(false);
+            await TicketWrites.MoveAsync(scope.ServiceProvider, board, desc, flow.IssueNumber, TicketMilestone.Merged, ct).ConfigureAwait(false);
             return null;
         }, ct);
 

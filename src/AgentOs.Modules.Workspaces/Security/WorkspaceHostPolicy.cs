@@ -37,7 +37,8 @@ internal sealed class WorkspaceHostPolicy : IWorkspaceHostPolicy
 {
     // Provider public hosts that are always trusted. api.github.com is covered by the subdomain rule;
     // *.visualstudio.com (legacy ADO) likewise.
-    private static readonly string[] DefaultHosts = ["github.com", "dev.azure.com", "visualstudio.com"];
+    // atlassian.net: every Jira Cloud site (E1.8); Jira Data Center needs its host allowed like any self-hosted server.
+    private static readonly string[] DefaultHosts = ["github.com", "dev.azure.com", "visualstudio.com", "atlassian.net"];
 
     /// <summary>Setting key (UI-first registry, platform scope): extra hosts, comma/space/newline separated.</summary>
     public const string SettingKey = "Workspaces:AllowedHosts";

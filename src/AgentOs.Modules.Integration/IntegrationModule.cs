@@ -60,16 +60,21 @@ public sealed class IntegrationModule : IModule
         // ToolsModule.InitializeAsync pumps every ITool DI registration into the IToolRegistry at startup.
         services.AddTool<BuildVerifierTool>();
 
-        // M2 — source-control providers behind one seam (GitHub + Azure DevOps both live for repos;
-        // ADO boards/work-items are a later milestone) + the by-kind resolver the Workspaces module consumes.
+        // M2 — source-control providers behind one seam (GitHub + Azure DevOps both live for repos; Azure DevOps Boards
+        // and Jira as ticket trackers, E1.8) + the by-kind resolver the Workspaces module consumes. The resolver wraps
+        // each code host in the tracker routing (TrackerRoutingSourceProvider).
         services.AddHttpClient(); // IHttpClientFactory for the Azure DevOps REST provider
         // The ADO REST provider talks to a TENANT-SUPPLIED host → SSRF risk. Route its named client through
         // the SSRF-hardened handler that refuses to connect to private/loopback/link-local IPs (incl. via
         // DNS + redirects). The provider resolves this client by name (see AzureDevOpsSourceProvider.Client).
         services.AddHttpClient(nameof(AzureDevOpsSourceProvider))
             .ConfigurePrimaryHttpMessageHandler(SsrfGuard.CreateHardenedHandler);
+        // E1.8 — Jira Cloud as a ticket tracker: the site is tenant-supplied too, so the same SSRF-hardened handler.
+        services.AddHttpClient(nameof(JiraSourceProvider))
+            .ConfigurePrimaryHttpMessageHandler(SsrfGuard.CreateHardenedHandler);
         services.AddSingleton<ISourceProvider, GitHubSourceProvider>();
         services.AddSingleton<ISourceProvider, AzureDevOpsSourceProvider>();
+        services.AddSingleton<ISourceProvider, JiraSourceProvider>();
         services.AddSingleton<ISourceProviderResolver, SourceProviderResolver>();
         services.AddSingleton<IRepoFileBrowser, GitHubRepoFileBrowser>();
     }
