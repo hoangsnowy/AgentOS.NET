@@ -39,6 +39,9 @@ internal static class ScopedAutonomy
         "Bash(git clone *)", "Bash(git checkout *)", "Bash(git switch *)", "Bash(git status*)", "Bash(git diff*)",
         "Bash(git log*)", "Bash(git show*)", "Bash(git add *)", "Bash(git commit *)", "Bash(git push -u origin *)",
         "Bash(git push origin *)", "Bash(git fetch*)", "Bash(git pull*)", "Bash(git rev-parse*)", "Bash(git branch*)",
+        // Bringing a branch up to date with its base (a conflict or "behind main" fix): a local merge — pushing it still
+        // goes through the push rules. A live fix run on VNChess #124 stopped because every "git merge" needed approval.
+        "Bash(git merge *)",
         "Bash(gh repo clone *)", "Bash(gh pr create *)", "Bash(gh pr view*)", "Bash(gh pr list*)", "Bash(gh pr checks*)",
         "Bash(gh pr diff*)", "Bash(gh issue view *)",
         "Bash(dotnet *)", "Bash(npm *)", "Bash(pnpm *)", "Bash(yarn *)",
