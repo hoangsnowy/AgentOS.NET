@@ -146,6 +146,32 @@ public sealed class RequestRateLimitingTests
         _ = new AgentOs.Modules.AppConfig.Settings.SettingsCatalog([new RequestRateLimitSettings()]);
     }
 
+    [Fact]
+    public void Defaults_Development_AreTenTimesHigher_InTheSettingsAndThePolicy()
+    {
+        RequestRateLimits.For(development: false).ShouldBe(RequestRateLimits.Default);
+        RequestRateLimits.For(development: true).ShouldBe(new RequestRateLimits(6000, 2400, 1200));
+
+        var descriptors = new RequestRateLimitSettings(RequestRateLimits.Development).Describe().ToDictionary(d => d.Key, d => d.DefaultValue);
+        descriptors[RequestRateLimitSettings.UserPerMinute].ShouldBe("2400");
+        _ = new AgentOs.Modules.AppConfig.Settings.SettingsCatalog([new RequestRateLimitSettings(RequestRateLimits.Development)]);
+
+        // An unreadable store falls back to the host's own defaults, not the production ones.
+        new RequestRateLimitPolicy(new MemorySettings { Throw = true }, new ManualClock(), RequestRateLimits.Development)
+            .Current.ShouldBe(RequestRateLimits.Development);
+    }
+
+    [Fact]
+    public void AddAgentOsRequestRateLimiting_CalledTwice_DeclaresTheSettingsOnce()
+    {
+        var services = new ServiceCollection();
+        services.AddAgentOsRequestRateLimiting(development: true);
+        services.AddAgentOsRequestRateLimiting(development: true);
+
+        services.Count(d => d.ServiceType == typeof(ISettingsContributor)).ShouldBe(1);
+        services.Count(d => d.ServiceType == typeof(RequestRateLimitPolicy)).ShouldBe(1);
+    }
+
     // ── A minimal host: the limiter end to end ──
 
     private static async Task<(WebApplication App, HttpClient Client)> HostAsync(MemorySettings settings)

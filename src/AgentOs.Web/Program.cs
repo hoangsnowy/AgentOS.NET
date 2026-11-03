@@ -299,7 +299,7 @@ builder.Services.AddSingleton<AgentOs.Web.Services.About.SystemStatusService>();
 // GAP-02: the global per-tenant + per-user request limiter, shared with the Api (ServiceDefaults; limits in Settings ›
 // Platform › Request limits). Static assets, health, /version and the live circuit's transport traffic are exempt —
 // only opening a circuit (/_blazor/negotiate) counts, so the desktop's websocket is never throttled mid-session.
-builder.Services.AddAgentOsRequestRateLimiting();
+builder.Services.AddAgentOsRequestRateLimiting(builder.Environment.IsDevelopment());
 
 // The anonymous pairing-code exchange: a typed code is short, so each client gets a handful of tries a minute
 // (on top of the global limiter).
@@ -591,6 +591,7 @@ app.MapRazorComponents<App>()
    // The circuit's own endpoints (/_blazor, /_blazor/negotiate, /initializers, /disconnect) are public (GAP-13): the
    // sign-in and sign-up pages are interactive, so an anonymous visitor needs a circuit. Pages keep their own
    // [Authorize] (_Imports.razor) / [AllowAnonymous]; AuthorizeRouteView enforces them inside the circuit.
-   .Add(BlazorFrameworkEndpoints.AllowAnonymous);
+   // Its housekeeping calls (/initializers, /disconnect) aren't rate-limited either — only opening a circuit counts (GAP-02).
+   .Add(BlazorFrameworkEndpoints.Apply);
 
 app.Run();

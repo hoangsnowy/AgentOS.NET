@@ -4,11 +4,13 @@
 //   • per user    — one person (or one API token) can't spend the whole tenant's budget.
 // Limits are platform settings (ADR-0011, Settings › Platform › Request limits), read per request from a snapshot that
 // is refreshed when ISettings.Version moves or every 30 s; the limit is part of the partition key, so a change takes
-// effect on the next request without a restart.
+// effect on the next request without a restart. The built-in defaults are 10x higher in Development: the standalone
+// desktop signs every browser in as ONE fixed dev user, so a per-user bucket there throttles the whole E2E suite (it did:
+// ~44 tests x 2 desktop loads x 3 counted requests passed 240/min and the last tests got 429 before the dock rendered).
 //
 // Exempt (never throttled): endpoints carrying DisableRateLimiting metadata (health / liveness, /version, static
-// assets) and SignalR transport requests on an ALREADY negotiated connection (query `id=`): the Blazor circuit's
-// websocket / long-polling traffic and the runner hub's. Opening a connection (`/negotiate`) is counted, so a flood of
+// assets, the Web's /_blazor/initializers + /_blazor/disconnect circuit housekeeping) and SignalR transport requests on an
+// ALREADY negotiated connection (query `id=`): the Blazor circuit's websocket / long-polling traffic and the runner hub's. Opening a connection (`/negotiate`) is counted, so a flood of
 // new circuits is still bounded; a transport request with a made-up id gets SignalR's cheap 404.
 
 using System;
@@ -31,8 +33,11 @@ using Microsoft.Extensions.Options;
 namespace AgentOs.ServiceDefaults;
 
 /// <summary>Declares the request-limit settings (platform scope — a tenant must not raise its own ceiling).</summary>
-public sealed class RequestRateLimitSettings : ISettingsContributor
+/// <param name="defaults">Built-in defaults; <see cref="RequestRateLimits.Default"/> unless the host is in Development.</param>
+public sealed class RequestRateLimitSettings(RequestRateLimits? defaults = null) : ISettingsContributor
 {
+    private readonly RequestRateLimits _defaults = defaults ?? RequestRateLimits.Default;
+
     /// <summary>UI category (Settings › Platform).</summary>
     public const string Category = "Platform";
 
@@ -45,8 +50,11 @@ public sealed class RequestRateLimitSettings : ISettingsContributor
     /// <summary>Requests per minute one anonymous client IP may send to one host.</summary>
     public const string AnonymousPerMinute = "Security:RateLimit:AnonymousRequestsPerMinute";
 
-    /// <summary>Built-in defaults.</summary>
+    /// <summary>Built-in defaults outside Development.</summary>
     public const int DefaultTenant = 600, DefaultUser = 240, DefaultAnonymous = 120;
+
+    /// <summary>How much higher the built-in defaults are in Development (one shared dev user, E2E suites).</summary>
+    public const int DevelopmentFactor = 10;
 
     /// <summary>The three keys, for the Settings › Platform panel.</summary>
     public static IReadOnlyList<string> Keys { get; } = [TenantPerMinute, UserPerMinute, AnonymousPerMinute];
@@ -56,17 +64,17 @@ public sealed class RequestRateLimitSettings : ISettingsContributor
     {
         yield return new(TenantPerMinute, SettingKind.WholeNumber, Category, "Requests per minute per tenant")
         {
-            Scope = SettingScope.Platform, DefaultValue = Invariant(DefaultTenant), Min = 10, Max = 1_000_000,
+            Scope = SettingScope.Platform, DefaultValue = Invariant(_defaults.Tenant), Min = 10, Max = 1_000_000,
             Help = "HTTP requests one workspace may send to each server per minute, all its users together. Over the limit the server answers 429. Health checks, static files and live desktop connections don't count.",
         };
         yield return new(UserPerMinute, SettingKind.WholeNumber, Category, "Requests per minute per user")
         {
-            Scope = SettingScope.Platform, DefaultValue = Invariant(DefaultUser), Min = 10, Max = 1_000_000,
+            Scope = SettingScope.Platform, DefaultValue = Invariant(_defaults.User), Min = 10, Max = 1_000_000,
             Help = "HTTP requests one signed-in person or API token may send to each server per minute.",
         };
         yield return new(AnonymousPerMinute, SettingKind.WholeNumber, Category, "Requests per minute per anonymous client")
         {
-            Scope = SettingScope.Platform, DefaultValue = Invariant(DefaultAnonymous), Min = 5, Max = 1_000_000,
+            Scope = SettingScope.Platform, DefaultValue = Invariant(_defaults.Anonymous), Min = 5, Max = 1_000_000,
             Help = "Requests per minute from one address that isn't signed in — the sign-in, sign-up and invitation pages.",
         };
     }
@@ -77,9 +85,18 @@ public sealed class RequestRateLimitSettings : ISettingsContributor
 /// <summary>The effective per-minute limits.</summary>
 public readonly record struct RequestRateLimits(int Tenant, int User, int Anonymous)
 {
-    /// <summary>The built-in defaults.</summary>
+    /// <summary>The built-in defaults (every environment but Development).</summary>
     public static RequestRateLimits Default { get; } = new(
         RequestRateLimitSettings.DefaultTenant, RequestRateLimitSettings.DefaultUser, RequestRateLimitSettings.DefaultAnonymous);
+
+    /// <summary>The Development defaults: <see cref="Default"/> times <see cref="RequestRateLimitSettings.DevelopmentFactor"/>.</summary>
+    public static RequestRateLimits Development { get; } = new(
+        RequestRateLimitSettings.DefaultTenant * RequestRateLimitSettings.DevelopmentFactor,
+        RequestRateLimitSettings.DefaultUser * RequestRateLimitSettings.DevelopmentFactor,
+        RequestRateLimitSettings.DefaultAnonymous * RequestRateLimitSettings.DevelopmentFactor);
+
+    /// <summary>The defaults for a host (<paramref name="development"/> = <c>IHostEnvironment.IsDevelopment()</c>).</summary>
+    public static RequestRateLimits For(bool development) => development ? Development : Default;
 }
 
 /// <summary>Builds the global limiter. Singleton.</summary>
@@ -99,17 +116,19 @@ public sealed class RequestRateLimitPolicy
 
     private readonly ISettings? _settings;
     private readonly TimeProvider _clock;
+    private readonly RequestRateLimits _defaults;
     private readonly Lock _gate = new();
     private Snapshot _snapshot;
 
     private sealed record Snapshot(RequestRateLimits Limits, long Version, long ReadAt);
 
-    /// <summary>Creates the policy; with no <paramref name="settings"/> the defaults apply.</summary>
-    public RequestRateLimitPolicy(ISettings? settings = null, TimeProvider? clock = null)
+    /// <summary>Creates the policy; with no <paramref name="settings"/> (or an unreadable value) <paramref name="defaults"/> apply.</summary>
+    public RequestRateLimitPolicy(ISettings? settings = null, TimeProvider? clock = null, RequestRateLimits? defaults = null)
     {
         _settings = settings;
         _clock = clock ?? TimeProvider.System;
-        _snapshot = new Snapshot(RequestRateLimits.Default, long.MinValue, long.MinValue);
+        _defaults = defaults ?? RequestRateLimits.Default;
+        _snapshot = new Snapshot(_defaults, long.MinValue, long.MinValue);
     }
 
     /// <summary>The limits in effect now (cached; re-read on a settings write or every 30 s).</summary>
@@ -131,9 +150,9 @@ public sealed class RequestRateLimitPolicy
             {
                 var version = _settings.Version;
                 var limits = new RequestRateLimits(
-                    Read(RequestRateLimitSettings.TenantPerMinute, RequestRateLimitSettings.DefaultTenant),
-                    Read(RequestRateLimitSettings.UserPerMinute, RequestRateLimitSettings.DefaultUser),
-                    Read(RequestRateLimitSettings.AnonymousPerMinute, RequestRateLimitSettings.DefaultAnonymous));
+                    Read(RequestRateLimitSettings.TenantPerMinute, _defaults.Tenant),
+                    Read(RequestRateLimitSettings.UserPerMinute, _defaults.User),
+                    Read(RequestRateLimitSettings.AnonymousPerMinute, _defaults.Anonymous));
                 Volatile.Write(ref _snapshot, new Snapshot(limits, version, now));
                 return limits;
             }
@@ -245,11 +264,17 @@ public static class RequestRateLimitingExtensions
     /// its own <c>AddRateLimiter</c> call (they chain with the global one). Use with <c>app.UseRateLimiter()</c> AFTER
     /// <c>UseAuthentication</c> — the partitions read the tenant + user claims.
     /// </summary>
-    public static IServiceCollection AddAgentOsRequestRateLimiting(this IServiceCollection services)
+    /// <param name="services">The host's services.</param>
+    /// <param name="development">The host runs in Development: the built-in defaults are <see cref="RequestRateLimits.Development"/>.</param>
+    public static IServiceCollection AddAgentOsRequestRateLimiting(this IServiceCollection services, bool development = false)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISettingsContributor, RequestRateLimitSettings>());
-        services.TryAddSingleton(sp => new RequestRateLimitPolicy(sp.GetService<ISettings>(), sp.GetService<TimeProvider>()));
+        var defaults = RequestRateLimits.For(development);
+        if (!services.Any(d => d.ServiceType == typeof(RequestRateLimitPolicy)))
+        {
+            services.AddSingleton<ISettingsContributor>(new RequestRateLimitSettings(defaults));
+        }
+        services.TryAddSingleton(sp => new RequestRateLimitPolicy(sp.GetService<ISettings>(), sp.GetService<TimeProvider>(), defaults));
         services.AddRateLimiter(o =>
         {
             o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;

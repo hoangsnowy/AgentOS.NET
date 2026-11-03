@@ -4,6 +4,7 @@
 using AgentOs.Web.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Shouldly;
@@ -28,8 +29,23 @@ public sealed class BlazorFrameworkEndpointsTests
     {
         var builder = Route(pattern);
 
-        BlazorFrameworkEndpoints.AllowAnonymous(builder);
+        BlazorFrameworkEndpoints.Apply(builder);
 
         (builder.Metadata.OfType<IAllowAnonymous>().Any()).ShouldBe(anonymous);
+    }
+
+    [Theory]
+    [InlineData("/_blazor/initializers/", true)]
+    [InlineData("/_blazor/disconnect/", true)]
+    [InlineData("/_blazor/negotiate", false)] // opening a circuit is what the limiter bounds
+    [InlineData("/_blazor", false)]           // transport on an open connection is exempted by the limiter itself
+    [InlineData("/settings", false)]
+    public void Apply_OnlyHousekeepingSkipsTheLimiter(string pattern, bool unlimited)
+    {
+        var builder = Route(pattern);
+
+        BlazorFrameworkEndpoints.Apply(builder);
+
+        (builder.Metadata.OfType<DisableRateLimitingAttribute>().Any()).ShouldBe(unlimited);
     }
 }

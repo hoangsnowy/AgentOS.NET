@@ -280,7 +280,7 @@ public sealed class HostSecurityTests
 
         // Past the limit, the exempt traffic still flows: a circuit's transport requests (here with an unknown id, so
         // SignalR answers 404 — the point is that it is not 429), health probes and static files.
-        foreach (var path in new[] { "/_blazor?id=already-negotiated", "/health", "/alive", "/version", "/app.css", "/_framework/blazor.web.js" })
+        foreach (var path in new[] { "/_blazor?id=already-negotiated", "/_blazor/initializers", "/health", "/alive", "/version", "/app.css", "/_framework/blazor.web.js" })
         {
             for (var i = 0; i < 10; i++)
             {
@@ -293,6 +293,25 @@ public sealed class HostSecurityTests
         using var page = await SendAsync(client, HttpMethod.Get, "/login");
         page.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
         page.Headers.RetryAfter.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Web_Development_AnE2ESuiteWorthOfDesktopLoads_IsNotThrottled()
+    {
+        // Regression guard: the standalone Development desktop is what the UI E2E suite drives, every browser as the same
+        // client. With the production defaults (240/min per user) the suite's ~44 tests x 2 desktop loads x 3 counted
+        // requests tripped the limiter and the last tests never saw the dock. Development defaults are 10x.
+        await using var factory = new WebHostFactory();
+        using var client = Client(factory);
+
+        for (var load = 0; load < 150; load++) // ≈ 75 tests' worth of loads, more than the suite has today
+        {
+            foreach (var (method, path) in new[] { (HttpMethod.Get, "/login"), (HttpMethod.Get, "/_blazor/initializers"), (HttpMethod.Post, "/_blazor/negotiate?negotiateVersion=1") })
+            {
+                using var r = await SendAsync(client, method, path);
+                r.StatusCode.ShouldNotBe(HttpStatusCode.TooManyRequests, $"load {load}: {method} {path}");
+            }
+        }
     }
 
     // ── Api ──

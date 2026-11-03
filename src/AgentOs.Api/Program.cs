@@ -47,7 +47,7 @@ builder.AddAgentOsDataProtection();
 // (anonymous callers: per client IP) chained with a per-user one, limits from Settings › Platform › Request limits.
 // An in-flight throttle INDEPENDENT of the month-to-date BudgetGuard (post-hoc, can't bound a burst). Health, /version
 // and / are exempt (DisableRateLimiting) so liveness/readiness probes are never throttled.
-builder.Services.AddAgentOsRequestRateLimiting();
+builder.Services.AddAgentOsRequestRateLimiting(builder.Environment.IsDevelopment());
 
 // Response compression — Brotli + Gzip for REST/JSON + Scalar responses. The default compressible
 // MIME set excludes text/event-stream, so the streaming MCP endpoint (/mcp) is left uncompressed
