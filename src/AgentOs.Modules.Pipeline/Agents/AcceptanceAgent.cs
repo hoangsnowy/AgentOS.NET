@@ -215,11 +215,18 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
            wait until its web endpoint answers, run the relevant end-to-end specs (`npx playwright test <spec>`),
            then stop the stack gracefully (Ctrl+C) so it removes its own containers. Never delete Docker volumes,
            images or any data outside this directory.
-        5. A criterion you cannot check here — a data set or secret that is not available, an external service —
-           is "not-checked" with the reason. Never report "pass" for something you did not run.
-        6. When a test fails, check whether it already fails on the default branch: `git worktree add ../base origin/{defaultBranch}`,
-           run the same test there. If it fails the same way, it is a pre-existing failure, not this change's:
-           list it under "baseFailures" and do not let it fail the verdict.
+        5. A criterion this computer cannot check — it needs Docker / `docker compose`, a shell script, a data set or
+           secret that is not available, or an external service — may still be proven by the pull request's CI: run
+           `gh pr checks {branch}`, open the workflow file (`.github/workflows/*.yml`) of a job that looks relevant and
+           read its steps. Only when a job whose steps really exercise that criterion PASSED for the change's latest
+           commit does the criterion pass, with the evidence "CI: <workflow> › <job> passed — <workflow file>:<line>
+           of the step that checks it". Otherwise it is "not-checked" with the reason.
+           Never report "pass" for something neither you nor CI ran.
+        6. When a test fails, check whether it already fails on the default branch: put a worktree of it in this run's
+           temp folder (`git worktree add "$AGENTOS_RUN_TMP/base" origin/{defaultBranch}` — or the system temp folder
+           when AGENTOS_RUN_TMP is not set; never next to the checkout with ../, writes outside the run's folders are
+           refused) and run the same test there. If it fails the same way, it is a pre-existing failure, not this
+           change's: list it under "baseFailures" and do not let it fail the verdict.
 
         Reply ONLY with this JSON (no other text):
         {"verdict":"pass","criteria":[{"criterion":"<ID or the criterion's words>","result":"pass","evidence":"<command and the key output line, or why it was not checked>"}],"baseFailures":[{"test":"<fully qualified test name>","evidence":"<the failure, and that it fails the same on {defaultBranch}>"}],"summary":"<one or two sentences>"}
