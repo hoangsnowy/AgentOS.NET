@@ -65,7 +65,8 @@ public static class TicketAnswers
 
     /// <summary>
     /// The decision for a blocked task. <paramref name="blockedAt"/> is when it became Blocked; a task blocked before that
-    /// was recorded falls back to <paramref name="taskCreatedAt"/> (any maintainer comment since counts — once).
+    /// was recorded falls back to <paramref name="taskCreatedAt"/>; the orchestrator never lets it get here without an
+    /// <paramref name="answeredAt"/> (it stamps one on first sight, so only answers written from then on count).
     /// </summary>
     public static TicketAnswerDecision Decide(AutopilotMode mode, bool enabled, bool orchestratorDecides,
         DateTimeOffset? blockedAt, DateTimeOffset? answeredAt, DateTimeOffset taskCreatedAt, IReadOnlyList<TicketDiscussionComment>? comments)

@@ -245,8 +245,8 @@ Blocked task of a board in *Build* / *Build and merge* whose ticket is open, tha
 continue and fits a free task slot, Autopilot reads the ticket's newest comments (one GraphQL call per such task — no
 other ticket is read). A comment counts as an **answer** when it is a maintainer's (`OWNER` / `MEMBER` / `COLLABORATOR`;
 AgentOS.NET's own signed comments and bots never — the same rules as above) and was written after the task became
-Blocked (`sessions.sessions.BlockedAtUtc`, stamped by the status roll-up on the transition; a task blocked before that
-column existed falls back to its start) and after the last answer acted on (`TicketAnswerAtUtc`). The task is then sent
+Blocked (`sessions.sessions.BlockedAtUtc`, stamped by the status roll-up on the transition; a task already blocked when
+that column appeared counts answers only from the first pass that sees it) and after the last answer acted on (`TicketAnswerAtUtc`). The task is then sent
 back to the Coding agent exactly as *Ask for changes* does — same branch and pull request, one more fix round counted,
 no new automatic rounds granted — with *"The project's maintainer answered on the ticket: …"* (the comments newest last,
 ≈8k characters at most, fenced as untrusted text like any requested change), and the Autopilot activity says so. The

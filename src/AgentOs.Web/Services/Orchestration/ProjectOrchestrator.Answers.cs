@@ -49,6 +49,13 @@ public sealed partial class ProjectOrchestrator
         foreach (var s in blocked.Where(s => openTickets.Contains((s.RepoOwner, s.RepoName, s.IssueNumber))))
         {
             if (free <= 0) { break; }
+            // Blocked before its block time was recorded (it was blocked when this feature shipped): only answers written
+            // from now on count — an old comment from before it existed must never send it back to the AI.
+            if (s.BlockedAtUtc is null && s.TicketAnswerAtUtc is null)
+            {
+                await sessionsRepo.MarkTicketAnswerForTenantAsync(tenant, s.Id, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+                continue;
+            }
             if (Ticket(board, pat, s) is not { } ticket) { continue; }
             TicketContent content;
             try
