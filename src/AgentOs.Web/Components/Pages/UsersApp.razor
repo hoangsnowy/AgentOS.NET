@@ -10,10 +10,12 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using AgentOs.Modules.Tenants
 @using AgentOs.Modules.Tenants.Keycloak
+@using AgentOs.Modules.Tenants.Invitations
 @inject AgentOs.Modules.Tenants.Keycloak.IKeycloakAdminClient Kc
 @inject AgentOs.Modules.Tenants.ITenantSignupService Signup
 @inject AgentOs.Modules.Tenants.Email.IEmailSender Email
 @inject NavigationManager Nav
+@inject AgentOs.SharedKernel.Hosting.PublicOrigin Origin
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 @inject AgentOs.Domain.Sessions.IRunnerDisconnector RunnerDisconnector
 @inject Microsoft.Extensions.DependencyInjection.IServiceScopeFactory Scopes
@@ -448,12 +450,14 @@ else
             if (!created || token is null) { return; }
             _inviteExpiresAt = token.ExpiresAtUtc;
             _invitedEmail = email;
-            _inviteUrl = $"/signup?invite={Uri.EscapeDataString(token.Token)}";
+            // GAP-05: the link points at Hosting:PublicBaseUrl, like the Api's — never at this circuit's base URI (the
+            // Host the browser connected with; the circuit's own origin stands in only in Development).
+            var absoluteUrl = InvitationLinks.Absolute(Origin, token.Token, Nav.BaseUri);
+            _inviteUrl = absoluteUrl;
             await LoadInvitesAsync();
 
-            // Email the absolute link. Best-effort: the URL stays on screen for copy/paste so the
+            // Email the link. Best-effort: the URL stays on screen for copy/paste so the
             // admin is never blocked if delivery is unconfigured or fails.
-            var absoluteUrl = Nav.ToAbsoluteUri(_inviteUrl).ToString();
             try
             {
                 var (subject, htmlBody, textBody) = AgentOs.Modules.Tenants.Email.InvitationEmail.Build(_tenantId, _inviteRole, absoluteUrl);

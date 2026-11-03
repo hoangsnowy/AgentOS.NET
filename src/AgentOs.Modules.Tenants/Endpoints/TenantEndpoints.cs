@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants.Email;
+using AgentOs.Modules.Tenants.Invitations;
 using AgentOs.Modules.Tenants.Keycloak;
 using AgentOs.SharedKernel.Hosting;
 using AgentOs.SharedKernel.Identity;
@@ -173,7 +174,7 @@ internal static class TenantEndpoints
             }
             // GAP-05: the link points at the configured public desktop URL — never at the request's Host header, which
             // the caller controls (an admin's request through a spoofed Host would mint a link to someone else's server).
-            var url = origin.Link($"/signup?invite={Uri.EscapeDataString(minted.Token)}", http.Request);
+            var url = origin.Link(InvitationLinks.PathFor(minted.Token), http.Request);
 
             // Best-effort: email the link to the invited address. The URL is returned regardless so the admin can still
             // copy/paste it if delivery is unconfigured or fails.
