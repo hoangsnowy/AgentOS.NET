@@ -103,7 +103,9 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
             services.AddScoped<ITenantsRepository, TenantsRepository>();
             services.AddScoped<IAuditLog, EfAuditLog>();
             services.AddScoped<ApiTokens.IApiTokenService>(sp => new ApiTokens.ApiTokenService(
-                sp.GetRequiredService<TenantsDbContext>(), sp.GetRequiredService<IAuditLog>(), sp.GetService<TimeProvider>() ?? TimeProvider.System));
+                sp.GetRequiredService<TenantsDbContext>(), sp.GetRequiredService<IAuditLog>(), sp.GetService<TimeProvider>() ?? TimeProvider.System,
+                sp.GetService<AgentOs.Domain.Configuration.ISettings>(),
+                sp.GetService<Microsoft.Extensions.Logging.ILogger<ApiTokens.ApiTokenService>>()));
         }
         else
         {

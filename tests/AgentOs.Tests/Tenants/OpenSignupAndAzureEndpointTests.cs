@@ -48,7 +48,7 @@ public sealed class OpenSignupAndAzureEndpointTests
     [InlineData(false, "false")]
     public void TenantsSettings_DefaultIsOnInDevelopmentOnly(bool development, string expected)
     {
-        var d = new TenantsSettings(development).Describe().ShouldHaveSingleItem();
+        var d = new TenantsSettings(development).Describe().Single(s => s.Key == TenantsSettings.OpenSignupKey);
         d.Key.ShouldBe(TenantsSettings.OpenSignupKey);
         d.DefaultValue.ShouldBe(expected);
         d.Scope.ShouldBe(SettingScope.Platform);   // a tenant admin can't open signup for the platform

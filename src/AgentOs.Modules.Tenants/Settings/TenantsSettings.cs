@@ -23,5 +23,15 @@ public sealed class TenantsSettings(bool openSignupDefault) : ISettingsContribut
             Scope = SettingScope.Platform,
             Help = "Let anyone create a new workspace (and become its admin) from the sign-up page. Off outside Development; invitations always work.",
         };
+
+        // E1.3: the longest expiry a new API token may get. Platform-only so a workspace can't extend it.
+        yield return new(ApiTokens.ApiTokenFormat.MaxLifetimeKey, SettingKind.WholeNumber, "Safety", "API token max lifetime (days)")
+        {
+            DefaultValue = ApiTokens.ApiTokenFormat.DefaultMaxLifetimeDays.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Scope = SettingScope.Platform,
+            Min = 1,
+            Max = 1825,
+            Help = "The longest expiry a new personal token or service-account token may have. Existing tokens keep their expiry.",
+        };
     }
 }

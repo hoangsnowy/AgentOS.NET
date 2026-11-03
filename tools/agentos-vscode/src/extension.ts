@@ -6,6 +6,10 @@
 // Pairing: Connect -> open <server>/pair/vscode in the browser -> the member approves -> the server
 // redirects to vscode://agentos.runner/paired?code=... -> we exchange the one-time code (token never
 // rides the URL) for {runnerId, token, hubUrl} -> store in SecretStorage -> download + spawn the runner.
+//
+// API token (E1.3): "Set API token" stores a personal API token (aos_..., created in Settings > API tokens) in
+// SecretStorage — never in settings.json — and checks it against <apiUrl>/v1/tenants/me. "Run the pipeline" then calls
+// POST <apiUrl>/v1/pipeline with it (the token needs the "run" scope).
 
 import * as vscode from 'vscode';
 import * as https from 'node:https';
@@ -17,6 +21,8 @@ import { randomUUID } from 'node:crypto';
 import { URL, URLSearchParams } from 'node:url';
 
 const SECRET_KEY = 'agentos.runner.credentials';
+const API_TOKEN_KEY = 'agentos.apiToken';
+const API_TOKEN_PREFIX = 'aos_';
 const CALLBACK = 'vscode://agentos.runner/paired';
 
 interface Creds {
@@ -41,6 +47,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentos.connect', () => connect()),
     vscode.commands.registerCommand('agentos.disconnect', () => disconnect(context)),
     vscode.commands.registerCommand('agentos.showLogs', () => output.show()),
+    vscode.commands.registerCommand('agentos.setApiToken', () => setApiToken(context)),
+    vscode.commands.registerCommand('agentos.checkApiToken', () => checkApiToken(context)),
+    vscode.commands.registerCommand('agentos.clearApiToken', () => clearApiToken(context)),
+    vscode.commands.registerCommand('agentos.runPipeline', () => runPipeline(context)),
     vscode.window.registerUriHandler({ handleUri: (uri) => onUri(context, uri) }),
   );
 
@@ -59,6 +69,98 @@ export function deactivate(): void {
 function serverUrl(): string {
   const cfg = vscode.workspace.getConfiguration('agentos').get<string>('serverUrl');
   return (cfg || 'https://localhost:5180').replace(/\/+$/, '');
+}
+
+function apiUrl(): string {
+  const cfg = vscode.workspace.getConfiguration('agentos').get<string>('apiUrl');
+  return (cfg || 'https://localhost:5080').replace(/\/+$/, '');
+}
+
+interface TenantMe {
+  tenantId: string;
+  userName?: string;
+  authMethod?: string;
+  scopes?: string[];
+}
+
+async function setApiToken(context: vscode.ExtensionContext): Promise<void> {
+  const token = await vscode.window.showInputBox({
+    title: 'AgentOS.NET API token',
+    prompt: 'Paste a personal API token (Settings > API tokens). It is kept in VS Code secret storage.',
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim().startsWith(API_TOKEN_PREFIX) ? undefined : `An API token starts with ${API_TOKEN_PREFIX}`),
+  });
+  if (!token) {
+    return;
+  }
+  try {
+    const me = (await requestJson('GET', `${apiUrl()}/v1/tenants/me`, undefined, token.trim())) as TenantMe;
+    await context.secrets.store(API_TOKEN_KEY, token.trim());
+    void vscode.window.showInformationMessage(`AgentOS.NET: token saved — ${describe(me)}.`);
+  } catch (e) {
+    void vscode.window.showErrorMessage(`AgentOS.NET: the Api refused this token — ${errMsg(e)}`);
+  }
+}
+
+async function checkApiToken(context: vscode.ExtensionContext): Promise<void> {
+  const token = await context.secrets.get(API_TOKEN_KEY);
+  if (!token) {
+    void vscode.window.showWarningMessage('AgentOS.NET: no API token — run "AgentOS.NET: Set API token".');
+    return;
+  }
+  try {
+    const me = (await requestJson('GET', `${apiUrl()}/v1/tenants/me`, undefined, token)) as TenantMe;
+    void vscode.window.showInformationMessage(`AgentOS.NET: ${describe(me)}.`);
+  } catch (e) {
+    void vscode.window.showErrorMessage(`AgentOS.NET: token check failed (revoked or expired?) — ${errMsg(e)}`);
+  }
+}
+
+async function clearApiToken(context: vscode.ExtensionContext): Promise<void> {
+  await context.secrets.delete(API_TOKEN_KEY);
+  void vscode.window.showInformationMessage('AgentOS.NET: API token removed from this machine (revoke it in Settings > API tokens).');
+}
+
+async function runPipeline(context: vscode.ExtensionContext): Promise<void> {
+  const token = await context.secrets.get(API_TOKEN_KEY);
+  if (!token) {
+    void vscode.window.showWarningMessage('AgentOS.NET: no API token — run "AgentOS.NET: Set API token".');
+    return;
+  }
+  const editor = vscode.window.activeTextEditor;
+  const selected = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection) : '';
+  const description = await vscode.window.showInputBox({
+    title: 'AgentOS.NET: run the pipeline',
+    prompt: 'The user story to turn into requirements, code and tests',
+    value: selected,
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim() ? undefined : 'Describe the user story'),
+  });
+  if (!description) {
+    return;
+  }
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'AgentOS.NET: running the pipeline…' },
+    async () => {
+      try {
+        const result = (await requestJson('POST', `${apiUrl()}/v1/pipeline`, { description: description.trim() }, token)) as {
+          status?: string;
+          iterations?: number;
+        };
+        output.appendLine(JSON.stringify(result, null, 2));
+        output.show(true);
+        void vscode.window.showInformationMessage(`AgentOS.NET: pipeline ${result.status ?? 'finished'} — details in the output panel.`);
+      } catch (e) {
+        void vscode.window.showErrorMessage(`AgentOS.NET: pipeline failed — ${errMsg(e)}`);
+      }
+    },
+  );
+}
+
+function describe(me: TenantMe): string {
+  const scopes = me.scopes && me.scopes.length ? me.scopes.join(' ') : 'n/a';
+  return `${me.userName ?? 'unknown'} in workspace ${me.tenantId} (scopes: ${scopes})`;
 }
 
 async function connect(): Promise<void> {
@@ -236,7 +338,7 @@ function isLocal(urlStr: string): boolean {
   }
 }
 
-function requestJson(method: string, urlStr: string, body?: unknown): Promise<unknown> {
+function requestJson(method: string, urlStr: string, body?: unknown, bearer?: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
     const lib = u.protocol === 'https:' ? https : http;
@@ -249,6 +351,7 @@ function requestJson(method: string, urlStr: string, body?: unknown): Promise<un
         headers: {
           'content-type': 'application/json',
           ...(data ? { 'content-length': String(data.length) } : {}),
+          ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
         },
       },
       (res) => {

@@ -46,7 +46,7 @@ public static class ShellActions
         new(Idea, "Start from an idea", "Board · turn an idea into a plan and tasks", "git-pull-request") { Keywords = "new idea ticket story issue plan board decompose" },
         new(AddKey, "Connect an AI account", "Settings › AI › Model keys", "key") { Keywords = "add model key api connect account llm provider anthropic openai gemini xai azure", AdminOnly = true },
         new(Invite, "Invite a member", "Settings › People & data › Users", "user") { Keywords = "invite add user member people team", AdminOnly = true },
-        new(Token, "Create an API token", "Settings › People & data › API tokens", "tag") { Keywords = "create new api token service account ci machine", AdminOnly = true },
+        new(Token, "Create an API token", "Settings › People & data › API tokens", "tag") { Keywords = "create new api token personal access token service account ci machine" },
         new(Export, "Export workspace data", "Settings › People & data › Data", "floppy-disk") { Keywords = "export download backup data workspace", AdminOnly = true },
         new(Theme, "Switch light / dark theme", "Appearance", "moon") { Keywords = "theme dark light mode toggle switch appearance night" },
         new(SignOut, "Sign out", "End this session", "power") { Keywords = "sign out log out logout exit leave" },

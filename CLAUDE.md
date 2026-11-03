@@ -65,7 +65,7 @@ CI: `.github/workflows/ci.yml` runs `restore → build Release → test` on Ubun
 
 ## Architecture
 
-Modular monolith. Solution file is **`AgentOs.slnx`** (the .NET 10 XML format). Each module is an `AgentOs.Modules.*` class library that **references `AgentOs.Domain` + `AgentOs.SharedKernel` only**; cross-module references are explicit and minimal (e.g. `Llm → AppConfig`, `Integration → Tools`). Hosts (`Api`, `Web`) reference every module and wire them with one `services.AddModulesFromAssemblies(cfg, …)` call + `await app.Services.InitializeModulesAsync()` + `app.MapModuleEndpoints()` — no per-module wiring in `Program.cs`.
+Modular monolith. Solution file is **`AgentOs.slnx`** (the .NET 10 XML format). Each module is an `AgentOs.Modules.*` class library that **references `AgentOs.Domain` + `AgentOs.SharedKernel` only**; cross-module references are explicit and minimal (e.g. `Llm → AppConfig`, `Integration → Tools`). Hosts (`Api`, `Web`) reference every module and wire them with one `services.AddModulesFromAssemblies(cfg, …)` call + `await app.Services.InitializeModulesAsync()` + `app.MapVersionedModuleEndpoints()` (the Api: every module REST route under `/v1` plus its deprecated unversioned twin; SignalR hubs implement `IProtocolEndpointModule` and stay at their own path — see [docs/API.md](docs/API.md)) — no per-module wiring in `Program.cs`.
 
 | Project | Role |
 |---|---|

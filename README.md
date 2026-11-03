@@ -459,19 +459,24 @@ tenant. Settings and keys are stored per `(tenant, key)` and always read for an 
 
 ## API
 
-Every route requires an authenticated principal unless it is explicitly public (fallback policy): on the
-Api that is `/`, `/version`, `/health`, `/alive`, `POST /tenants/register`, `GET /tenants/invitations/preview`,
-the runner hub (it authenticates the runner itself) and, outside Production, `/openapi` + `/scalar`. The Api
-validates a Keycloak bearer token (RS256 only); the Web uses a cookie session (`/account/login` → OIDC). Both hosts
-rate-limit per tenant, per user and per anonymous client (Settings → Platform → Request limits). The complete, always-current list is the **Scalar UI** at `/scalar/v1`.
-The most used routes:
+Versioned REST under **`/v1`** — the unversioned paths still work but are deprecated (`Deprecation` / `Sunset`
+headers, sunset 2027-05-03). Every route requires an authenticated principal unless it is explicitly public
+(fallback policy): on the Api that is `/`, `/version`, `/health`, `/alive`, `POST /tenants/register`,
+`GET /tenants/invitations/preview` (and their `/v1` twins), the runner hub (it authenticates the runner itself) and,
+outside Production, `/openapi` + `/scalar`. The Api takes `Authorization: Bearer` with a Keycloak access token
+(people, RS256 only) **or** an AgentOS.NET API token `aos_…` (personal tokens and service accounts, scoped read / run /
+admin — Settings → API tokens); the Web uses a cookie session (`/account/login` → OIDC). Both hosts rate-limit per
+tenant, per user and per anonymous client (Settings → Platform → Request limits) — a token counts as its tenant and
+principal exactly like a JWT. Contract, auth, CI example and deprecation policy: **[docs/API.md](docs/API.md)**;
+OpenAPI: [docs/api/openapi-v1.json](docs/api/openapi-v1.json) (live in the **Scalar UI** at `/scalar/v1` outside
+Production). The most used routes (all under `/v1`):
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/pipeline` · `/pipeline/stream` | signed in | Run the full flow (SSE progress on `/stream`) |
 | `POST` | `/requirement` · `/code` · `/test` · `/qa` | signed in | Run one agent on its own |
 | `GET`  | `/runs`, `/runs/{id}` | signed in | Persisted runs |
-| `GET`  | `/tenants/me` | signed in | Resolved tenant, user, roles |
+| `GET`  | `/tenants/me` | signed in | Resolved tenant, user, roles (and an API token's scopes) |
 | `GET` `POST` | `/tenants`, `/tenants/{id}/members` | Admin | Tenants and members |
 | `GET` `POST` `DELETE` | `/settings*` | Admin | Legacy runtime-config endpoint (see CONFIG.md) |
 | `POST` | `/llm/test` | signed in | Probe the configured provider with a minimal call |

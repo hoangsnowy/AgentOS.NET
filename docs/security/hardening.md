@@ -188,5 +188,11 @@ Tick every box before exposing a deployment to people outside the team that oper
 - [ ] `ASPNETCORE_ENVIRONMENT=Production` on both hosts (Aspire `launchProfileName: null` drops it — set it
       explicitly; see CLAUDE.md *Lessons learned*).
 - [ ] No `Settings__Locks__*` env override unless it is a recorded decision.
-- [ ] Scalar / OpenAPI is not exposed (mapped only outside Production, `src/AgentOs.Api/Program.cs:174-183`) — also
-      keep Staging environments off the internet.
+- [ ] Scalar / OpenAPI is not exposed (mapped only outside Production, `src/AgentOs.Api/Program.cs`) — also
+      keep Staging environments off the internet. The contract is published as [`docs/api/openapi-v1.json`](../api/openapi-v1.json)
+      instead.
+- [ ] API tokens: lower `Tenants:ApiTokens:MaxLifetimeDays` (Settings → Platform → Safety, default 366) to your
+      credential-rotation policy; review **Settings → API tokens** for stale service accounts (*Last used*), and alert
+      on `apitoken.refused` rows in the audit log ([API.md](../API.md#api-tokens)).
+- [ ] Clients have moved off the deprecated unversioned routes before their sunset (2027-05-03): watch for responses
+      carrying a `Deprecation` header ([API.md](../API.md#deprecation-policy)).

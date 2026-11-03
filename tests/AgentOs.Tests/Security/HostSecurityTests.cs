@@ -376,6 +376,10 @@ public sealed class HostSecurityTests
             "/scalar/{documentName?}", // the docs page + its embedded assets
             "/tenants/invitations/preview",
             "/tenants/register",
+            // E1.3: the same two public handlers under the versioned contract (the unversioned paths are their
+            // deprecated twins) — nothing else becomes public through /v1.
+            "/v1/tenants/invitations/preview",
+            "/v1/tenants/register",
             "/version",
         ]);
     }

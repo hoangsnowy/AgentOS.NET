@@ -48,7 +48,7 @@ public static class SettingsSearch
         new("evidence", "Tool calls", Gov + " › Activity log", "scroll", "evidence tool calls invocations trail governance", Access.Admin),
         new("audit", "Activity log", Gov, "clock-counter", "audit log activity who changed history sign-in login members csv", Access.Admin),
         new("users", "Users", People, "user", "users members invite invitation roles people team", Access.Admin),
-        new("tokens", "API tokens", People, "tag", "api token service account ci pipeline script machine bearer mcp client", Access.Admin),
+        new("tokens", "API tokens", People, "tag", "api token personal access token pat service account ci pipeline script machine bearer mcp client vs code extension", Access.Everyone),
         new("data", "Data", People, "floppy-disk", "export purge delete tenant workspace data download gdpr", Access.Admin),
         new("general", "General", Personal, "gear", "general preferences", Access.Everyone),
         new("appearance", "Appearance", Personal, "palette", "appearance theme dark light mode wallpaper accent glass motion animation", Access.Everyone),

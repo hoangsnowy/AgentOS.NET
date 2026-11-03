@@ -25,6 +25,10 @@ When reporting, include: affected component, reproduction steps, and impact.
   [docs/SETUP.md](docs/SETUP.md).
 - **API auth** is Keycloak OIDC JWT bearer (RS256); tokens are signed by the Keycloak realm key
   and validated against its JWKS — rotate the signing key in Keycloak, not in AgentOS.NET.
+- **API tokens** (`aos_…`, personal tokens and service accounts) are the machine credential for CI, scripts and the
+  VS Code extension. Treat one like a password: store it in a CI secret store or VS Code secret storage, never in a
+  repository; give it the lowest scope that works (`read` < `run` < `admin`) and the shortest expiry; revoke it in
+  **Settings → API tokens** the moment it may have leaked (effective on the next request). See [docs/API.md](docs/API.md#api-tokens).
 - The **remote dev-agent runtime** executes work on a developer machine — treat the pairing
   credential as a secret. Remote execution is gated by the `RemoteAgent:AutoApprove` platform setting, which
   Production locks off (a gate, not yet a per-run human approval — see the
@@ -55,6 +59,12 @@ When reporting, include: affected component, reproduction steps, and impact.
 - **QA gate before every PR** — a pipeline result becomes a pull request only when QA passed on real model
   output (`PrGate`, enforced inside the PR service itself): failed runs, the iteration cap with QA still
   failing, and offline canned text are blocked with the reason on the session.
+- **API tokens** — shown once, stored only as a salted HMAC-SHA256 (per-token random salt) and compared in constant
+  time; scoped (`read` = safe methods, `run` = writes, `admin` = the workspace-admin role, never `platform-admin`),
+  always expiring (capped by the `Tenants:ApiTokens:MaxLifetimeDays` platform setting), revocable, with last use
+  shown. Create, revoke, use and refusal are audited (use / refusal at most once per token per 5 minutes, with IP and
+  user agent). Service accounts need a workspace admin; a removed member's personal tokens are revoked before their
+  account is deleted.
 - **Approval policies + repo safety** — per tenant / project, an approver (or admin) approves the plan, the pull
   request, the change and/or the merge on Board › Tasks (audited); a gate fails closed — rejected or nobody who can
   approve stops the task. AgentOS.NET never opens a pull request from, or merges, the default branch, and refuses a

@@ -64,6 +64,11 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   and theme, Api, Web and optional Ollama, with the key ring certificate-wrapped and row-level security on by
   default. CI lints and templates the chart and runs a cold install plus an upgrade on kind.
 
+- **API tokens v2 + `/v1` (E1.3).** Personal API tokens for every member and service accounts for admins, scoped
+  `read` / `run` / `admin`, salted-HMAC storage, a platform max-lifetime setting
+  (`Tenants:ApiTokens:MaxLifetimeDays`), use + refusal auditing. The Api serves every route under `/v1` with a
+  published OpenAPI document ([docs/api/openapi-v1.json](docs/api/openapi-v1.json)) and a
+  [deprecation policy](docs/API.md#deprecation-policy). The VS Code extension can store a token and start a run.
 - **Approval policies** (E1.5). Per tenant and per project (Settings › Autopilot › Approvals): a person with the
   new **Approver** role (or an admin) approves the plan, opening the pull request, the change and/or the merge on
   **Board › Tasks › Approvals** — Approve, or Reject with a reason; who and when are recorded and audited
@@ -89,6 +94,12 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   pipes to and from the CLI; re-connecting a computer replaces its old offline entries.
 - Sign-in cookies are isolated per instance and a failed OIDC callback restarts sign-in instead of erroring.
 - Code-scanning (CodeQL) alerts are cleared as they land, with compiler-enforced twins for their classes.
+
+### Deprecated
+
+- The unversioned Api routes (`/pipeline`, `/runs`, `/tenants/…`, …) — use the same path under `/v1`. They keep
+  working until at least **2027-05-03** and answer with `Deprecation`, `Sunset` and `Link: rel="successor-version"`
+  headers ([docs/API.md](docs/API.md#deprecation-policy)).
 
 ### Security
 
@@ -128,5 +139,7 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   [docs/CONFIG.md](docs/CONFIG.md#set-at-deploy-bootstrap).
 - The `approver` realm role (E1.5) is created by the azd post-deploy hook and the Helm realm job; a local realm
   imported before it needs the role added through the Keycloak admin API, or its volume dropped.
+- Existing API tokens keep working — the `AddApiTokenScopesAndSalt` migration gives them scopes from their old
+  role and they stay service accounts; scripts calling the unversioned Api routes should move to `/v1`.
 
 [Unreleased]: https://github.com/hoangsnowy/AgentOS.NET/commits/main

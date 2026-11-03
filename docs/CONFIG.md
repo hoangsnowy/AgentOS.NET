@@ -415,6 +415,7 @@ as one fixed dev user, so production-sized per-user buckets would throttle a UI 
 | Key | Default | Notes |
 |---|---|---|
 | `RemoteAgent:AutoApprove` | `false` (Production locked) | Unattended remote execution. |
+| `Tenants:ApiTokens:MaxLifetimeDays` | `366` (platform, 1–1825) | Longest expiry a new personal token or service-account token may get (Settings → Platform → Safety). Existing tokens keep their expiry. See [API.md](API.md#api-tokens). |
 | `Tenants:OpenSignup` | `true` in Development, else `false` | Lets anyone create a new workspace (and become its admin) from `/signup` / `POST /tenants/register`. Invitations always work. Pin it with `Settings:Locks:Tenants:OpenSignup`. |
 | `Tools:EnforceByDefault` | `true` in Production, else `false` | Fail-closed tool policy. |
 | `Workspaces:AllowedHosts` | empty | Self-hosted GitHub Enterprise / Azure DevOps Server hosts, comma-separated (atop `SsrfGuard`; public provider hosts always allowed). |
