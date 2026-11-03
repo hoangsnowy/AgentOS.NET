@@ -209,10 +209,11 @@
     private IEnumerable<string> CurrentSegments() =>
         string.IsNullOrEmpty(_path) ? Array.Empty<string>() : _path.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
+    // `var b when b < …`: a bare `< 1024 =>` arm reads as markup to the 10.0.1xx SDK's Razor parser (see TicketFilesPanel).
     private static string Size(long bytes) => bytes switch
     {
-        < 1024 => $"{bytes} B",
-        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        var b when b < 1024 => $"{b} B",
+        var b when b < 1024 * 1024 => $"{b / 1024.0:0.#} KB",
         _ => $"{bytes / (1024.0 * 1024):0.#} MB",
     };
 }
