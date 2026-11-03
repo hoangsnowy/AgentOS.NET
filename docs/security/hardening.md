@@ -77,7 +77,7 @@ Tick every box before exposing a deployment to people outside the team that oper
       bootstrap stops the host (GAP-14); `/health` shows `row-level-security` **Healthy** — **Degraded** means someone
       set the escape hatch `Persistence:RowLevelSecurity=false`.
 - [ ] Verify in SQL: `select relname, relrowsecurity, relforcerowsecurity from pg_class where relrowsecurity;`
-      lists the 19 tables in `RowLevelSecurity.Tables`, and
+      lists the 20 tables in `RowLevelSecurity.Tables`, and
       `select has_table_privilege('agentos_rls', 'tenants.audit_events', 'DELETE');` is `false` (append-only, GAP-11b).
 - [ ] Record the audit chain's head hash outside the database now and then (Settings › Activity log › Verify chain
       shows it): without an external anchor, a database owner who rewrites the newest events is not detected.

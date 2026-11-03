@@ -67,9 +67,9 @@ working). **Stage 2 (2026-11-03)** closes that escape. The mechanism, as it stan
      bound to tenant A that names tenant B still sees nothing of B;
    - otherwise the ambient identity (runs, Board sessions, the scheduler's run; every Blazor circuit event through
      `CircuitIdentityHandler`), else the authenticated HTTP request's `tenant` claim, else **none — nothing**.
-4. **Tables** — `RowLevelSecurity.Tables` is the single list (19):
+4. **Tables** — `RowLevelSecurity.Tables` is the single list (20):
    - `pipeline.pipeline_runs`, `run_metrics`, `orchestrations`, `scheduled_runs`;
-   - `sessions.sessions`, `session_repos`, `runners`, `ticket_files`, `design_reviews`;
+   - `sessions.sessions`, `session_repos`, `runners`, `ticket_files`, `design_reviews`, `approvals` (E1.5);
    - `tools.tool_invocations`;
    - `workspaces.workspaces`, `workspace_repos`, `autopilot_events`, `ticket_flows`;
    - `memory.nodes`, `memory.edges`;
@@ -78,7 +78,7 @@ working). **Stage 2 (2026-11-03)** closes that escape. The mechanism, as it stan
    `RowLevelSecurity.ExemptTables` lists the tables with a `TenantId` column deliberately outside RLS, with the
    reason: `tenants.api_tokens` (looked up by prefix while authenticating, before any tenant is known; EF filter +
    explicit predicates, only the SHA-256 of a token is stored). A real-Postgres test fails on a tenant table that is
-   in neither list.
+   in neither list. `RowLevelSecurityDocsTests` reads this list back and fails when it and the code diverge.
 5. **Before the bootstrap ran** (boot: migrations, module seeds) **and when RLS is off**, connections keep the login
    user and set `app.platform = 'on'`, so policies an earlier boot left behind never hide rows from a process that
    runs without the database wall on purpose (a forced policy binds an owner login).
