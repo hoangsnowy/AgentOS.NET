@@ -150,6 +150,60 @@ public sealed class KeycloakAdminClientTests
         handler.Calls[1].Headers.Authorization.ShouldBe(new AuthenticationHeaderValue("Bearer", "sa-tok"));
     }
 
+    // The account exists after POST /users. A later step failing must not leave it behind — callers read "threw" as
+    // "no account" (an invitation is given back on it, GAP-11).
+    [Fact]
+    public async Task CreateUserAsync_RoleGrantFails_DeletesTheHalfCreatedUserBeforeThrowing()
+    {
+        using var handler = new StubHandler();
+        handler.Enqueue(req => req.Method == HttpMethod.Post && req.RequestUri!.AbsolutePath.EndsWith("/protocol/openid-connect/token"),
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent("{\"access_token\":\"tok-1\",\"expires_in\":300}") });
+        handler.Enqueue(req => req.Method == HttpMethod.Post && req.RequestUri!.AbsolutePath.EndsWith("/admin/realms/agentic/users"),
+            new HttpResponseMessage(HttpStatusCode.Created) { Headers = { Location = new Uri("http://kc/admin/realms/agentic/users/u-half") } });
+        handler.Enqueue(req => req.Method == HttpMethod.Get && req.RequestUri!.AbsolutePath.EndsWith("/admin/realms/agentic/roles/admin"),
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent("{\"id\":\"role-admin\",\"name\":\"admin\"}") });
+        handler.Enqueue(req => req.Method == HttpMethod.Post && req.RequestUri!.AbsolutePath.EndsWith("/users/u-half/role-mappings/realm"),
+            new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("boom") });
+        handler.Enqueue(req => req.Method == HttpMethod.Delete && req.RequestUri!.AbsolutePath.EndsWith("/admin/realms/agentic/users/u-half"),
+            new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://kc/") };
+        using var client = new KeycloakAdminClient(http, Options.Create(new KeycloakAdminOptions { BaseUrl = "http://kc", Realm = "agentic" }),
+            NullLogger<KeycloakAdminClient>.Instance);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => client.CreateUserAsync("alice", "alice@example.com", "acme", AdminRole, sendVerifyEmail: true));
+
+        ex.ShouldNotBeOfType<KeycloakUserLeftBehindException>();
+        handler.Calls.Count.ShouldBe(5);
+        handler.Calls[4].Method.ShouldBe(HttpMethod.Delete);
+    }
+
+    // When even the compensating delete fails, the caller must learn the account is still there.
+    [Fact]
+    public async Task CreateUserAsync_RoleGrantAndDeleteFail_ThrowsLeftBehindWithTheUserId()
+    {
+        using var handler = new StubHandler();
+        handler.Enqueue(req => req.Method == HttpMethod.Post && req.RequestUri!.AbsolutePath.EndsWith("/protocol/openid-connect/token"),
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent("{\"access_token\":\"tok-1\",\"expires_in\":300}") });
+        handler.Enqueue(req => req.Method == HttpMethod.Post && req.RequestUri!.AbsolutePath.EndsWith("/admin/realms/agentic/users"),
+            new HttpResponseMessage(HttpStatusCode.Created) { Headers = { Location = new Uri("http://kc/admin/realms/agentic/users/u-stuck") } });
+        handler.Enqueue(req => req.Method == HttpMethod.Get && req.RequestUri!.AbsolutePath.EndsWith("/admin/realms/agentic/roles/admin"),
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent("{\"id\":\"role-admin\",\"name\":\"admin\"}") });
+        handler.Enqueue(req => req.Method == HttpMethod.Post && req.RequestUri!.AbsolutePath.EndsWith("/users/u-stuck/role-mappings/realm"),
+            new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("boom") });
+        handler.Enqueue(req => req.Method == HttpMethod.Delete && req.RequestUri!.AbsolutePath.EndsWith("/admin/realms/agentic/users/u-stuck"),
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("down") });
+
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://kc/") };
+        using var client = new KeycloakAdminClient(http, Options.Create(new KeycloakAdminOptions { BaseUrl = "http://kc", Realm = "agentic" }),
+            NullLogger<KeycloakAdminClient>.Instance);
+
+        var ex = await Should.ThrowAsync<KeycloakUserLeftBehindException>(() => client.CreateUserAsync("alice", "alice@example.com", "acme", AdminRole, sendVerifyEmail: true));
+
+        ex.UserId.ShouldBe("u-stuck");
+        ex.InnerException.ShouldBeOfType<InvalidOperationException>().Message.ShouldContain("grant-roles failed (500)");
+    }
+
     private static StringContent JsonContent(string body)
     {
         var c = new StringContent(body, System.Text.Encoding.UTF8);

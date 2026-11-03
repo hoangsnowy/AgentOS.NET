@@ -282,7 +282,7 @@ public sealed class TenantSignupServiceTests
     [Fact]
     public async Task SignupAsync_AccountCreationFails_ReleasesTheInvitation()
     {
-        var (svc, kc, _, _, _) = Invitable();
+        var (svc, kc, _, audit, _) = Invitable();
         var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
         kc.CreateUserAsync("taken", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Keycloak create-user failed (409): User exists with same username"));
@@ -292,6 +292,47 @@ public sealed class TenantSignupServiceTests
 
         (await svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token))).Mode.ShouldBe(SignupMode.Invite);
         (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Accepted);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.Target!.Contains("reason=account_not_created", StringComparison.Ordinal));
+    }
+
+    // The claim is the point of no return: the invitee dropping the connection (RequestAborted) must not reach Keycloak
+    // half-way, and a cancellation that still surfaces (an HttpClient timeout) may mean the account exists — the
+    // invitation stays used rather than offering a second account on the same link.
+    [Fact]
+    public async Task SignupAsync_AccountCreationCancelled_RunsWithoutTheRequestToken_AndKeepsTheInvitationUsed()
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+        using var aborted = new CancellationTokenSource();
+        await aborted.CancelAsync();
+        kc.CreateUserAsync(default!, default!, default!, default!, default, default, default)
+            .ThrowsAsyncForAnyArgs(new OperationCanceledException("The request was aborted after Keycloak created the user."));
+
+        await Should.ThrowAsync<OperationCanceledException>(() => svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token), aborted.Token));
+
+        await kc.Received(1).CreateUserAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<bool>(), Arg.Any<string?>(), CancellationToken.None);
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Accepted);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.Target!.Contains("reason=account_unrecorded", StringComparison.Ordinal));
+        await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("bob2", "bob@acme.test", invite.Token)));
+    }
+
+    // Keycloak created the account, the rest failed and the compensating delete failed too: the account is there, so
+    // the invitation stays used and the audit row names the account for the operator.
+    [Fact]
+    public async Task SignupAsync_AccountLeftBehindInKeycloak_KeepsTheInvitationUsed_AndAuditsTheAccount()
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+        kc.CreateUserAsync(default!, default!, default!, default!, default, default, default)
+            .ThrowsAsyncForAnyArgs(KeycloakUserLeftBehindException.For("u-stuck", new InvalidOperationException("Keycloak grant-roles failed (500): boom")));
+
+        await Should.ThrowAsync<KeycloakUserLeftBehindException>(() => svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token)));
+
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Accepted);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.UserId == "u-stuck"
+            && e.Target!.Contains("reason=account_unrecorded", StringComparison.Ordinal));
+        await kc.DidNotReceiveWithAnyArgs().DeleteUserAsync(default!);
     }
 
     [Theory]

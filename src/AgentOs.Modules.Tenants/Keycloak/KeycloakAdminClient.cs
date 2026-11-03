@@ -102,6 +102,30 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
             ?? throw new InvalidOperationException("Keycloak create-user response missing Location header.");
         var userId = location.TrimEnd('/').Split('/').Last();
 
+        // The account exists from here on. Whatever fails next (a role grant, a cancelled request, a dropped
+        // connection) must not leave it behind: callers take "CreateUserAsync threw" as "no account was created" and
+        // e.g. hand an invitation back (GAP-11). Delete it before rethrowing; if even that fails, say so with a typed
+        // exception so the caller can keep its own state consumed instead of offering a second account.
+        try
+        {
+            await FinishUserAsync(userId, realmRoles, sendVerifyEmail, password, token, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            if (!await TryDeleteLeftBehindUserAsync(userId, ex).ConfigureAwait(false))
+            {
+                throw KeycloakUserLeftBehindException.For(userId, ex);
+            }
+            throw;
+        }
+
+        return userId;
+    }
+
+    // Role grants + the actions email for a user that already exists. Split out so CreateUserAsync can compensate.
+    private async Task FinishUserAsync(
+        string userId, IReadOnlyList<string> realmRoles, bool sendVerifyEmail, string? password, string token, CancellationToken ct)
+    {
         if (realmRoles.Count > 0)
         {
             var roleMappings = new List<object>(realmRoles.Count);
@@ -151,8 +175,27 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
                     userId, actionsResp.StatusCode);
             }
         }
+    }
 
-        return userId;
+    // Compensating delete for a half-created user. Runs under CancellationToken.None: the caller's request may be the
+    // very thing that was cancelled. Returns false (and logs) when the account is still there.
+    private async Task<bool> TryDeleteLeftBehindUserAsync(string userId, Exception cause)
+    {
+        try
+        {
+            await DeleteUserAsync(userId, CancellationToken.None).ConfigureAwait(false);
+            _logger.LogWarning(cause, "Keycloak user {UserId} was removed again because its set-up failed.", LogSafe.Scrub(userId));
+            return true;
+        }
+        // HttpClient reports its own timeout as a TaskCanceledException even with CancellationToken.None.
+        catch (Exception deleteEx) when (deleteEx is HttpRequestException or InvalidOperationException or TimeoutException
+                                                  or TaskCanceledException or JsonException)
+        {
+            _logger.LogError(deleteEx,
+                "Keycloak user {UserId} was created, its set-up failed, and removing it failed too — the account is left behind.",
+                LogSafe.Scrub(userId));
+            return false;
+        }
     }
 
     /// <inheritdoc />

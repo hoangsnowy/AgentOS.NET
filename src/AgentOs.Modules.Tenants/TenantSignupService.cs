@@ -4,8 +4,10 @@
 // {invitation id, tenant} only — the row is the authority for role, address and state. Accepting one:
 //   read the signed token → bind RLS to the tenant it names (the invitee is anonymous) → the row must be Pending and the
 //   address must be the invited one (InvitationRules) → CLAIM it (one conditional UPDATE: a second accept, a revoke or
-//   the expiry can't race it) → create the Keycloak account → bind the account to the row. A failed account creation
-//   releases the claim so the invitee can retry; a refused attempt is audited.
+//   the expiry can't race it) → create the Keycloak account (under CancellationToken.None: the claim is the point of no
+//   return) → bind the account to the row. The claim is given back only when Keycloak refused and no account exists
+//   (KeycloakAdminClient deletes a half-made one before throwing); a cancelled or left-behind creation keeps the
+//   invitation used so one link can never yield two accounts. Every refused or failed attempt is audited.
 // Tokens minted before this change (purpose …Invitation.v1: stateless and reusable) no longer open — re-invite.
 
 using System;
@@ -208,7 +210,10 @@ internal sealed partial class TenantSignupService : ITenantSignupService
             throw new InvalidOperationException(InvitationRules.Describe(why));
         }
 
-        string? kcUserId = null;
+        // The claim is the point of no return: from here the account is created to completion even if the invitee drops
+        // the connection (RequestAborted). Cancelling half-way would leave a Keycloak account nobody recorded next to a
+        // claim this code could not tell apart from "Keycloak refused" — so the request's token stops here.
+        string kcUserId;
         try
         {
             kcUserId = await _kc.CreateUserAsync(
@@ -219,16 +224,28 @@ internal sealed partial class TenantSignupService : ITenantSignupService
                 realmRoles: TenantRoles.Expand([invitation.Role]),
                 sendVerifyEmail: true,
                 password: request.Password,
-                ct: ct).ConfigureAwait(false);
+                ct: CancellationToken.None).ConfigureAwait(false);
         }
-        finally
+        catch (Exception ex) when (ex is not OperationCanceledException and not KeycloakUserLeftBehindException)
         {
-            if (kcUserId is null)
-            {
-                // No account was created (a taken username, Keycloak down): give the invitation back so the invitee can
-                // try again. Never throws over the original failure.
-                await ReleaseQuietlyAsync(invitation).ConfigureAwait(false);
-            }
+            // Keycloak refused (a taken username, Keycloak down) and the client guarantees no account exists — an account
+            // it made before failing is deleted again (KeycloakAdminClient), otherwise it throws the typed exception
+            // handled below. Give the invitation back so the invitee can try again; never throws over the original failure.
+            await ReleaseQuietlyAsync(invitation).ConfigureAwait(false);
+            await AuditQuietlyAsync(invitation, "account_not_created").ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or KeycloakUserLeftBehindException)
+        {
+            // An account may exist (a left-behind user, or an HttpClient timeout with no answer): the invitation stays
+            // consumed so this link can never produce a second account. The operator sees it in the audit log and the
+            // Keycloak console; the invitee needs a new invitation.
+            var userId = (ex as KeycloakUserLeftBehindException)?.UserId;
+            _logger.LogError(ex,
+                "Invitation {InvitationId} was used, but creating the account did not finish cleanly (user {UserId}); it stays used.",
+                invitation.Id, LogSafe.Scrub(userId ?? "unknown"));
+            await AuditQuietlyAsync(invitation, "account_unrecorded", userId).ConfigureAwait(false);
+            throw;
         }
 
         try
@@ -260,6 +277,23 @@ internal sealed partial class TenantSignupService : ITenantSignupService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Invitation {InvitationId} could not be released after a failed sign-up; it stays used — send a new one.", invitation.Id);
+        }
+    }
+
+    // The audit row for a claimed invitation whose account creation failed — written after the fact, under
+    // CancellationToken.None, and never over the original failure.
+    private async Task AuditQuietlyAsync(InvitationRecord invitation, string reason, string? userId = null)
+    {
+        try
+        {
+            await _audit.WriteAsync(new AuditEntry(
+                Guid.NewGuid(), invitation.TenantId, userId, AuditActions.InvitationRefused,
+                Target: $"id={invitation.Id:N},reason={reason}", IpAddress: null, UserAgent: null,
+                TimestampUtc: _clock.GetUtcNow()), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "The failed sign-up on invitation {InvitationId} could not be audited ({Reason}).", invitation.Id, reason);
         }
     }
 
