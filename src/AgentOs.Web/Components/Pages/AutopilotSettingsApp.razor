@@ -29,6 +29,11 @@ else
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@DecisionKeys" />
     </Panel>
 
+    <Panel Title="Approvals">
+        <p class="muted platform-hint">Steps a person must approve before AgentOS.NET takes them — on Board › Tasks, by someone with the Approver or Admin role (Settings › Users). Every decision is recorded with who and when. Nothing is ever approved for you: when nobody in the workspace can approve, the task stops and says so. A project line below replaces these for that project.</p>
+        <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@ApprovalKeys" />
+    </Panel>
+
     <Panel Title="Limits">
         <p class="muted platform-hint">Every engine keeps these bounds: the Orchestrator agent, the fixed rules and a ticket's MAF workflow. Fix rounds are counted per task in total — whichever engine sent the change back, and across restarts.</p>
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@LimitKeys" />
@@ -68,6 +73,7 @@ else
             <li><strong>Merging.</strong> With <em>Build and merge</em>, a change is merged only when its checks are green and its ticket flow's gates passed — by default the Reviewer agent approved it and the Testing agent passed it against the ticket's acceptance criteria, which needs a connected computer.</li>
             <li><strong>Ticket flow.</strong> The steps each ticket runs are the ticket flow in Workflow › Ticket flow (per project, versioned). It may skip Review or Test for some tickets, but never both, and checks always run before a merge.</li>
             <li><strong>Order.</strong> Approved tickets start p0 first, then oldest — never before the tickets they depend on are done. Tickets marked for a person are never touched.</li>
+            <li><strong>Repository safety.</strong> AgentOS.NET never pushes to or merges from a repository's default branch, and refuses a merge its branch protection would refuse — required reviews, code owners (CODEOWNERS) and required checks are read from GitHub before every merge, also when the token could bypass them.</li>
             <li><strong>Plan limits.</strong> When your computer's Claude or Codex plan hits its limit, Autopilot waits until the plan resets: no new work, and no fix round or retry is spent. Work it cut short picks up again after the reset — nothing is lost.</li>
         </ul>
     </Panel>
@@ -77,6 +83,8 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private static readonly string[] DecisionKeys = [AutopilotSettings.DecidedByKey, AutopilotSettings.TicketEngineKey];
+
+    private static readonly IReadOnlyList<string> ApprovalKeys = AgentOs.Modules.Integration.Governance.ApprovalSettings.Keys;
 
     private static readonly string[] LimitKeys =
     [

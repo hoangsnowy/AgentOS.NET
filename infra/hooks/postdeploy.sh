@@ -67,6 +67,14 @@ case "$code" in
   *)   echo "WARN: Could not ensure realm role platform-admin (HTTP $code)." ;;
 esac
 
+# 2c. Realm role approver (E1.5 approval policies): approves or rejects the steps a policy holds. Same idempotent ensure.
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${auth[@]}" "$KC_URL/admin/realms/$REALM/roles"   -d '{"name":"approver","description":"Tenant approver - approves or rejects plan, diff, pull request and merge steps"}')
+case "$code" in
+  201) echo "Realm role approver created." ;;
+  409) echo "Realm role approver already present." ;;
+  *)   echo "WARN: Could not ensure realm role approver (HTTP $code)." ;;
+esac
+
 # 3. Seed users: rotate imported placeholder passwords
 rotate_user() {
   local username="$1" newpass="$2"

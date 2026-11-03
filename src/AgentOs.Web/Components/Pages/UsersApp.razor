@@ -74,6 +74,7 @@ else
                                 <select class="prefs-select" disabled="@(_busyId == m.Id || isSelf)"
                                         value="@PrimaryRole(m)" @onchange="@(e => ChangeRole(m, e))">
                                     <option value="admin">Admin</option>
+                                    <option value="approver">Approver</option>
                                     <option value="member">Member</option>
                                 </select>
                             </td>
@@ -111,6 +112,7 @@ else
                 <Field Label="Role">
                     <select @bind="_inviteRole" class="prefs-select">
                         <option value="member">Member</option>
+                        <option value="approver">Approver</option>
                         <option value="admin">Admin</option>
                     </select>
                 </Field>
@@ -197,8 +199,8 @@ else
         }
     }
 
-    private static string PrimaryRole(KeycloakUser m) =>
-        m.Roles.Contains("admin", StringComparer.Ordinal) ? "admin" : "member";
+    // Admin over approver over member (an approver is a member who may also approve the steps an approval policy holds).
+    private static string PrimaryRole(KeycloakUser m) => AgentOs.Modules.Tenants.TenantRoles.Primary(m.Roles);
 
     private async Task LoadMembersAsync()
     {
@@ -223,7 +225,7 @@ else
         await CircuitSafe.RunAsync(
             async () =>
             {
-                await Kc.UpdateUserRolesAsync(m.Id, new[] { role });
+                await Kc.UpdateUserRolesAsync(m.Id, AgentOs.Modules.Tenants.TenantRoles.Expand([role]));
                 Toasts.Show("Users", $"{m.Username} is now {role}.", ToastKind.Ok);
                 await LoadMembersAsync();
             },
