@@ -234,6 +234,40 @@ public sealed class ReplyRecoveryTests
         prs.HeadsAsked.ShouldBe(1);   // recorded before the run; only a recovered summary compares it
     }
 
+    // VNChess #124: the run merged main, fixed, committed and pushed — then ended without its summary and the follow-up
+    // gave none (timed out). The moved head proves the work is on the remote: carry on, don't block finished work.
+    [Fact]
+    public async Task IssueWork_RevisionPushedButFollowUpGaveNoSummary_CarriesOnWithThePushedWork()
+    {
+        var feed = new CapturingFeed();
+        var prs = new FakePrs(exists: true, heads: ["abc123", "def456"]);
+        var (llm, _) = Llm(Reply(NoJson), Answer("Still thinking about it."));
+
+        var outcome = (await Agent(llm, feed).RunAsync(Request(prs, existingBranch: "issue-102-ai-fix", changeRequest: "Fix the null check.")))
+            .Repos.ShouldHaveSingleItem();
+
+        outcome.Ok.ShouldBeTrue();
+        outcome.BranchName.ShouldBe("issue-102-ai-fix");
+        outcome.Summary.ShouldBe(IssueWorkAgent.PushedWithoutSummary);
+        outcome.Description.ShouldBeNull();   // the pull request keeps its own description
+        feed.Events.ShouldContain(e => e.Kind == SessionRunEventKind.ReplyRecovered && e.Message.Contains("carrying on with that work"));
+    }
+
+    [Theory]
+    [InlineData("abc123", "abc123")]   // nothing pushed
+    [InlineData("abc123", null)]       // the remote can't tell — never trusted unconfirmed
+    public async Task IssueWork_RevisionNotPushed_FollowUpGaveNoSummary_StillFails(string before, string? after)
+    {
+        var prs = new FakePrs(exists: true, heads: [before, after]);
+        var (llm, _) = Llm(Reply(NoJson), Answer("Still thinking about it."));
+
+        var outcome = (await Agent(llm).RunAsync(Request(prs, existingBranch: "issue-102-ai-fix", changeRequest: "Fix the null check.")))
+            .Repos.ShouldHaveSingleItem();
+
+        outcome.Ok.ShouldBeFalse();
+        outcome.Error.ShouldNotBeNull().ShouldStartWith(IssueWorkAgent.NoSummaryAfterAskingAgain);
+    }
+
     [Fact]
     public async Task IssueWork_FollowUpAlsoWithoutJson_FailsAfterExactlyOneMoreCall()
     {

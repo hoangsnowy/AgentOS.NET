@@ -348,6 +348,16 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
         var answer = await ReplyRecovery.AskAsync(llm, followUp, _logger, nameof(IssueWorkAgent), ct).ConfigureAwait(false);
         if (answer.Reply is not { } reply || !ReplyRecovery.HasJson(reply, nameof(IssueWorkAgent)))
         {
+            // The pushed work speaks for itself: a revision whose pull-request branch moved since the run started did push
+            // (VNChess #124: main merged in twice, fixes committed, CI green — yet the follow-up timed out and the task was
+            // blocked). Carry on with that work; review and acceptance still judge it, and an empty description keeps the
+            // pull request's own.
+            if (await PushedRevisionAsync(request, repo, headBefore, _logger, ct).ConfigureAwait(false))
+            {
+                Emit(request, SessionRunEventKind.ReplyRecovered,
+                    $"{repoLabel} — no summary, but the run pushed to {repo.ExistingBranch}: carrying on with that work.", repoLabel);
+                return new RepoWorkOutcome(repo.SessionRepoId, true, repo.Owner, repo.Repo, repo.ExistingBranch!, PushedWithoutSummary, null);
+            }
             Emit(request, SessionRunEventKind.ReplyRecovered, $"{repoLabel} — asked again, but the agent still gave no summary.", repoLabel);
             var content = response.Content ?? "";
             return new RepoWorkOutcome(repo.SessionRepoId, false, repo.Owner, repo.Repo, "",
@@ -366,6 +376,19 @@ public sealed class IssueWorkAgent : IIssueWorkAgent
 
     /// <summary>The failure when the run gave no JSON summary and asking once more gave none either.</summary>
     internal const string NoSummaryAfterAskingAgain = "Agent did not return a JSON summary (asked once more; still none).";
+
+    /// <summary>The summary of a revision that pushed its work but never said so (no reply, and the follow-up gave none).</summary>
+    internal const string PushedWithoutSummary = "The run pushed its work but sent no summary — see the pull request's new commits.";
+
+    // A revision of an existing pull request pushed when its branch head moved since before the run. False when it isn't a
+    // revision, the head wasn't recorded, or the remote can't tell (never trusted without the remote confirming).
+    private static async Task<bool> PushedRevisionAsync(IssueWorkRequest request, WorkRepo repo, string? headBefore, ILogger logger,
+        CancellationToken ct)
+    {
+        if (!IsRevision(request, repo) || headBefore is null) { return false; }
+        var headAfter = await BranchHeadAsync(request, repo, repo.ExistingBranch!, logger, ct).ConfigureAwait(false);
+        return headAfter is not null && !string.Equals(headBefore, headAfter, StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>The failure when a recovered summary names a branch that never reached the remote — worded so the
     /// Orchestrator agent's retry guidance tells the next run to push.</summary>
