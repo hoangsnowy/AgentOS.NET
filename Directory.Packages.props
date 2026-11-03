@@ -78,6 +78,8 @@
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.14" />
     <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
+    <!-- In-memory test server for host-pipeline integration tests (forwarded headers, host filter, sign-out, CSRF). -->
+    <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.14" />
 
     <!-- Web host: Blazor diagram editor -->
     <PackageVersion Include="Z.Blazor.Diagrams" Version="3.0.4.1" />

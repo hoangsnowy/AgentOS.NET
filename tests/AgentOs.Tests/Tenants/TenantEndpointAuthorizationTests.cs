@@ -29,6 +29,7 @@ public sealed class TenantEndpointAuthorizationTests
         builder.Services.AddSingleton(Substitute.For<IEmailSender>());
         builder.Services.AddSingleton(Substitute.For<ITenantContext>());
         builder.Services.AddSingleton(Substitute.For<ITenantSignupService>());
+        builder.Services.AddSingleton(new AgentOs.SharedKernel.Hosting.PublicOrigin("https://agentos.example.com", allowRequestFallback: false));
         var app = builder.Build();
         app.MapTenantEndpoints();
         return [.. ((IEndpointRouteBuilder)app).DataSources.SelectMany(d => d.Endpoints).OfType<RouteEndpoint>()];

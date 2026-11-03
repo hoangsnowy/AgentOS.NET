@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants.Email;
 using AgentOs.Modules.Tenants.Keycloak;
+using AgentOs.SharedKernel.Hosting;
 using AgentOs.SharedKernel.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -138,6 +139,7 @@ internal static class TenantEndpoints
             IAuditLog audit,
             IEmailSender email,
             ITenantContext ctx,
+            PublicOrigin origin,
             HttpContext http,
             CancellationToken ct) =>
         {
@@ -154,8 +156,9 @@ internal static class TenantEndpoints
             }
             var ttl = TimeSpan.FromHours(body.TtlHours is > 0 and <= 168 ? body.TtlHours.Value : 24);
             var minted = signup.CreateInvitation(tenantId, role, body.Email, ttl);
-            var origin = $"{http.Request.Scheme}://{http.Request.Host}";
-            var url = $"{origin}/signup?invite={Uri.EscapeDataString(minted.Token)}";
+            // GAP-05: the link points at the configured public desktop URL — never at the request's Host header, which
+            // the caller controls (an admin's request through a spoofed Host would mint a link to someone else's server).
+            var url = origin.Link($"/signup?invite={Uri.EscapeDataString(minted.Token)}", http.Request);
             await audit.WriteAsync(new AuditEntry(
                 Guid.NewGuid(), tenantId, ctx.UserId, AuditActions.InvitationMinted,
                 Target: $"role={role}{(body.Email is null ? "" : $",email={body.Email}")}",

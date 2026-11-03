@@ -297,9 +297,10 @@
         await JS.InvokeVoidAsync("agenticTheme.applyAgentMotion", v ? "on" : "off");
     }
 
-    private void Lock() => Nav.NavigateTo("/account/logout", forceLoad: true);
+    // Sign-out is a POST with an antiforgery token (GAP-19) — AccountSignOut submits the form App.razor renders.
+    private Task Lock() => AgentOs.Web.Auth.AccountSignOut.SubmitAsync(JS);
 
-    private void SignOut() => Nav.NavigateTo("/account/logout", forceLoad: true);
+    private Task SignOut() => AgentOs.Web.Auth.AccountSignOut.SubmitAsync(JS);
 
     public void Dispose()
     {

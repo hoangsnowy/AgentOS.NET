@@ -19,6 +19,10 @@ else if (!_isAdmin)
 {
     <div class="login-error">Admin role required to export or purge data.</div>
 }
+else if (_tenantId is null)
+{
+    <div class="login-error" role="alert">@TenantClaim.MissingMessage</div>
+}
 else
 {
     <header class="page-head">
@@ -95,8 +99,9 @@ else
     private bool _isAdmin;
     private bool _isPlatformAdmin;
     private bool _busy;
-    private string _tenantId = "default";
-    private string _actor = "admin";
+    // Null = the sign-in carries no tenant claim: fail closed (GAP-17), never the shared "default" tenant.
+    private string? _tenantId;
+    private System.Security.Claims.ClaimsPrincipal _user = new();
     private string? _purging;
     private string _confirm = string.Empty;
     private IReadOnlyList<TenantRecord>? _tenants;
@@ -109,11 +114,11 @@ else
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
             _isPlatformAdmin = state.User.IsPlatformAdmin();
-            _tenantId = state.User.GetTenantId() ?? "default";
-            _actor = state.User.Identity?.Name ?? "admin";
+            _tenantId = state.User.GetTenantId();
+            _user = state.User;
         }
         _resolved = true;
-        if (_isPlatformAdmin && Data.IsAvailable) { _tenants = await Tenants.ListAsync(); }
+        if (_isPlatformAdmin && _tenantId is not null && Data.IsAvailable) { _tenants = await Tenants.ListAsync(); }
     }
 
     private async Task PurgeAsync(string tenantId)
@@ -122,12 +127,13 @@ else
         _busy = true;
         try
         {
-            _lastReport = await Data.PurgeAsync(tenantId, _actor);
+            _lastReport = await Data.PurgeAsync(tenantId, _user);
             _purging = null;
             _tenants = await Tenants.ListAsync();
             Toasts.Show("Data", $"Tenant {tenantId} purged — {_lastReport.TotalRows} rows.", ToastKind.Ok);
         }
-        catch (Exception ex) when (ex is Npgsql.NpgsqlException or InvalidOperationException or System.Net.Http.HttpRequestException)
+        catch (Exception ex) when (ex is Npgsql.NpgsqlException or InvalidOperationException or System.Net.Http.HttpRequestException
+            or TenantPurgeDeniedException)
         {
             Toasts.Show("Data", $"Purge failed: {ex.Message}", ToastKind.Err);
         }
