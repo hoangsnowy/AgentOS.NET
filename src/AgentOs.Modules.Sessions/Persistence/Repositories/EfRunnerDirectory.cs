@@ -2,6 +2,9 @@
 // authenticated tenant yet — so the lookup bypasses the tenant query filter (IgnoreQueryFilters) and
 // finds the runner by its unguessable id. The caller MUST then verify the presented token against the
 // returned TokenHash before trusting TenantId / OwnerUserId. The id alone grants nothing.
+// RLS (ADR-0012 stage 2): the two cross-tenant reads by id — the handshake lookup and the revalidation sweep — run in
+// an explicit RowLevelSecurity.PlatformScope; the hub binds the rest of the handshake (MarkPaired, RetireReplaced) to
+// the runner's tenant once the token is verified.
 
 using System;
 using System.Collections.Generic;
@@ -9,6 +12,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Sessions;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgentOs.Modules.Sessions.Persistence.Repositories;
@@ -21,6 +25,9 @@ internal sealed class EfRunnerDirectory : IRunnerDirectory
 
     public async Task<RunnerIdentity?> FindForPairingAsync(Guid runnerId, CancellationToken cancellationToken = default)
     {
+        // Before authentication no tenant is known: the unguessable id is looked up across tenants, then the hub verifies
+        // the token against the returned hash before it trusts anything in the row.
+        using var platform = RowLevelSecurity.PlatformScope("runner-handshake");
         return await _db.Runners
             .IgnoreQueryFilters()
             .AsNoTracking()
@@ -109,6 +116,8 @@ internal sealed class EfRunnerDirectory : IRunnerDirectory
         ArgumentNullException.ThrowIfNull(runnerIds);
         if (runnerIds.Count == 0) { return new Dictionary<Guid, string>(); }
         // One WHERE Id IN (…) per revalidation sweep, tenant-unfiltered like the handshake lookup (the sweep spans tenants).
+        // A status read only — but an empty answer means "gone", so it must see every tenant's row (platform scope).
+        using var platform = RowLevelSecurity.PlatformScope("runner-revalidation");
         var ids = runnerIds.ToArray();
         return await _db.Runners
             .IgnoreQueryFilters()

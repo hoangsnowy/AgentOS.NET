@@ -45,13 +45,13 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
             ORDER BY "CreatedAtUtc" DESC
             LIMIT @lim OFFSET @off
             """;
-        return await QueryListAsync(sql, new { tenantId = _tenant.TenantId, lim, off }, ct).ConfigureAwait(false);
+        return await QueryListAsync(_tenant.TenantId, sql, new { tenantId = _tenant.TenantId, lim, off }, ct).ConfigureAwait(false);
     }
 
     public async Task<WorkspaceEntity?> GetAsync(Guid id, CancellationToken ct = default)
     {
         const string sql = """SELECT * FROM workspaces.workspaces WHERE "Id" = @id AND "TenantId" = @tenantId""";
-        return await QuerySingleAsync(sql, new { id, tenantId = _tenant.TenantId }, ct).ConfigureAwait(false);
+        return await QuerySingleAsync(_tenant.TenantId, sql, new { id, tenantId = _tenant.TenantId }, ct).ConfigureAwait(false);
     }
 
     public async Task AddAsync(WorkspaceEntity workspace, CancellationToken ct = default)
@@ -69,13 +69,13 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
             WHERE "TenantId" = @tenantId
             ORDER BY "CreatedAtUtc" DESC
             """;
-        return await QueryListAsync(sql, new { tenantId }, ct).ConfigureAwait(false);
+        return await QueryListAsync(tenantId, sql, new { tenantId }, ct).ConfigureAwait(false);
     }
 
     public async Task<WorkspaceEntity?> GetForTenantAsync(string tenantId, Guid id, CancellationToken ct = default)
     {
         const string sql = """SELECT * FROM workspaces.workspaces WHERE "TenantId" = @tenantId AND "Id" = @id""";
-        return await QuerySingleAsync(sql, new { tenantId, id }, ct).ConfigureAwait(false);
+        return await QuerySingleAsync(tenantId, sql, new { tenantId, id }, ct).ConfigureAwait(false);
     }
 
     public async Task<bool> SetAutopilotForTenantAsync(string tenantId, Guid id, string mode, string? userId, CancellationToken ct = default)
@@ -121,8 +121,9 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
 
     public async Task<IReadOnlyList<WorkspaceEntity>> ListAutopilotAsync(CancellationToken ct = default)
     {
-        // Cross-tenant on purpose: the project orchestrator is a platform worker. Explicit bypass, not an empty tenant.
-        using var platform = RowLevelSecurity.Bypass();
+        // Cross-tenant on purpose: the project orchestrator is a platform worker. An explicit, counted platform scope —
+        // an empty tenant sees nothing (RLS stage 2).
+        using var platform = RowLevelSecurity.PlatformScope("autopilot-scan");
         return await _db.Workspaces.IgnoreQueryFilters().AsNoTracking()
             .Where(w => w.Autopilot != "Off")
             .ToListAsync(ct).ConfigureAwait(false);
@@ -177,8 +178,9 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
             WHERE "TenantId" = @tenantId AND "WorkspaceId" = @workspaceId
             ORDER BY "AddedAtUtc"
             """;
-        await using var conn = Conn.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        // RLS (ADR-0012 stage 2): Dapper reads switch to the restricted role like the EF context — a plain connection ran as
+        // the login user, which an owner login (Azure) sees nothing through once "no tenant" means nothing.
+        await using var conn = await Conn.OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<WorkspaceRepoEntity>(
             new CommandDefinition(sql, new { tenantId, workspaceId }, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();
@@ -193,8 +195,7 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
             WHERE "TenantId" = @tenantId
             ORDER BY "WorkspaceId", "AddedAtUtc"
             """;
-        await using var conn = Conn.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await Conn.OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<WorkspaceRepoEntity>(
             new CommandDefinition(sql, new { tenantId }, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();
@@ -227,19 +228,17 @@ internal sealed class WorkspaceRepository : IWorkspaceRepository
     }
 
     // ── Dapper read helpers (tenant-scoped by the caller's SQL) ───────────────────────────────────
-    private async Task<IReadOnlyList<WorkspaceEntity>> QueryListAsync(string sql, object parms, CancellationToken ct)
+    private async Task<IReadOnlyList<WorkspaceEntity>> QueryListAsync(string tenantId, string sql, object parms, CancellationToken ct)
     {
-        await using var conn = Conn.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await Conn.OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<WorkspaceEntity>(
             new CommandDefinition(sql, parms, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();
     }
 
-    private async Task<WorkspaceEntity?> QuerySingleAsync(string sql, object parms, CancellationToken ct)
+    private async Task<WorkspaceEntity?> QuerySingleAsync(string tenantId, string sql, object parms, CancellationToken ct)
     {
-        await using var conn = Conn.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await Conn.OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         return await conn.QueryFirstOrDefaultAsync<WorkspaceEntity>(
             new CommandDefinition(sql, parms, cancellationToken: ct)).ConfigureAwait(false);
     }

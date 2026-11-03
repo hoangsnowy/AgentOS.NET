@@ -59,6 +59,8 @@ public sealed class OrchestratorLog(IServiceScopeFactory scopes, ILogger<Orchest
         {
             try
             {
+                // RLS stage 2: a caller with no tenant of its own (the worker) is bound to the board's tenant for this read.
+                using var bound = AgentOs.SharedKernel.Persistence.RowLevelSecurity.TenantScopeIfUnbound(tenantId);
                 using var scope = scopes.CreateScope();
                 var stored = await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>()
                     .ListAutopilotEventsAsync(tenantId, boardId, Keep).ConfigureAwait(false);
@@ -98,6 +100,9 @@ public sealed class OrchestratorLog(IServiceScopeFactory scopes, ILogger<Orchest
     {
         try
         {
+            // Fire-and-forget from the worker, sometimes outside the board's identity push: bind the write to the board's
+            // tenant (RLS stage 2 refuses a row written with no tenant).
+            using var bound = AgentOs.SharedKernel.Persistence.RowLevelSecurity.TenantScopeIfUnbound(tenantId);
             using var scope = scopes.CreateScope();
             await scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>().AddAutopilotEventAsync(tenantId, boardId, text).ConfigureAwait(false);
         }

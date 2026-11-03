@@ -35,7 +35,7 @@ to the next request.
 |---|---|---|
 | `ConnectionStrings:DefaultConnection` | — | Postgres. Absent → modules fall back to no-op repositories (stateless boot) unless `RequireDatabase` is true. Aspire injects it on the full stack. |
 | `Persistence:RequireDatabase` | `true` (code); Web base `false` for the standalone run, `true` in Web Production | Fail-loud guard: refuse to boot stateless when a DB is expected. |
-| `Persistence:RowLevelSecurity` | `true` | Postgres RLS on the tenant tables ([ADR-0012](adr/0012-postgres-row-level-security.md)); the DB user needs `CREATEROLE`. `false` = escape hatch (application filters only). |
+| `Persistence:RowLevelSecurity` | `true` | Postgres RLS on the tenant tables ([ADR-0012](adr/0012-postgres-row-level-security.md)); a connection with no tenant sees nothing. The DB user needs `CREATEROLE`. A failed bootstrap **stops the host outside Development** (Development logs an error and runs on application filters). `false` = escape hatch (application filters only; logged as a warning every boot, `/health` reports `row-level-security` Degraded). |
 | `Auth:Keycloak:Authority` | empty | **Required outside Development.** Dev fallback `http://localhost:8080/realms/agentic` applies in Development only. |
 | `Auth:Keycloak:Audience` | `agentic-api` | JWT audience (Api). |
 | `Auth:Keycloak:ClientId` / `ClientSecret` | `agentic-web` / empty | Web OIDC client. Secret required outside Development; the dev default secret is rejected by `DevSecretGuard`. |

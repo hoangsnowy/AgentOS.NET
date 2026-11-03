@@ -29,8 +29,9 @@ internal sealed class OrchestrationRepository(PipelineDbContext db, ITenantConte
             WHERE "TenantId" = @tenantId
             ORDER BY "Name"
             """;
-        await using var c = Conn.Create();
-        await c.OpenAsync(ct).ConfigureAwait(false);
+        // RLS (ADR-0012 stage 2): Dapper reads switch to the restricted role like the EF context — a plain connection ran as
+        // the login user, which an owner login (Azure) sees nothing through once "no tenant" means nothing.
+        await using var c = await Conn.OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         var rows = await c.QueryAsync<OrchestrationRecord>(
             new CommandDefinition(sql, new { tenantId }, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();
@@ -43,8 +44,7 @@ internal sealed class OrchestrationRepository(PipelineDbContext db, ITenantConte
             FROM pipeline.orchestrations
             WHERE "Id" = @id AND "TenantId" = @tenantId
             """;
-        await using var c = Conn.Create();
-        await c.OpenAsync(ct).ConfigureAwait(false);
+        await using var c = await Conn.OpenForTenantAsync(tenant.TenantId, ct).ConfigureAwait(false);
         return await c.QueryFirstOrDefaultAsync<OrchestrationRecord>(
             new CommandDefinition(sql, new { id, tenantId = tenant.TenantId }, cancellationToken: ct)).ConfigureAwait(false);
     }

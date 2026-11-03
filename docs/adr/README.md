@@ -11,7 +11,7 @@ Format: Status · Context · Decision · Consequences. Keep them terse.
 | [0005](0005-build-verifier-sandbox.md) | `build_verifier` execution sandbox | Accepted |
 | [0008](0008-memory-and-knowledge-graph.md) | Shared memory and knowledge graph (layers, bi-temporal graph in Postgres, retrieval, visualisation) | Proposed |
 | [0011](0011-ui-first-configuration.md) | UI-first configuration: settings registry, scopes, precedence | Accepted |
-| [0012](0012-postgres-row-level-security.md) | Postgres row-level security for tenant tables (stage 1) | Accepted |
+| [0012](0012-postgres-row-level-security.md) | Postgres row-level security for tenant tables (stage 2: no tenant sees nothing) | Accepted |
 | [0013](0013-teams-and-projects.md) | Teams and projects inside a tenant (org → team → project → repo) | Proposed |
 | [0014](0014-ticket-flow-is-data.md) | Ticket flow is data: Autopilot runs what the Workflow app shows | Accepted |
 | [0015](0015-ticket-files.md) | Ticket files: the only way files reach an agent | Accepted |

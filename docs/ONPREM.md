@@ -203,8 +203,9 @@ external Keycloak without its URL, several Web replicas without sticky sessions)
 - **External Postgres** — `postgresql.enabled=false` and `externalDatabase.{host,port,database,username,sslMode}`
   (password: `postgres-password` in the secret). Create the `agentos` and `keycloak` databases first. The user
   must **own** them and hold **`CREATEROLE`**: the hosts create the `agentos_rls` role, its grants and the
-  row-level-security policies at every boot. Without it RLS stays off and the hosts log
-  `Row-level security bootstrap FAILED` (isolation falls back to application filters only).
+  row-level-security policies at every boot. Without it the hosts **refuse to start** with "Row-level security
+  could not be set up, so AgentOS.NET will not start" (`Persistence:RowLevelSecurity=false` runs without it, on
+  application filters only — on purpose, and reported Degraded by `/health`).
 - **External Keycloak** — `keycloak.enabled=false`, `keycloak.publicUrl=https://sso.corp.example`. Import
   [`infra/keycloak/agentic-realm.json`](../infra/keycloak/agentic-realm.json) and copy
   [`infra/keycloak/themes/agentos`](../infra/keycloak/themes/agentos) into its themes directory first; the realm
@@ -375,7 +376,7 @@ card without a version under the service account.
 | Sign-in loops, *IDX10205 issuer invalid* | `KEYCLOAK_PUBLIC_URL` differs from how browsers reach Keycloak — the issuer is fixed to it. |
 | Api/Web exit: *RequireKeyWrapping is on but the key ring is unwrapped* | The certificate is not mounted or its path/password is wrong. Check `dataprotection/` and `DATAPROTECTION_CERTIFICATE_*`, or the Helm Secret. |
 | HTTP 431 on Keycloak | Oversized cookie jar on a shared host name — compose/Helm raise Keycloak's limit to 128K; use dedicated host names per install (and `COOKIE_PREFIX` / `web.cookiePrefix`). |
-| Log: `Row-level security bootstrap FAILED` | The database user lacks `CREATEROLE`/ownership (external Postgres). Grant it, restart. |
+| Host exits: `Row-level security could not be set up` (log: `Row-level security bootstrap FAILED`) | The database user lacks `CREATEROLE`/ownership (external Postgres). Grant it (or have a DBA create `agentos_rls` and grant it), restart. |
 | Log: `libgssapi_krb5.so.2: cannot open shared object file` | Harmless — Npgsql probing Kerberos; the app uses password auth. |
 
 Related: [DEPLOYMENT.md](DEPLOYMENT.md) (Azure), [CONFIG.md](CONFIG.md) (settings),

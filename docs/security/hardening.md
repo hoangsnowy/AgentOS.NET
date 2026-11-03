@@ -65,11 +65,14 @@ Tick every box before exposing a deployment to people outside the team that oper
 ## 4. Database and row-level security
 
 - [ ] **RLS is on.** Leave `Persistence:RowLevelSecurity=true` (default). The DB user needs `CREATEROLE`, or a DBA
-      pre-creates `agentos_rls` ([ADR-0012](../adr/0012-postgres-row-level-security.md)). After first boot, confirm
-      the log has **no** RLS bootstrap error — on failure the host keeps running with RLS off
-      (`src/AgentOs.SharedKernel/Persistence/RowLevelSecurity.cs:132-136`). **(manual check — GAP-14)**
+      pre-creates `agentos_rls` ([ADR-0012](../adr/0012-postgres-row-level-security.md)). Outside Development a failed
+      bootstrap stops the host (GAP-14); `/health` shows `row-level-security` **Healthy** — **Degraded** means someone
+      set the escape hatch `Persistence:RowLevelSecurity=false`.
 - [ ] Verify in SQL: `select relname, relrowsecurity, relforcerowsecurity from pg_class where relrowsecurity;`
-      lists the 16 tables in `RowLevelSecurity.Tables` (`RowLevelSecurity.cs:39-47`).
+      lists the 19 tables in `RowLevelSecurity.Tables`, and
+      `select has_table_privilege('agentos_rls', 'tenants.audit_events', 'DELETE');` is `false` (append-only, GAP-11b).
+- [ ] Record the audit chain's head hash outside the database now and then (Settings › Activity log › Verify chain
+      shows it): without an external anchor, a database owner who rewrites the newest events is not detected.
 - [ ] **Least-privilege app login.** The shipped deployment connects as the server administrator
       (`postgres.module.bicep:78`). Prefer a dedicated login that owns the schemas, has `CREATEROLE`, and is not a
       superuser. **(manual — GAP-15)**
@@ -148,7 +151,9 @@ Tick every box before exposing a deployment to people outside the team that oper
       **(GAP-15)**
 - [ ] Set a retention on the Log Analytics workspace (none set in `infra/resources.bicep:37-46`).
 - [ ] Configure real SMTP — the null sender (no `Email:SmtpHost`) logs invitation links including the token
-      (`src/AgentOs.Modules.Tenants/Email/NullEmailSender.cs:21-26`). Use STARTTLS (`Email__UseStartTls=true`) or 465.
+      (`src/AgentOs.Modules.Tenants/Email/NullEmailSender.cs:21-26`). A link works once and only for the invited
+      address, and can be revoked in Settings › Users (GAP-11), but treat it as a credential until then. Use STARTTLS
+      (`Email__UseStartTls=true`) or 465.
 - [ ] Tool evidence stores full tool input / output (`tools.tool_invocations`); restrict database read access and
       watch `agentos.evidence.lost` / `agentos.evidence.inline_writes` (meter `AgentOs.Tools`).
 

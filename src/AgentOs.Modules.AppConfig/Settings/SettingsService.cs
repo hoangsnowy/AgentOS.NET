@@ -116,6 +116,11 @@ public sealed class SettingsService : ISettings
         }
 
         var (rowTenant, rowKey) = Row(d.Key, scope, tenantId);
+        // GAP-14: the "__platform" rows are readable by every tenant but writable only by an explicit platform operation
+        // (RLS stage 2). The caller already proved the platform-admin role; this tells the database.
+        using var platform = scope == SettingScope.Platform
+            ? AgentOs.SharedKernel.Persistence.RowLevelSecurity.PlatformScope("platform-settings")
+            : null;
         var old = await _store.GetForTenantAsync(rowTenant, rowKey, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(trimmed))
         {

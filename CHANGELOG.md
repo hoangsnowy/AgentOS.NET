@@ -93,9 +93,20 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   start while any setting still holds the on-prem `CHANGE_ME` placeholder.
 - VS Code runner extension: `@vscode/vsce` 4.1.0 brings `@azure/msal-node` to 7.1.2, past the advisory on
   authorization-code-flow parameter disclosure (< 7.1.0; dev-only dependency).
+- Invitations are single-use, bound to the invited address and revocable from Settings › Users (GAP-11); the
+  audit trail is append-only for the application's database role and hash-chained per tenant, with **Verify
+  chain** in Settings › Activity log (GAP-11b).
+- Row-level security stage 2 (GAP-14): a connection with no tenant sees nothing; settings, the audit trail and
+  invitations are under RLS; cross-tenant platform work runs in explicit, counted platform scopes; a failed RLS
+  bootstrap stops the host outside Development and `/health` reports `row-level-security`.
 
 ### Migration notes
 
-- None — there is no earlier tagged release to upgrade from.
+- Invitation links minted before invitations became single-use rows stop working — send new ones.
+- Audit events recorded before the hash chain stay readable but are reported as "not chained"; the chain starts
+  with the next event.
+- Outside Development the hosts now refuse to start when the row-level-security bootstrap fails (the database user
+  needs `CREATEROLE`). Tests or scripts that delete audit rows will make **Verify chain** report a break — that is
+  the point; don't clean audit rows up.
 
 [Unreleased]: https://github.com/hoangsnowy/AgentOS.NET/commits/main

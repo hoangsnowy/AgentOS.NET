@@ -2,12 +2,31 @@
 @layout AuthLayout
 @attribute [AllowAnonymous]
 @using AgentOs.Modules.Tenants
+@using AgentOs.Modules.Tenants.Invitations
 @inject AgentOs.Modules.Tenants.ITenantSignupService SignupSvc
 @inject NavigationManager Nav
 
 <PageTitle>Create workspace — AgentOS.NET</PageTitle>
 
-@if (_closed)
+@if (_inviteProblem is not null)
+{
+    @* GAP-11: an invitation link that is used, revoked, expired or not valid says so — it never falls back to
+       "create a workspace". *@
+    <div class="login-card" data-testid="invite-unusable">
+        <div class="login-brand">
+            <BrandMark Size="44" Decorative="true" />
+            <div>
+                <div class="brand-title">This invitation can't be used</div>
+                <div class="brand-sub">@(_invitePreview is null ? "Invitation link" : $"Invitation to '{_invitePreview.TenantId}'")</div>
+            </div>
+        </div>
+        <div class="login-form">
+            <div class="login-error" role="alert">@_inviteProblem</div>
+            <div class="login-hint">Already have an account? <a href="/login">Sign in</a></div>
+        </div>
+    </div>
+}
+else if (_closed)
 {
     <div class="login-card" data-testid="signup-closed">
         <div class="login-brand">
@@ -51,9 +70,19 @@ else
         <Field Label="@(_invitePreview is null ? "Admin username" : "Username")">
             <input type="text" @bind="_username" placeholder="alice" autocomplete="username" />
         </Field>
-        <Field Label="Email">
-            <input type="email" @bind="_email" placeholder="alice@@acme.test" autocomplete="email" />
-        </Field>
+        @if (_invitePreview is null)
+        {
+            <Field Label="Email">
+                <input type="email" @bind="_email" placeholder="alice@@acme.test" autocomplete="email" />
+            </Field>
+        }
+        else
+        {
+            @* The invitation is bound to this address (GAP-11): shown, not editable. *@
+            <Field Label="Email" Hint="This invitation works only for this address. Confirm it from your inbox before signing in.">
+                <input type="email" value="@_invitePreview.Email" readonly aria-readonly="true" autocomplete="email" />
+            </Field>
+        }
         <Field Label="Password" Hint="at least 12 chars · upper + lower + digit + symbol">
             <input type="password" @bind="_password" autocomplete="new-password" />
         </Field>
@@ -86,17 +115,33 @@ else
     private string _error = "";
     private bool _busy;
     private InvitationPreview? _invitePreview;
+    // GAP-11: why an invitation link can't be used (unknown, used, revoked, expired), or null.
+    private string? _inviteProblem;
     // GAP-01: without an invitation the page offers workspace creation only when open self-signup is on.
     private bool _closed;
 
     protected override async Task OnParametersSetAsync()
     {
-        _invitePreview = string.IsNullOrWhiteSpace(InviteToken) ? null : SignupSvc.PreviewInvitation(InviteToken);
-        _closed = _invitePreview is null && !await SignupSvc.IsOpenSignupEnabledAsync();
-        if (_invitePreview is not null && string.IsNullOrEmpty(_email) && !string.IsNullOrEmpty(_invitePreview.Email))
+        _invitePreview = null;
+        _inviteProblem = null;
+        if (!string.IsNullOrWhiteSpace(InviteToken))
         {
-            _email = _invitePreview.Email;
+            var read = await CircuitSafe.RunAsync(
+                async () => _invitePreview = await SignupSvc.PreviewInvitationAsync(InviteToken),
+                _ => _inviteProblem = "We couldn't check this invitation right now. Please try again in a moment.");
+            if (read)
+            {
+                _inviteProblem = _invitePreview is null
+                    ? InvitationRules.Describe(InvitationAcceptance.NotFound)
+                    : _invitePreview.CanAccept ? null : InvitationRules.Describe(InvitationRules.ForStatus(_invitePreview.Status));
+            }
+            if (_invitePreview is { CanAccept: true } invite)
+            {
+                _email = invite.Email;
+            }
+            return;
         }
+        _closed = !await SignupSvc.IsOpenSignupEnabledAsync();
     }
 
     private async Task Submit()

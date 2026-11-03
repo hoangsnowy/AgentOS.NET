@@ -80,10 +80,11 @@ public sealed class OpenSignupAndAzureEndpointTests
     public async Task Signup_WithInvitation_WhenClosed_StillJoins()
     {
         var (service, kc) = Service(new FixedSettings("false"), existingTenant: "acme");
-        var invite = service.CreateInvitation("acme", "member", null, TimeSpan.FromHours(1));
+        var invite = await service.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), new AuditActor("admin-1"),
+            TestContext.Current.CancellationToken);
 
         var outcome = await service.SignupAsync(
-            new TenantSignupRequest("bob", Password, null, null, null, invite.Token), TestContext.Current.CancellationToken);
+            new TenantSignupRequest("bob", Password, "bob@acme.test", null, null, invite.Token), TestContext.Current.CancellationToken);
 
         outcome.Mode.ShouldBe(SignupMode.Invite);
         outcome.TenantId.ShouldBe("acme");

@@ -1,13 +1,15 @@
 // IScheduledRunStore implementations. EF (Postgres): tenant-explicit methods use IgnoreQueryFilters() + an explicit
 // TenantId predicate (the global filter reads ITenantContext, blank off-request), and RLS still binds each
 // connection to the ambient tenant. ClaimDueAsync is the one deliberate cross-tenant read — the scheduler must see
-// every tenant's due rows; it runs with no ambient tenant (RLS stage 1 is permissive then) and each claim is an
-// optimistic single-row UPDATE (… WHERE Id = @id AND NextRunAtUtc = @seen), so only one host wins an occurrence.
+// every tenant's due rows; it runs inside an explicit RowLevelSecurity.PlatformScope("scheduler") (RLS stage 2: no
+// tenant sees nothing) and each claim is an optimistic single-row UPDATE (… WHERE Id = @id AND NextRunAtUtc = @seen),
+// so only one host wins an occurrence.
 // In-memory: the stateless standalone Web (no connection string) — same semantics, process-local.
 
 using System.Collections.Concurrent;
 using AgentOs.Modules.Pipeline.Persistence;
 using AgentOs.Modules.Pipeline.Persistence.Entities;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgentOs.Modules.Pipeline.Scheduling;
@@ -75,6 +77,9 @@ internal sealed class EfScheduledRunStore(PipelineDbContext db) : IScheduledRunS
 
     public async Task<IReadOnlyList<DueRun>> ClaimDueAsync(DateTimeOffset now, int max, CancellationToken ct = default)
     {
+        // Cross-tenant by nature: the scheduler serves every tenant. Disposed before the caller starts any run, so the
+        // runs themselves execute under their own tenant only.
+        using var platform = RowLevelSecurity.PlatformScope("scheduler");
         var due = await db.ScheduledRuns.IgnoreQueryFilters().AsNoTracking()
             .Where(x => x.Enabled && x.NextRunAtUtc != null && x.NextRunAtUtc <= now)
             .OrderBy(x => x.NextRunAtUtc).Take(max).ToListAsync(ct).ConfigureAwait(false);

@@ -56,7 +56,9 @@ dashboard or rule references a series no instrument emits.
 | | `agentos.evidence.remote_refused` (`agentos_evidence_remote_refused_total`) | counter | `reason` = `unknown_run` · `not_dispatched` · `wrong_connection` · `grace_passed` · `run_cap` · `batch_cap` | Tool calls a paired runner reported that the server refused to record (each refusal is also logged). Cap hits on very long runs are expected; the rest mean a runner is out of step. |
 | | `agentos.remote.result_refused` (`agentos_remote_result_refused_total`) | counter | `kind` = `request` · `tool_call` · `progress` · `unknown` | Runner results (`CompleteRequest`, `CompleteToolCall`) and progress steps (`ReportProgress`) the server refused (GAP-06). `request` / `tool_call` / `progress`: it came from a connection the work was not dispatched to — neither that runner nor its own reconnect (same runner id, same tenant); each is also logged as a warning. `unknown`: no one waits for that id any more — a runner finishing after the timeout or a Stop, a duplicate, or an id this replica never dispatched (logged at Information). |
 | | `agentos.tools.output.saved_chars` (`agentos_tools_output_saved_chars_total`) | counter `{char}` | `kind` = `builtin` · `mcp` · `remote` | Tool-output characters the gateway kept away from the model (log shaping + size cap). Dashboards show **≈ tokens = chars ÷ 4** — an estimate of tokens not sent, never billed usage. |
-| `AgentOs.Health` | `agentos.health.status` (`agentos_health_status`) | gauge | `agentos.health.check` = `self` · `postgres` · `keycloak` · `overall` | 1 healthy · 0.5 degraded · 0 unhealthy, published every 60 s (each publish runs every check, so not more often). |
+| `AgentOs.Health` | `agentos.health.status` (`agentos_health_status`) | gauge | `agentos.health.check` = `self` · `postgres` · `row-level-security` · `keycloak` · `overall` | 1 healthy · 0.5 degraded · 0 unhealthy, published every 60 s (each publish runs every check, so not more often). |
+| `AgentOs.Persistence` | `agentos.rls.connections` (`agentos_rls_connections_total`) | counter | `scope` = `tenant` · `platform` · `none` | Connections bound by row-level security (ADR-0012). `none` sees **nothing** (stage 2): a rising `none` is a code path that lost its tenant. |
+| | `agentos.rls.platform_scope` (`agentos_rls_platform_scope_total`) | counter | `reason` = `autopilot-scan` · `scheduler` · `runner-handshake` · `runner-revalidation` · `platform-settings` · `audit-platform` | Explicit cross-tenant scopes entered. A new reason is a new cross-tenant code path — review it. |
 
 Traces: the `AgentOs.Llm` ActivitySource emits one `chat {model}` client span per provider attempt (attributes
 `gen_ai.*`, `gen_ai.usage.*` incl. `cache_read.input_tokens` / `cache_creation.input_tokens`, `agentos.cost.usd`,
@@ -80,7 +82,7 @@ Traces: the `AgentOs.Llm` ActivitySource emits one `chat {model}` client span pe
 | Endpoint | Checks | Use |
 |---|---|---|
 | `/alive` | `self` (tag `live`) | Liveness probe — restart the container when it fails. |
-| `/health` | `self` + `postgres` (when `ConnectionStrings:DefaultConnection` is set) + `keycloak` (OIDC discovery, outside Development) | Readiness probe + the outside-in availability probe. JSON body names each check. |
+| `/health` | `self` + `postgres` and `row-level-security` (when `ConnectionStrings:DefaultConnection` is set; Degraded = turned off by `Persistence:RowLevelSecurity=false`) + `keycloak` (OIDC discovery, outside Development) | Readiness probe + the outside-in availability probe. JSON body names each check. |
 
 Every check is also the `agentos_health_status` gauge, so an unhealthy dependency alerts even when nobody probes.
 

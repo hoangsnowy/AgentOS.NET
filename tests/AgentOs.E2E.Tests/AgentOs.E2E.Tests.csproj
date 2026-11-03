@@ -10,6 +10,9 @@
   <ItemGroup>
     <!-- Reference the AppHost so Aspire generates Projects.AgentOs_AppHost for the test harness. -->
     <ProjectReference Include="..\..\infra\AgentOs.AppHost\AgentOs.AppHost.csproj" />
+    <!-- RowLevelSecurityRealDbTests checks the running stack against RowLevelSecurity.Tables / AppendOnlyTables (GAP-14):
+         one list, so a table added to RLS is checked on the stack too. -->
+    <ProjectReference Include="..\..\src\AgentOs.SharedKernel\AgentOs.SharedKernel.csproj" />
   </ItemGroup>
 
   <ItemGroup>

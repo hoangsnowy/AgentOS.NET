@@ -22,9 +22,11 @@ internal sealed class PipelineRunRepository(
     ITenantContext tenant,
     INpgsqlConnectionFactory? connectionFactory = null) : IPipelineRunRepository
 {
-    // Ambient-tenant write: the API request path has a populated ITenantContext, so stamp from it.
+    // Ambient-tenant write: the run's pushed identity first (a scheduled run or a circuit has no HttpContext, so
+    // ITenantContext alone said "default" while RLS was bound to the run's tenant — the save was refused), then the
+    // request's ITenantContext.
     public Task SaveAsync(PipelineRunRecord record, CancellationToken ct = default)
-        => SaveAsync(record, tenant.TenantId, ct);
+        => SaveAsync(record, AmbientIdentity.Resolve(null, null, tenant).TenantId, ct);
 
     // Tenant-explicit write: the caller (e.g. a Blazor circuit, which has a blank ITenantContext) supplies
     // the owning tenant directly, so the run + its run_metrics rows are billed to the right tenant.
