@@ -1,6 +1,7 @@
 // Real Azure DevOps, real PAT, the lab organization/project. Proves what the AzureDevOpsSourceProvider
-// supports today against the live API (repo validation + listing) and pins the known gaps as explicit
-// skipped tests, so they show up in every lab run until they are implemented.
+// supports today against the live API (repo validation + listing; Boards work items live in
+// AzureBoardsLabTests) and pins the known gaps as explicit skipped tests, so they show up in every lab run
+// until they are implemented.
 
 using System;
 using System.Threading.Tasks;
@@ -41,9 +42,6 @@ public sealed class AzureDevOpsLabTests
         var repos = await _ado.ListRepositoriesAsync(new ConnectionCredentials(SourceProviderKind.AzureDevOps, LabConfig.AzureDevOpsToken!, LabConfig.AzureDevOpsOrg));
         repos.ShouldContain(r => string.Equals(r.Name, LabConfig.AzureDevOpsRepo, StringComparison.OrdinalIgnoreCase));
     }
-
-    [Fact(Skip = "Known gap: Azure DevOps boards (work items) are not implemented — AzureDevOpsSourceProvider.ListBoards/ValidateBoard/ReadBoardTickets/CreateTickets throw NotSupported. Tracked in the plan (lab findings).")]
-    public Task Boards_ListValidateReadAndCreateWorkItems() => Task.CompletedTask;
 
     [Fact(Skip = "Known gap: Azure DevOps repo context has no README/tree yet — ReadRepoContextAsync returns identity only, so the Requirement agent is not grounded on ADO repos. Tracked in the plan (lab findings).")]
     public Task ReadRepoContext_ReturnsReadme() => Task.CompletedTask;

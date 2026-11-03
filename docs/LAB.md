@@ -92,6 +92,21 @@ so tokens never land in a transcript. The lab tests read a dedicated store, `age
    dotnet user-secrets set "Lab:AzureDevOps:Token" "<pat>" --id agentos-lab-tests
    ```
 
+### 2b. Jira Cloud (ticket tracker, E1.8)
+
+1. A free Jira Cloud site (https://www.atlassian.com/software/jira/free) with a Scrum or Kanban project, e.g. key
+   **LAB**; the lab account is its administrator.
+2. An API token for that account: https://id.atlassian.com/manage-profile/security/api-tokens.
+3. Store it (the Azure DevOps PAT above also needs **Identity — Read** for the Boards maintainer roles):
+   ```powershell
+   dotnet user-secrets set "Lab:Jira:Site" "https://<you>.atlassian.net" --id agentos-lab-tests
+   dotnet user-secrets set "Lab:Jira:Project" "LAB" --id agentos-lab-tests
+   dotnet user-secrets set "Lab:Jira:Email" "<account e-mail>" --id agentos-lab-tests
+   dotnet user-secrets set "Lab:Jira:Token" "<api token>" --id agentos-lab-tests
+   # optional: work items in another ADO project than the repo's
+   dotnet user-secrets set "Lab:AzureDevOps:BoardsProject" "<project>" --id agentos-lab-tests
+   ```
+
 ### 3. A real LLM (optional, capped)
 
 ```powershell
@@ -185,14 +200,13 @@ cleans up what it creates (labels deleted, created issues closed). What they cov
 | Area | Checks |
 |---|---|
 | GitHub | token + repo validation, repo listing, README grounding for the Requirement agent, **repo agent instructions (the sandbox's `AGENTS.md`)**, live ticket body, **the ticket's discussion (a maintainer comment kept with its authority, an AgentOS.NET-signed one left out; both deleted afterwards)**, idempotent label sync, Projects board read + ticket creation |
-| Azure DevOps | PAT + repo validation, repo listing |
+| Azure DevOps | PAT + repo validation, repo listing; **Boards**: project + WIQL validation, a created work item read back with its comment (maintainer role), moved to Active, linked to a PR, then destroyed |
+| Jira | project + JQL validation, a created issue read back with its comment (maintainer role), transitioned, remote-linked to a PR, then deleted |
 | Multi-tenant (real-auth UI) | a second tenant created through `/signup` sees none of tenant `default`'s boards, runners, evidence or runs, and Users lists only its own member; the tenant, its rows and its Keycloak user are removed afterwards |
 | Real-auth UI | sign-in, Users/invitation email (MailHog), budget gate, Board runners, System → About (every service healthy) |
 
 ## Lab findings (gaps the lab exposed)
 
-- **Azure DevOps boards are not implemented** — `AzureDevOpsSourceProvider` throws *not supported* for
-  listing/validating/reading boards and creating work items, although the Board app offers Azure DevOps.
 - **Azure DevOps repo context has no README/tree** — the Requirement agent isn't grounded on ADO repos.
 
-Both are pinned as explicitly skipped lab tests until they're built.
+It is pinned as an explicitly skipped lab test until it's built. (Azure DevOps Boards landed with E1.8 — docs/INTEGRATIONS.md.)

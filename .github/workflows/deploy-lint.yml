@@ -154,6 +154,10 @@ jobs:
           echo "redirect: ${location%%\?*}"
           case "$location" in http://localhost:8081/realms/agentic/protocol/openid-connect/auth*) ;; *) echo "::error::unexpected sign-in redirect"; exit 1 ;; esac
           curl -sf "$location" | grep -q 'AgentOS.NET' || { echo "::error::login page is not the AgentOS.NET theme"; exit 1; }
+          # GAP-05: a Host header other than the public URL's is refused (400), probes are not.
+          spoofed=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://localhost:8080/)
+          [ "$spoofed" = "400" ] || { echo "::error::a spoofed Host header was served ($spoofed)"; exit 1; }
+          curl -sf -H 'Host: 10.244.0.9:8080' http://localhost:8080/alive >/dev/null || { echo "::error::probe with a pod-IP Host was refused"; exit 1; }
           wrapped=$(kubectl -n agentos exec agentos-agentos-net-postgres-0 -- sh -c \
             'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select bool_and(\"Xml\" like '"'"'%encryptedSecret%'"'"') from config.data_protection_keys"')
           [ "$wrapped" = "t" ] || { echo "::error::DataProtection key ring is not wrapped ($wrapped)"; exit 1; }

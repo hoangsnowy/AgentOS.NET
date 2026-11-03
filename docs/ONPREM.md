@@ -81,6 +81,16 @@ Then in `.env`: `WEB_PUBLIC_URL=https://agentos.corp.example`,
 `KEYCLOAK_PUBLIC_URL=https://sso.agentos.corp.example`, and `docker compose up -d --wait` again (the realm
 step re-runs and rewrites the redirect URIs).
 
+**Public URL, trusted proxies, host names (GAP-05).** `WEB_PUBLIC_URL` is also `Hosting__PublicBaseUrl` on both
+hosts: every invitation, pairing and hub link is built from it — never from the request's `Host` header — and the
+desktop answers only to its host name (plus `localhost`; `/health` and `/alive` are exempt). It must be `https://`
+unless it is `localhost`; a host refuses to start without a valid one. The hosts honour `X-Forwarded-For/Proto` only
+from loopback and `TRUSTED_NETWORKS` (default `172.16.0.0/12` — Docker's bridge networks, where a proxy on the host
+appears to come from). Narrow it to your compose network's subnet (`docker network inspect agentos-net_default`), and
+keep `BIND_ADDRESS=127.0.0.1` so nothing but the proxy reaches the published ports. The Api answers to
+`API_ALLOWED_HOSTS` (default `api`, the Web's in-network calls) + `localhost`; add the name your proxy publishes it
+under, if any.
+
 **Proxy headers.** Keycloak runs with `KC_PROXY_HEADERS=xforwarded`: it **trusts** `X-Forwarded-Proto`,
 `-Host`, `-Port` and `-For` to build its URLs and record client IPs. So (1) keep Keycloak reachable only through
 the proxy (`BIND_ADDRESS=127.0.0.1`, or a firewall) — anyone who can reach port 8081 directly can spoof those
@@ -178,7 +188,15 @@ install` prints how to read them (NOTES).
      hosts: { web: agentos.corp.example, keycloak: sso.agentos.corp.example }
    postgresql:
      persistence: { size: 50Gi, storageClass: fast-ssd }
+   # GAP-05: trust X-Forwarded-* only from your ingress controller's pods — the default is every private range.
+   forwardedHeaders:
+     trustedNetworks: "10.42.0.0/16"   # your pod CIDR (or trustedProxies: "<controller IPs>")
    ```
+
+   The chart sets `Hosting__PublicBaseUrl` to `web.publicUrl` (default `https://<ingress.hosts.web>`) on both hosts:
+   every invitation, pairing and hub link is built from it, never from the request's `Host`, and the desktop answers
+   only to that host name (+ `localhost`; the probe paths are exempt). The Api answers to its Service name and
+   `ingress.hosts.api`. A plain `http://` public URL is refused unless it is `localhost` (the kind values).
 
 5. `helm install agentos deploy/helm/agentos-net -n agentos -f my-values.yaml --wait --timeout 15m`
 
@@ -378,6 +396,10 @@ card without a version under the service account.
 | HTTP 431 on Keycloak | Oversized cookie jar on a shared host name — compose/Helm raise Keycloak's limit to 128K; use dedicated host names per install (and `COOKIE_PREFIX` / `web.cookiePrefix`). |
 | Host exits: `Row-level security could not be set up` (log: `Row-level security bootstrap FAILED`) | The database user lacks `CREATEROLE`/ownership (external Postgres). Grant it (or have a DBA create `agentos_rls` and grant it), restart. |
 | Log: `libgssapi_krb5.so.2: cannot open shared object file` | Harmless — Npgsql probing Kerberos; the app uses password auth. |
+| Api/Web exit: *Hosting:PublicBaseUrl is required outside Development* / *must use https://* | Set `WEB_PUBLIC_URL` / `web.publicUrl` to the desktop's `https://` URL (`http://` only for `localhost`). |
+| HTTP 400 with an empty body on every page | The browser's host name is not the public URL's (nor `localhost`) — fix `WEB_PUBLIC_URL` / `web.publicUrl`, or add the extra name to `AllowedHosts`. |
+| Audit / rate limits show the proxy's IP, sign-in builds `http://` redirect URIs | The proxy is not a trusted peer — add its network to `TRUSTED_NETWORKS` / `forwardedHeaders.trustedNetworks`. |
+| Log: *Plugin … refused: its SHA-256 … is not in Plugins:AllowedSha256* | Unapproved plugin assembly (GAP-19). If you trust it, add the logged hash to `Plugins__AllowedSha256` and restart. |
 
 Related: [DEPLOYMENT.md](DEPLOYMENT.md) (Azure), [CONFIG.md](CONFIG.md) (settings),
 [keycloak-prod-runbook.md](keycloak-prod-runbook.md), [dataprotection-dr-runbook.md](dataprotection-dr-runbook.md).

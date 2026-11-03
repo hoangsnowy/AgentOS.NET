@@ -283,6 +283,8 @@ internal sealed class SessionRepository : ISessionRepository
         var previous = session.Status;
         session.Status = repos.Any(r => r.Status == "Failed") ? "Failed"
             : repos.Any(r => r.Status == "Blocked") ? "Blocked"   // QA gate refused the PR (plan 0.5)
+            // A pushed change waits for an approver before its pull request is opened (E1.5): nothing runs, nothing failed.
+            : repos.Any(r => r.Status == "AwaitingApproval") ? "Waiting"
             : repos.All(r => r.Status == "Merged") ? "Merged"               // every proposed change is in
             // Done = every repo has a proposed change, tested or not (Accepted / Rejected by the Testing agent).
             // (or reviewed: Reviewed / ChangesRequested by the Reviewer agent).

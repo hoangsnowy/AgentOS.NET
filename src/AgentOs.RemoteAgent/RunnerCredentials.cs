@@ -5,6 +5,11 @@
 // Where: %APPDATA%\AgentOS.NET\runner.json on Windows (inside the user's own profile), ~/.config/agentos-net/runner.json
 // elsewhere with mode 0600 — the same trust model as the gh CLI's hosts file. The token is the runner's pairing
 // secret for ONE runner; Disconnect on Board › Computers revokes it.
+//
+// GAP-05: the token travels to the exchange and the hub, so both must be https:// — plain http:// is accepted only for
+// a loopback address when the runner itself runs in Development (DOTNET_ENVIRONMENT / ASPNETCORE_ENVIRONMENT), e.g. a
+// local standalone Web. A hub URL returned by the exchange, saved in runner.json or set in REMOTE_AGENT_HUB is checked
+// the same way before the runner connects.
 
 using System;
 using System.IO;
@@ -77,14 +82,48 @@ internal sealed record RunnerCredentials(string HubUrl, string RunnerId, string 
         return new Uri(s + "/runner/pair/exchange", UriKind.Absolute);
     }
 
-    /// <summary>Redeem a one-time code. Null when the server says it is invalid, used or expired.</summary>
-    internal static async Task<RunnerCredentials?> ExchangeAsync(HttpClient http, string server, string code, CancellationToken ct = default)
+    /// <summary>True when the runner runs in Development (<c>DOTNET_ENVIRONMENT</c> or <c>ASPNETCORE_ENVIRONMENT</c>).</summary>
+    internal static bool IsDevelopment() =>
+        string.Equals(Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Development", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Why the runner refuses to send its token to <paramref name="url"/>, or null when it may: https://, or
+    /// http:// to a loopback address in Development only.</summary>
+    internal static string? InsecureReason(string url, bool development)
     {
-        using var response = await http.PostAsJsonAsync(ExchangeUri(server), new { code = code.Trim() }, ct).ConfigureAwait(false);
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return $"'{url}' is not an absolute URL.";
+        }
+        if (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && development && uri.IsLoopback))
+        {
+            return null;
+        }
+        return uri.Scheme == Uri.UriSchemeHttp
+            ? $"{uri.GetLeftPart(UriPartial.Authority)} uses plain http:// — the runner's token would travel unencrypted. Use the "
+              + "server's https:// address (http:// is allowed only for localhost with DOTNET_ENVIRONMENT=Development)."
+            : $"'{url}' is not an https:// address.";
+    }
+
+    /// <summary>Redeem a one-time code. Null when the server says it is invalid, used or expired. Throws
+    /// <see cref="InvalidOperationException"/> when the server or the hub it names is not https:// (see <see cref="InsecureReason"/>).</summary>
+    internal static async Task<RunnerCredentials?> ExchangeAsync(
+        HttpClient http, string server, string code, bool development = false, CancellationToken ct = default)
+    {
+        var exchange = ExchangeUri(server);
+        if (InsecureReason(exchange.ToString(), development) is { } refused)
+        {
+            throw new InvalidOperationException(refused);
+        }
+        using var response = await http.PostAsJsonAsync(exchange, new { code = code.Trim() }, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) { return null; }
         var dto = await response.Content.ReadFromJsonAsync<ExchangeDto>(Json, ct).ConfigureAwait(false);
-        return dto is null || dto.RunnerId == Guid.Empty || string.IsNullOrEmpty(dto.Token) || string.IsNullOrEmpty(dto.HubUrl)
-            ? null
+        if (dto is null || dto.RunnerId == Guid.Empty || string.IsNullOrEmpty(dto.Token) || string.IsNullOrEmpty(dto.HubUrl))
+        {
+            return null;
+        }
+        return InsecureReason(dto.HubUrl, development) is { } hubRefused
+            ? throw new InvalidOperationException("The server named a hub the runner won't use: " + hubRefused)
             : new RunnerCredentials(dto.HubUrl, dto.RunnerId.ToString(), dto.Token);
     }
 

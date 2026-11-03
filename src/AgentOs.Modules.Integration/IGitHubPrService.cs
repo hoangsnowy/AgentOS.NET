@@ -24,6 +24,12 @@ public interface IGitHubPrService
     /// repo) using the per-workspace PAT — the unified repo/token source. GitHub-only.
     /// </summary>
     Task<GitHubPrResult> OpenPrAsync(PipelineResult result, WorkspaceDescriptor workspace, string title, string body, CancellationToken ct);
+
+    /// <summary>Same, opened as a draft when <paramref name="draft"/> is set (the approval policy's draft pull requests, E1.5).</summary>
+    Task<GitHubPrResult> OpenPrAsync(PipelineResult result, WorkspaceDescriptor workspace, string title, string body, bool draft, CancellationToken ct) =>
+        draft
+            ? throw new System.InvalidOperationException("This service can't open draft pull requests, and the approval policy asks for drafts.")
+            : OpenPrAsync(result, workspace, title, body, ct);
 }
 
 /// <summary>Result of <see cref="IGitHubPrService.OpenPrAsync"/>.</summary>

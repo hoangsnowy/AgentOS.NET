@@ -18,10 +18,9 @@ else if (!_isAdmin)
 {
     <div class="login-error">Admin role required to view the audit log.</div>
 }
-else if (!_platformScope && _tenantId.Length == 0)
+else if (_tenantId is null)
 {
-    @* No silent "default": a signed-in admin without a tenant claim has a malformed token, not another tenant's trail. *@
-    <div class="login-error">No workspace (tenant) on your sign-in token. Sign in again to see its audit log.</div>
+    <div class="login-error" role="alert">@TenantClaim.MissingMessage</div>
 }
 else
 {
@@ -115,7 +114,8 @@ else
     private bool _platformScope;
     private bool _loading;
     private bool _verifying;
-    private string _tenantId = string.Empty;
+    // Null = the sign-in carries no tenant claim: fail closed (GAP-17), never the shared "default" tenant.
+    private string? _tenantId;
     private string _kind = "all";
     private IReadOnlyList<AuditEntry>? _rows;
     private AuditChainReport? _chain;
@@ -125,7 +125,9 @@ else
 
     private static readonly Kind[] Kinds = [new("all", "All"), new("settings", "Settings"), new("members", "Members"), new("signin", "Sign-in")];
 
-    private string Scope => _platformScope ? AuditScopes.Platform : _tenantId;
+    // The scope to read and verify: the platform scope when selected, else the tenant. Null when the sign-in has no
+    // tenant claim — nothing is read or verified then (GAP-17), not even the platform scope.
+    private string? Scope => _tenantId is null ? null : _platformScope ? AuditScopes.Platform : _tenantId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -134,18 +136,19 @@ else
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
             _isPlatformAdmin = state.User.IsPlatformAdmin();
-            _tenantId = state.User.GetTenantId() ?? string.Empty;
+            _tenantId = state.User.GetTenantId();
         }
         _resolved = true;
-        if (_isAdmin && _tenantId.Length > 0) { await LoadAsync(); }
+        if (_isAdmin && _tenantId is not null) { await LoadAsync(); }
     }
 
     private async Task LoadAsync()
     {
+        if (Scope is not { } scope) { return; }
         _loading = true;
         try
         {
-            _rows = await Audit.ListAsync(Scope, Max);
+            _rows = await Audit.ListAsync(scope, Max);
         }
         finally
         {
@@ -155,12 +158,12 @@ else
 
     private async Task VerifyAsync()
     {
-        if (_verifying) { return; }
+        if (_verifying || Scope is not { } scope) { return; }
         _verifying = true;
         _chainError = null;
         _chain = null;
         await CircuitSafe.RunAsync(
-            async () => _chain = await ChainVerifier.VerifyAsync(Scope),
+            async () => _chain = await ChainVerifier.VerifyAsync(scope),
             ex => _chainError = $"Couldn't verify the chain: {ex.Message}");
         _verifying = false;
     }

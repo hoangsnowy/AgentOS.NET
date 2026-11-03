@@ -22,11 +22,13 @@ using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
 using AgentOs.SharedKernel.Plugins;
 using AgentOs.Web.Components;
+using AgentOs.Web.Endpoints;
 using AgentOs.Web.Services;
 using AgentOs.Web.Shell.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -90,7 +92,12 @@ builder.Services.AddSingleton(new AgentOs.Web.Services.DevModeState(devAutoLogin
 if (devAutoLogin && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
 {
     builder.Services.AddHostedService<AgentOs.Web.Services.BoardTasks.DesignGateSample>();
+    // Approval policies (E1.5): sample requests for Board › Tasks › Approvals, same guard.
+    builder.Services.AddHostedService<AgentOs.Web.Services.Approvals.ApprovalSample>();
 }
+
+// The IdP's origin, for the CSP's form-action (a form post that ends in a redirect to Keycloak is checked against it).
+string? oidcOrigin = null;
 
 if (devAutoLogin)
 {
@@ -124,6 +131,7 @@ var oidcAuthority = keycloak["Authority"] is { Length: > 0 } configuredAuthority
         ? "http://localhost:8080/realms/agentic"
         : throw new InvalidOperationException(
             "Auth:Keycloak:Authority is required outside Development when DevAutoLogin is off.");
+oidcOrigin = ContentSecurityPolicies.OriginOf(oidcAuthority);
 // Per-instance cookie names. Cookies are scoped to the HOST, not the port, so two AgentOS.NET instances on the
 // same host (dev + lab on localhost, or several deployments under one parent domain) would otherwise share
 // and overwrite each other's auth/correlation/antiforgery cookies. The default prefix keeps today's names.
@@ -191,6 +199,8 @@ builder.Services
         options.Scope.Add("openid");
         options.TokenValidationParameters = new TokenValidationParameters
         {
+            // GAP-13: ID tokens from the realm are RS256 — the same pin as the Api's access tokens.
+            ValidAlgorithms = JwtAuthExtensions.ValidAlgorithms,
             NameClaimType = "preferred_username",
             RoleClaimType = ClaimTypes.Role,
         };
@@ -246,6 +256,9 @@ builder.Services.AddSingleton<AgentOs.Web.Orchestrations.OrchestrationStore>();
 builder.Services.AddSingleton<AgentOs.Web.Services.TaskStopRegistry>();
 // Board tasks run here, off any circuit — the Board UI and the project orchestrator share it.
 builder.Services.AddSingleton<AgentOs.Web.Services.BoardTasks.BoardTaskService>();
+// Approval policies (E1.5): the gates Board tasks and Autopilot wait at, and the approvers' decisions on Board › Tasks.
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<AgentOs.Web.Services.Approvals.ApprovalGateService>();
 // "Try the app": previews run on a member's paired computer; their state lives as long as the runner connection.
 builder.Services.AddSingleton<AgentOs.Web.Services.Preview.PreviewService>();
 // The project orchestrator (Autopilot): a pass over every autopilot board each minute, decisions logged per board.
@@ -290,10 +303,15 @@ builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.
 builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.SmtpProbe>();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.SystemStatusService>();
 
-// The anonymous pairing-code exchange: a typed code is short, so each client gets a handful of tries a minute.
+// GAP-02: the global per-tenant + per-user request limiter, shared with the Api (ServiceDefaults; limits in Settings ›
+// Platform › Request limits). Static assets, health, /version and the live circuit's transport traffic are exempt —
+// only opening a circuit (/_blazor/negotiate) counts, so the desktop's websocket is never throttled mid-session.
+builder.Services.AddAgentOsRequestRateLimiting(builder.Environment.IsDevelopment());
+
+// The anonymous pairing-code exchange: a typed code is short, so each client gets a handful of tries a minute
+// (on top of the global limiter).
 builder.Services.AddRateLimiter(options =>
 {
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy(AgentOs.Modules.Sessions.Endpoints.PairingEndpoints.ExchangeRateLimitPolicy, http =>
         System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
             http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -306,6 +324,9 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+// GAP-19: one line per plugin — refused ones (SHA-256 not in Plugins:AllowedSha256) are warnings carrying the hash.
+PluginLoader.LogOutcomes(app.Services.GetRequiredService<IPluginCatalog>(), app.Logger);
 
 await app.Services.InitializeModulesAsync();
 
@@ -324,6 +345,11 @@ AppCatalog.RegisterPluginApps(app.Services.GetServices<PluginAppDescriptor>().Se
 // FIRST middleware: honour X-Forwarded-Proto/For from the Container Apps ingress. Critical for the Web
 // — the OIDC redirect_uri + secure-cookie decisions depend on the request being seen as https.
 app.UseAgentOsForwardedHeaders();
+
+// GAP-12: HSTS (outside Development), nosniff, frame-ancestors 'none', Referrer-Policy and the desktop's CSP on every
+// response (ContentSecurityPolicies.WebDesktop documents each source). After the forwarded headers so HSTS sees https.
+var desktopCsp = ContentSecurityPolicies.WebDesktop(oidcOrigin is null ? null : [oidcOrigin], app.Environment.IsDevelopment());
+app.UseAgentOsSecurityHeaders(o => o.ContentSecurityPolicy = desktopCsp);
 
 // Early in the pipeline so it wraps every downstream response. Skips assets MapStaticAssets already
 // served pre-compressed (their Content-Encoding is set), so there is no double-compression.
@@ -351,7 +377,9 @@ app.MapDefaultEndpoints();
 var informationalVersion = System.Reflection.CustomAttributeExtensions
     .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(Program).Assembly)
     ?.InformationalVersion ?? "0.0.0";
-app.MapGet("/version", () => Results.Ok(new { name = "agentos-web", version = informationalVersion }));
+app.MapGet("/version", () => Results.Ok(new { name = "agentos-web", version = informationalVersion }))
+   .AllowAnonymous()
+   .DisableRateLimiting();
 
 // Serve the self-contained AgentOs.RemoteAgent exe so the VS Code extension (and the Runners tab) can
 // fetch the runner with no .NET SDK and no source checkout. scripts/build-runner.ps1 publishes one
@@ -395,7 +423,7 @@ app.MapGet("/runner/download", (IHostEnvironment env, string? rid) =>
     }
     var downloadName = resolved.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? "agentos-runner.exe" : "agentos-runner";
     return Results.File(resolved, "application/octet-stream", downloadName);
-});
+}).AllowAnonymous();
 
 // Version probe for the extension's auto-update: a cheap build token (size + mtime) of the published
 // binary for a RID. The extension stores it and re-downloads when it changes. No assembly-version
@@ -411,72 +439,11 @@ app.MapGet("/runner/version", (IHostEnvironment env, string? rid) =>
     var token = string.Create(System.Globalization.CultureInfo.InvariantCulture,
         $"{info.Length:x}-{info.LastWriteTimeUtc.Ticks:x}");
     return Results.Text(token);
-});
+}).AllowAnonymous();
 
-// Cost CSV export for the admin Cost app. Mapped here on the Web (not via the API's MapModuleEndpoints)
-// so the Cost circuit can trigger a same-origin, cookie-authed browser download — like /runner/download.
-// Tenant comes from the OIDC 'tenant' claim; admin-gated; `days` (0/absent = all time) sets the cutoff.
-app.MapGet("/cost/export", async (HttpContext http, AgentOs.Modules.Pipeline.Persistence.IPipelineRunRepository runs, int? days) =>
-{
-    if (!http.User.IsAdmin())
-    {
-        return Results.Forbid();
-    }
-
-    var tenant = http.User.GetTenantId() ?? "default";
-    DateTimeOffset? since = days is > 0 ? DateTimeOffset.UtcNow.AddDays(-days.Value) : null;
-    var summary = await runs.GetCostSummaryForTenantAsync(tenant, since);
-    var bytes = System.Text.Encoding.UTF8.GetBytes(AgentOs.Modules.Pipeline.Cost.CostCsv.ToCsv(summary));
-    return Results.File(bytes, "text/csv", "agentos-cost.csv");
-}).RequireAuthorization();
-
-// Tenant data export (Settings → Data, E1.4): one JSON document of every row the tenant owns, secrets excluded,
-// streamed. A tenant admin exports their own tenant; ?tenant= another one needs platform-admin. Audited only once the
-// export has been written — a refused export (a secret column it can't safely redact) is a 409, not an audited success.
-app.MapGet("/tenant/export", async (HttpContext http, AgentOs.Modules.Tenants.Data.ITenantDataService data,
-    AgentOs.Modules.Tenants.IAuditLog audit, ILoggerFactory loggers, string? tenant) =>
-{
-    if (!http.User.IsAdmin()) { return Results.Forbid(); }
-    var own = http.User.GetTenantId() ?? "default";
-    var target = string.IsNullOrWhiteSpace(tenant) ? own : tenant;
-    if (!string.Equals(target, own, StringComparison.Ordinal) && !http.User.IsPlatformAdmin()) { return Results.Forbid(); }
-    if (!data.IsAvailable) { return Results.NotFound("No database in this run — nothing to export."); }
-    http.Response.ContentType = "application/json";
-    http.Response.Headers.ContentDisposition = $"attachment; filename=\"agentos-{target}-{DateTime.UtcNow:yyyyMMdd}.json\"";
-    try
-    {
-        await data.ExportAsync(target, http.Response.Body, http.RequestAborted);
-    }
-    catch (AgentOs.Modules.Tenants.Data.TenantExportRefusedException ex) when (!http.Response.HasStarted)
-    {
-        // Fail closed: the redaction check runs before the first byte, so nothing was sent. Detail stays in the log.
-        loggers.CreateLogger("TenantExport").LogWarning(ex, "Tenant export refused");
-        http.Response.Headers.ContentDisposition = default;
-        return Results.Problem(
-            title: "Export stopped",
-            detail: "The export was stopped before anything was written: a table that holds secrets has changed and can't be "
-                + "safely redacted yet. Nothing was exported. Ask your operator to update AgentOS.NET, then try again.",
-            statusCode: StatusCodes.Status409Conflict);
-    }
-    await audit.WriteAsync(new AgentOs.Modules.Tenants.AuditEntry(Guid.NewGuid(), target, http.User.Identity?.Name,
-        AgentOs.Modules.Tenants.AuditActions.TenantExported, $"export of {target}", null, null, DateTimeOffset.UtcNow), CancellationToken.None);
-    return Results.Empty;
-}).RequireAuthorization();
-
-// Audit CSV export (Settings → Audit log). Same-origin cookie-authed download like /cost/export. A tenant admin
-// exports their own tenant; scope=platform (platform settings changes) needs platform-admin.
-app.MapGet("/audit/export", async (HttpContext http, AgentOs.Modules.Tenants.IAuditLog audit, string? scope) =>
-{
-    var platform = string.Equals(scope, "platform", StringComparison.Ordinal);
-    if (!http.User.IsAdmin() || (platform && !http.User.IsPlatformAdmin()))
-    {
-        return Results.Forbid();
-    }
-    var tenant = platform ? AgentOs.Modules.Tenants.AuditScopes.Platform : http.User.GetTenantId() ?? "default";
-    var rows = await audit.ListAsync(tenant, 10_000);
-    var bytes = System.Text.Encoding.UTF8.GetBytes(AgentOs.Modules.Tenants.AuditCsv.ToCsv(rows));
-    return Results.File(bytes, "text/csv", platform ? "agentos-audit-platform.csv" : $"agentos-audit-{tenant}.csv");
-}).RequireAuthorization();
+// Same-origin, cookie-authed downloads for the admin apps: /cost/export, /tenant/export, /audit/export
+// (AgentOs.Web.Endpoints.ExportEndpoints). A sign-in without a tenant claim gets a 403 there (GAP-17).
+app.MapExportEndpoints();
 
 // VS Code browser-pairing: the approve page (/pair/vscode, OIDC-cookie authed) + the one-time code
 // exchange (/runner/pair/exchange). Mapped here on the Web — the extension and browser both target the
@@ -494,67 +461,22 @@ AgentOs.Modules.Sessions.Endpoints.DesignReviewEndpoints.MapDesignReviewEndpoint
 // Api's hub would be invisible to it. Anonymous by design — the hub authenticates the connection
 // itself against the runner's salted pairing-token hash (see RemoteAgentHub.OnConnectedAsync), so
 // there is no browser session to require here.
-app.MapHub<AgentOs.Modules.RemoteAgent.RemoteAgentHub>(AgentOs.Modules.RemoteAgent.RemoteAgentHub.Path);
+app.MapHub<AgentOs.Modules.RemoteAgent.RemoteAgentHub>(AgentOs.Modules.RemoteAgent.RemoteAgentHub.Path).AllowAnonymous();
 
-// OIDC challenge / sign-out — buttons in the UI hit these endpoints. /signin-oidc and
-// /signout-callback-oidc are owned by the OIDC middleware. In dev-auto-login mode there are no
-// Cookie/OIDC schemes, so these become simple redirects (the dev user is always signed in).
-// Only follow a returnUrl that is a local path (starts with a single '/'), never an absolute or
-// protocol-relative URL — otherwise /account/login?returnUrl=https://evil is an open redirect.
-static string SafeLocalReturn(string? url) =>
-    !string.IsNullOrEmpty(url) && url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal)
-        && !url.StartsWith("/\\", StringComparison.Ordinal)
-            ? url
-            : "/";
+// /account/login + /account/logout (POST with an antiforgery token — GAP-19) and the dev-only /dev/view-as.
+app.MapAccountEndpoints(devAutoLogin);
 
-if (devAutoLogin)
-{
-    app.MapGet("/account/login", (string? returnUrl) =>
-        Results.Redirect(SafeLocalReturn(returnUrl)));
-    app.MapGet("/account/logout", () => Results.Redirect("/"));
-
-    // Dev-only "View as": narrow the auto-login principal's roles to preview the member (or admin)
-    // desktop without standing up a second Keycloak user. Writes the cookie DevAutoAuthHandler reads,
-    // then reloads so the new principal takes effect. Available only because devAutoLogin is on.
-    app.MapGet("/dev/view-as", (HttpContext ctx, string? role) =>
-    {
-        if (role is "admin" or "member")
-        {
-            ctx.Response.Cookies.Append(DevAutoAuthHandler.ViewAsCookie, role,
-                new Microsoft.AspNetCore.Http.CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = true,
-                    SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax,
-                    Path = "/",
-                });
-        }
-        else
-        {
-            ctx.Response.Cookies.Delete(DevAutoAuthHandler.ViewAsCookie);
-        }
-        return Results.Redirect("/");
-    });
-}
-else
-{
-    app.MapGet("/account/login", (string? returnUrl) =>
-        Results.Challenge(
-            new AuthenticationProperties { RedirectUri = SafeLocalReturn(returnUrl) },
-            new[] { OpenIdConnectDefaults.AuthenticationScheme }));
-
-    // Shown only after a sign-in callback failed twice in a row (see AuthCookies.HandleRemoteFailureAsync).
-    app.MapGet("/account/signin-failed", (string? reason, string? returnUrl) => AuthCookies.FailedPage(reason, returnUrl))
-        .AllowAnonymous();
-
-    app.MapGet("/account/logout", () =>
-        Results.SignOut(
-            new AuthenticationProperties { RedirectUri = "/" },
-            new[] { CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme }));
-}
-
-app.MapStaticAssets();
+// Static assets are public (the sign-in and sign-up pages need the CSS / JS / icons) and never rate-limited.
+app.MapStaticAssets().AllowAnonymous().DisableRateLimiting();
 app.MapRazorComponents<App>()
-   .AddInteractiveServerRenderMode();
+   // Blazor stamps its own one-directive CSP (frame-ancestors 'self', guarding websocket compression against framing)
+   // on interactive documents, which would replace the desktop's full policy. Null hands it to the security-headers
+   // middleware, whose policy has the stricter frame-ancestors 'none' on every document (GAP-12).
+   .AddInteractiveServerRenderMode(o => o.ContentSecurityFrameAncestorsPolicy = null)
+   // The circuit's own endpoints (/_blazor, /_blazor/negotiate, /initializers, /disconnect) are public (GAP-13): the
+   // sign-in and sign-up pages are interactive, so an anonymous visitor needs a circuit. Pages keep their own
+   // [Authorize] (_Imports.razor) / [AllowAnonymous]; AuthorizeRouteView enforces them inside the circuit.
+   // Its housekeeping calls (/initializers, /disconnect) aren't rate-limited either — only opening a circuit counts (GAP-02).
+   .Add(BlazorFrameworkEndpoints.Apply);
 
 app.Run();

@@ -1,3 +1,7 @@
 {{- if .Values.api.enabled }}
-{{ include "agentos.appWorkload" (dict "root" . "name" "api" "values" .Values.api "extraEnv" list) }}
+{{- /* The Api answers to its in-cluster Service name (the Web's About probe) and its ingress host, if exposed. */ -}}
+{{- $apiHosts := list (include "agentos.component" (dict "root" . "name" "api")) -}}
+{{- with .Values.ingress.hosts.api }}{{ $apiHosts = append $apiHosts . }}{{ end -}}
+{{- $extra := list (dict "name" "AllowedHosts" "value" (join ";" $apiHosts)) -}}
+{{ include "agentos.appWorkload" (dict "root" . "name" "api" "values" .Values.api "extraEnv" $extra) }}
 {{- end }}

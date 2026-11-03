@@ -43,6 +43,7 @@ with its own DI surface, EF Core context and Postgres schema, so any one can lat
 | I want to… | Read |
 |---|---|
 | Run it locally (standalone or full stack), secrets, CI | [docs/SETUP.md](docs/SETUP.md) |
+| Tickets from GitHub Projects, Azure DevOps Boards or Jira (code on GitHub / Azure Repos) | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Test against real GitHub / Azure DevOps / LLMs (the lab server) | [docs/LAB.md](docs/LAB.md) |
 | Know what to set at deploy vs in the UI | [docs/CONFIG.md](docs/CONFIG.md) |
 | Understand the architecture | [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/README.md) |
@@ -410,6 +411,11 @@ in the desktop and applies on the next call:
   once the screenshots are in (until then it says *Waiting for screenshots*; new screenshots clear an earlier
   approval); Autopilot merges such a ticket only after a pass or your approval. A ticket that runs Design must run Test.
   ([ADR-0016](docs/adr/0016-design-gate.md))
+- **Approvals** (E1.5) — per tenant / project, an **Approver** (or admin) approves the plan, opening the pull request,
+  the change and/or the merge on **Board › Tasks › Approvals** (who + when, audited); Autopilot waits and resumes, and
+  fails closed when the step is rejected or nobody can approve. Optional draft PRs. Every merge is checked against the
+  branch's protection, rulesets and `CODEOWNERS` first; the default branch is never pushed or merged from.
+  ([CONFIG.md](docs/CONFIG.md#settings--autopilot--approvals-e15))
 - **Settings → Audit log** — who changed what (settings, keys — never their values —, members, sign-in), CSV export.
 
 **Your repo's own rules.** When a Board ticket runs against a repo, every agent follows the repo's agent
@@ -456,9 +462,11 @@ audit trail and invitations included — and a connection with no tenant sees no
 
 ## API
 
-Everything except `/`, `/health`, `/alive`, `/health/llm` and `/version` requires an authenticated
-principal: the Api validates a Keycloak bearer token; the Web uses a cookie session
-(`/account/login` → OIDC). The complete, always-current list is the **Scalar UI** at `/scalar/v1`.
+Every route requires an authenticated principal unless it is explicitly public (fallback policy): on the
+Api that is `/`, `/version`, `/health`, `/alive`, `POST /tenants/register`, `GET /tenants/invitations/preview`,
+the runner hub (it authenticates the runner itself) and, outside Production, `/openapi` + `/scalar`. The Api
+validates a Keycloak bearer token (RS256 only); the Web uses a cookie session (`/account/login` → OIDC). Both hosts
+rate-limit per tenant, per user and per anonymous client (Settings → Platform → Request limits). The complete, always-current list is the **Scalar UI** at `/scalar/v1`.
 The most used routes:
 
 | Method | Path | Auth | Description |
@@ -471,7 +479,8 @@ The most used routes:
 | `GET` `POST` `DELETE` | `/settings*` | Admin | Legacy runtime-config endpoint (see CONFIG.md) |
 | `POST` | `/llm/test` | signed in | Probe the configured provider with a minimal call |
 | — | `/mcp` | signed in | AgentOS.NET as an MCP server |
-| `GET`  | `/health` · `/alive` · `/health/llm` | none | Readiness, liveness, provider-key readiness |
+| `GET`  | `/health` · `/alive` | none | Readiness, liveness |
+| `GET`  | `/health/llm` | signed in | Provider-key readiness |
 
 ## Extending
 
@@ -515,7 +524,9 @@ automatically — don't add an appsettings key.
 For an extension that ships *outside* the solution, implement `IAgentOsPlugin`
 (`src/AgentOs.SharedKernel/Plugins/`) and drop the assembly into the host's `plugins/` folder — no
 compile-time reference. A plugin has the same DI surface as a module (tools, LLM providers, desktop
-windows). Use `/plugin-scaffold {Name}`; `samples/AgentOs.Plugins.Sample` is a working example.
+windows). Use `/plugin-scaffold {Name}`; `samples/AgentOs.Plugins.Sample` is a working example. Plugins run with
+full trust, so a host loads only assemblies whose SHA-256 is listed in `Plugins:AllowedSha256` — anything else is
+refused and shown as *Refused* on **Plugins** ([CONFIG.md](docs/CONFIG.md#set-at-deploy-bootstrap)).
 
 ## Deploy
 

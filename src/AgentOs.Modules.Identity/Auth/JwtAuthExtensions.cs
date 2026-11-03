@@ -14,6 +14,9 @@ namespace AgentOs.Modules.Identity.Auth;
 /// <summary>DI extensions for Keycloak JWT bearer auth.</summary>
 public static class JwtAuthExtensions
 {
+    /// <summary>The only JWS algorithm accepted for access tokens (and the Web's ID tokens): the realm's RS256.</summary>
+    public static IReadOnlyList<string> ValidAlgorithms { get; } = [SecurityAlgorithms.RsaSha256];
+
     /// <summary>Add JWT bearer authentication (Keycloak) + Admin/Member policies.</summary>
     public static IServiceCollection AddJwtAuth(this IServiceCollection services, IConfiguration config)
     {
@@ -65,6 +68,9 @@ public static class JwtAuthExtensions
                     ValidateAudience = true,
                     ValidAudience = audience,
                     ValidateLifetime = true,
+                    // GAP-13: the realm signs with RS256; pinning it rules out algorithm confusion (HS256 keyed with
+                    // the public key, or "none") whatever the JWKS or a forged header advertises.
+                    ValidAlgorithms = ValidAlgorithms,
                     RoleClaimType = ClaimTypes.Role,
                     NameClaimType = "preferred_username",
                     ClockSkew = TimeSpan.FromMinutes(2),

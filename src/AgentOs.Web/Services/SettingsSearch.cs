@@ -40,7 +40,7 @@ public static class SettingsSearch
         new("routing", "Routing", Ai, "lightning", "force provider default provider routing test connection offline fallback remoteagent remote agent paired tool output budget tokens", Access.Admin),
         new("agents", "Agent profiles", Ai, "diamond", "agent model per agent temperature max tokens output qa loop iterations cap profile coding testing requirement orchestrator", Access.Admin),
         new("prompts", "Prompts", Ai, "file", "prompt system prompt workspace rules instructions version history rollback", Access.Admin),
-        new("autopilot", "Autopilot", Ai, "play", "autopilot orchestrator decided by rules maf workflow step by step tasks at once parallel acceptance tests fix rounds retries checks timeout poll merge plan limit files attachments ticket files upload size comments discussion maintainer decisions", Access.Admin),
+        new("autopilot", "Autopilot", Ai, "play", "autopilot orchestrator decided by rules maf workflow step by step tasks at once parallel acceptance tests fix rounds retries checks timeout poll merge plan limit files attachments ticket files upload size comments discussion maintainer decisions approvals approve approver plan diff pull request draft merge policy branch protection codeowners", Access.Admin),
         new("github", "GitHub", Conn, "git-pull-request", "github token pat pull request repo owner pipeline", Access.Admin),
         new("mcp", "MCP servers", Conn, "arrow-square-out", "mcp model context protocol tool servers upstream", Access.Admin),
         new("plugins", "Plugins", Conn, "squares-stack", "plugins extensions add-ons", Access.Everyone),
@@ -57,7 +57,7 @@ public static class SettingsSearch
         new("session", "Session", Personal, "power", "session sign out logout", Access.Everyone),
         new("about", "About", Sys, "info", "about version build health services status", Access.Everyone),
         new("diagnostics", "Diagnostics", Sys, "circle-fill", "status diagnostics effective configuration which provider storage persistence database postgres stateless", Access.Admin),
-        new("platform", "Platform", Sys, "server", "platform safety run limits concurrency sandbox docker openai-compatible self-hosted ollama vllm foundry", Access.Platform),
+        new("platform", "Platform", Sys, "server", "platform safety run limits request rate limit 429 throttle concurrency sandbox docker openai-compatible self-hosted ollama vllm foundry", Access.Platform),
     ];
 
     private static readonly Dictionary<string, Page> ByTarget = Pages.ToDictionary(p => p.Target, StringComparer.Ordinal);

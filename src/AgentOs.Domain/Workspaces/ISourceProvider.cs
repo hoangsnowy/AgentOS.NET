@@ -69,6 +69,25 @@ public interface ISourceProvider
         TicketContent.BodyOnly(await ReadTicketBodyAsync(repo, number, cancellationToken).ConfigureAwait(false),
             maxComments > 0 ? "This source doesn't provide a ticket's comments — the agents work from its description only." : null);
 
+    // ── Ticket writes (E1.8) ─────────────────────────────────────────────────────────────────────
+    // What a run tells its ticket: a comment (an Orchestrator question, a superseded note), a workflow move (started,
+    // merged) and a link to the pull request. GitHub needs no move or link: "Closes #N" in the pull request does both.
+
+    /// <summary>Post <paramref name="body"/> (Markdown) as a comment on ticket <paramref name="number"/>. Never throws;
+    /// false when it couldn't (or the backend can't).</summary>
+    Task<bool> CommentOnTicketAsync(WorkspaceDescriptor repo, int number, string body, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
+    /// <summary>Move ticket <paramref name="number"/> along its workflow for <paramref name="milestone"/> (the tracker's
+    /// configured start / done state). Never throws; false when nothing moved (no such state, or nothing to do).</summary>
+    Task<bool> MoveTicketAsync(WorkspaceDescriptor repo, int number, TicketMilestone milestone, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
+    /// <summary>Link pull request <paramref name="pullRequestUrl"/> to ticket <paramref name="number"/> (idempotent per
+    /// URL). Never throws; false when it couldn't (or the backend links by itself).</summary>
+    Task<bool> LinkPullRequestAsync(WorkspaceDescriptor repo, int number, string pullRequestUrl, string title, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
     // ── Writes (bootstrap) ───────────────────────────────────────────────────────────────────────
     // The first write members: stamping a standard label taxonomy and creating tickets from a
     // generated RequirementSpec. Labels are repo-scoped, so they take a WorkspaceDescriptor.

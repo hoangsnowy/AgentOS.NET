@@ -59,6 +59,7 @@ dashboard or rule references a series no instrument emits.
 | `AgentOs.Health` | `agentos.health.status` (`agentos_health_status`) | gauge | `agentos.health.check` = `self` · `postgres` · `row-level-security` · `keycloak` · `overall` | 1 healthy · 0.5 degraded · 0 unhealthy, published every 60 s (each publish runs every check, so not more often). |
 | `AgentOs.Persistence` | `agentos.rls.connections` (`agentos_rls_connections_total`) | counter | `scope` = `tenant` · `platform` · `none` | Connections bound by row-level security (ADR-0012). `none` sees **nothing** (stage 2): a rising `none` is a code path that lost its tenant. |
 | | `agentos.rls.platform_scope` (`agentos_rls_platform_scope_total`) | counter | `reason` = `autopilot-scan` · `scheduler` · `runner-handshake` · `runner-revalidation` · `platform-settings` · `audit-platform` | Explicit cross-tenant scopes entered. A new reason is a new cross-tenant code path — review it. |
+| `AgentOs.Http` | `agentos.http.rate_limited` (`agentos_http_rate_limited_total`) | counter `{request}` | `authenticated` = `true` · `false` | Requests the global request limiter refused with 429 (Settings → Platform → Request limits). A steady anonymous rate is scraping or a sign-up flood; an authenticated one means a limit too low for real use. |
 
 Traces: the `AgentOs.Llm` ActivitySource emits one `chat {model}` client span per provider attempt (attributes
 `gen_ai.*`, `gen_ai.usage.*` incl. `cache_read.input_tokens` / `cache_creation.input_tokens`, `agentos.cost.usd`,

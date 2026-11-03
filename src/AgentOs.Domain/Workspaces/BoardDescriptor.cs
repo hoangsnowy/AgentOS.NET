@@ -35,6 +35,10 @@ public sealed record BoardDescriptor(
     string? Project = null,
     string? Host = null)
 {
+    /// <summary>The external tracker this descriptor reads tickets from (E1.8), when it addresses a tracker — set by the
+    /// tracker routing, read by the Azure DevOps Boards / Jira providers. Null for a GitHub Projects board.</summary>
+    public TrackerBinding? Tracker { get; init; }
+
     /// <summary>Validates the coordinates needed to reach the board. Throws <see cref="ArgumentException"/> if invalid.</summary>
     public void Validate()
     {
@@ -54,9 +58,9 @@ public sealed record BoardDescriptor(
         {
             throw new ArgumentException("ProjectScope must be 'org' or 'user'.", nameof(ProjectScope));
         }
-        if (Kind == SourceProviderKind.AzureDevOps && string.IsNullOrWhiteSpace(Project))
+        if (Kind is SourceProviderKind.AzureDevOps or SourceProviderKind.Jira && string.IsNullOrWhiteSpace(Project))
         {
-            throw new ArgumentException("Project is required for Azure DevOps.", nameof(Project));
+            throw new ArgumentException(Kind == SourceProviderKind.Jira ? "Project key is required for Jira." : "Project is required for Azure DevOps.", nameof(Project));
         }
     }
 }

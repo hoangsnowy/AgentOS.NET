@@ -46,13 +46,22 @@ public sealed class RowLevelSecurityTests
         RowLevelSecurity.BootstrapSql(18).ShouldNotContain("coalesce(current_setting");
     }
 
+    // Stage 2 brings the platform-scoped tables (app_config, audit_events) + invitations under the policy; the tables the
+    // modules added in the meantime (scheduled runs, memory, autopilot events, ticket flows/files, design reviews,
+    // approvals) are covered as well — a table a module adds goes into Tables or ExemptTables, never nowhere.
     [Fact]
     public void Tables_StageTwo_IncludeAppConfigAuditEventsAndInvitations()
     {
-        RowLevelSecurity.Tables.Count.ShouldBe(19);
+        RowLevelSecurity.Tables.Count.ShouldBe(20);
         RowLevelSecurity.Tables.ShouldContain(("config", "app_config"));
         RowLevelSecurity.Tables.ShouldContain(("tenants", "audit_events"));
         RowLevelSecurity.Tables.ShouldContain(("tenants", "invitations"));
+        RowLevelSecurity.Tables.ShouldContain(("pipeline", "scheduled_runs"));
+        RowLevelSecurity.Tables.ShouldContain(("sessions", "ticket_files"));
+        RowLevelSecurity.Tables.ShouldContain(("sessions", "design_reviews"));
+        RowLevelSecurity.Tables.ShouldContain(("sessions", "approvals"));
+        RowLevelSecurity.Tables.ShouldContain(("workspaces", "ticket_flows"));
+        RowLevelSecurity.Tables.ShouldContain(("memory", "nodes"));
         RowLevelSecurity.Tables.Distinct().Count().ShouldBe(RowLevelSecurity.Tables.Count);
         RowLevelSecurity.ExemptTables.Keys.ShouldBe(["tenants.api_tokens"]);
         RowLevelSecurity.ExemptTables.Keys.ShouldNotContain(k => RowLevelSecurity.Tables.Any(t => $"{t.Schema}.{t.Table}" == k));

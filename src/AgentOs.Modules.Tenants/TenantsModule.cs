@@ -53,6 +53,9 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
         }
 
         services.AddScoped<ITenantSignupService, TenantSignupService>();
+        // E1.5: who can approve (approver or admin role) — approval gates fail closed when nobody can.
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<AgentOs.Domain.Governance.IApproverDirectory, Approvals.KeycloakApproverDirectory>();
         // GAP-01: open self-signup is a platform setting, on in Development only by default.
         services.AddSingleton<AgentOs.Domain.Configuration.ISettingsContributor>(
             new Settings.TenantsSettings(AgentOs.SharedKernel.Modularity.ModuleEnvironment.IsDevelopment(configuration)));

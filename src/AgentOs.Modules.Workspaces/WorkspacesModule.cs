@@ -38,6 +38,8 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
         services.AddScoped<IWorkspaceConnector, WorkspaceConnector>();
         // A board's repositories for agents that see the whole board (the Autopilot lead reads their practices).
         services.AddScoped<AgentOs.Domain.Workspaces.IBoardRepos, WorkspaceBoardRepos>();
+        // E1.8 — a board's external ticket tracker (Azure DevOps Boards / Jira), read by the source-provider routing.
+        services.AddScoped<AgentOs.Domain.Workspaces.IBoardTrackers, WorkspaceBoardTrackers>();
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))

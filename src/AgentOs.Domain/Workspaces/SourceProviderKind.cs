@@ -12,4 +12,7 @@ public enum SourceProviderKind
 
     /// <summary>Azure DevOps (dev.azure.com / on-prem TFS).</summary>
     AzureDevOps = 1,
+
+    /// <summary>Jira Cloud — a ticket tracker only (E1.8): a board's tickets can come from it, never its code.</summary>
+    Jira = 2,
 }

@@ -215,7 +215,8 @@ internal sealed partial class TenantSignupService : ITenantSignupService
                 username: request.Username,
                 email: invitation.Email,
                 tenantId: invitation.TenantId,
-                realmRoles: [invitation.Role],
+                // An invited approver is a member too (TenantRoles.Expand).
+                realmRoles: TenantRoles.Expand([invitation.Role]),
                 sendVerifyEmail: true,
                 password: request.Password,
                 ct: ct).ConfigureAwait(false);
@@ -272,9 +273,10 @@ internal sealed partial class TenantSignupService : ITenantSignupService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentNullException.ThrowIfNull(actor);
-        if (role is not ("admin" or "member"))
+        // admin, approver or member (E1.5): the realm roles it amounts to are expanded when the account is created.
+        if (!TenantRoles.IsKnown(role))
         {
-            throw new ArgumentException("The role must be 'admin' or 'member'.", nameof(role));
+            throw new ArgumentException("The role must be 'admin', 'approver' or 'member'.", nameof(role));
         }
         var address = email?.Trim() ?? string.Empty;
         var (emailOk, emailErr) = SignupValidation.ValidateEmail(address);

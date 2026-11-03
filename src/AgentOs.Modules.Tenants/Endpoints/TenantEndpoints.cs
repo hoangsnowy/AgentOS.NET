@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants.Email;
 using AgentOs.Modules.Tenants.Keycloak;
+using AgentOs.SharedKernel.Hosting;
 using AgentOs.SharedKernel.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -137,6 +138,7 @@ internal static class TenantEndpoints
             ITenantSignupService signup,
             IEmailSender email,
             ITenantContext ctx,
+            PublicOrigin origin,
             HttpContext http,
             CancellationToken ct) =>
         {
@@ -147,9 +149,9 @@ internal static class TenantEndpoints
                 return Results.Forbid();
             }
             var role = string.IsNullOrWhiteSpace(body.Role) ? "member" : body.Role;
-            if (role is not ("admin" or "member"))
+            if (!TenantRoles.IsKnown(role))
             {
-                return Results.BadRequest(new { error = "role must be 'admin' or 'member'" });
+                return Results.BadRequest(new { error = "role must be 'admin', 'approver' or 'member'" });
             }
             // GAP-11: an invitation is bound to the address it is sent to — no address, no invitation.
             if (string.IsNullOrWhiteSpace(body.Email))
@@ -160,7 +162,7 @@ internal static class TenantEndpoints
             InvitationToken minted;
             try
             {
-                // Audited by the service (invitation.minted).
+                // Audited by the service (invitation.minted) — the row joins the tenant's hash chain there.
                 minted = await signup.CreateInvitationAsync(tenantId, role, body.Email, ttl,
                     new AuditActor(ctx.UserId, http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString()),
                     ct).ConfigureAwait(false);
@@ -169,8 +171,9 @@ internal static class TenantEndpoints
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-            var origin = $"{http.Request.Scheme}://{http.Request.Host}";
-            var url = $"{origin}/signup?invite={Uri.EscapeDataString(minted.Token)}";
+            // GAP-05: the link points at the configured public desktop URL — never at the request's Host header, which
+            // the caller controls (an admin's request through a spoofed Host would mint a link to someone else's server).
+            var url = origin.Link($"/signup?invite={Uri.EscapeDataString(minted.Token)}", http.Request);
 
             // Best-effort: email the link to the invited address. The URL is returned regardless so the admin can still
             // copy/paste it if delivery is unconfigured or fails.
@@ -300,13 +303,11 @@ internal static class TenantEndpoints
             {
                 return Results.Forbid();
             }
-            var roles = (body.Roles ?? Array.Empty<string>())
-                .Where(r => r is "admin" or "member")
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
+            // An approver is a member too (TenantRoles.Expand); unknown roles are dropped.
+            var roles = TenantRoles.Expand(body.Roles).ToList();
             if (roles.Count == 0)
             {
-                return Results.BadRequest(new { error = "roles must contain at least one of: admin, member" });
+                return Results.BadRequest(new { error = "roles must contain at least one of: admin, approver, member" });
             }
             // Lock-out guard: an Admin editing themselves must keep the admin role.
             if (string.Equals(ctx.UserId, userId, StringComparison.Ordinal) && !roles.Contains("admin", StringComparer.Ordinal))

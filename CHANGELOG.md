@@ -16,6 +16,11 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 
 ### Added
 
+- **Ticket trackers (E1.8).** A board's tickets can come from **Azure DevOps Boards** (WIQL by area / iteration /
+  state / tags) or **Jira Cloud** (REST v3, JQL) while its code stays on GitHub / Azure Repos. Comments are the
+  ticket's discussion with the maintainer rule mapped to project roles; a run moves the ticket on start and merge,
+  links its pull request and asks its questions there. API tokens are stored encrypted. See docs/INTEGRATIONS.md.
+
 - **Board + Autopilot.** A Projects-style board that spans many repositories: tickets with dependencies,
   file attachments, live plain-language progress, Stop / Try again / Ask for changes / Fix the failing
   checks. Autopilot runs each ticket as a Microsoft Agent Framework workflow (drawn as a graph in the Workflow
@@ -59,6 +64,12 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   and theme, Api, Web and optional Ollama, with the key ring certificate-wrapped and row-level security on by
   default. CI lints and templates the chart and runs a cold install plus an upgrade on kind.
 
+- **Approval policies** (E1.5). Per tenant and per project (Settings › Autopilot › Approvals): a person with the
+  new **Approver** role (or an admin) approves the plan, opening the pull request, the change and/or the merge on
+  **Board › Tasks › Approvals** — Approve, or Reject with a reason; who and when are recorded and audited
+  (`approval.decided`). Autopilot and the per-ticket MAF workflow wait at each gate and resume once approved;
+  optional draft pull requests.
+
 ### Changed
 
 - The dock is the MVP: Home · Board · Insights · Settings; Terminal and Files are Board tabs, and one
@@ -91,8 +102,21 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 - Keycloak member admin can use a least-privilege service-account client (`client_credentials`, only the
   user-management roles) instead of a master-realm admin password; outside Development the host refuses to
   start while any setting still holds the on-prem `CHANGE_ME` placeholder.
+- Repository safety (E1.5, threat-model GAP-18): approval gates fail closed (rejected, or nobody can approve, stops
+  the task — never assumed); no pull request from and no merge of the default branch (server + runner deny rules);
+  every merge reads the base branch's classic protection and rulesets, reviews, required checks and `CODEOWNERS`
+  through the GitHub API and refuses what the protection would refuse — also when the token could bypass it.
 - VS Code runner extension: `@vscode/vsce` 4.1.0 brings `@azure/msal-node` to 7.1.2, past the advisory on
   authorization-code-flow parameter disclosure (< 7.1.0; dev-only dependency).
+- Edge hardening (threat model GAP-05): forwarded headers are trusted only from loopback and the configured
+  ingress (`Hosting:TrustedNetworks` / `Hosting:TrustedProxies`); every link the server hands out — invitations,
+  VS Code pairing, the runner's hub URL — comes from `Hosting:PublicBaseUrl`, never the request `Host`; the hosts
+  answer only to that host name (or `AllowedHosts`); the runner refuses plain `http://` servers except localhost in
+  Development.
+- Authorization in the service, not only the UI (GAP-17): tenant purge checks platform-admin itself; a sign-in
+  without a tenant claim is refused instead of falling back to the `default` tenant.
+- Sign-out is a POST with an antiforgery token, the VS Code approve form is antiforgery-protected, and plugins load
+  only when their SHA-256 is listed in `Plugins:AllowedSha256` (GAP-19).
 - Invitations are single-use, bound to the invited address and revocable from Settings › Users (GAP-11); the
   audit trail is append-only for the application's database role and hash-chained per tenant, with **Verify
   chain** in Settings › Activity log (GAP-11b).
@@ -102,6 +126,14 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 
 ### Migration notes
 
+- No tagged release to upgrade from, but existing deployments built from `main` need, before upgrading:
+  `Hosting__PublicBaseUrl` set to the desktop's `https://` URL on both hosts (outside Development they refuse to
+  start without it — the azd, compose and Helm templates now set it), the ingress ranges in
+  `Hosting__TrustedNetworks` if they are not the template defaults, `AllowedHosts` on the Api for any custom Api host
+  name, and the SHA-256 of every plugin in `Plugins__AllowedSha256` (an unlisted plugin is refused). See
+  [docs/CONFIG.md](docs/CONFIG.md#set-at-deploy-bootstrap).
+- The `approver` realm role (E1.5) is created by the azd post-deploy hook and the Helm realm job; a local realm
+  imported before it needs the role added through the Keycloak admin API, or its volume dropped.
 - Invitation links minted before invitations became single-use rows stop working — send new ones.
 - Audit events recorded before the hash chain stay readable but are reported as "not chained"; the chain starts
   with the next event.

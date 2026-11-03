@@ -76,6 +76,9 @@ public static class AuditActions
 
     /// <summary>New screenshots cleared an earlier design approval — it stands only on the screens it was given on.</summary>
     public const string DesignApprovalCleared = "design.approval_cleared";
+
+    /// <summary>An approver approved or rejected a step an approval policy held (plan, diff, pull request, merge — E1.5).</summary>
+    public const string ApprovalDecided = "approval.decided";
 }
 
 /// <summary>Audit "tenant" ids that are not tenants.</summary>

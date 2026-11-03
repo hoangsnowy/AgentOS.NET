@@ -2,6 +2,8 @@
 // Shared by AgentOs.Api and AgentOs.Web; wired by the AppHost.
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using AgentOs.SharedKernel.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,15 +33,20 @@ public static class Extensions
 
         // Behind Azure Container Apps (and any TLS-terminating ingress) the app receives plain HTTP with
         // X-Forwarded-Proto: https. Without honouring it the OIDC middleware builds an http:// redirect_uri
-        // (Keycloak then rejects it) and CookieSecurePolicy.Always drops the auth cookie. The proxy IP is
-        // not known ahead of time in ACA, so the default KnownNetworks/KnownProxies allow-list (loopback
-        // only) would discard the headers — clear it and trust the single hop in front of us.
-        builder.Services.Configure<ForwardedHeadersOptions>(options =>
-        {
-            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-            options.KnownIPNetworks.Clear();
-            options.KnownProxies.Clear();
-        });
+        // (Keycloak then rejects it) and CookieSecurePolicy.Always drops the auth cookie. GAP-05: the headers are
+        // honoured only from loopback + the ingress ranges the deployment lists (Hosting:TrustedProxies /
+        // Hosting:TrustedNetworks) — never from any peer. PostConfigure, so ASPNETCORE_FORWARDEDHEADERS_ENABLED's own
+        // setup (which clears the lists) cannot widen it. Parsed now so a bad entry fails the boot, not a request.
+        HostingSecurity.ConfigureForwardedHeaders(new ForwardedHeadersOptions(), builder.Configuration);
+        builder.Services.PostConfigure<ForwardedHeadersOptions>(options =>
+            HostingSecurity.ConfigureForwardedHeaders(options, builder.Configuration));
+
+        // GAP-05: links (invitations, pairing, hub URLs) come from Hosting:PublicBaseUrl — required outside Development.
+        var origin = PublicOrigin.FromConfiguration(builder.Configuration, builder.Environment);
+        builder.Services.AddSingleton(origin);
+        // Host filtering is ours (UseAgentOsForwardedHeaders), so probes can be exempt; the framework's filter — which
+        // reads the same AllowedHosts key and would 400 a probe sent to the pod IP — is neutralised.
+        builder.Services.PostConfigure<Microsoft.AspNetCore.HostFiltering.HostFilteringOptions>(o => o.AllowedHosts = ["*"]);
 
         // `localhost` shares ONE cookie jar across every dev app on the box, so the Cookie header to a
         // dev host can blow past Kestrel's 32 KB default → HTTP 431 (Request Header Fields Too Large)
@@ -60,11 +67,16 @@ public static class Extensions
         return builder;
     }
 
-    /// <summary>Applies forwarded headers as the FIRST middleware so every downstream component (OIDC,
-    /// cookie policy, link generation) sees the original https scheme + client IP. Call before any auth.</summary>
+    /// <summary>The FIRST middleware: rejects a Host that is not allowed (GAP-05 — see <see cref="HostingSecurity"/>),
+    /// then applies forwarded headers from trusted proxies so every downstream component (OIDC, cookie policy, rate
+    /// limits, audit) sees the original https scheme + client IP. Call before any auth.</summary>
     public static WebApplication UseAgentOsForwardedHeaders(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
+        if (HostingSecurity.AllowedHosts(app.Configuration, app.Services.GetRequiredService<PublicOrigin>()) is { } hosts)
+        {
+            app.Use(HostingSecurity.HostFilter(hosts));
+        }
         app.UseForwardedHeaders();
         return app;
     }
@@ -92,6 +104,7 @@ public static class Extensions
                 .AddMeter("AgentOs.Pipeline") // runs by outcome, run duration, budget refusals + utilization (PipelineTelemetry.MeterName)
                 .AddMeter(HealthMetricsPublisher.MeterName) // health check status per check (agentos.health.status)
                 .AddMeter("AgentOs.Persistence") // RLS connections by scope + platform scopes by reason (RowLevelSecurity.MeterName)
+                .AddMeter(RequestRateLimitPolicy.MeterName) // 429s from the global request limiter (agentos.http.rate_limited)
                 .AddMeter("Npgsql")) // connection pool + command duration (db.client.*) — the Postgres side of the run SLOs
             .WithTracing(tracing => tracing
                 .AddAspNetCoreInstrumentation()
@@ -171,15 +184,16 @@ public static class Extensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
+        // Probes carry no credentials and must never be throttled (GAP-13 fallback policy / GAP-02 limiter).
         app.MapHealthChecks("/health", new HealthCheckOptions
         {
             ResponseWriter = HealthJsonWriter.WriteAsync,
-        });
+        }).AllowAnonymous().DisableRateLimiting();
         app.MapHealthChecks("/alive", new HealthCheckOptions
         {
             Predicate = r => r.Tags.Contains("live"),
             ResponseWriter = HealthJsonWriter.WriteAsync,
-        });
+        }).AllowAnonymous().DisableRateLimiting();
 
         return app;
     }

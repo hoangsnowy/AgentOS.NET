@@ -31,6 +31,7 @@ public sealed class SessionsDbContext : DbContext
     public DbSet<SessionRepoEntity> SessionRepos => Set<SessionRepoEntity>();
     public DbSet<TicketFileEntity> TicketFiles => Set<TicketFileEntity>();
     public DbSet<DesignReviewEntity> DesignReviews => Set<DesignReviewEntity>();
+    public DbSet<ApprovalEntity> Approvals => Set<ApprovalEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -131,6 +132,25 @@ public sealed class SessionsDbContext : DbContext
             e.Property(x => x.UpdatedAtUtc).IsRequired();
             e.HasIndex(x => new { x.TenantId, x.SessionId, x.Run }).IsUnique();
             e.HasIndex(x => new { x.TenantId, x.UpdatedAtUtc });
+            e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
+        });
+
+        // Approval policies (E1.5): one request per (tenant, task, gate, change).
+        modelBuilder.Entity<ApprovalEntity>(e =>
+        {
+            e.ToTable("approvals");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Gate).IsRequired().HasMaxLength(32);
+            e.Property(x => x.Status).IsRequired().HasMaxLength(32);
+            e.Property(x => x.Title).IsRequired().HasMaxLength(300);
+            e.Property(x => x.Link).HasMaxLength(2048);
+            e.Property(x => x.RequestedBy).IsRequired().HasMaxLength(256);
+            e.Property(x => x.RequestedAtUtc).IsRequired();
+            e.Property(x => x.DecidedBy).HasMaxLength(256);
+            e.Property(x => x.Note).HasMaxLength(AgentOs.Domain.Governance.ApprovalRequest.MaxNote);
+            e.HasIndex(x => new { x.TenantId, x.SessionId, x.Gate, x.Run }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.RequestedAtUtc });
             e.HasQueryFilter(x => x.TenantId == (_tenant != null ? _tenant.TenantId : null));
         });
     }

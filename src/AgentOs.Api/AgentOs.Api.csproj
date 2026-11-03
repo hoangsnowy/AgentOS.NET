@@ -10,6 +10,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Host-level integration tests boot this Program through WebApplicationFactory. -->
+    <InternalsVisibleTo Include="AgentOs.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AgentOs.Domain\AgentOs.Domain.csproj" />
     <ProjectReference Include="..\AgentOs.SharedKernel\AgentOs.SharedKernel.csproj" />
     <ProjectReference Include="..\AgentOs.Modules.AppConfig\AgentOs.Modules.AppConfig.csproj" />

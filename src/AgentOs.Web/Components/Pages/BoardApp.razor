@@ -45,6 +45,7 @@
 @inject AgentOs.Web.Services.Preview.PreviewService Previews
 @inject ITicketFiles TicketFiles
 @inject NavigationManager Nav
+@inject AgentOs.SharedKernel.Hosting.PublicOrigin Origin
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @implements IDisposable
 
@@ -100,19 +101,26 @@ else if (_tab == Tab.Boards)
         @* Boards list view *@
         <Panel Title="Connect a board">
             <div class="form-grid">
-                <Field Label="Provider">
-                    <select class="prefs-select" @bind="_wsKind">
-                        <option value="@SourceProviderKind.GitHub">GitHub Projects</option>
-                        <option value="@SourceProviderKind.AzureDevOps">Azure DevOps</option>
+                <Field Label="Tickets from">
+                    <select class="prefs-select" @bind="_wsTicketsFrom" @bind:after="OnTicketsFromChanged" data-testid="connect-tickets-from">
+                        <option value="@TicketsFrom.GitHubProjects">GitHub Projects</option>
+                        <option value="@TicketsFrom.AzureBoards">Azure DevOps Boards</option>
+                        <option value="@TicketsFrom.Jira">Jira</option>
+                    </select>
+                </Field>
+                <Field Label="Code in">
+                    <select class="prefs-select" @bind="_wsKind" disabled="@(_wsTicketsFrom == TicketsFrom.GitHubProjects)" data-testid="connect-code-in">
+                        <option value="@SourceProviderKind.GitHub">GitHub</option>
+                        <option value="@SourceProviderKind.AzureDevOps">Azure Repos</option>
                     </select>
                 </Field>
                 <Field Label="Name">
                     <input @bind="_wsName" placeholder="My product board" />
                 </Field>
-                <Field Label="@(_wsKind == SourceProviderKind.AzureDevOps ? "Organization" : "Owner (org or user)")">
-                    <input @bind="_wsProjectOwner" placeholder="octo-org" />
+                <Field Label="@(_wsKind == SourceProviderKind.AzureDevOps ? "Code organization" : "Code owner (org or user)")">
+                    <input @bind="_wsProjectOwner" placeholder="@(_wsKind == SourceProviderKind.AzureDevOps ? "contoso" : "octo-org")" />
                 </Field>
-                @if (_wsKind == SourceProviderKind.GitHub)
+                @if (_wsKind == SourceProviderKind.GitHub && _wsTicketsFrom == TicketsFrom.GitHubProjects)
                 {
                     <Field Label="Scope">
                         <select class="prefs-select" @bind="_wsScope">
@@ -123,41 +131,120 @@ else if (_tab == Tab.Boards)
                 }
                 @if (_wsKind == SourceProviderKind.AzureDevOps)
                 {
-                    <Field Label="Project">
+                    <Field Label="Code project">
                         <input @bind="_wsProject" placeholder="MyProject" />
                     </Field>
                 }
-                <Field Label="Board number">
-                    <input @bind="_wsNumberText" placeholder="5 (optional — leave blank for repos-only)" />
-                    @if (_foundBoards is { Count: > 0 })
-                    {
-                        <select class="prefs-select" @onchange="OnBoardPicked">
-                            <option value="">— pick from @_foundBoards.Count found —</option>
-                            @foreach (var b in _foundBoards)
-                            {
-                                <option value="@b.Number">#@b.Number — @b.Title</option>
-                            }
-                        </select>
-                    }
-                    else if (_foundBoards is { Count: 0 })
-                    {
-                        <p class="muted board-form-hint">No boards found for that owner + token.</p>
-                    }
-                </Field>
-                <Field Label="Access token (PAT)">
-                    <input type="password" @bind="_wsToken" placeholder="ghp_… (needs repo + read:project)" autocomplete="off" />
+                @if (_wsTicketsFrom == TicketsFrom.GitHubProjects)
+                {
+                    <Field Label="Board number">
+                        <input @bind="_wsNumberText" placeholder="5 (optional — leave blank for repos-only)" />
+                        @if (_foundBoards is { Count: > 0 })
+                        {
+                            <select class="prefs-select" @onchange="OnBoardPicked" aria-label="Pick a found board">
+                                <option value="">— pick from @_foundBoards.Count found —</option>
+                                @foreach (var b in _foundBoards)
+                                {
+                                    <option value="@b.Number">#@b.Number — @b.Title</option>
+                                }
+                            </select>
+                        }
+                        else if (_foundBoards is { Count: 0 })
+                        {
+                            <p class="muted board-form-hint">No boards found for that owner + token.</p>
+                        }
+                    </Field>
+                }
+                <Field Label="@(_wsKind == SourceProviderKind.AzureDevOps ? "Code PAT" : "Code access token (PAT)")">
+                    <input type="password" @bind="_wsToken" autocomplete="off"
+                           placeholder="@(_wsKind == SourceProviderKind.AzureDevOps ? "Code (Read & write)" : _wsTicketsFrom == TicketsFrom.GitHubProjects ? "ghp_… (needs repo + read:project)" : "ghp_… (needs repo)")" />
                 </Field>
             </div>
+
+            @if (_wsTicketsFrom == TicketsFrom.AzureBoards)
+            {
+                <p class="muted board-form-hint">Work items of an Azure DevOps project become this board's tickets. Every filter is optional; tag a work item <code>ai:ready</code> to let Autopilot pick it.</p>
+                <div class="form-grid" data-testid="connect-tracker-ado">
+                    <Field Label="Boards organization">
+                        <input @bind="_trSite" placeholder="contoso" />
+                    </Field>
+                    <Field Label="Boards project">
+                        <input @bind="_trProject" placeholder="Shop" />
+                    </Field>
+                    <Field Label="Area path">
+                        <input @bind="_trArea" placeholder="Shop\Checkout (optional)" />
+                    </Field>
+                    <Field Label="Iteration path">
+                        <input @bind="_trIteration" placeholder="Shop\Sprint 12 or @@CurrentIteration (optional)" />
+                    </Field>
+                    <Field Label="States">
+                        <input @bind="_trStates" placeholder="New, Active (optional, comma separated)" />
+                    </Field>
+                    <Field Label="Tags">
+                        <input @bind="_trTags" placeholder="ai:ready (optional, comma separated)" />
+                    </Field>
+                    <Field Label="State when work starts">
+                        <input @bind="_trStart" placeholder="Active" />
+                    </Field>
+                    <Field Label="State when merged">
+                        <input @bind="_trDone" placeholder="Closed" />
+                    </Field>
+                    <Field Label="Boards PAT">
+                        <input type="password" @bind="_trToken" autocomplete="off" placeholder="Work Items (Read & write) — blank = the code PAT" />
+                    </Field>
+                </div>
+            }
+            else if (_wsTicketsFrom == TicketsFrom.Jira)
+            {
+                <p class="muted board-form-hint">Issues of a Jira Cloud project become this board's tickets. Label an issue <code>ai:ready</code> to let Autopilot pick it.</p>
+                <div class="form-grid" data-testid="connect-tracker-jira">
+                    <Field Label="Jira site">
+                        <input @bind="_trSite" placeholder="https://contoso.atlassian.net" />
+                    </Field>
+                    <Field Label="Project key">
+                        <input @bind="_trProject" placeholder="SHOP" />
+                    </Field>
+                    <Field Label="JQL (optional)">
+                        <input @bind="_trJql" placeholder="@JqlPlaceholder" />
+                    </Field>
+                    <Field Label="Transition when work starts">
+                        <input @bind="_trStart" placeholder="In Progress" />
+                    </Field>
+                    <Field Label="Transition when merged">
+                        <input @bind="_trDone" placeholder="Done" />
+                    </Field>
+                    <Field Label="Account e-mail">
+                        <input type="email" @bind="_trAccount" autocomplete="off" placeholder="you@contoso.com" />
+                    </Field>
+                    <Field Label="Jira API token">
+                        <input type="password" @bind="_trToken" autocomplete="off" placeholder="from id.atlassian.com → Security" />
+                    </Field>
+                </div>
+            }
+
             <div class="form-actions">
-                <Btn Variant="Btn.ButtonVariant.Ghost" OnClick="FindBoards"
-                     Disabled="_busy || _findingBoards || _wsKind != SourceProviderKind.GitHub">
-                    @(_findingBoards ? "Finding…" : "Find boards")
-                </Btn>
+                @if (_wsTicketsFrom == TicketsFrom.GitHubProjects)
+                {
+                    <Btn Variant="Btn.ButtonVariant.Ghost" OnClick="FindBoards"
+                         Disabled="_busy || _findingBoards || _wsKind != SourceProviderKind.GitHub">
+                        @(_findingBoards ? "Finding…" : "Find boards")
+                    </Btn>
+                }
                 <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ConnectBoard" Disabled="_busy">
                     @(_busy ? "Connecting…" : "Connect")
                 </Btn>
             </div>
-            <p class="muted board-form-hint">Token is validated, then stored encrypted — never shown again or kept on the row. A GitHub board number is its Projects v2 number (in the project URL).</p>
+            <p class="muted board-form-hint">
+                Tokens are validated, then stored encrypted — never shown again or kept on the row.
+                @if (_wsTicketsFrom == TicketsFrom.GitHubProjects)
+                {
+                    <text>A GitHub board number is its Projects v2 number (in the project URL).</text>
+                }
+                else
+                {
+                    <text>The code stays in its repositories (add them after connecting); pull requests are linked back to the ticket, which moves to the states above.</text>
+                }
+            </p>
         </Panel>
 
         @if (_boards is null) { <Spinner /> }
@@ -180,7 +267,11 @@ else if (_tab == Tab.Boards)
                             <td><strong>@b.Name</strong></td>
                             <td>
                                 <code>@b.ProjectOwner</code>
-                                @if (b.ProjectNumber is not null)
+                                @if (b.ReadTracker() is { } tracker)
+                                {
+                                    <span class="muted"> · tickets from @TrackerLabel(tracker)</span>
+                                }
+                                else if (b.ProjectNumber is not null)
                                 {
                                     <span class="muted"> #@b.ProjectNumber</span>
                                 }
@@ -191,7 +282,7 @@ else if (_tab == Tab.Boards)
                             </td>
                             <td><Badge>@b.Status</Badge></td>
                             <td class="actions">
-                                @if (b.Kind == SourceProviderKind.GitHub)
+                                @if (b.Kind == SourceProviderKind.GitHub || b.HasTickets)
                                 {
                                     <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => SelectBoard(b))">
                                         Open <Icon Name="arrow-right" Size="13" />
@@ -222,6 +313,10 @@ else if (_tab == Tab.Boards)
             </Btn>
             <span class="board-back-repo muted">
                 <code>@_selectedBoard.ProjectOwner@(_selectedBoard.ProjectNumber is not null ? $" #{_selectedBoard.ProjectNumber}" : "")</code>
+                @if (_selectedBoard.ReadTracker() is { } selectedTracker)
+                {
+                    <span> · tickets from <a href="@TrackerHome(selectedTracker)" target="_blank" rel="noopener" class="board-issue-link">@TrackerLabel(selectedTracker)</a></span>
+                }
             </span>
         </div>
 
@@ -288,7 +383,7 @@ else if (_tab == Tab.Boards)
         </Panel>
 
         @* Unified tickets across the board's repos *@
-        @if (_selectedBoard.ProjectNumber is null)
+        @if (!_selectedBoard.HasTickets)
         {
             <Panel Title="Tickets">
                 <p class="muted">This is a repos-only board. Reconnect it with a GitHub Projects v2 board number to pull tickets.</p>
@@ -364,7 +459,7 @@ else if (_tab == Tab.Boards)
                         @foreach (var ticket in FilteredTickets())
                         {
                             <tr>
-                                <td class="muted">@(ticket.Number is null ? "draft" : $"#{ticket.Number}")</td>
+                                <td class="muted">@(ticket.Number is null ? "draft" : ticket.Reference)</td>
                                 <td>
                                     @if (ticket.Kind == BoardTicketKind.DraftIssue || string.IsNullOrEmpty(ticket.HtmlUrl))
                                     {
@@ -379,6 +474,10 @@ else if (_tab == Tab.Boards)
                                     @if (ticket.RepoOwner is not null)
                                     {
                                         <code>@ticket.RepoOwner/@ticket.RepoName</code>
+                                    }
+                                    else if (_selectedBoard.HasTickets && _selectedBoard.ProjectNumber is null)
+                                    {
+                                        <span class="muted" title="Add a repository above, or give the ticket a repo: label">no repository</span>
                                     }
                                     else
                                     {
@@ -582,13 +681,13 @@ else if (_tab == Tab.Runners)
                 else
                 {
                     <p class="cred-readout-hint">On <strong>@_newRunnerLabel</strong>, open the AgentOS.NET helper folder and run this once — it connects the computer and remembers it:</p>
-                    <pre class="pair-command" data-testid="pair-command">AgentOs.RemoteAgent pair @Nav.BaseUri.TrimEnd('/') @_newRunnerCode</pre>
+                    <pre class="pair-command" data-testid="pair-command">AgentOs.RemoteAgent pair @PublicBase @_newRunnerCode</pre>
                     <p class="cred-readout-hint">Code <strong class="pair-code">@_newRunnerCode</strong> works once, for 10 minutes. This page turns to “connected” by itself.</p>
                 }
                 <details class="prefs-details">
                     <summary>Set it up by hand (advanced)</summary>
                     <p class="cred-readout-hint">Shown <strong>once</strong>. Set these on the computer, then start the helper:</p>
-                    <textarea readonly rows="2" aria-label="Manual pairing values">REMOTE_AGENT_HUB=@(Nav.BaseUri)hubs/remote-agent
+                    <textarea readonly rows="2" aria-label="Manual pairing values">REMOTE_AGENT_HUB=@(PublicBase)/hubs/remote-agent
 REMOTE_AGENT_ID=@_newRunner.Value.Id
 REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                 </details>
@@ -758,6 +857,9 @@ else if (_tab == Tab.Sessions)
     @if (_sessions is null) { <Spinner /> }
     else
     {
+        @* E1.5: the steps the approval policy holds (plan, pull request, change, merge) — Approve / Reject, audited. *@
+        <ApprovalsPanel TenantId="@_tenantId" IsAdmin="@_isAdmin" VisibleTasks="@_sessions.Select(s => s.Id).ToHashSet()"
+                        Actor="@(new AgentOs.Web.Services.Approvals.ApprovalActor(_userId, _userLabel, _canApprove))" />
         <DesignChecks TenantId="@_tenantId" IsAdmin="@_isAdmin" VisibleTasks="@_sessions.Select(s => s.Id).ToHashSet()" DecidedBy="@_userLabel" />
         <Panel Title="@(_isAdmin ? "Tasks (all members)" : "Your tasks")">
         <table class="data-table">
@@ -1007,6 +1109,9 @@ else if (_tab == Tab.Sessions)
 @code {
     private enum Tab { Boards, Idea, Runners, Sessions, Log, Files, Autopilot, Knowledge }
 
+    // GAP-05: the server address a computer pairs to — Hosting:PublicBaseUrl; the circuit's own origin in Development only.
+    private string PublicBase => Origin.BaseUrl(Nav.BaseUri);
+
     /// <summary>Board deep-link tabs (WM.RequestLaunchTab("board", …)): the setup checklist's "Pair" → runners, etc.</summary>
     public static class LaunchTabs
     {
@@ -1035,6 +1140,8 @@ else if (_tab == Tab.Sessions)
     // The task whose "Files for the AI" are open.
     private Guid? _filesFor;
     private bool _isAdmin;
+    // Holds the approver or admin role: may approve or reject what the approval policy holds (E1.5).
+    private bool _canApprove;
 
     // ── Data ────────────────────────────────────────────────────────────────────────────────
     private IReadOnlyList<WorkspaceEntity>? _boards;
@@ -1241,6 +1348,20 @@ else if (_tab == Tab.Sessions)
     }
 
     // ── Connect board form ───────────────────────────────────────────────────────────────────
+    // Where the tickets come from (E1.8); _wsKind is where the CODE lives.
+    private enum TicketsFrom { GitHubProjects, AzureBoards, Jira }
+    private TicketsFrom _wsTicketsFrom = TicketsFrom.GitHubProjects;
+    private string _trSite = "";
+    private string _trProject = "";
+    private string _trArea = "";
+    private string _trIteration = "";
+    private string _trStates = "";
+    private string _trTags = "";
+    private string _trJql = "";
+    private string _trStart = "";
+    private string _trDone = "";
+    private string _trAccount = "";
+    private string _trToken = "";
     private SourceProviderKind _wsKind = SourceProviderKind.GitHub;
     private string _wsName = "";
     private string _wsProjectOwner = "";
@@ -1267,6 +1388,7 @@ else if (_tab == Tab.Sessions)
             _userId = user.GetUserId() ?? "";
             _userLabel = string.IsNullOrWhiteSpace(user.Identity?.Name) ? _userId : user.Identity!.Name!;
             _isAdmin = user.IsAdmin();
+            _canApprove = user.CanApprove();
         }
         _resolved = true;
         // Deep-link from the Home app's "Start from idea": prefill the wizard's idea + open the Idea tab.
@@ -1456,14 +1578,14 @@ else if (_tab == Tab.Sessions)
         _tickets = null;
         _ticketError = null;
         _filterRepo = _filterLabel = _filterStatus = "";
-        _loadingTickets = board.ProjectNumber is not null;
+        _loadingTickets = board.HasTickets;
         StateHasChanged();
 
         try
         {
             _repos = await Workspaces.ListReposForTenantAsync(_tenantId, board.Id);
 
-            if (board.ProjectNumber is null)
+            if (!board.HasTickets)
             {
                 return; // Repos-only board — no tickets to load.
             }
@@ -1613,9 +1735,9 @@ else if (_tab == Tab.Sessions)
 
     // ── "Start from idea" wizard (bootstrap) ─────────────────────────────────────────────────────
 
-    // Only boards with a Projects v2 number can take new tickets (each issue is added to the board).
+    // Only boards with tickets can take new ones: a Projects v2 number (each issue is added to the board) or a tracker.
     private IEnumerable<WorkspaceEntity> IdeaBoards()
-        => _boards?.Where(b => b.ProjectNumber is not null) ?? Enumerable.Empty<WorkspaceEntity>();
+        => _boards?.Where(b => b.HasTickets) ?? Enumerable.Empty<WorkspaceEntity>();
 
     private string StepClass(IdeaStep step)
         => _ideaStep == step ? "active" : (_ideaStep > step ? "done" : "");
@@ -2161,6 +2283,8 @@ else if (_tab == Tab.Sessions)
         "Accepted" => "Passed testing",
         "Rejected" => "Failed testing",
         "Closed" => "Closed",
+        "Waiting" => "Waiting for approval",          // E1.5: a pushed change waits for an approver to open its PR
+        "AwaitingApproval" => "Waiting for approval",
         _ => status,
     };
 
@@ -2256,7 +2380,7 @@ else if (_tab == Tab.Sessions)
             _newRunner = (entity.Id, secret.Token);
             _newRunnerLabel = entity.Label;
             _newRunnerConnected = false;
-            _newRunnerCode = PairingCodes.IssueTypedCode(entity.Id, secret.Token, Nav.BaseUri + "hubs/remote-agent");
+            _newRunnerCode = PairingCodes.IssueTypedCode(entity.Id, secret.Token, PublicBase + "/hubs/remote-agent");
             _runnerLabel = "";
             _ = WatchForConnectionAsync(entity.Id);
             var r0 = await Runners.ListForTenantAsync(_tenantId);
@@ -2710,6 +2834,47 @@ else if (_tab == Tab.Sessions)
         if (string.IsNullOrWhiteSpace(_wsName)) { _wsName = board.Title; }
     }
 
+    // GitHub Projects tickets need GitHub code; the trackers keep the code host the member picked. Defaults for the moves.
+    private void OnTicketsFromChanged()
+    {
+        if (_wsTicketsFrom == TicketsFrom.GitHubProjects) { _wsKind = SourceProviderKind.GitHub; }
+        // A Jira site is no Azure DevOps organization (and back): each tracker starts from empty fields.
+        _trSite = _trProject = _trArea = _trIteration = _trStates = _trTags = _trJql = _trAccount = _trToken = "";
+        var (start, done) = TrackerBinding.DefaultStates(_wsTicketsFrom == TicketsFrom.Jira ? SourceProviderKind.Jira : SourceProviderKind.AzureDevOps);
+        _trStart = start;
+        _trDone = done;
+        _foundBoards = null;
+    }
+
+    private const string JqlPlaceholder = "labels = \"ai:ready\" AND sprint in openSprints()";
+
+    internal static string TrackerLabel(TrackerBinding t) =>
+        t.Kind == SourceProviderKind.Jira ? $"Jira {t.Project}" : $"Azure Boards {t.Site}/{t.Project}";
+
+    private static string TrackerHome(TrackerBinding t) =>
+        t.Kind == SourceProviderKind.Jira
+            ? $"{t.JiraBaseUrl()}/browse/{Uri.EscapeDataString(t.Project)}"
+            : $"https://{t.Host ?? "dev.azure.com"}/{Uri.EscapeDataString(t.Site)}/{Uri.EscapeDataString(t.Project)}/_workitems";
+
+    private static IReadOnlyList<string> SplitList(string text) =>
+        text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private TrackerConnectInput? TrackerInput()
+    {
+        if (_wsTicketsFrom == TicketsFrom.GitHubProjects) { return null; }
+        var jira = _wsTicketsFrom == TicketsFrom.Jira;
+        var filter = jira
+            ? new TrackerFilter(Jql: string.IsNullOrWhiteSpace(_trJql) ? null : _trJql.Trim())
+            : new TrackerFilter(
+                AreaPath: string.IsNullOrWhiteSpace(_trArea) ? null : _trArea.Trim(),
+                IterationPath: string.IsNullOrWhiteSpace(_trIteration) ? null : _trIteration.Trim(),
+                States: SplitList(_trStates),
+                Tags: SplitList(_trTags));
+        var binding = new TrackerBinding(jira ? SourceProviderKind.Jira : SourceProviderKind.AzureDevOps,
+            _trSite.Trim(), _trProject.Trim(), jira ? _trAccount.Trim() : null, filter, _trStart.Trim(), _trDone.Trim());
+        return new TrackerConnectInput(binding, string.IsNullOrWhiteSpace(_trToken) ? null : _trToken);
+    }
+
     private async Task ConnectBoard()
     {
         if (_busy) { return; }
@@ -2735,14 +2900,15 @@ else if (_tab == Tab.Sessions)
             var input = new WorkspaceConnectInput(
                 _wsName.Trim(), _wsKind, _wsProjectOwner.Trim(),
                 _wsKind == SourceProviderKind.GitHub ? _wsScope : "org",
-                number,
+                _wsTicketsFrom == TicketsFrom.GitHubProjects ? number : null,
                 string.IsNullOrWhiteSpace(_wsProject) ? null : _wsProject.Trim(),
-                null, _wsToken);
+                null, _wsToken, TrackerInput());
             var result = await Connector.ConnectAsync(_tenantId, string.IsNullOrEmpty(_userId) ? null : _userId, input);
             if (result.Ok)
             {
                 Toasts.Show("Board", $"Connected '{_wsName.Trim()}'.", ToastKind.Ok);
                 _wsName = _wsProjectOwner = _wsNumberText = _wsProject = _wsToken = "";
+                _trSite = _trProject = _trArea = _trIteration = _trStates = _trTags = _trJql = _trAccount = _trToken = "";
                 _foundBoards = null;
                 _boards = await Workspaces.ListForTenantAsync(_tenantId);
             }

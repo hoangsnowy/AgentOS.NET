@@ -10,7 +10,9 @@ using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Sessions.Pairing;
+using AgentOs.SharedKernel.Hosting;
 using AgentOs.SharedKernel.Identity;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -30,19 +32,25 @@ public static class PairingEndpoints
     /// <summary>Rate-limiter policy name the host must register for the code exchange.</summary>
     public const string ExchangeRateLimitPolicy = "pairing-exchange";
 
+    // The runner hub's path on the Web origin (RemoteAgentHub.Path — not referenced to keep Sessions free of RemoteAgent).
+    private const string HubPath = "/hubs/remote-agent";
+
     public static void MapPairingEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
         endpoints.MapGet("/pair/vscode", ApprovePage).RequireAuthorization("Member");
-        endpoints.MapPost("/pair/vscode", ApproveAsync).RequireAuthorization("Member").DisableAntiforgery();
+        // GAP-19: the approve form carries an antiforgery token (ApprovePage) and the POST validates it — a cross-site
+        // form can no longer provision a runner for the signed-in member (SameSite=Lax was the only defence).
+        endpoints.MapPost("/pair/vscode", ApproveAsync).RequireAuthorization("Member");
         // Anonymous — gated by the one-time code. A typed code is short (≈39 bits), so the host rate-limits this
         // route per client under ExchangeRateLimitPolicy (the Web registers it).
-        endpoints.MapPost("/runner/pair/exchange", ExchangeAsync).RequireRateLimiting(ExchangeRateLimitPolicy);
+        endpoints.MapPost("/runner/pair/exchange", ExchangeAsync).AllowAnonymous().RequireRateLimiting(ExchangeRateLimitPolicy);
     }
 
     // The branded approve page. Self-contained HTML so it renders without the Blazor shell.
-    private static IResult ApprovePage(string? callback, string? state, string? label, ITenantContext tenant)
+    private static IResult ApprovePage(
+        string? callback, string? state, string? label, ITenantContext tenant, HttpContext http, IAntiforgery antiforgery)
     {
         if (!IsAllowedCallback(callback))
         {
@@ -53,10 +61,12 @@ public static class PairingEndpoints
 
         var who = WebUtility.HtmlEncode(tenant.UserName ?? tenant.UserId ?? "you");
         var machine = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(label) ? "My dev machine" : label);
+        var csrf = antiforgery.GetAndStoreTokens(http);
         var body =
             $"<p>Pair a new AgentOS.NET runner to your editor, signed in as <strong>{who}</strong>. "
             + "The runner executes AI coding sessions on this machine.</p>"
             + "<form method=\"post\" action=\"/pair/vscode\">"
+            + $"<input type=\"hidden\" name=\"{WebUtility.HtmlEncode(csrf.FormFieldName)}\" value=\"{WebUtility.HtmlEncode(csrf.RequestToken)}\" />"
             + $"<input type=\"hidden\" name=\"callback\" value=\"{WebUtility.HtmlEncode(callback)}\" />"
             + $"<input type=\"hidden\" name=\"state\" value=\"{WebUtility.HtmlEncode(state ?? string.Empty)}\" />"
             + "<label>Machine name</label>"
@@ -72,6 +82,7 @@ public static class PairingEndpoints
         [FromForm] string? label,
         HttpContext http,
         ITenantContext tenant,
+        PublicOrigin origin,
         IRunnerProvisioningService provisioning,
         IPairingCodeStore codes,
         CancellationToken ct)
@@ -86,17 +97,19 @@ public static class PairingEndpoints
                 string.IsNullOrWhiteSpace(label) ? "My dev machine" : label, ct)
             .ConfigureAwait(false);
 
-        var hubUrl = $"{http.Request.Scheme}://{http.Request.Host}/hubs/remote-agent";
+        // GAP-05: the hub the runner will trust comes from the configured public base URL, never the request Host.
+        var hubUrl = origin.Link(HubPath, http.Request);
         var code = codes.Stash(new PairingPayload(provisioned.RunnerId, provisioned.Token, hubUrl));
 
         // Hand the editor only the one-time code; it exchanges it for the token over a direct POST.
         var redirect = $"{callback}?code={Uri.EscapeDataString(code)}&state={Uri.EscapeDataString(state ?? string.Empty)}";
+        // A meta refresh, not an inline <script>: the Web's Content-Security-Policy is script-src 'self' (GAP-12).
         return Results.Content(
             Page("Pairing approved",
                 "<p>Approved. Return to your editor — it should connect automatically. "
                 + "You can close this tab.</p>"
-                + $"<a class=\"b\" href=\"{WebUtility.HtmlEncode(redirect)}\">Open editor</a>"
-                + $"<script>location.href={System.Text.Json.JsonSerializer.Serialize(redirect)};</script>"),
+                + $"<a class=\"b\" href=\"{WebUtility.HtmlEncode(redirect)}\">Open editor</a>",
+                head: $"<meta http-equiv=\"refresh\" content=\"0;url={WebUtility.HtmlEncode(redirect)}\" />"),
             "text/html");
     }
 
@@ -123,8 +136,8 @@ public static class PairingEndpoints
     }
 
     // Minimal branded page chrome (AgentOS.NET, dark) — no external CSS dependency.
-    private static string Page(string title, string body) =>
-        "<!doctype html><html><head><meta charset=\"utf-8\" />"
+    private static string Page(string title, string body, string head = "") =>
+        "<!doctype html><html><head><meta charset=\"utf-8\" />" + head
         + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />"
         + $"<title>{WebUtility.HtmlEncode(title)} · AgentOS.NET</title><style>"
         + ":root{color-scheme:dark}*{box-sizing:border-box}"
