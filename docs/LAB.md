@@ -191,7 +191,8 @@ real data when it is there shows it.
 ## Run the lab tests
 
 ```powershell
-pwsh infra/lab/lab.ps1 test        # lab integration tests + the real-auth UI E2E, wired to the lab ports
+pwsh infra/lab/lab.ps1 test        # lab integration tests + the real-auth UI E2E, wired to the lab ports (Web, Api :6080,
+                                   # Keycloak, MailHog, Postgres) with a 20-min live-run budget for the Workflow test
 ```
 
 Without `RUN_AGENTOS_LAB=true` (CI, other machines) every lab test skips with a precise reason. Each test
