@@ -143,12 +143,12 @@ internal static class GitHubMergeGuard
     private static async Task<IReadOnlyList<ReviewFact>> ReviewsAsync(IGitHubClient client, string owner, string repo, int number)
     {
         var all = await client.PullRequest.Review.GetAll(owner, repo, number).ConfigureAwait(false);
-        var latest = new Dictionary<string, ReviewFact>(StringComparer.OrdinalIgnoreCase);
-        foreach (var r in all.Where(r => r.User?.Login is { Length: > 0 }).OrderBy(r => r.SubmittedAt))
-        {
-            if (StateOf(r.State.Value) is { } s) { latest[r.User.Login] = new ReviewFact(r.User.Login, s); }
-        }
-        return latest.Values.ToList();
+        // Oldest first, so the last review of each reviewer that counts is their latest.
+        return all.Where(r => r.User?.Login is { Length: > 0 } && StateOf(r.State.Value) is not null)
+            .OrderBy(r => r.SubmittedAt)
+            .GroupBy(r => r.User.Login, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new ReviewFact(g.Key, StateOf(g.Last().State.Value).GetValueOrDefault()))
+            .ToList();
     }
 
     // The review states that count; a comment (or a pending review) neither approves nor replaces an approval.
