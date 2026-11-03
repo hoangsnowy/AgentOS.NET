@@ -260,8 +260,18 @@ public sealed class ScopedWriteGuardEgressTests : IDisposable
     [InlineData("cargo install --path .")]
     [InlineData("cargo build --target-dir ../../shared-target")]
     [InlineData("CARGO_TARGET_DIR=../../shared-target cargo build")]
-    [InlineData("cargo build --artifact-dir=/tmp/out")]
     public void CheckCommand_CargoWritesOutsideTheRunFolder_AreRefused(string command) => Bash(command).ShouldNotBeNull(command);
+
+    [Fact]
+    public void CheckCommand_CargoArtifactDirInGitBashTmp_IsTheRunsTempFolder()
+    {
+        var verdict = Bash("cargo build --artifact-dir=/tmp/out");
+
+        // Windows: Git Bash's /tmp is the CLI's TEMP = the run's temp folder (a writable root). Elsewhere /tmp is the
+        // shared one — outside the run (the CLI's TMPDIR is the run's temp folder).
+        if (OperatingSystem.IsWindows()) { verdict.ShouldBeNull(); }
+        else { verdict.ShouldNotBeNull(); }
+    }
 
     [Fact]
     public void CheckCommand_CargoTargetDirInside_IsAllowed() => Bash("CARGO_TARGET_DIR=target/ci cargo test").ShouldBeNull();
