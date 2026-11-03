@@ -146,17 +146,19 @@ internal static class GitHubMergeGuard
         var latest = new Dictionary<string, ReviewFact>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in all.Where(r => r.User?.Login is { Length: > 0 }).OrderBy(r => r.SubmittedAt))
         {
-            var state = r.State.Value switch
-            {
-                PullRequestReviewState.Approved => ReviewState.Approved,
-                PullRequestReviewState.ChangesRequested => ReviewState.ChangesRequested,
-                PullRequestReviewState.Dismissed => ReviewState.Other,
-                _ => (ReviewState?)null,
-            };
-            if (state is { } s) { latest[r.User.Login] = new ReviewFact(r.User.Login, s); }
+            if (StateOf(r.State.Value) is { } s) { latest[r.User.Login] = new ReviewFact(r.User.Login, s); }
         }
         return latest.Values.ToList();
     }
+
+    // The review states that count; a comment (or a pending review) neither approves nor replaces an approval.
+    private static ReviewState? StateOf(PullRequestReviewState state) => state switch
+    {
+        PullRequestReviewState.Approved => ReviewState.Approved,
+        PullRequestReviewState.ChangesRequested => ReviewState.ChangesRequested,
+        PullRequestReviewState.Dismissed => ReviewState.Other,
+        _ => null,
+    };
 
     // Check runs and commit statuses on the head commit, by name.
     private static async Task<IReadOnlyList<CheckFact>> ChecksAsync(IGitHubClient client, string owner, string repo, string? sha)

@@ -32,66 +32,64 @@ public sealed class GitHubRepoSafetyTests
     private static WorkspaceDescriptor Workspace(string defaultBranch = "main") =>
         new(Guid.NewGuid(), "t1", SourceProviderKind.GitHub, Owner, Repo, null, defaultBranch, "pat");
 
-    private sealed class Fake
+    // One mocked GitHub per test (xUnit builds a new instance for each), answering with real Octokit models.
+    private IGitHubClient Client { get; } = Substitute.For<IGitHubClient>();
+    private List<string> MarkedReady { get; } = [];
+    private NewPullRequest? Opened { get; set; }
+
+    private GitHubPrCreationService Service() =>
+        new(NullLogger<GitHubPrCreationService>.Instance, (_, _) => Client, (_, nodeId, _) =>
+        {
+            MarkedReady.Add(nodeId);
+            return Task.CompletedTask;
+        });
+
+    public GitHubRepoSafetyTests()
     {
-        public IGitHubClient Client { get; } = Substitute.For<IGitHubClient>();
-        public List<string> MarkedReady { get; } = [];
-        public NewPullRequest? Opened { get; private set; }
-
-        public GitHubPrCreationService Service() =>
-            new(NullLogger<GitHubPrCreationService>.Instance, (_, _) => Client, (_, nodeId, _) =>
-            {
-                MarkedReady.Add(nodeId);
-                return Task.CompletedTask;
-            });
-
-        public Fake()
+        Client.PullRequest.Create(Owner, Repo, Arg.Do<NewPullRequest>(p => Opened = p))
+            .Returns(_ => Model<PullRequest>("""{"number":12,"html_url":"https://github.com/acme/shop/pull/12","draft":true}"""));
+        Client.Repository.Get(Owner, Repo).Returns(Model<Repository>("""{"default_branch":"main"}"""));
+        Client.PullRequest.Review.GetAll(Owner, Repo, Arg.Any<int>()).Returns(new List<PullRequestReview>());
+        Client.Check.Run.GetAllForReference(Owner, Repo, Arg.Any<string>()).Returns(Model<CheckRunsResponse>("""{"total_count":0,"check_runs":[]}"""));
+        Client.Repository.Status.GetCombined(Owner, Repo, Arg.Any<string>()).Returns(Model<CombinedCommitStatus>("""{"state":"success","statuses":[]}"""));
+        Client.PullRequest.Files(Owner, Repo, Arg.Any<int>()).Returns(new List<PullRequestFile>
         {
-            Client.PullRequest.Create(Owner, Repo, Arg.Do<NewPullRequest>(p => Opened = p))
-                .Returns(_ => Model<PullRequest>("""{"number":12,"html_url":"https://github.com/acme/shop/pull/12","draft":true}"""));
-            Client.Repository.Get(Owner, Repo).Returns(Model<Repository>("""{"default_branch":"main"}"""));
-            Client.PullRequest.Review.GetAll(Owner, Repo, Arg.Any<int>()).Returns(new List<PullRequestReview>());
-            Client.Check.Run.GetAllForReference(Owner, Repo, Arg.Any<string>()).Returns(Model<CheckRunsResponse>("""{"total_count":0,"check_runs":[]}"""));
-            Client.Repository.Status.GetCombined(Owner, Repo, Arg.Any<string>()).Returns(Model<CombinedCommitStatus>("""{"state":"success","statuses":[]}"""));
-            Client.PullRequest.Files(Owner, Repo, Arg.Any<int>()).Returns(new List<PullRequestFile>
-            {
-                Model<PullRequestFile>("""{"filename":"docs/readme.md"}"""),
-            });
-            Client.Repository.Content.GetAllContentsByRef(Owner, Repo, Arg.Any<string>(), Arg.Any<string>())
-                .Throws(new NotFoundException("no CODEOWNERS", System.Net.HttpStatusCode.NotFound));
-            Client.Repository.Branch.GetBranchProtection(Owner, Repo, Arg.Any<string>())
-                .Throws(new NotFoundException("Branch not protected", System.Net.HttpStatusCode.NotFound));
-            Client.PullRequest.Merge(Owner, Repo, Arg.Any<int>(), Arg.Any<MergePullRequest>())
-                .Returns(Model<PullRequestMerge>("""{"merged":true,"message":"merged","sha":"m1"}"""));
-        }
-
-        public static PullRequest Pr(int number, string head = "agentos/issue-5", bool draft = false, string state = "clean") =>
-            Model<PullRequest>(
-                $$$"""{"number":{{{number}}},"node_id":"PR_node","draft":{{{(draft ? "true" : "false")}}},"mergeable":true,"mergeable_state":"{{{state}}}","head":{"ref":"{{{head}}}","sha":"abc"},"base":{"ref":"main","sha":"def"},"user":{"login":"agentos-bot"}}""");
-
-        public void PullRequest(int number, string head = "agentos/issue-5", bool draft = false, string state = "clean") =>
-            Client.PullRequest.Get(Owner, Repo, number).Returns(Pr(number, head, draft, state));
-
-        public void Protection(string json) =>
-            // Configure(): re-configuring a call that throws must not run it.
-            Client.Repository.Branch.Configure().GetBranchProtection(Owner, Repo, "main").Returns(Model<BranchProtectionSettings>(json));
-
-        public void Reviews(params (string Login, string State)[] reviews)
-        {
-            var list = new List<PullRequestReview>();
-            var at = 0;
-            foreach (var (login, state) in reviews)
-            {
-                list.Add(Model<PullRequestReview>(
-                    $$"""{"id":{{++at}},"state":"{{state}}","user":{"login":"{{login}}"},"submitted_at":"2026-11-0{{at}}T10:00:00Z"}"""));
-            }
-            Client.PullRequest.Review.GetAll(Owner, Repo, Arg.Any<int>()).Returns(list);
-        }
-
-        public void CodeOwners(string text) =>
-            Client.Repository.Content.Configure().GetAllContentsByRef(Owner, Repo, ".github/CODEOWNERS", "main")
-                .Returns(new List<RepositoryContent> { Model<RepositoryContent>($$"""{"name":"CODEOWNERS","path":".github/CODEOWNERS","type":"file","encoding":"base64","content":"{{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text))}}"}""") });
+            Model<PullRequestFile>("""{"filename":"docs/readme.md"}"""),
+        });
+        Client.Repository.Content.GetAllContentsByRef(Owner, Repo, Arg.Any<string>(), Arg.Any<string>())
+            .Throws(new NotFoundException("no CODEOWNERS", System.Net.HttpStatusCode.NotFound));
+        Client.Repository.Branch.GetBranchProtection(Owner, Repo, Arg.Any<string>())
+            .Throws(new NotFoundException("Branch not protected", System.Net.HttpStatusCode.NotFound));
+        Client.PullRequest.Merge(Owner, Repo, Arg.Any<int>(), Arg.Any<MergePullRequest>())
+            .Returns(Model<PullRequestMerge>("""{"merged":true,"message":"merged","sha":"m1"}"""));
     }
+
+    private static PullRequest Pr(int number, string head = "agentos/issue-5", bool draft = false, string state = "clean") =>
+        Model<PullRequest>(
+            $$$"""{"number":{{{number}}},"node_id":"PR_node","draft":{{{(draft ? "true" : "false")}}},"mergeable":true,"mergeable_state":"{{{state}}}","head":{"ref":"{{{head}}}","sha":"abc"},"base":{"ref":"main","sha":"def"},"user":{"login":"agentos-bot"}}""");
+
+    private void PullRequest(int number, string head = "agentos/issue-5", bool draft = false, string state = "clean") =>
+        Client.PullRequest.Get(Owner, Repo, number).Returns(Pr(number, head, draft, state));
+
+    private void Protection(string json) =>
+        // Configure(): re-configuring a call that throws must not run it.
+        Client.Repository.Branch.Configure().GetBranchProtection(Owner, Repo, "main").Returns(Model<BranchProtectionSettings>(json));
+
+    private void Reviews(params (string Login, string State)[] reviews)
+    {
+        var list = new List<PullRequestReview>();
+        var at = 0;
+        foreach (var (login, state) in reviews)
+        {
+            list.Add(Model<PullRequestReview>(
+                $$"""{"id":{{++at}},"state":"{{state}}","user":{"login":"{{login}}"},"submitted_at":"2026-11-0{{at}}T10:00:00Z"}"""));
+        }
+        Client.PullRequest.Review.GetAll(Owner, Repo, Arg.Any<int>()).Returns(list);
+    }
+
+    private void CodeOwners(string text) =>
+        Client.Repository.Content.Configure().GetAllContentsByRef(Owner, Repo, ".github/CODEOWNERS", "main")
+            .Returns(new List<RepositoryContent> { Model<RepositoryContent>($$"""{"name":"CODEOWNERS","path":".github/CODEOWNERS","type":"file","encoding":"base64","content":"{{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text))}}"}""") });
 
     // ── Opening pull requests ──
 
@@ -100,15 +98,14 @@ public sealed class GitHubRepoSafetyTests
     [InlineData(false)]
     public async Task CreateFromBranch_OpensADraft_OnlyWhenThePolicySaysSo(bool draft)
     {
-        var fake = new Fake();
 
-        var result = await fake.Service().CreateFromBranchAsync(Workspace(), "agentos/issue-5", "Add dark mode", "body", draft);
+        var result = await Service().CreateFromBranchAsync(Workspace(), "agentos/issue-5", "Add dark mode", "body", draft);
 
         result.Ok.ShouldBeTrue();
-        fake.Opened.ShouldNotBeNull();
-        fake.Opened.Draft.ShouldBe(draft);
-        fake.Opened.Head.ShouldBe("agentos/issue-5");
-        fake.Opened.Base.ShouldBe("main");
+        Opened.ShouldNotBeNull();
+        Opened.Draft.ShouldBe(draft);
+        Opened.Head.ShouldBe("agentos/issue-5");
+        Opened.Base.ShouldBe("main");
     }
 
     [Theory]
@@ -116,13 +113,12 @@ public sealed class GitHubRepoSafetyTests
     [InlineData("refs/heads/main")]
     public async Task CreateFromBranch_NeverFromTheDefaultBranch(string branch)
     {
-        var fake = new Fake();
 
-        var result = await fake.Service().CreateFromBranchAsync(Workspace(), branch, "t", "b", draft: false);
+        var result = await Service().CreateFromBranchAsync(Workspace(), branch, "t", "b", draft: false);
 
         result.Ok.ShouldBeFalse();
         result.Error.ShouldNotBeNull().ShouldContain("default branch");
-        await fake.Client.PullRequest.DidNotReceiveWithAnyArgs().Create(default!, default!, default!);
+        await Client.PullRequest.DidNotReceiveWithAnyArgs().Create(default!, default!, default!);
     }
 
     [Fact]
@@ -147,107 +143,99 @@ public sealed class GitHubRepoSafetyTests
     [Fact]
     public async Task Merge_Unprotected_Merges()
     {
-        var fake = new Fake();
-        fake.PullRequest(5);
+        PullRequest(5);
 
-        (await fake.Service().MergeAsync(Workspace(), 5)).ShouldBeNull();
+        (await Service().MergeAsync(Workspace(), 5)).ShouldBeNull();
 
-        await fake.Client.PullRequest.Received(1).Merge(Owner, Repo, 5, Arg.Any<MergePullRequest>());
+        await Client.PullRequest.Received(1).Merge(Owner, Repo, 5, Arg.Any<MergePullRequest>());
     }
 
     [Fact]
     public async Task Merge_RefusedWhenTheProtectionWouldRefuse_RequiredReviews()
     {
-        var fake = new Fake();
-        fake.PullRequest(5);
-        fake.Protection("""{"required_pull_request_reviews":{"required_approving_review_count":1,"require_code_owner_reviews":false},"required_status_checks":{"strict":false,"contexts":[]}}""");
+        PullRequest(5);
+        Protection("""{"required_pull_request_reviews":{"required_approving_review_count":1,"require_code_owner_reviews":false},"required_status_checks":{"strict":false,"contexts":[]}}""");
 
-        var error = await fake.Service().MergeAsync(Workspace(), 5);
+        var error = await Service().MergeAsync(Workspace(), 5);
 
         error.ShouldNotBeNull().ShouldStartWith("Refusing to merge");
         error.ShouldContain("needs 1 approving review(s), it has 0");
-        await fake.Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
+        await Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
     }
 
     [Fact]
     public async Task Merge_RefusedWithoutACodeOwnersApproval_AndAllowedWithIt()
     {
-        var fake = new Fake();
-        fake.PullRequest(5);
-        fake.Protection("""{"required_pull_request_reviews":{"required_approving_review_count":1,"require_code_owner_reviews":true}}""");
-        fake.CodeOwners("/docs/ @alice\n");
-        fake.Reviews(("bob", "APPROVED"));
+        PullRequest(5);
+        Protection("""{"required_pull_request_reviews":{"required_approving_review_count":1,"require_code_owner_reviews":true}}""");
+        CodeOwners("/docs/ @alice\n");
+        Reviews(("bob", "APPROVED"));
 
-        (await fake.Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("a code owner must approve docs/readme.md (@alice)");
-        await fake.Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
+        (await Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("a code owner must approve docs/readme.md (@alice)");
+        await Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
 
-        fake.Reviews(("bob", "APPROVED"), ("alice", "APPROVED"));
-        (await fake.Service().MergeAsync(Workspace(), 5)).ShouldBeNull();
-        await fake.Client.PullRequest.Received(1).Merge(Owner, Repo, 5, Arg.Any<MergePullRequest>());
+        Reviews(("bob", "APPROVED"), ("alice", "APPROVED"));
+        (await Service().MergeAsync(Workspace(), 5)).ShouldBeNull();
+        await Client.PullRequest.Received(1).Merge(Owner, Repo, 5, Arg.Any<MergePullRequest>());
     }
 
     [Fact]
     public async Task Merge_RefusedWhenARequiredCheckHasNotPassed()
     {
-        var fake = new Fake();
-        fake.PullRequest(5);
-        fake.Protection("""{"required_status_checks":{"strict":true,"contexts":["build"]}}""");
+        PullRequest(5);
+        Protection("""{"required_status_checks":{"strict":true,"contexts":["build"]}}""");
 
-        (await fake.Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("the required check 'build' has not reported");
-        await fake.Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
+        (await Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("the required check 'build' has not reported");
+        await Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
     }
 
     [Fact]
     public async Task Merge_RefusedByARulesetRule_ReadFromTheRulesApi()
     {
-        var fake = new Fake();
-        fake.PullRequest(5);
+        PullRequest(5);
         // The JSON GET /repos/{o}/{r}/rules/branches/main returns, through Octokit's own (snake_case) deserializer.
         var rules = Model<List<AgentOs.Modules.Integration.Governance.GitHubBranchRule>>(
             """[{"type":"pull_request","parameters":{"required_approving_review_count":2,"require_code_owner_review":false}},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"ci/build"}]}}]""");
         var response = Substitute.For<IApiResponse<List<AgentOs.Modules.Integration.Governance.GitHubBranchRule>>>();
         response.Body.Returns(rules);
-        fake.Client.Connection.Get<List<AgentOs.Modules.Integration.Governance.GitHubBranchRule>>(
+        Client.Connection.Get<List<AgentOs.Modules.Integration.Governance.GitHubBranchRule>>(
             Arg.Is<Uri>(u => u.ToString() == "repos/acme/shop/rules/branches/main"), Arg.Any<IDictionary<string, string>>()).Returns(response);
 
-        var error = await fake.Service().MergeAsync(Workspace(), 5);
+        var error = await Service().MergeAsync(Workspace(), 5);
 
         error.ShouldNotBeNull().ShouldContain("needs 2 approving review(s)");
         error.ShouldContain("the required check 'ci/build' has not reported");
-        await fake.Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
+        await Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
     }
 
     [Fact]
     public async Task Merge_RefusedWhenGitHubSaysBlocked_EvenIfTheTokenCouldBypass()
     {
-        var fake = new Fake();
-        fake.PullRequest(5, state: "blocked");
+        PullRequest(5, state: "blocked");
 
-        (await fake.Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("blocked by the branch's protection");
-        await fake.Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
+        (await Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("blocked by the branch's protection");
+        await Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
     }
 
     [Fact]
     public async Task Merge_NeverFromTheDefaultBranch()
     {
-        var fake = new Fake();
-        fake.PullRequest(5, head: "main");
+        PullRequest(5, head: "main");
 
-        (await fake.Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("default branch");
-        await fake.Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
-        await fake.Client.Git.Reference.DidNotReceiveWithAnyArgs().Delete(default!, default!, default!);
+        (await Service().MergeAsync(Workspace(), 5)).ShouldNotBeNull().ShouldContain("default branch");
+        await Client.PullRequest.DidNotReceiveWithAnyArgs().Merge(default!, default!, default, default!);
+        await Client.Git.Reference.DidNotReceiveWithAnyArgs().Delete(default!, default!, default!);
     }
 
     [Fact]
     public async Task Merge_ADraft_IsMarkedReadyFirst()
     {
-        var fake = new Fake();
         // The first read is the draft; after the mutation GitHub reads it ready.
-        fake.Client.PullRequest.Get(Owner, Repo, 5).Returns(Fake.Pr(5, draft: true), Fake.Pr(5, draft: false));
+        Client.PullRequest.Get(Owner, Repo, 5).Returns(Pr(5, draft: true), Pr(5, draft: false));
 
-        (await fake.Service().MergeAsync(Workspace(), 5)).ShouldBeNull();
+        (await Service().MergeAsync(Workspace(), 5)).ShouldBeNull();
 
-        fake.MarkedReady.ShouldBe(["PR_node"]);
-        await fake.Client.PullRequest.Received(1).Merge(Owner, Repo, 5, Arg.Any<MergePullRequest>());
+        MarkedReady.ShouldBe(["PR_node"]);
+        await Client.PullRequest.Received(1).Merge(Owner, Repo, 5, Arg.Any<MergePullRequest>());
     }
 }

@@ -196,18 +196,23 @@ public sealed class CodeOwners
     public static CodeOwners Parse(string? text)
     {
         var rules = new List<(Regex, IReadOnlyList<string>)>();
-        foreach (var raw in (text ?? string.Empty).Split('\n'))
+        foreach (var line in (text ?? string.Empty).Split('\n').Select(WithoutComment))
         {
-            var line = raw.Trim();
-            if (line.Length == 0 || line[0] == '#') { continue; }
-            var hash = line.IndexOf(" #", StringComparison.Ordinal);
-            if (hash > 0) { line = line[..hash]; }
             var parts = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 0 || parts[0].StartsWith('!')) { continue; }
             var owners = parts.Skip(1).Where(o => o.Contains('@', StringComparison.Ordinal)).Select(o => o.ToLowerInvariant()).ToList();
             rules.Add((ToRegex(parts[0]), owners));
         }
         return new CodeOwners(rules);
+    }
+
+    // A line trimmed and without its comment ("#" at the start, or " #" after the owners); a comment line reads empty.
+    private static string WithoutComment(string raw)
+    {
+        var line = raw.Trim();
+        if (line.Length == 0 || line[0] == '#') { return string.Empty; }
+        var hash = line.IndexOf(" #", StringComparison.Ordinal);
+        return hash > 0 ? line[..hash] : line;
     }
 
     /// <summary>The owners of <paramref name="path"/> (lower case; empty when nobody owns it).</summary>
