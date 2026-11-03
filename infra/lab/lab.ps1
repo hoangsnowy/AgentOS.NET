@@ -227,6 +227,10 @@ switch ($Command) {
         $env:AGENTOS_REAL_URL = $WebUrl
         $env:MAILHOG_URL = 'http://localhost:9025'
         $env:AGENTOS_KC_URL = 'https://localhost:9080'   # Keycloak admin API, for tests that clean up users they create
+        # The lab's Api (the API-token test otherwise defaults to the dev Api on :5080 and is refused), and a live-run
+        # budget for the Workflow test: a real 5-agent pipeline on the paired runner takes minutes, not the 90 s default.
+        $env:AGENTOS_API_URL = 'https://localhost:6080'
+        if (-not $env:AGENTOS_E2E_RUN_TIMEOUT_SECONDS) { $env:AGENTOS_E2E_RUN_TIMEOUT_SECONDS = '1200' }
         if ($pgPort) { $env:AGENTOS_PG_CONN = "Host=localhost;Port=$pgPort;Database=agentos;Username=postgres;Password=postgres" }
         Write-Host '== Lab integration tests (real GitHub / Azure DevOps)'
         # Tests run from the lab worktree: same code as the running lab, own build output (no dev-checkout locks).
