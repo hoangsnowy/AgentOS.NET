@@ -29,6 +29,11 @@ public interface IAgentProfiles
     /// <summary>Whether a Board agent run that ended without its JSON reply is asked once for it, for the current tenant
     /// (<see cref="AutopilotSettings.RecoverMissingReplyKey"/>; on by default).</summary>
     ValueTask<bool> RecoverMissingReplyAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(true);
+
+    /// <summary>How long one specialist answer may take on a paired computer, for the current tenant
+    /// (<see cref="AgentSettings.AnswerTimeoutMinutes"/>; <see cref="AgentOs.Domain.Llm.LlmRequest.AgentAnswerTimeout"/> by default).</summary>
+    ValueTask<TimeSpan> AnswerTimeoutAsync(CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(AgentOs.Domain.Llm.LlmRequest.AgentAnswerTimeout);
 }
 
 /// <summary><see cref="IAgentProfiles"/> over <see cref="ISettings"/>.</summary>
@@ -96,6 +101,15 @@ public sealed class SettingsAgentProfiles : IAgentProfiles
     /// <inheritdoc />
     public ValueTask<bool> RecoverMissingReplyAsync(CancellationToken cancellationToken = default) =>
         AutopilotSettings.ReadRecoverMissingReplyAsync(_settings, CurrentTenant(), cancellationToken);
+
+    /// <inheritdoc />
+    public async ValueTask<TimeSpan> AnswerTimeoutAsync(CancellationToken cancellationToken = default)
+    {
+        var fallback = (int)AgentOs.Domain.Llm.LlmRequest.AgentAnswerTimeout.TotalMinutes;
+        var minutes = await _settings.GetIntAsync(AgentSettings.AnswerTimeoutMinutes, CurrentTenant(), fallback, cancellationToken)
+            .ConfigureAwait(false);
+        return TimeSpan.FromMinutes(Math.Clamp(minutes, AgentSettings.AnswerTimeoutMin, AgentSettings.AnswerTimeoutMax));
+    }
 
     // Ambient identity first (Blazor circuits and background runs push it); else the request's tenant context.
     private string? CurrentTenant()

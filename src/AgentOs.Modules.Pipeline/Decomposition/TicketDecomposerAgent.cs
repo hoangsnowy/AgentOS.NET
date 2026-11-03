@@ -86,7 +86,7 @@ public sealed partial class TicketDecomposerAgent : ITicketDecomposerAgent
             Model: profile.Model,
             Temperature: profile.Temperature,
             MaxTokens: profile.MaxTokens,
-            Timeout: LlmRequest.AgentAnswerTimeout)
+            Timeout: await BoardAgent.AnswerTimeoutAsync(_profiles, cancellationToken).ConfigureAwait(false))
         {
             AgentRole = AgentRoles.Discovery,
         };

@@ -349,7 +349,8 @@ static async Task<RemoteExecResult> RunLlmAsync(RemoteExecRequest request, Func<
         : scoped ? [.. profile.DefaultArgs, .. AgentOs.RemoteAgent.ScopedAutonomy.ArgsFor(cmd)]
         : profile.DefaultArgs;
     // The model the agent's profile picked (Settings → Agent profiles) — `--model` for claude, `-m` for codex (CliModel.cs).
-    var modelFlags = AgentOs.RemoteAgent.CliModel.Flags(cmd, request.Model, args);
+    var modelFlags = AgentOs.RemoteAgent.CliModel.Flags(cmd, request.Model, args,
+        Environment.GetEnvironmentVariable(AgentOs.RemoteAgent.CliModel.ClaudeFallbackVariable) ?? AgentOs.RemoteAgent.CliModel.DefaultClaudeFallback);
     args = [.. args, .. modelFlags];
     // Claude with the runner's own flags streams its events, so the Board can show what it is doing (CliProgress.cs).
     // A custom REMOTE_AGENT_ARGS keeps exactly what the operator asked for.

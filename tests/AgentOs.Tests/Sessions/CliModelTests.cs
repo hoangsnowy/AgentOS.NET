@@ -31,13 +31,27 @@ public sealed class CliModelTests
     [InlineData("claude", "")]
     [InlineData("claude", "   ")]
     [InlineData("claude", null)]
-    [InlineData("claude", "gpt-5")]                  // a model claude cannot serve: its default applies
     [InlineData("codex", "claude-sonnet-4-6")]        // a model codex cannot serve
     [InlineData("my-agent", "claude-sonnet-4-6")]     // an unknown CLI: never guess its flags
     [InlineData("claude", "--dangerously-skip-permissions")]   // never let a model id become a flag
     [InlineData("claude", "claude sonnet")]
     public void NoFlag_WhenThereIsNothingTheCliCanUse(string command, string? model) =>
         CliModel.Flags(command, model, ClaudeDefaults).ShouldBeEmpty();
+
+    // A non-Claude profile model on claude runs as the Claude fallback, never silently as the CLI default (a slow
+    // thinking model ran Workflow Coding steps past the answer deadline on the lab, 2026-11-04).
+    [Theory]
+    [InlineData("gpt-5")]
+    [InlineData("gpt-4.1")]
+    [InlineData("gpt-4o-mini")]
+    public void Claude_NonClaudeModel_RunsAsTheClaudeFallback(string model)
+    {
+        CliModel.Flags("claude", model, ClaudeDefaults).ShouldBe(["--model", CliModel.DefaultClaudeFallback]);
+        CliModel.Flags("claude", model, ClaudeDefaults, "claude-haiku-4-5").ShouldBe(["--model", "claude-haiku-4-5"]);
+        CliModel.Flags("claude", model, ClaudeDefaults, "").ShouldBeEmpty();                        // empty = the CLI default
+        CliModel.Flags("claude", model, ClaudeDefaults, "--yolo").ShouldBeEmpty();                  // never a flag
+        CliModel.Flags("claude", model, ["-p", "--model", "opus"], "sonnet").ShouldBeEmpty();      // operator args win
+    }
 
     [Theory]
     [InlineData("--model", "opus")]

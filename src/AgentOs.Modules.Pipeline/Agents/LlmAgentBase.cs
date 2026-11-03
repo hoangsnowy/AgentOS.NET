@@ -123,7 +123,7 @@ public abstract class LlmAgentBase
             // parsing the system prompt — robust against per-tenant prompt overrides — and Insights files the call
             // under it.
             AgentRole = role,
-            Timeout = LlmRequest.AgentAnswerTimeout,
+            Timeout = _profiles is null ? LlmRequest.AgentAnswerTimeout : await _profiles.AnswerTimeoutAsync(ct).ConfigureAwait(false),
         };
         var response = await llm.SendAsync(request, ct).ConfigureAwait(false);
 

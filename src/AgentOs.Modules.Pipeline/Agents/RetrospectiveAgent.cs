@@ -71,7 +71,7 @@ public sealed class RetrospectiveAgent(ILlmClientFactory factory, ILogger<Retros
         }
         var request = new LlmRequest(
             await BoardAgent.SystemPromptAsync(prompts, AgentRoles.Retrospective, Instructions, null, UntrustedText.SystemRule, ct).ConfigureAwait(false),
-            User(input), profile.Model, profile.Temperature, profile.MaxTokens, Timeout: LlmRequest.AgentAnswerTimeout)
+            User(input), profile.Model, profile.Temperature, profile.MaxTokens, Timeout: await BoardAgent.AnswerTimeoutAsync(profiles, ct).ConfigureAwait(false))
         {
             AgentRole = AgentRoles.Retrospective,
         };

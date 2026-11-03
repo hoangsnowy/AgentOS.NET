@@ -81,7 +81,7 @@ public sealed class AutopilotOrchestratorAgent(ILlmClientFactory factory, ILogge
         var request = new LlmRequest(
             await BoardAgent.SystemPromptAsync(prompts, AgentRoles.AutopilotOrchestrator, Instructions, null, UntrustedText.SystemRule, ct).ConfigureAwait(false),
             User(brief) + await PracticesAsync(brief, ct).ConfigureAwait(false),
-            profile.Model, profile.Temperature, profile.MaxTokens, Timeout: LlmRequest.AgentAnswerTimeout)
+            profile.Model, profile.Temperature, profile.MaxTokens, Timeout: await BoardAgent.AnswerTimeoutAsync(profiles, ct).ConfigureAwait(false))
         {
             AgentRole = AgentRoles.AutopilotOrchestrator,
         };

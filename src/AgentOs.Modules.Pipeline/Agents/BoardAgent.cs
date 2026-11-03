@@ -17,6 +17,10 @@ public static class BoardAgent
 {
     private static readonly AgentsOptions Seeds = new();
 
+    /// <summary>The tenant's answer time limit (<see cref="AgentSettings.AnswerTimeoutMinutes"/>), or the default without profiles.</summary>
+    public static ValueTask<TimeSpan> AnswerTimeoutAsync(IAgentProfiles? profiles, CancellationToken ct) =>
+        profiles is null ? ValueTask.FromResult(AgentOs.Domain.Llm.LlmRequest.AgentAnswerTimeout) : profiles.AnswerTimeoutAsync(ct);
+
     /// <summary>The live profile for <paramref name="role"/>: the settings registry when wired, else the seed.</summary>
     public static async ValueTask<AgentOptions> ProfileAsync(IAgentProfiles? profiles, IOptions<AgentsOptions>? options, string role,
         CancellationToken ct)
