@@ -1,11 +1,14 @@
 @* AuditLogApp — Settings → Audit log. The tenant's audit trail: settings changes (with old → new; secrets
    masked, stored keys/prompts shown as "set (N chars)"), member lifecycle, invitations and sign-in events.
    Admins see their own tenant; platform admins can switch to the platform scope (platform settings). Filter
-   by kind, export CSV (formula-safe). Tenant is read from AuthenticationState — a circuit has no HttpContext. *@
+   by kind, export CSV (formula-safe). Tenant is read from AuthenticationState — a circuit has no HttpContext.
+   GAP-11b: the trail is append-only in the database and hash-chained per tenant; "Verify chain" walks it and says
+   "intact" or names the first event that was changed or removed (each row shows its place in the chain, #N). *@
 
 @using Microsoft.AspNetCore.Components.Authorization
 @using AgentOs.Modules.Tenants
 @inject IAuditLog Audit
+@inject IAuditChainVerifier ChainVerifier
 
 @if (!_resolved)
 {
@@ -24,7 +27,7 @@ else
     <header class="page-head">
         <div>
             <h1 class="page-title">Audit log · <code>@(_platformScope ? "platform" : _tenantId)</code></h1>
-            <p class="page-sub">Who changed what, and when — settings, members, invitations and sign-in. Append-only.</p>
+            <p class="page-sub">Who changed what, and when — settings, members, invitations and sign-in. Append-only and tamper-evident.</p>
         </div>
         <div class="audit-actions">
             @if (_isPlatformAdmin)
@@ -34,12 +37,33 @@ else
                     <option value="platform">Platform settings</option>
                 </select>
             }
+            <Btn Size="Btn.ButtonSize.Sm" OnClick="VerifyAsync" Loading="_verifying" Title="Check that no event was changed or removed">
+                <Icon Name="shield" Size="13" /> Verify chain
+            </Btn>
             <a class="btn btn-sm" href="@($"/audit/export?scope={(_platformScope ? "platform" : "tenant")}")" download>
                 <Icon Name="file" Size="13" /> Export CSV
             </a>
             <Btn Size="Btn.ButtonSize.Sm" OnClick="LoadAsync" Disabled="_loading"><Icon Name="arrow-clockwise" Size="13" Loop="_loading" /> Refresh</Btn>
         </div>
     </header>
+
+    @if (_chainError is not null)
+    {
+        <div class="login-error" role="alert">@_chainError</div>
+    }
+    else if (_chain is not null)
+    {
+        <div class="audit-chain @(_chain.Intact ? "is-intact" : "is-broken")" role="status" data-testid="audit-chain">
+            <Icon Name="@(_chain.Intact ? "check" : "warning")" Size="16" />
+            <div class="audit-chain-text">
+                <span class="audit-chain-title">@_chain.Summary</span>
+                @if (_chain.Intact && _chain.HeadHash is not null)
+                {
+                    <span class="audit-chain-head" title="Record this value somewhere else to prove later that nothing after it was rewritten">Latest event hash: @_chain.HeadHash</span>
+                }
+            </div>
+        </div>
+    }
 
     <div class="audit-filters" role="group" aria-label="Filter by kind">
         @foreach (var k in Kinds)
@@ -60,12 +84,13 @@ else
         <Panel>
             <table class="data-table audit-table">
                 <thead>
-                    <tr><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr>
+                    <tr><th>#</th><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr>
                 </thead>
                 <tbody>
                     @foreach (var e in Filtered())
                     {
                         <tr>
+                            <td class="audit-seq" title="@(e.Sequence is null ? "Recorded before the chain existed" : $"Event {e.Sequence} in this chain")">@(e.Sequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "—")</td>
                             <td class="audit-when" title="@e.TimestampUtc.ToString("u")">@e.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
                             <td>@(string.IsNullOrEmpty(e.UserId) ? "—" : e.UserId)</td>
                             <td><span class="badge @BadgeClass(e.Action)">@e.Action</span></td>
@@ -88,14 +113,21 @@ else
     private bool _isPlatformAdmin;
     private bool _platformScope;
     private bool _loading;
+    private bool _verifying;
     // Null = the sign-in carries no tenant claim: fail closed (GAP-17), never the shared "default" tenant.
     private string? _tenantId;
     private string _kind = "all";
     private IReadOnlyList<AuditEntry>? _rows;
+    private AuditChainReport? _chain;
+    private string? _chainError;
 
     private sealed record Kind(string Key, string Label);
 
     private static readonly Kind[] Kinds = [new("all", "All"), new("settings", "Settings"), new("members", "Members"), new("signin", "Sign-in")];
+
+    // The scope to read and verify: the platform scope when selected, else the tenant. Null when the sign-in has no
+    // tenant claim — nothing is read or verified then (GAP-17), not even the platform scope.
+    private string? Scope => _tenantId is null ? null : _platformScope ? AuditScopes.Platform : _tenantId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -112,11 +144,11 @@ else
 
     private async Task LoadAsync()
     {
-        if (_tenantId is not { } tenant) { return; }
+        if (Scope is not { } scope) { return; }
         _loading = true;
         try
         {
-            _rows = await Audit.ListAsync(_platformScope ? AuditScopes.Platform : tenant, Max);
+            _rows = await Audit.ListAsync(scope, Max);
         }
         finally
         {
@@ -124,10 +156,24 @@ else
         }
     }
 
+    private async Task VerifyAsync()
+    {
+        if (_verifying || Scope is not { } scope) { return; }
+        _verifying = true;
+        _chainError = null;
+        _chain = null;
+        await CircuitSafe.RunAsync(
+            async () => _chain = await ChainVerifier.VerifyAsync(scope),
+            ex => _chainError = $"Couldn't verify the chain: {ex.Message}");
+        _verifying = false;
+    }
+
     private async Task OnScopeChanged(ChangeEventArgs e)
     {
         _platformScope = _isPlatformAdmin && e.Value?.ToString() == "platform";
         _rows = null;
+        _chain = null;
+        _chainError = null;
         await LoadAsync();
     }
 
@@ -147,7 +193,7 @@ else
 
     private static string BadgeClass(string action) => action switch
     {
-        "login.failed" or "member.removed" => "err",
+        "login.failed" or "member.removed" or "invitation.refused" => "err",
         _ when action.StartsWith("setting.", StringComparison.Ordinal) => "info",
         _ when action.StartsWith("member.", StringComparison.Ordinal) || action.StartsWith("invitation.", StringComparison.Ordinal) => "warn",
         _ => "ok",

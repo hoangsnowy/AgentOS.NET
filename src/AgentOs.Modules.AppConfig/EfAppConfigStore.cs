@@ -2,6 +2,11 @@
 // owns its own LLM keys / GitHub PAT / etc. Singleton; per-op DI scope is created here and the
 // tenant id is read out of the OUTER request scope via the captured IServiceProvider. A 15-second
 // read cache keeps the LLM hot path off the DB on every call; cache keys include the tenant.
+// RLS (ADR-0012 stage 2, GAP-14): config.app_config is bound like every tenant table. A flow that acts for a tenant
+// reads and writes that tenant's rows only (plus the "__platform" rows every tenant may read); a flow with no tenant
+// of its own (a background worker, an anonymous request) that names the tenant it works for is bound to that tenant
+// for the one call — an explicit tenant FILLS a missing one, it never overrides the flow's own. Platform rows are
+// written only inside RowLevelSecurity.PlatformScope (SettingsService does that for platform-scope settings).
 
 using System;
 using System.Collections.Concurrent;
@@ -12,6 +17,7 @@ using System.Threading.Tasks;
 using AgentOs.Modules.AppConfig.Persistence;
 using AgentOs.Modules.AppConfig.Persistence.Entities;
 using AgentOs.SharedKernel.Identity;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,37 +49,45 @@ public sealed class EfAppConfigStore : IAppConfigStore
     {
         await using var scope = _rootProvider.CreateAsyncScope();
         var tenantId = ResolveTenant(scope.ServiceProvider);
-        var cacheKey = CacheKey(tenantId, key);
-        if (_cache.TryGetValue(cacheKey, out var hit) && hit.FetchedUtc + CacheTtl > DateTime.UtcNow)
-        {
-            return hit.Value;
-        }
-
-        var db = scope.ServiceProvider.GetRequiredService<AppConfigDbContext>();
-        var row = await db.AppConfig.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Key == key, cancellationToken)
-            .ConfigureAwait(false);
-        var value = row is null ? null : TryUnprotect(row.EncryptedValue);
-        _cache[cacheKey] = new CacheEntry(value, DateTime.UtcNow);
-        return value;
+        return TryCached(tenantId, key, out var cached)
+            ? cached
+            : await ReadAsync(scope.ServiceProvider, tenantId, key, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async ValueTask<string?> GetForTenantAsync(string tenantId, string key, CancellationToken cancellationToken = default)
     {
-        var cacheKey = CacheKey(tenantId, key);
-        if (_cache.TryGetValue(cacheKey, out var hit) && hit.FetchedUtc + CacheTtl > DateTime.UtcNow)
+        if (TryCached(tenantId, key, out var cached))
         {
-            return hit.Value;
+            return cached;
         }
-
         await using var scope = _rootProvider.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppConfigDbContext>();
+        return await ReadAsync(scope.ServiceProvider, tenantId, key, cancellationToken).ConfigureAwait(false);
+    }
+
+    private bool TryCached(string tenantId, string key, out string? value)
+    {
+        if (Cacheable(tenantId) && _cache.TryGetValue(CacheKey(tenantId, key), out var hit) && hit.FetchedUtc + CacheTtl > DateTime.UtcNow)
+        {
+            value = hit.Value;
+            return true;
+        }
+        value = null;
+        return false;
+    }
+
+    private async ValueTask<string?> ReadAsync(IServiceProvider scoped, string tenantId, string key, CancellationToken cancellationToken)
+    {
+        using var bound = BindTenant(tenantId);
+        var db = scoped.GetRequiredService<AppConfigDbContext>();
         var row = await db.AppConfig.AsNoTracking()
             .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Key == key, cancellationToken)
             .ConfigureAwait(false);
         var value = row is null ? null : TryUnprotect(row.EncryptedValue);
-        _cache[cacheKey] = new CacheEntry(value, DateTime.UtcNow);
+        if (Cacheable(tenantId))
+        {
+            _cache[CacheKey(tenantId, key)] = new CacheEntry(value, DateTime.UtcNow);
+        }
         return value;
     }
 
@@ -88,6 +102,7 @@ public sealed class EfAppConfigStore : IAppConfigStore
         ArgumentException.ThrowIfNullOrEmpty(key);
         ArgumentNullException.ThrowIfNull(value);
 
+        using var bound = BindTenant(tenantId);
         await using var scope = _rootProvider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppConfigDbContext>();
         var cipher = _protector.Protect(value);
@@ -115,6 +130,7 @@ public sealed class EfAppConfigStore : IAppConfigStore
     public async ValueTask DeleteForTenantAsync(string tenantId, string key, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(tenantId);
+        using var bound = BindTenant(tenantId);
         await using var scope = _rootProvider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppConfigDbContext>();
         var row = await db.AppConfig
@@ -149,6 +165,7 @@ public sealed class EfAppConfigStore : IAppConfigStore
     {
         await using var scope = _rootProvider.CreateAsyncScope();
         var tenantId = ResolveTenant(scope.ServiceProvider);
+        using var bound = BindTenant(tenantId);
         var db = scope.ServiceProvider.GetRequiredService<AppConfigDbContext>();
         var keys = await db.AppConfig.AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.Key.StartsWith(prefix))
@@ -157,6 +174,22 @@ public sealed class EfAppConfigStore : IAppConfigStore
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         return keys;
     }
+
+    /// <summary>Bind a flow that has no tenant of its own to the tenant it names (see the file header); null when the flow
+    /// already acts for a tenant, is a platform operation, or the rows are the shared platform rows.</summary>
+    internal static IDisposable? BindTenant(string tenantId)
+        => string.Equals(tenantId, RowLevelSecurity.PlatformSettingsTenant, StringComparison.Ordinal)
+            ? null
+            : RowLevelSecurity.TenantScopeIfUnbound(tenantId);
+
+    /// <summary>False for a read the database refuses (RLS on, the flow acts for ANOTHER tenant): it must neither be served
+    /// from the per-process cache (that would hand one tenant's value to another flow) nor pin its refused null there.</summary>
+    internal static bool Cacheable(string tenantId)
+        => !RowLevelSecurity.Enabled
+           || RowLevelSecurity.InPlatformScope
+           || string.Equals(tenantId, RowLevelSecurity.PlatformSettingsTenant, StringComparison.Ordinal)
+           || RowLevelSecurity.CurrentTenant() is not { } flow
+           || string.Equals(flow, tenantId, StringComparison.Ordinal);
 
     private static (string Tenant, string Key) CacheKey(string tenantId, string key) => (tenantId, key);
 

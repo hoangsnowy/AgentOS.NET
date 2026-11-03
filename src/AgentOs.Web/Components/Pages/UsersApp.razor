@@ -1,6 +1,7 @@
 @* UsersApp — tenant-admin member management desktop window (Windows Server "Users" / GNOME
    Users vibe). Lists the current tenant's Keycloak members and lets an Admin change roles, send a
-   password-reset email, remove a member, or mint an invitation URL. Admin-gated: the app is
+   password-reset email, remove a member, or invite one. Invitations (GAP-11) are single-use, work only
+   for the address they were sent to, and can be revoked here until they are used. Admin-gated: the app is
    AdminOnly in AppCatalog, and the page itself re-checks the admin role (defence in depth). Tenant
    + role are read from the circuit's AuthenticationState — HttpContext is null in interactive
    Server, so ITenantContext can't be used in a component. *@
@@ -9,10 +10,12 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using AgentOs.Modules.Tenants
 @using AgentOs.Modules.Tenants.Keycloak
+@using AgentOs.Modules.Tenants.Invitations
 @inject AgentOs.Modules.Tenants.Keycloak.IKeycloakAdminClient Kc
 @inject AgentOs.Modules.Tenants.ITenantSignupService Signup
 @inject AgentOs.Modules.Tenants.Email.IEmailSender Email
 @inject NavigationManager Nav
+@inject AgentOs.SharedKernel.Hosting.PublicOrigin Origin
 @inject AgentOs.Web.Shell.Services.ToastService Toasts
 @inject AgentOs.Domain.Sessions.IRunnerDisconnector RunnerDisconnector
 @inject Microsoft.Extensions.DependencyInjection.IServiceScopeFactory Scopes
@@ -122,24 +125,87 @@ else
             </div>
             <div class="form-actions">
                 <Btn Variant="Btn.ButtonVariant.Primary" OnClick="MintInvite" Loading="_busy">
-                    Mint invite URL
+                    Create invitation
                 </Btn>
             </div>
 
             @if (_inviteUrl is not null)
             {
                 <div class="cred-readout">
-                    <p class="cred-readout-hint">Copy + send to your invitee. Expires @_inviteExpiresAt.ToString("u").</p>
-                    <textarea readonly rows="2">@_inviteUrl</textarea>
+                    <p class="cred-readout-hint">Copy + send to <strong>@_invitedEmail</strong>. It works once, only for that address, until @_inviteExpiresAt.ToString("u").</p>
+                    <textarea readonly rows="2" aria-label="Invitation link">@_inviteUrl</textarea>
                 </div>
             }
             @if (_inviteError is not null)
             {
-                <div class="login-error">@_inviteError</div>
+                <div class="login-error" role="alert">@_inviteError</div>
+            }
+        </Panel>
+
+        <Panel Title="Invitations">
+            @if (_invitesError is not null)
+            {
+                <div class="login-error">@_invitesError</div>
+            }
+            else if (_invites is null)
+            {
+                <Spinner />
+            }
+            else
+            {
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Expires</th>
+                            <th class="actions">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var invite in _invites)
+                        {
+                            <tr>
+                                <td>@invite.Email</td>
+                                <td>@RoleLabel(invite.Role)</td>
+                                <td><Badge Variant="@StatusVariant(invite.Status)">@StatusLabel(invite.Status)</Badge></td>
+                                <td title="@invite.ExpiresAtUtc.ToString("u")">@invite.ExpiresAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="actions">
+                                    @if (invite.Status == InvitationStatus.Pending)
+                                    {
+                                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger"
+                                             OnClick="@(() => _confirmRevoke = invite)" Disabled="_revokingId == invite.Id">
+                                            <Icon Name="x" Size="13" /> Revoke
+                                        </Btn>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (_invites.Count == 0)
+                        {
+                            <tr><td colspan="5" class="data-empty">No invitations yet — create one above.</td></tr>
+                        }
+                    </tbody>
+                </table>
             }
         </Panel>
     }
 }
+
+<Dialog Show="_confirmRevoke is not null" Title="Revoke invitation" Width="380" Destructive="true" OnClose="@(() => _confirmRevoke = null)">
+    <ChildContent>
+        @if (_confirmRevoke is not null)
+        {
+            <p>Revoke the invitation for <strong>@_confirmRevoke.Email</strong>?</p>
+            <p class="muted">Its link stops working at once. You can send a new invitation later.</p>
+        }
+    </ChildContent>
+    <Footer>
+        <Btn OnClick="@(() => _confirmRevoke = null)" Disabled="_revokingId is not null">Cancel</Btn>
+        <Btn Variant="Btn.ButtonVariant.Danger" OnClick="ConfirmRevoke" Loading="_revokingId is not null">Revoke</Btn>
+    </Footer>
+</Dialog>
 
 <Dialog Show="_confirmRemove is not null" Title="Remove member" Width="380" Destructive="true" OnClose="@(() => _confirmRemove = null)">
     <ChildContent>
@@ -176,8 +242,14 @@ else
     private int _inviteTtl = 24;
     private bool _busy;
     private string? _inviteUrl;
+    private string? _invitedEmail;
     private DateTimeOffset _inviteExpiresAt;
     private string? _inviteError;
+
+    private IReadOnlyList<InvitationInfo>? _invites;
+    private string? _invitesError;
+    private InvitationInfo? _confirmRevoke;
+    private Guid? _revokingId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -196,11 +268,63 @@ else
         if (_isAdmin && _tenantId.Length > 0)
         {
             await LoadMembersAsync();
+            await LoadInvitesAsync();
         }
+    }
+
+    private async Task LoadInvitesAsync()
+    {
+        _invitesError = null;
+        await CircuitSafe.RunAsync(
+            async () => _invites = await Signup.ListInvitationsAsync(_tenantId),
+            ex => _invitesError = $"Couldn't load the invitations: {ex.Message}");
+    }
+
+    private static Badge.BadgeVariant StatusVariant(InvitationStatus status) => status switch
+    {
+        InvitationStatus.Pending => Badge.BadgeVariant.Info,
+        InvitationStatus.Accepted => Badge.BadgeVariant.Ok,
+        InvitationStatus.Revoked => Badge.BadgeVariant.Err,
+        _ => Badge.BadgeVariant.Warn,
+    };
+
+    /// <summary>The words on an invitation's status badge (state is never colour-only).</summary>
+    internal static string StatusLabel(InvitationStatus status) => status switch
+    {
+        InvitationStatus.Pending => "pending",
+        InvitationStatus.Accepted => "used",
+        InvitationStatus.Revoked => "revoked",
+        _ => "expired",
+    };
+
+    private async Task ConfirmRevoke()
+    {
+        if (_confirmRevoke is not { } invite || _revokingId is not null) { return; }
+        _revokingId = invite.Id;
+        await CircuitSafe.RunAsync(
+            async () =>
+            {
+                var revoked = await Signup.RevokeInvitationAsync(_tenantId, invite.Id, new AuditActor(_myUserId));
+                Toasts.Show("Users", revoked
+                    ? $"Invitation for {invite.Email} revoked — its link no longer works."
+                    : $"The invitation for {invite.Email} was already used or revoked.", revoked ? ToastKind.Ok : ToastKind.Warn);
+                await LoadInvitesAsync();
+            },
+            ex => Toasts.Show("Users", $"Revoke failed: {ex.Message}", ToastKind.Err));
+        _revokingId = null;
+        _confirmRevoke = null;
     }
 
     // Admin over approver over member (an approver is a member who may also approve the steps an approval policy holds).
     private static string PrimaryRole(KeycloakUser m) => AgentOs.Modules.Tenants.TenantRoles.Primary(m.Roles);
+
+    /// <summary>The words on an invitation's role cell — the same three roles the invite form offers.</summary>
+    private static string RoleLabel(string? role) => role switch
+    {
+        "admin" => "Admin",
+        "approver" => "Approver",
+        _ => "Member",
+    };
 
     private async Task LoadMembersAsync()
     {
@@ -214,7 +338,11 @@ else
         _loading = false;
     }
 
-    private async Task Reload() => await LoadMembersAsync();
+    private async Task Reload()
+    {
+        await LoadMembersAsync();
+        await LoadInvitesAsync();   // an invitation used or expired since the page opened shows its new state
+    }
 
     private async Task ChangeRole(KeycloakUser m, ChangeEventArgs e)
     {
@@ -314,13 +442,22 @@ else
         try
         {
             var ttl = TimeSpan.FromHours(Math.Clamp(_inviteTtl, 1, 168));
-            var token = Signup.CreateInvitation(_tenantId, _inviteRole, email, ttl);
+            // The invitation is a stored row now (single-use, revocable): a store outage is shown inline, never a crash.
+            InvitationToken? token = null;
+            var created = await CircuitSafe.RunAsync(
+                async () => token = await Signup.CreateInvitationAsync(_tenantId, _inviteRole, email, ttl, new AuditActor(_myUserId)),
+                ex => _inviteError = ex is ArgumentException ? ex.Message : $"Couldn't create the invitation: {ex.Message}");
+            if (!created || token is null) { return; }
             _inviteExpiresAt = token.ExpiresAtUtc;
-            _inviteUrl = $"/signup?invite={Uri.EscapeDataString(token.Token)}";
+            _invitedEmail = email;
+            // GAP-05: the link points at Hosting:PublicBaseUrl, like the Api's — never at this circuit's base URI (the
+            // Host the browser connected with; the circuit's own origin stands in only in Development).
+            var absoluteUrl = InvitationLinks.Absolute(Origin, token.Token, Nav.BaseUri);
+            _inviteUrl = absoluteUrl;
+            await LoadInvitesAsync();
 
-            // Email the absolute link. Best-effort: the URL stays on screen for copy/paste so the
+            // Email the link. Best-effort: the URL stays on screen for copy/paste so the
             // admin is never blocked if delivery is unconfigured or fails.
-            var absoluteUrl = Nav.ToAbsoluteUri(_inviteUrl).ToString();
             try
             {
                 var (subject, htmlBody, textBody) = AgentOs.Modules.Tenants.Email.InvitationEmail.Build(_tenantId, _inviteRole, absoluteUrl);
@@ -356,7 +493,6 @@ else
                 Toasts.Show("Users", $"Invitation created, but email failed: {ex.Message}. Copy the link below.", ToastKind.Warn);
             }
         }
-        catch (ArgumentException ex) { _inviteError = ex.Message; }
         finally { _busy = false; }
     }
 }

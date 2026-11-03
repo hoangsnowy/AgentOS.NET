@@ -70,8 +70,13 @@
                            value="@f.Draft" @onchange="e => f.Draft = e.Value?.ToString()?.Trim() ?? string.Empty" />
                     break;
             }
-            <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@(readOnly || _saving)" OnClick="() => Save(f)">Save</Btn>
-            <Btn Size="Btn.ButtonSize.Sm" Disabled="@(readOnly || _saving || !HasOwnValue(f))" OnClick="() => Reset(f)">Reset</Btn>
+            @* A read-only field gets NO Save/Reset handler at all: Blazor Server dispatches a registered handler for any
+               element the client names, disabled attribute or not, so a disabled button is not a gate. *@
+            @if (!readOnly)
+            {
+                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" Disabled="@_saving" OnClick="() => Save(f)">Save</Btn>
+                <Btn Size="Btn.ButtonSize.Sm" Disabled="@(_saving || !HasOwnValue(f))" OnClick="() => Reset(f)">Reset</Btn>
+            }
         </div>
     </div>
 }
@@ -90,8 +95,11 @@
     [Parameter] public string Area { get; set; } = "Settings";
 
     /// <summary>The viewer is a platform admin: platform-scope settings become editable and are written at
-    /// platform scope (every tenant). Tenant-scope settings still write to <see cref="TenantId"/>.</summary>
+    /// platform scope (every tenant). Tenant-scope settings still write to <see cref="TenantId"/>. This only
+    /// unlocks the controls — the write itself re-checks the signed-in principal's platform-admin role.</summary>
     [Parameter] public bool CanEditPlatform { get; set; }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private sealed class FieldState(SettingView view)
     {
@@ -146,6 +154,17 @@
         try
         {
             var scope = WriteScope(f);
+            // GAP-14: a platform-wide write is a platform operation. The proof is the signed-in principal's platform-admin
+            // role, checked here at write time (not a parameter, not a disabled button); only then does this flow enter
+            // the platform RLS scope that opens the "__platform" rows — ISettings refuses a platform write outside one.
+            if (scope == SettingScope.Platform && !await IsPlatformAdminAsync())
+            {
+                Toasts.Show(Area, $"{f.View.Descriptor.Label} is platform-wide; only a platform admin can change it.", AgentOs.Web.Shell.Services.ToastKind.Err);
+                return;
+            }
+            using var platform = scope == SettingScope.Platform
+                ? AgentOs.SharedKernel.Persistence.RowLevelSecurity.PlatformScope("platform-settings")
+                : null;
             var result = await Settings.SetAsync(f.View.Descriptor.Key, value, scope, scope == SettingScope.Tenant ? TenantId : null, Actor);
             Toasts.Show(Area, result.Ok ? okMessage : result.Error ?? "Save failed.",
                 result.Ok ? AgentOs.Web.Shell.Services.ToastKind.Ok : AgentOs.Web.Shell.Services.ToastKind.Err);
@@ -155,6 +174,16 @@
             _saving = false;
             await LoadAsync();
         }
+    }
+
+    private async Task<bool> IsPlatformAdminAsync()
+    {
+        if (!CanEditPlatform || AuthState is null)
+        {
+            return false;
+        }
+        var state = await AuthState;
+        return state.User.IsPlatformAdmin();
     }
 
     private static string SettingValidationMask(string secret) =>

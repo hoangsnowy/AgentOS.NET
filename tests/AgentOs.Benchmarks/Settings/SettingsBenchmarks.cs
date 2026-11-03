@@ -11,6 +11,7 @@ using AgentOs.Domain.Configuration;
 using AgentOs.Modules.AppConfig;
 using AgentOs.Modules.AppConfig.Persistence;
 using AgentOs.Modules.AppConfig.Settings;
+using AgentOs.SharedKernel.Persistence;
 using BenchmarkDotNet.Attributes;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -100,6 +101,7 @@ public class SettingsServiceBenchmarks
             SettingsFixture.Catalog(), store, SettingsFixture.Configuration(), new NullSettingsAuditSink(),
             NullLogger<SettingsService>.Instance);
         (await _settings.SetAsync(_tenantKey, "claude-opus-5-5", SettingScope.Tenant, _tenant, "bench")).Ok.ShouldBeTrue();
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await _settings.SetAsync(_platformKey, "Claude", SettingScope.Platform, null, "bench")).Ok.ShouldBeTrue();
     }
 

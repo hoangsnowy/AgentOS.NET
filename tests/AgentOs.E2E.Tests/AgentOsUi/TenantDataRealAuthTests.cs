@@ -148,8 +148,9 @@ public sealed class TenantDataRealAuthTests : IClassFixture<AgentOsRealAuthFixtu
         await using var conn = new NpgsqlConnection(PgConn);
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM tenants.audit_events WHERE (\"TenantId\" = '_platform' AND \"Target\" LIKE @p) OR \"TenantId\" = @t";
-        cmd.Parameters.AddWithValue("p", tenant + ":%");
+        // The throwaway tenant's whole chain goes; the platform's "tenant.purged" row stays — removing it from the middle of
+        // the append-only, hash-chained platform trail would break that chain (GAP-11b).
+        cmd.CommandText = "DELETE FROM tenants.audit_events WHERE \"TenantId\" = @t";
         cmd.Parameters.AddWithValue("t", tenant);
         await cmd.ExecuteNonQueryAsync();
     }

@@ -1,16 +1,23 @@
 // Exercises TenantSignupService end-to-end against in-memory fakes. Covers all three modes
 // (slug / auto-create / invite), the Keycloak-first saga rollback when the registry write
-// throws, and the invitation token's expiry + tamper-detection.
+// throws, and — GAP-11 — invitations as single-use, email-bound, revocable rows: a second use, the wrong address, a
+// revoked or an expired invitation is refused (and audited) before any account is created; a failed account creation
+// gives the invitation back; a link minted before invitations were rows no longer opens.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants;
+using AgentOs.Modules.Tenants.Invitations;
 using AgentOs.Modules.Tenants.Keycloak;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 using Shouldly;
 using Xunit;
 
@@ -19,6 +26,7 @@ namespace AgentOs.Tests.Identity;
 public sealed class TenantSignupServiceTests
 {
     private const string ValidPassword = "Sup3rSecure!Pass";
+    private static readonly AuditActor Admin = new("admin-1", "10.0.0.1", "tests");
 
     [Fact]
     public async Task SignupAsync_SlugMode_CreatesTenantAndKeycloakUser()
@@ -70,21 +78,10 @@ public sealed class TenantSignupServiceTests
     [Fact]
     public async Task SignupAsync_InviteMode_JoinsExistingTenantWithoutCreatingRow()
     {
-        var repo = new FakeRepo();
-        await repo.AddAsync(new TenantRecord("acme", "Acme Corp", DateTimeOffset.UtcNow));
-        var kc = Substitute.For<IKeycloakAdminClient>();
-        kc.CreateUserAsync(default!, default!, default!, default!, default, default, default)
-            .ReturnsForAnyArgs(Task.FromResult("kc-user-3"));
-        var svc = NewService(repo, kc);
-        var invite = svc.CreateInvitation("acme", "member", "bob@acme.test", TimeSpan.FromHours(1));
+        var (svc, kc, repo, _, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
 
-        var outcome = await svc.SignupAsync(new TenantSignupRequest(
-            Username: "bob",
-            Password: ValidPassword,
-            Email: "bob@acme.test",
-            TenantId: null,
-            TenantName: null,
-            InviteToken: invite.Token));
+        var outcome = await svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token));
 
         outcome.Mode.ShouldBe(SignupMode.Invite);
         outcome.TenantId.ShouldBe("acme");
@@ -130,32 +127,269 @@ public sealed class TenantSignupServiceTests
         await kc.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default!, default!, default);
     }
 
-    [Fact]
-    public void PreviewInvitation_ValidToken_ReturnsPayload()
-    {
-        var svc = NewService(new FakeRepo(), Substitute.For<IKeycloakAdminClient>());
-        var minted = svc.CreateInvitation("acme", "admin", "bob@x.test", TimeSpan.FromMinutes(5));
+    // ── GAP-11: invitations are single-use, bound to an address, revocable, and expire ──
 
-        var preview = svc.PreviewInvitation(minted.Token);
+    [Fact]
+    public async Task PreviewInvitationAsync_ValidToken_ReturnsThePendingRow()
+    {
+        var (svc, _, _, _, _) = Invitable();
+        var minted = await svc.CreateInvitationAsync("acme", "admin", "Bob@X.test", TimeSpan.FromMinutes(5), Admin);
+
+        var preview = await svc.PreviewInvitationAsync(minted.Token);
+
         preview.ShouldNotBeNull();
-        preview!.TenantId.ShouldBe("acme");
+        preview.Id.ShouldBe(minted.Id);
+        preview.TenantId.ShouldBe("acme");
         preview.Role.ShouldBe("admin");
-        preview.Email.ShouldBe("bob@x.test");
+        preview.Email.ShouldBe("Bob@X.test");
+        preview.Status.ShouldBe(InvitationStatus.Pending);
+        preview.CanAccept.ShouldBeTrue();
     }
 
     [Fact]
-    public void PreviewInvitation_TamperedOrMissingToken_ReturnsNull()
+    public async Task PreviewInvitationAsync_TamperedOrMissingToken_ReturnsNull()
     {
-        var svc = NewService(new FakeRepo(), Substitute.For<IKeycloakAdminClient>());
-        svc.PreviewInvitation(null).ShouldBeNull();
-        svc.PreviewInvitation("").ShouldBeNull();
-        svc.PreviewInvitation("not-a-token").ShouldBeNull();
+        var (svc, _, _, _, _) = Invitable();
+        (await svc.PreviewInvitationAsync(null)).ShouldBeNull();
+        (await svc.PreviewInvitationAsync("")).ShouldBeNull();
+        (await svc.PreviewInvitationAsync("not-a-token")).ShouldBeNull();
     }
+
+    // A link minted before invitations were rows (stateless, reusable, purpose v1) no longer opens: honouring it would
+    // keep the old gap open until it expired.
+    [Fact]
+    public async Task PreviewAndSignup_PreUpgradeStatelessToken_AreRefused()
+    {
+        var dp = new EphemeralDataProtectionProvider();
+        var (svc, kc, _, _, _) = Invitable(dp);
+        var legacy = dp.CreateProtector("AgentOs.Modules.Tenants.Invitation.v1").ToTimeLimitedDataProtector().Protect(
+            JsonSerializer.Serialize(new LegacyPayload("acme", "admin", null, DateTimeOffset.UtcNow), WebJson),
+            TimeSpan.FromHours(1));
+
+        (await svc.PreviewInvitationAsync(legacy)).ShouldBeNull();
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("mallory", "m@x.test", legacy)));
+        error.Message.ShouldBe(InvitationRules.Describe(InvitationAcceptance.NotFound));
+        await kc.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default!, default!, default);
+    }
+
+    // Reuse: the second sign-up with the same link is refused before Keycloak is touched, and the attempt is audited.
+    [Fact]
+    public async Task SignupAsync_InvitationUsedTwice_SecondIsRefused()
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+
+        await svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token));
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("bob2", "bob@acme.test", invite.Token)));
+
+        error.Message.ShouldBe(InvitationRules.Describe(InvitationAcceptance.AlreadyUsed));
+        await kc.Received(1).CreateUserAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Accepted);
+        audit.Actions.ShouldContain(AuditActions.InvitationAccepted);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.Target!.Contains("reason=AlreadyUsed", StringComparison.Ordinal));
+    }
+
+    // Two people racing with one link: exactly one gets an account (the claim is one conditional write).
+    [Fact]
+    public async Task SignupAsync_ConcurrentUsesOfOneInvitation_OnlyOneSucceeds()
+    {
+        var (svc, kc, _, _, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => Task.Run(async () =>
+        {
+            try
+            {
+                await svc.SignupAsync(Join($"bob{i}", "bob@acme.test", invite.Token));
+                return true;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        })));
+
+        attempts.Count(ok => ok).ShouldBe(1);
+        await kc.Received(1).CreateUserAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    // Bound to the address: another address (or none) is refused; the invitee can still use it afterwards.
+    [Theory]
+    [InlineData("eve@evil.test", InvitationAcceptance.EmailMismatch)]
+    [InlineData("bob@acme.test.evil", InvitationAcceptance.EmailMismatch)]
+    [InlineData(null, InvitationAcceptance.EmailRequired)]
+    public async Task SignupAsync_WrongOrMissingEmail_IsRefused_AndTheInvitationStaysUsable(string? email, InvitationAcceptance expected)
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("eve", email, invite.Token)));
+
+        error.Message.ShouldBe(InvitationRules.Describe(expected));
+        await kc.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default!, default!, default);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.TenantId == "acme");
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Pending);
+
+        // The right person, typing the address in another case and with stray spaces, still gets in.
+        (await svc.SignupAsync(Join("bob", "  BOB@Acme.Test ", invite.Token))).Mode.ShouldBe(SignupMode.Invite);
+    }
+
+    [Fact]
+    public async Task RevokeInvitationAsync_Pending_LinkStopsWorking_AndIsAudited()
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+
+        (await svc.RevokeInvitationAsync("acme", invite.Id, Admin)).ShouldBeTrue();
+
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Revoked);
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token)));
+        error.Message.ShouldBe(InvitationRules.Describe(InvitationAcceptance.Revoked));
+        await kc.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default!, default!, default);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRevoked && e.UserId == "admin-1" && e.IpAddress == "10.0.0.1");
+        (await svc.RevokeInvitationAsync("acme", invite.Id, Admin)).ShouldBeFalse();   // already revoked
+    }
+
+    [Fact]
+    public async Task RevokeInvitationAsync_UsedOrOtherTenant_ReturnsFalse()
+    {
+        var (svc, _, _, _, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+
+        (await svc.RevokeInvitationAsync("other", invite.Id, Admin)).ShouldBeFalse();   // not this tenant's invitation
+        await svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token));
+        (await svc.RevokeInvitationAsync("acme", invite.Id, Admin)).ShouldBeFalse();    // used: nothing to revoke
+        (await svc.ListInvitationsAsync("acme")).Single().Status.ShouldBe(InvitationStatus.Accepted);
+    }
+
+    [Fact]
+    public async Task SignupAsync_ExpiredInvitation_IsRefused()
+    {
+        var (svc, kc, _, _, clock) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(2), Admin);
+
+        clock.Advance(TimeSpan.FromHours(2));
+
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Expired);
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token)));
+        error.Message.ShouldBe(InvitationRules.Describe(InvitationAcceptance.Expired));
+        await kc.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default!, default!, default);
+    }
+
+    // Keycloak refused the account (a taken username): the invitation goes back to pending so the invitee can retry.
+    [Fact]
+    public async Task SignupAsync_AccountCreationFails_ReleasesTheInvitation()
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+        kc.CreateUserAsync("taken", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("Keycloak create-user failed (409): User exists with same username"));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("taken", "bob@acme.test", invite.Token)));
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Pending);
+
+        (await svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token))).Mode.ShouldBe(SignupMode.Invite);
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Accepted);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.Target!.Contains("reason=account_not_created", StringComparison.Ordinal));
+    }
+
+    // The claim is the point of no return: the invitee dropping the connection (RequestAborted) must not reach Keycloak
+    // half-way, and a cancellation that still surfaces (an HttpClient timeout) may mean the account exists — the
+    // invitation stays used rather than offering a second account on the same link.
+    [Fact]
+    public async Task SignupAsync_AccountCreationCancelled_RunsWithoutTheRequestToken_AndKeepsTheInvitationUsed()
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+        using var aborted = new CancellationTokenSource();
+        await aborted.CancelAsync();
+        kc.CreateUserAsync(default!, default!, default!, default!, default, default, default)
+            .ThrowsAsyncForAnyArgs(new OperationCanceledException("The request was aborted after Keycloak created the user."));
+
+        await Should.ThrowAsync<OperationCanceledException>(() => svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token), aborted.Token));
+
+        await kc.Received(1).CreateUserAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<bool>(), Arg.Any<string?>(), CancellationToken.None);
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Accepted);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.Target!.Contains("reason=account_unrecorded", StringComparison.Ordinal));
+        await Should.ThrowAsync<InvalidOperationException>(() => svc.SignupAsync(Join("bob2", "bob@acme.test", invite.Token)));
+    }
+
+    // Keycloak created the account, the rest failed and the compensating delete failed too: the account is there, so
+    // the invitation stays used and the audit row names the account for the operator.
+    [Fact]
+    public async Task SignupAsync_AccountLeftBehindInKeycloak_KeepsTheInvitationUsed_AndAuditsTheAccount()
+    {
+        var (svc, kc, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "member", "bob@acme.test", TimeSpan.FromHours(1), Admin);
+        kc.CreateUserAsync(default!, default!, default!, default!, default, default, default)
+            .ThrowsAsyncForAnyArgs(KeycloakUserLeftBehindException.For("u-stuck", new InvalidOperationException("Keycloak grant-roles failed (500): boom")));
+
+        await Should.ThrowAsync<KeycloakUserLeftBehindException>(() => svc.SignupAsync(Join("bob", "bob@acme.test", invite.Token)));
+
+        (await svc.PreviewInvitationAsync(invite.Token))!.Status.ShouldBe(InvitationStatus.Accepted);
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationRefused && e.UserId == "u-stuck"
+            && e.Target!.Contains("reason=account_unrecorded", StringComparison.Ordinal));
+        await kc.DidNotReceiveWithAnyArgs().DeleteUserAsync(default!);
+    }
+
+    [Theory]
+    [InlineData("owner", "bob@acme.test", 1)]
+    [InlineData("member", "", 1)]
+    [InlineData("member", "not-an-address", 1)]
+    [InlineData("member", "bob@acme.test", 0)]
+    [InlineData("member", "bob@acme.test", 169)]
+    public async Task CreateInvitationAsync_BadRoleAddressOrLifetime_Throws(string role, string email, int hours)
+    {
+        var (svc, _, _, _, _) = Invitable();
+        await Should.ThrowAsync<ArgumentException>(() =>
+            svc.CreateInvitationAsync("acme", role, email, TimeSpan.FromHours(hours), Admin));
+        (await svc.ListInvitationsAsync("acme")).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task CreateInvitationAsync_IsListedAndAudited()
+    {
+        var (svc, _, _, audit, _) = Invitable();
+        var invite = await svc.CreateInvitationAsync("acme", "admin", " carol@acme.test ", TimeSpan.FromHours(3), Admin);
+
+        var listed = (await svc.ListInvitationsAsync("acme")).ShouldHaveSingleItem();
+        listed.Id.ShouldBe(invite.Id);
+        listed.Email.ShouldBe("carol@acme.test");
+        listed.Role.ShouldBe("admin");
+        listed.CreatedBy.ShouldBe("admin-1");
+        listed.Status.ShouldBe(InvitationStatus.Pending);
+        (await svc.ListInvitationsAsync("other")).ShouldBeEmpty();
+        audit.Entries.ShouldContain(e => e.Action == AuditActions.InvitationMinted && e.TenantId == "acme"
+            && e.Target!.Contains("email=carol@acme.test", StringComparison.Ordinal) && e.UserAgent == "tests");
+    }
+
+    // ── helpers ──
+
+    private static TenantSignupRequest Join(string username, string? email, string token)
+        => new(username, ValidPassword, email, TenantId: null, TenantName: null, InviteToken: token);
 
     // These tests exercise the open-signup modes, so the platform setting is on (GAP-01: it is off by default outside
     // Development, and the service fails closed without a settings registry — see OpenSignupAndAzureEndpointTests).
     private static TenantSignupService NewService(ITenantsRepository repo, IKeycloakAdminClient kc) =>
-        new(repo, kc, new NullAuditLog(), new EphemeralDataProtectionProvider(), NullLogger<TenantSignupService>.Instance, new OpenSignupSettings());
+        new(repo, kc, new CapturingAuditLog(), new EphemeralDataProtectionProvider(), NullLogger<TenantSignupService>.Instance, new OpenSignupSettings());
+
+    private static (TenantSignupService Service, IKeycloakAdminClient Kc, FakeRepo Repo, CapturingAuditLog Audit, ManualClock Clock) Invitable(
+        IDataProtectionProvider? dp = null)
+    {
+        var repo = new FakeRepo();
+        repo.Records["acme"] = new TenantRecord("acme", "Acme", DateTimeOffset.UtcNow);
+        var kc = Substitute.For<IKeycloakAdminClient>();
+        kc.CreateUserAsync(default!, default!, default!, default!, default, default, default)
+            .ReturnsForAnyArgs(ci => Task.FromResult("kc-" + ci.ArgAt<string>(0)));
+        var audit = new CapturingAuditLog();
+        var clock = new ManualClock(new DateTimeOffset(2026, 11, 3, 9, 0, 0, TimeSpan.Zero));
+        var svc = new TenantSignupService(repo, kc, audit, dp ?? new EphemeralDataProtectionProvider(), NullLogger<TenantSignupService>.Instance,
+            new OpenSignupSettings(), new InMemoryInvitationStore(), clock);
+        return (svc, kc, repo, audit, clock);
+    }
 
     // ISettings is ValueTask-returning — a hand-written fake, never substituted.
     private sealed class OpenSignupSettings : AgentOs.Domain.Configuration.ISettings
@@ -173,19 +407,44 @@ public sealed class TenantSignupServiceTests
             ValueTask.FromResult(AgentOs.Domain.Configuration.SettingWriteResult.Success);
     }
 
-    private sealed class NullAuditLog : IAuditLog
+    private sealed class CapturingAuditLog : IAuditLog
     {
-        public Task WriteAsync(AuditEntry entry, CancellationToken ct = default) => Task.CompletedTask;
+        private readonly ConcurrentQueue<AuditEntry> _entries = new();
+
+        public IReadOnlyList<AuditEntry> Entries => [.. _entries];
+
+        public IReadOnlyList<string> Actions => [.. _entries.Select(e => e.Action)];
+
+        public Task WriteAsync(AuditEntry entry, CancellationToken ct = default)
+        {
+            _entries.Enqueue(entry);
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyList<AuditEntry>> ListAsync(string tenantId, int max = 100, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<AuditEntry>>([]);
+            Task.FromResult<IReadOnlyList<AuditEntry>>([.. _entries.Where(e => e.TenantId == tenantId)]);
     }
+
+    private sealed class ManualClock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+
+        public void Advance(TimeSpan by) => _now += by;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
+    // The pre-upgrade (v1) invitation payload: stateless, no id.
+    private sealed record LegacyPayload(string TenantId, string Role, string? Email, DateTimeOffset IssuedAtUtc);
 
     private sealed class FakeRepo : ITenantsRepository
     {
         public Dictionary<string, TenantRecord> Records { get; } = new(StringComparer.Ordinal);
 
         public Task<IReadOnlyList<TenantRecord>> ListAsync(CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<TenantRecord>>(new List<TenantRecord>(Records.Values));
+            Task.FromResult<IReadOnlyList<TenantRecord>>([.. Records.Values]);
 
         public Task<TenantRecord?> GetAsync(string id, CancellationToken ct = default) =>
             Task.FromResult(Records.TryGetValue(id, out var r) ? r : null);

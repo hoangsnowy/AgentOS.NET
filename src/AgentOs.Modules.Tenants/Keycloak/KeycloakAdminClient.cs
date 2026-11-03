@@ -95,13 +95,37 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         if (!createResp.IsSuccessStatusCode)
         {
             var body = await createResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new InvalidOperationException($"Keycloak create-user failed ({(int)createResp.StatusCode}): {body}");
+            throw KeycloakAdminException.Refused("create-user", createResp.StatusCode, body);
         }
 
         var location = createResp.Headers.Location?.ToString()
-            ?? throw new InvalidOperationException("Keycloak create-user response missing Location header.");
+            ?? throw new KeycloakAdminException("Keycloak create-user response missing Location header.");
         var userId = location.TrimEnd('/').Split('/').Last();
 
+        // The account exists from here on. Whatever fails next (a role grant, a cancelled request, a dropped
+        // connection) must not leave it behind: callers take "CreateUserAsync threw" as "no account was created" and
+        // e.g. hand an invitation back (GAP-11). Delete it before rethrowing; if even that fails, say so with a typed
+        // exception so the caller can keep its own state consumed instead of offering a second account.
+        try
+        {
+            await FinishUserAsync(userId, realmRoles, sendVerifyEmail, password, token, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            if (!await TryDeleteLeftBehindUserAsync(userId, ex).ConfigureAwait(false))
+            {
+                throw KeycloakUserLeftBehindException.For(userId, ex);
+            }
+            throw;
+        }
+
+        return userId;
+    }
+
+    // Role grants + the actions email for a user that already exists. Split out so CreateUserAsync can compensate.
+    private async Task FinishUserAsync(
+        string userId, IReadOnlyList<string> realmRoles, bool sendVerifyEmail, string? password, string token, CancellationToken ct)
+    {
         if (realmRoles.Count > 0)
         {
             var roleMappings = new List<object>(realmRoles.Count);
@@ -130,7 +154,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
                 if (!grantResp.IsSuccessStatusCode)
                 {
                     var body = await grantResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                    throw new InvalidOperationException($"Keycloak grant-roles failed ({(int)grantResp.StatusCode}): {body}");
+                    throw KeycloakAdminException.Refused("grant-roles", grantResp.StatusCode, body);
                 }
             }
         }
@@ -151,8 +175,27 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
                     userId, actionsResp.StatusCode);
             }
         }
+    }
 
-        return userId;
+    // Compensating delete for a half-created user. Runs under CancellationToken.None: the caller's request may be the
+    // very thing that was cancelled. Returns false (and logs) when the account is still there.
+    private async Task<bool> TryDeleteLeftBehindUserAsync(string userId, Exception cause)
+    {
+        try
+        {
+            await DeleteUserAsync(userId, CancellationToken.None).ConfigureAwait(false);
+            _logger.LogWarning(cause, "Keycloak user {UserId} was removed again because its set-up failed.", LogSafe.Scrub(userId));
+            return true;
+        }
+        // HttpClient reports its own timeout as a TaskCanceledException even with CancellationToken.None.
+        catch (Exception deleteEx) when (deleteEx is HttpRequestException or InvalidOperationException or TimeoutException
+                                                  or TaskCanceledException or JsonException)
+        {
+            _logger.LogError(deleteEx,
+                "Keycloak user {UserId} was created, its set-up failed, and removing it failed too — the account is left behind.",
+                LogSafe.Scrub(userId));
+            return false;
+        }
     }
 
     /// <inheritdoc />
@@ -168,7 +211,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         if (!listResp.IsSuccessStatusCode)
         {
             var body = await listResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new InvalidOperationException($"Keycloak list-users failed ({(int)listResp.StatusCode}): {body}");
+            throw KeycloakAdminException.Refused("list-users", listResp.StatusCode, body);
         }
         var dtos = await listResp.Content.ReadFromJsonAsync<List<UserDto>>(ct).ConfigureAwait(false)
             ?? new List<UserDto>();
@@ -207,7 +250,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         if (!resp.IsSuccessStatusCode && resp.StatusCode != System.Net.HttpStatusCode.NotFound)
         {
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new InvalidOperationException($"Keycloak delete-user failed ({(int)resp.StatusCode}): {body}");
+            throw KeycloakAdminException.Refused("delete-user", resp.StatusCode, body);
         }
     }
 
@@ -230,7 +273,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         if (!curResp.IsSuccessStatusCode)
         {
             var body = await curResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new InvalidOperationException($"Keycloak get-role-mappings failed ({(int)curResp.StatusCode}): {body}");
+            throw KeycloakAdminException.Refused("get-role-mappings", curResp.StatusCode, body);
         }
         var current = await curResp.Content.ReadFromJsonAsync<List<KeycloakRoleDto>>(ct).ConfigureAwait(false)
             ?? new List<KeycloakRoleDto>();
@@ -247,7 +290,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
             if (!delResp.IsSuccessStatusCode)
             {
                 var body = await delResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                throw new InvalidOperationException($"Keycloak revoke-roles failed ({(int)delResp.StatusCode}): {body}");
+                throw KeycloakAdminException.Refused("revoke-roles", delResp.StatusCode, body);
             }
         }
 
@@ -274,7 +317,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
             if (!grantResp.IsSuccessStatusCode)
             {
                 var body = await grantResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                throw new InvalidOperationException($"Keycloak grant-roles failed ({(int)grantResp.StatusCode}): {body}");
+                throw KeycloakAdminException.Refused("grant-roles", grantResp.StatusCode, body);
             }
         }
     }
@@ -291,7 +334,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         if (!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new InvalidOperationException($"Keycloak password-reset email failed ({(int)resp.StatusCode}): {body}");
+            throw KeycloakAdminException.Refused("password-reset email", resp.StatusCode, body);
         }
     }
 
@@ -303,7 +346,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Keycloak serverinfo failed ({(int)resp.StatusCode}).");
+            throw KeycloakAdminException.Refused("serverinfo", resp.StatusCode);
         }
         using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false), cancellationToken: ct).ConfigureAwait(false);
         return doc.RootElement.TryGetProperty("systemInfo", out var info) && info.TryGetProperty("version", out var v)
@@ -325,7 +368,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         if (!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new InvalidOperationException($"Keycloak get-user failed ({(int)resp.StatusCode}): {body}");
+            throw KeycloakAdminException.Refused("get-user", resp.StatusCode, body);
         }
         var dto = await resp.Content.ReadFromJsonAsync<UserDto>(ct).ConfigureAwait(false);
         if (dto?.Attributes is null)
@@ -343,7 +386,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         // every public method funnels through here, so this is the single guard for the whole client.
         if (_http.BaseAddress is null)
         {
-            throw new InvalidOperationException(
+            throw new KeycloakAdminException(
                 "User management requires Keycloak, which isn't configured in this environment. "
                 + "Run the full stack with `dotnet run --project infra/AgentOs.AppHost` (Aspire wires Keycloak); "
                 + "the standalone Web has no identity backend.");
@@ -381,10 +424,10 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                throw new InvalidOperationException($"Keycloak admin token request failed ({(int)resp.StatusCode}): {body}");
+                throw KeycloakAdminException.Refused("admin token request", resp.StatusCode, body);
             }
             var dto = await resp.Content.ReadFromJsonAsync<TokenDto>(ct).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("Keycloak admin token response is empty.");
+                ?? throw new KeycloakAdminException("Keycloak admin token response is empty.");
             _cachedToken = dto.AccessToken;
             _cachedTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(30, dto.ExpiresIn - 30));
             return _cachedToken;

@@ -227,6 +227,9 @@ public sealed class PreviewService : IDisposable
     // The tenant's repo the preview names: under that board, in that tenant, with the same owner/repo. Null otherwise.
     private async Task<WorkspaceRepoEntity?> FindRepoAsync(string tenantId, PreviewAnnouncement p)
     {
+        // Runs in the runner hub's flow, which has no tenant of its own: bind the read to the runner's tenant (from its
+        // verified connection) — RLS stage 2 shows a connection with no tenant nothing.
+        using var bound = AgentOs.SharedKernel.Persistence.RowLevelSecurity.TenantScopeIfUnbound(tenantId);
         using var scope = _scopes.CreateScope();
         if (scope.ServiceProvider.GetService<IWorkspaceRepository>() is not { } store) { return null; }
         var repos = await store.ListReposForTenantAsync(tenantId, p.BoardId).ConfigureAwait(false);

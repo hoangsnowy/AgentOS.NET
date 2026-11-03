@@ -96,12 +96,18 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
+            // GAP-11/11b/14: tenants.audit_events and tenants.invitations are under RLS (ADR-0012 stage 2), and the app
+            // role may only append to the audit trail — every connection runs as the restricted role.
             services.AddDbContext<TenantsDbContext>(opt =>
                 opt.UseNpgsql(connectionString, npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "tenants")));
+                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "tenants"))
+                   .AddInterceptors(RowLevelSecurityInterceptor.Instance));
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<ITenantsRepository, TenantsRepository>();
-            services.AddScoped<IAuditLog, EfAuditLog>();
+            services.AddScoped<EfAuditLog>();
+            services.AddScoped<IAuditLog>(sp => sp.GetRequiredService<EfAuditLog>());
+            services.AddScoped<IAuditChainVerifier>(sp => sp.GetRequiredService<EfAuditLog>());
+            services.AddScoped<Invitations.IInvitationStore, Invitations.EfInvitationStore>();
             services.AddScoped<ApiTokens.IApiTokenService>(sp => new ApiTokens.ApiTokenService(
                 sp.GetRequiredService<TenantsDbContext>(), sp.GetRequiredService<IAuditLog>(), sp.GetService<TimeProvider>() ?? TimeProvider.System));
         }
@@ -110,6 +116,9 @@ public sealed class TenantsModule : IModule, IEndpointModule, IInitializableModu
             services.TryAddSingleton<ApiTokens.IApiTokenService, ApiTokens.NullApiTokenService>();
             services.TryAddSingleton<ITenantsRepository, NullTenantsRepository>();
             services.TryAddSingleton<IAuditLog, NullAuditLog>();
+            services.TryAddSingleton<IAuditChainVerifier, NullAuditLog>();
+            // No database (the standalone Web): invitations live in this process, with the same single-use rules.
+            services.TryAddSingleton<Invitations.IInvitationStore, Invitations.InMemoryInvitationStore>();
         }
     }
 

@@ -1,6 +1,7 @@
 // REAL-AUTH E2E — the invitation-email path end-to-end, fully automated (no human checking an inbox).
-// operator logs in via real Keycloak → Users app → mint an invite for a unique address → the app's
-// MailKit sender delivers to MailHog → we assert the message landed via the MailHog API.
+// operator logs in via real Keycloak → Users app → create an invite for a unique address → the app's
+// MailKit sender delivers to MailHog → we assert the message landed via the MailHog API. Then GAP-11: the invitation is
+// listed as pending, the admin revokes it, and its link says it can't be used.
 // Gated by RUN_AGENTOS_E2E_REAL=true with the full Aspire stack running (Web + Keycloak + MailHog).
 
 using System;
@@ -34,13 +35,27 @@ public sealed class InvitationEmailRealAuthTests : IClassFixture<AgentOsRealAuth
         // Mint an invite for a unique address so the MailHog assertion can't collide with other runs.
         var email = $"e2e-invite-{Guid.NewGuid():N}@agentic.local";
         await win.GetByPlaceholder("bob@acme.test").FillAsync(email);
-        await win.GetByRole(AriaRole.Button, new() { Name = "Mint invite URL" }).ClickAsync();
+        await win.GetByRole(AriaRole.Button, new() { Name = "Create invitation" }).ClickAsync();
 
-        // UI confirms the invite URL was minted.
-        await Assertions.Expect(win.Locator(".cred-readout textarea")).ToContainTextAsync("/signup?invite=");
+        // UI confirms the invite URL was created.
+        var link = win.Locator(".cred-readout textarea");
+        await Assertions.Expect(link).ToContainTextAsync("/signup?invite=");
+        var url = await link.InputValueAsync();
 
         // The real assertion: the MailKit sender delivered the invite to MailHog for that address.
         var delivered = await MailHog.WaitForMessageAsync(TimeSpan.FromSeconds(20), email);
         Assert.True(delivered, $"No invitation email for {email} arrived in MailHog within 20s.");
+
+        // GAP-11: listed as pending; the admin revokes it; the link then says it can't be used.
+        var row = win.Locator("tr", new() { HasTextString = email });
+        await Assertions.Expect(row.Locator(".badgepill")).ToHaveTextAsync("pending");
+        await row.GetByRole(AriaRole.Button, new() { Name = "Revoke" }).ClickAsync();
+        await _fx.Page.Locator(".dialog").GetByRole(AriaRole.Button, new() { Name = "Revoke" }).ClickAsync();
+        await Assertions.Expect(row.Locator(".badgepill")).ToHaveTextAsync("revoked", new() { Timeout = 15_000 });
+
+        var page = await _fx.Page.Context.NewPageAsync();
+        await page.GotoAsync(url);
+        await Assertions.Expect(page.Locator("[data-testid=invite-unusable]")).ToContainTextAsync("withdrawn by an administrator");
+        await page.CloseAsync();
     }
 }

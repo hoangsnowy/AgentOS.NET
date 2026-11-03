@@ -455,7 +455,10 @@ Roles: `admin` (tenant admin), `member`, and `platform-admin` (platform-wide set
 
 Row-level isolation: pipeline runs, run metrics and orchestrations, sessions/runners and workspaces
 carry a `TenantId` with an EF global query filter on `ITenantContext.TenantId`; writes stamp the
-tenant. Settings and keys are stored per `(tenant, key)` and always read for an explicit tenant.
+tenant. Settings and keys are stored per `(tenant, key)` and always read for an explicit tenant. Below the
+application, Postgres row-level security binds every connection to its tenant on every tenant table — settings,
+audit trail and invitations included — and a connection with no tenant sees nothing
+([ADR-0012](docs/adr/0012-postgres-row-level-security.md)).
 
 ## API
 

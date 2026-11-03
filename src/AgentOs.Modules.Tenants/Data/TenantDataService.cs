@@ -13,7 +13,9 @@
 //     audited under _platform. GAP-17: the service authorizes the purge itself — the caller must hold platform-admin and
 //     may not purge their own tenant — so a future route or job can't skip the check the desktop does
 //     (TenantPurgeDeniedException, raised before any connection is opened).
-// Runs on a raw connection (no RLS role switch); every statement is filtered by the tenant explicitly.
+// Runs on a raw connection as the login user (no RLS role switch: the purge must delete the tenant's audit trail,
+// which the app role may not — GAP-11b); every statement is filtered by the tenant explicitly AND the session is bound
+// to that tenant, so the forced policies (RLS stage 2, ADR-0012) let an owner login (Azure) see exactly its rows.
 
 using System;
 using System.Collections.Generic;
@@ -129,8 +131,7 @@ internal sealed partial class TenantDataService(
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentNullException.ThrowIfNull(output);
         EnsureAvailable();
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         var tables = await TenantTablesAsync(conn, ct).ConfigureAwait(false);
         var columns = await ColumnsAsync(conn, tables, ct).ConfigureAwait(false);
         // Resolve every table's redaction before the first byte is written: a refusal leaves no partial export.
@@ -186,9 +187,8 @@ internal sealed partial class TenantDataService(
         var actor = AuthorizePurge(tenantId, caller);
         EnsureAvailable();
         var deleted = new List<(string Table, long Rows)>();
-        await using (var conn = new NpgsqlConnection(connectionString))
+        await using (var conn = await OpenForTenantAsync(tenantId, ct).ConfigureAwait(false))
         {
-            await conn.OpenAsync(ct).ConfigureAwait(false);
             var tables = await TenantTablesAsync(conn, ct).ConfigureAwait(false);
             var order = DeleteOrder(tables, await ForeignKeysAsync(conn, ct).ConfigureAwait(false));
             await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
@@ -224,6 +224,28 @@ internal sealed partial class TenantDataService(
             $"{tenantId}: {report.TotalRows} rows in {deleted.Count} tables, {users} users, {computers} computer connections cut", null, null, report.AtUtc), ct).ConfigureAwait(false);
         LogPurged(logger, tenantId, report.TotalRows, users);
         return report;
+    }
+
+    // The login user's own connection, bound to the one tenant it exports or purges: with no session tenant the forced
+    // policies would show an owner login nothing — an export missing every RLS table, a purge that deleted no rows yet
+    // reported success.
+    private async Task<NpgsqlConnection> OpenForTenantAsync(string tenantId, CancellationToken ct)
+    {
+        var conn = new NpgsqlConnection(connectionString);
+        try
+        {
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using (AgentOs.SharedKernel.Persistence.RowLevelSecurity.TenantScope(tenantId))
+            {
+                await AgentOs.SharedKernel.Persistence.RowLevelSecurity.ApplySessionAsync(conn, switchRole: false, ct).ConfigureAwait(false);
+            }
+            return conn;
+        }
+        catch
+        {
+            await conn.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     private void EnsureAvailable()

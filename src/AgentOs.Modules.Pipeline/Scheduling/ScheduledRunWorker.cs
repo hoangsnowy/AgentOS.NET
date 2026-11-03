@@ -67,7 +67,9 @@ internal sealed class ScheduledRunWorker(IServiceScopeFactory scopes, TimeProvid
     private async Task ExecuteOneAsync(DueRun due, CancellationToken ct)
     {
         string status;
-        using (AmbientIdentity.Push(due.TenantId, due.Run.CreatedBy))
+        // The whole occurrence — the run AND its outcome row — acts for the schedule's tenant: with RLS stage 2 a write
+        // made after the identity is gone would bind to no tenant and touch nothing.
+        using var identity = AmbientIdentity.Push(due.TenantId, due.Run.CreatedBy);
         using (var scope = scopes.CreateScope())
         {
             try

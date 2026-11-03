@@ -98,10 +98,15 @@ public sealed class RemoteAgentHub : Hub
         // the documented Pending → Paired transition existed only as a comment. Deliberately NOT
         // Context.ConnectionAborted — the pairing fact has already happened, and a connection that drops
         // in the next millisecond must not roll it back.
-        await _runners.MarkPairedAsync(identity.RunnerId, CancellationToken.None).ConfigureAwait(false);
-        // Re-pairing the same computer (a new code, a reinstall) used to leave one Offline row — and one still-valid
-        // token — per pairing on Board › Computers. Its older offline entries retire now.
-        await _runners.RetireReplacedAsync(identity.RunnerId, _broker.IsConnected, CancellationToken.None).ConfigureAwait(false);
+        // The token is verified, so the row's tenant is now trusted: the rest of the handshake writes as that tenant (RLS
+        // stage 2 — a connection with no tenant touches nothing).
+        using (AgentOs.SharedKernel.Persistence.RowLevelSecurity.TenantScope(identity.TenantId))
+        {
+            await _runners.MarkPairedAsync(identity.RunnerId, CancellationToken.None).ConfigureAwait(false);
+            // Re-pairing the same computer (a new code, a reinstall) used to leave one Offline row — and one still-valid
+            // token — per pairing on Board › Computers. Its older offline entries retire now.
+            await _runners.RetireReplacedAsync(identity.RunnerId, _broker.IsConnected, CancellationToken.None).ConfigureAwait(false);
+        }
 
         await base.OnConnectedAsync().ConfigureAwait(false);
     }

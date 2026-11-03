@@ -117,6 +117,12 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   without a tenant claim is refused instead of falling back to the `default` tenant.
 - Sign-out is a POST with an antiforgery token, the VS Code approve form is antiforgery-protected, and plugins load
   only when their SHA-256 is listed in `Plugins:AllowedSha256` (GAP-19).
+- Invitations are single-use, bound to the invited address and revocable from Settings › Users (GAP-11); the
+  audit trail is append-only for the application's database role and hash-chained per tenant, with **Verify
+  chain** in Settings › Activity log (GAP-11b).
+- Row-level security stage 2 (GAP-14): a connection with no tenant sees nothing; settings, the audit trail and
+  invitations are under RLS; cross-tenant platform work runs in explicit, counted platform scopes; a failed RLS
+  bootstrap stops the host outside Development and `/health` reports `row-level-security`.
 
 ### Migration notes
 
@@ -128,5 +134,19 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   [docs/CONFIG.md](docs/CONFIG.md#set-at-deploy-bootstrap).
 - The `approver` realm role (E1.5) is created by the azd post-deploy hook and the Helm realm job; a local realm
   imported before it needs the role added through the Keycloak admin API, or its volume dropped.
+- Invitation links minted before invitations became single-use rows stop working — send new ones.
+- Audit events recorded before the hash chain stay readable but are reported as "not chained"; the chain starts
+  with the next event.
+- **Row-level security stage 2 is not a rolling upgrade.** The first new replica rewrites the database policies when
+  it boots; a replica of the previous version still running then reads platform settings, model keys and scheduled
+  work as nothing, and the audit rows it writes have no chain link (**Verify chain** reports a break there). Stop
+  every old Api / Web replica before the first new one starts — a stop-then-start cut-over: compose recreates
+  single containers that way already; on Helm scale the `api` / `web` Deployments to 0 before `helm upgrade`; on
+  Azure Container Apps deactivate the active revisions before `azd deploy`. Steps in
+  [docs/ONPREM.md](docs/ONPREM.md#upgrading-to-row-level-security-stage-2--stop-the-old-version-first) and
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#a4--subsequent-deploys).
+- Outside Development the hosts now refuse to start when the row-level-security bootstrap fails (the database user
+  needs `CREATEROLE`). Tests or scripts that delete audit rows will make **Verify chain** report a break — that is
+  the point; don't clean audit rows up.
 
 [Unreleased]: https://github.com/hoangsnowy/AgentOS.NET/commits/main

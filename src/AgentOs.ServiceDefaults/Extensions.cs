@@ -103,6 +103,8 @@ public static class Extensions
                 .AddMeter("AgentOs.Tools") // evidence health (inline writes, lost rows, runner-reported refusals) + tool-output savings (ToolTelemetry.MeterName)
                 .AddMeter("AgentOs.Pipeline") // runs by outcome, run duration, budget refusals + utilization (PipelineTelemetry.MeterName)
                 .AddMeter(HealthMetricsPublisher.MeterName) // health check status per check (agentos.health.status)
+                .AddMeter("AgentOs.Persistence") // RLS connections by scope + platform scopes by reason (RowLevelSecurity.MeterName)
+                .AddMeter("AgentOs.Audit") // audit rows not recorded, by reason (Modules.Tenants AuditTelemetry.MeterName)
                 .AddMeter(RequestRateLimitPolicy.MeterName) // 429s from the global request limiter (agentos.http.rate_limited)
                 .AddMeter("Npgsql")) // connection pool + command duration (db.client.*) — the Postgres side of the run SLOs
             .WithTracing(tracing => tracing
@@ -147,6 +149,9 @@ public static class Extensions
                 HealthStatus.Unhealthy,
                 tags: ["ready"],
                 timeout: TimeSpan.FromSeconds(5)));
+            // GAP-14: whether the database wall is up. Degraded (still 200) when an operator turned it off on purpose, so
+            // the readiness probe passes but agentos.health.status and the /health body say so.
+            checks.AddCheck<RowLevelSecurityHealthCheck>("row-level-security", HealthStatus.Unhealthy, tags: ["ready"]);
         }
 
         // Probe the discovery document over the backend-reachable URL: behind ACA the public

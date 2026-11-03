@@ -115,6 +115,15 @@ public sealed class SettingsService : ISettings
             return SettingWriteResult.Fail(error);
         }
 
+        // GAP-14: the "__platform" rows are readable by every tenant but writable only inside an explicit platform
+        // operation (RLS stage 2). This service never opens that scope itself — it has no principal to check, so it would
+        // be elevating on the caller's word. The surface that verified the platform-admin role enters
+        // RowLevelSecurity.PlatformScope("platform-settings") around the call; outside one, a platform write is refused.
+        if (scope == SettingScope.Platform && !AgentOs.SharedKernel.Persistence.RowLevelSecurity.InPlatformScope)
+        {
+            return SettingWriteResult.Fail($"{d.Label} is platform-wide; only a platform admin can change it.");
+        }
+
         var (rowTenant, rowKey) = Row(d.Key, scope, tenantId);
         var old = await _store.GetForTenantAsync(rowTenant, rowKey, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(trimmed))

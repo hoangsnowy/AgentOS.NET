@@ -42,9 +42,11 @@ public sealed class AppConfigModule : IModule, IEndpointModule, IInitializableMo
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
+            // GAP-14: config.app_config is under RLS (ADR-0012 stage 2) — every connection runs as the restricted role.
             services.AddDbContext<AppConfigDbContext>(opt =>
                 opt.UseNpgsql(connectionString, npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "config")));
+                    npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "config"))
+                   .AddInterceptors(AgentOs.SharedKernel.Persistence.RowLevelSecurityInterceptor.Instance));
             services.AddSingleton<EfAppConfigStore>();
             services.AddSingleton<IAppConfigStore>(sp => new AuditingAppConfigStore(sp.GetRequiredService<EfAppConfigStore>(), sp, sp.GetService<TimeProvider>()));
             return;

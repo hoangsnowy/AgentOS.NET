@@ -1,6 +1,14 @@
 // Default impl of ITenantSignupService. Keycloak-first ordering with rollback so a registry-row
-// failure never leaves the tenant claim orphaned without a corresponding row. Invitations are
-// time-limited DataProtection payloads serialized as JSON, no persistence required.
+// failure never leaves the tenant claim orphaned without a corresponding row.
+// Invitations (GAP-11) are rows in IInvitationStore. The emailed token is a time-limited DataProtection envelope around
+// {invitation id, tenant} only — the row is the authority for role, address and state. Accepting one:
+//   read the signed token → bind RLS to the tenant it names (the invitee is anonymous) → the row must be Pending and the
+//   address must be the invited one (InvitationRules) → CLAIM it (one conditional UPDATE: a second accept, a revoke or
+//   the expiry can't race it) → create the Keycloak account (under CancellationToken.None: the claim is the point of no
+//   return) → bind the account to the row. The claim is given back only when Keycloak refused and no account exists
+//   (KeycloakAdminClient deletes a half-made one before throwing); a cancelled or left-behind creation keeps the
+//   invitation used so one link can never yield two accounts. Every refused or failed attempt is audited.
+// Tokens minted before this change (purpose …Invitation.v1: stateless and reusable) no longer open — re-invite.
 
 using System;
 using System.Collections.Generic;
@@ -10,8 +18,10 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Modules.Tenants.Invitations;
 using AgentOs.Modules.Tenants.Keycloak;
 using AgentOs.SharedKernel.Logging;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging;
 
@@ -19,7 +29,10 @@ namespace AgentOs.Modules.Tenants;
 
 internal sealed partial class TenantSignupService : ITenantSignupService
 {
-    private const string ProtectorPurpose = "AgentOs.Modules.Tenants.Invitation.v1";
+    private const string ProtectorPurpose = "AgentOs.Modules.Tenants.Invitation.v2";
+
+    /// <summary>The longest an invitation may live (7 days).</summary>
+    public static readonly TimeSpan MaxInvitationLifetime = TimeSpan.FromHours(168);
 
     private readonly ITenantsRepository _repo;
     private readonly IKeycloakAdminClient _kc;
@@ -27,6 +40,8 @@ internal sealed partial class TenantSignupService : ITenantSignupService
     private readonly ITimeLimitedDataProtector _protector;
     private readonly ILogger<TenantSignupService> _logger;
     private readonly AgentOs.Domain.Configuration.ISettings? _settings;
+    private readonly IInvitationStore _invitations;
+    private readonly TimeProvider _clock;
 
     public TenantSignupService(
         ITenantsRepository repo,
@@ -34,7 +49,9 @@ internal sealed partial class TenantSignupService : ITenantSignupService
         IAuditLog audit,
         IDataProtectionProvider dp,
         ILogger<TenantSignupService> logger,
-        AgentOs.Domain.Configuration.ISettings? settings = null)
+        AgentOs.Domain.Configuration.ISettings? settings = null,
+        IInvitationStore? invitations = null,
+        TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(dp);
         _repo = repo;
@@ -42,6 +59,8 @@ internal sealed partial class TenantSignupService : ITenantSignupService
         _audit = audit;
         _logger = logger;
         _settings = settings;
+        _invitations = invitations ?? new InMemoryInvitationStore();
+        _clock = clock ?? TimeProvider.System;
         _protector = dp.CreateProtector(ProtectorPurpose).ToTimeLimitedDataProtector();
     }
 
@@ -81,27 +100,18 @@ internal sealed partial class TenantSignupService : ITenantSignupService
         }
         if (!string.IsNullOrEmpty(request.Email))
         {
-            var (emailOk, emailErr) = SignupValidation.ValidateEmail(request.Email);
+            var (emailOk, emailErr) = SignupValidation.ValidateEmail(request.Email.Trim());
             if (!emailOk) { throw new InvalidOperationException(emailErr!); }
         }
 
-        string tenantId;
-        string role;
-        SignupMode mode;
-        bool createTenantRow;
-
         if (!string.IsNullOrWhiteSpace(request.InviteToken))
         {
-            var preview = PreviewInvitation(request.InviteToken)
-                ?? throw new InvalidOperationException("Invitation is invalid or expired.");
-            var existing = await _repo.GetAsync(preview.TenantId, ct).ConfigureAwait(false)
-                ?? throw new InvalidOperationException($"Invitation tenant '{preview.TenantId}' no longer exists.");
-            tenantId = existing.Id;
-            role = preview.Role;
-            mode = SignupMode.Invite;
-            createTenantRow = false;
+            return await SignupWithInvitationAsync(request, request.InviteToken, ct).ConfigureAwait(false);
         }
-        else if (!string.IsNullOrWhiteSpace(request.TenantId))
+
+        string tenantId;
+        SignupMode mode;
+        if (!string.IsNullOrWhiteSpace(request.TenantId))
         {
             var (slugOk, slugErr) = SignupValidation.ValidateTenantId(request.TenantId);
             if (!slugOk) { throw new InvalidOperationException(slugErr!); }
@@ -111,115 +121,286 @@ internal sealed partial class TenantSignupService : ITenantSignupService
                 throw new InvalidOperationException($"Workspace '{request.TenantId}' already exists.");
             }
             tenantId = request.TenantId;
-            role = "admin";
             mode = SignupMode.Slug;
-            createTenantRow = true;
         }
         else
         {
             tenantId = await GenerateUniqueSlugAsync(request.Username, ct).ConfigureAwait(false);
-            role = "admin";
             mode = SignupMode.AutoCreate;
-            createTenantRow = true;
         }
-
-        // An invited approver is a member too (TenantRoles.Expand).
-        var roles = TenantRoles.Expand([role]).ToArray();
-        var sendVerify = !string.IsNullOrWhiteSpace(request.Email);
 
         string kcUserId = await _kc.CreateUserAsync(
             username: request.Username,
-            email: request.Email ?? string.Empty,
+            email: request.Email?.Trim() ?? string.Empty,
             tenantId: tenantId,
-            realmRoles: roles,
-            sendVerifyEmail: sendVerify,
+            realmRoles: AdminRoles,
+            sendVerifyEmail: !string.IsNullOrWhiteSpace(request.Email),
             password: request.Password,
             ct: ct).ConfigureAwait(false);
 
-        if (createTenantRow)
+        try
         {
+            var record = new TenantRecord(
+                tenantId,
+                string.IsNullOrWhiteSpace(request.TenantName) ? tenantId : request.TenantName,
+                DateTimeOffset.UtcNow);
+            await _repo.AddAsync(record, ct).ConfigureAwait(false);
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateException dbEx) { await HandleAsync(dbEx).ConfigureAwait(false); }
+        catch (System.Data.Common.DbException dbEx) { await HandleAsync(dbEx).ConfigureAwait(false); }
+        catch (InvalidOperationException dbEx) { await HandleAsync(dbEx).ConfigureAwait(false); }
+
+        async Task HandleAsync(Exception dbEx)
+        {
+            void RollbackKeycloak(Exception rollbackEx) =>
+                _logger.LogError(rollbackEx,
+                    "Tenant DB write failed for '{TenantId}', and rolling back Keycloak user '{UserId}' also failed — orphaned Keycloak user.",
+                    LogSafe.Scrub(tenantId), LogSafe.Scrub(kcUserId));
             try
             {
-                var record = new TenantRecord(
-                    tenantId,
-                    string.IsNullOrWhiteSpace(request.TenantName) ? tenantId : request.TenantName,
-                    DateTimeOffset.UtcNow);
-                await _repo.AddAsync(record, ct).ConfigureAwait(false);
+                await _kc.DeleteUserAsync(kcUserId, CancellationToken.None).ConfigureAwait(false);
             }
-            catch (Microsoft.EntityFrameworkCore.DbUpdateException dbEx) { await HandleAsync(dbEx).ConfigureAwait(false); }
-            catch (System.Data.Common.DbException dbEx) { await HandleAsync(dbEx).ConfigureAwait(false); }
-            catch (InvalidOperationException dbEx) { await HandleAsync(dbEx).ConfigureAwait(false); }
-
-            async Task HandleAsync(Exception dbEx)
-            {
-                void RollbackKeycloak(Exception rollbackEx) =>
-                    _logger.LogError(rollbackEx,
-                        "Tenant DB write failed for '{TenantId}', and rolling back Keycloak user '{UserId}' also failed — orphaned Keycloak user.",
-                        LogSafe.Scrub(tenantId), LogSafe.Scrub(kcUserId));
-                try
-                {
-                    await _kc.DeleteUserAsync(kcUserId, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (System.Net.Http.HttpRequestException rollbackEx) { RollbackKeycloak(rollbackEx); }
-                catch (JsonException rollbackEx) { RollbackKeycloak(rollbackEx); }
-                catch (TimeoutException rollbackEx) { RollbackKeycloak(rollbackEx); }
-                catch (InvalidOperationException rollbackEx) { RollbackKeycloak(rollbackEx); }
-                throw new InvalidOperationException(
-                    $"Tenant registry write failed for '{tenantId}'; Keycloak user rolled back.", dbEx);
-            }
+            catch (System.Net.Http.HttpRequestException rollbackEx) { RollbackKeycloak(rollbackEx); }
+            catch (JsonException rollbackEx) { RollbackKeycloak(rollbackEx); }
+            catch (TimeoutException rollbackEx) { RollbackKeycloak(rollbackEx); }
+            catch (InvalidOperationException rollbackEx) { RollbackKeycloak(rollbackEx); }
+            throw new InvalidOperationException(
+                $"Tenant registry write failed for '{tenantId}'; Keycloak user rolled back.", dbEx);
         }
 
         await _audit.WriteAsync(new AuditEntry(
             Guid.NewGuid(), tenantId, kcUserId, AuditActions.SignupCompleted,
             Target: $"mode={mode}", IpAddress: null, UserAgent: null,
             TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
-        if (createTenantRow)
-        {
-            await _audit.WriteAsync(new AuditEntry(
-                Guid.NewGuid(), tenantId, kcUserId, AuditActions.TenantCreated,
-                Target: tenantId, IpAddress: null, UserAgent: null,
-                TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
-        }
+        await _audit.WriteAsync(new AuditEntry(
+            Guid.NewGuid(), tenantId, kcUserId, AuditActions.TenantCreated,
+            Target: tenantId, IpAddress: null, UserAgent: null,
+            TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
 
         return new TenantSignupOutcome(tenantId, kcUserId, mode);
     }
 
-    public InvitationToken CreateInvitation(string tenantId, string role, string? email, TimeSpan ttl)
+    // The invite branch (see the file header for the order and why).
+    private async Task<TenantSignupOutcome> SignupWithInvitationAsync(TenantSignupRequest request, string token, CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(role);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(ttl, TimeSpan.Zero);
+        var payload = ReadToken(token)
+            ?? throw new InvalidOperationException(InvitationRules.Describe(InvitationAcceptance.NotFound));
+        // The invitee is anonymous (or signed in elsewhere): the signed token, not the caller, names the tenant.
+        using var bound = RowLevelSecurity.TenantScope(payload.TenantId);
+        var invitation = await _invitations.GetAsync(payload.TenantId, payload.Id, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException(InvitationRules.Describe(InvitationAcceptance.NotFound));
 
-        var payload = new InvitationPayload(tenantId, role, email, DateTimeOffset.UtcNow);
-        var json = JsonSerializer.Serialize(payload, JsonOpts);
-        var token = _protector.Protect(json, ttl);
-        return new InvitationToken(token, DateTimeOffset.UtcNow.Add(ttl));
+        var check = InvitationRules.CheckAcceptance(invitation.StatusAt(_clock.GetUtcNow()), invitation.EmailNormalized, request.Email);
+        if (check != InvitationAcceptance.Ok)
+        {
+            await RefusedAsync(invitation, check, ct).ConfigureAwait(false);
+            throw new InvalidOperationException(InvitationRules.Describe(check));
+        }
+        _ = await _repo.GetAsync(invitation.TenantId, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"The workspace '{invitation.TenantId}' this invitation is for no longer exists.");
+
+        // Consume it before the account exists: a second accept of the same link, a revoke or the expiry landing in
+        // between makes this conditional write touch nothing — the invitation is used at most once.
+        if (!await _invitations.TryClaimAsync(invitation.TenantId, invitation.Id, _clock.GetUtcNow(), ct).ConfigureAwait(false))
+        {
+            var now = await _invitations.GetAsync(invitation.TenantId, invitation.Id, ct).ConfigureAwait(false);
+            var why = now is null ? InvitationAcceptance.NotFound : InvitationRules.ForStatus(now.StatusAt(_clock.GetUtcNow()));
+            why = why == InvitationAcceptance.Ok ? InvitationAcceptance.AlreadyUsed : why;
+            await RefusedAsync(invitation, why, ct).ConfigureAwait(false);
+            throw new InvalidOperationException(InvitationRules.Describe(why));
+        }
+
+        // The claim is the point of no return: from here the account is created to completion even if the invitee drops
+        // the connection (RequestAborted). Cancelling half-way would leave a Keycloak account nobody recorded next to a
+        // claim this code could not tell apart from "Keycloak refused" — so the request's token stops here.
+        string kcUserId;
+        try
+        {
+            kcUserId = await _kc.CreateUserAsync(
+                username: request.Username,
+                email: invitation.Email,
+                tenantId: invitation.TenantId,
+                // An invited approver is a member too (TenantRoles.Expand).
+                realmRoles: TenantRoles.Expand([invitation.Role]),
+                sendVerifyEmail: true,
+                password: request.Password,
+                ct: CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not KeycloakUserLeftBehindException)
+        {
+            // Keycloak refused (a taken username, Keycloak down) and the client guarantees no account exists — an account
+            // it made before failing is deleted again (KeycloakAdminClient), otherwise it throws the typed exception
+            // handled below. Give the invitation back so the invitee can try again; never throws over the original failure.
+            await ReleaseQuietlyAsync(invitation).ConfigureAwait(false);
+            await AuditQuietlyAsync(invitation, "account_not_created").ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or KeycloakUserLeftBehindException)
+        {
+            // An account may exist (a left-behind user, or an HttpClient timeout with no answer): the invitation stays
+            // consumed so this link can never produce a second account. The operator sees it in the audit log and the
+            // Keycloak console; the invitee needs a new invitation.
+            var userId = (ex as KeycloakUserLeftBehindException)?.UserId;
+            _logger.LogError(ex,
+                "Invitation {InvitationId} was used, but creating the account did not finish cleanly (user {UserId}); it stays used.",
+                invitation.Id, LogSafe.Scrub(userId ?? "unknown"));
+            await AuditQuietlyAsync(invitation, "account_unrecorded", userId).ConfigureAwait(false);
+            throw;
+        }
+
+        try
+        {
+            await _invitations.CompleteAsync(invitation.TenantId, invitation.Id, kcUserId, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The account exists and the invitation stays consumed; only the link to the account is missing.
+            _logger.LogWarning(ex, "Invitation {InvitationId} was used, but recording the account it created failed.", invitation.Id);
+        }
+
+        var at = _clock.GetUtcNow();
+        await _audit.WriteAsync(new AuditEntry(
+            Guid.NewGuid(), invitation.TenantId, kcUserId, AuditActions.SignupCompleted,
+            Target: $"mode={SignupMode.Invite}", IpAddress: null, UserAgent: null, TimestampUtc: at), ct).ConfigureAwait(false);
+        await _audit.WriteAsync(new AuditEntry(
+            Guid.NewGuid(), invitation.TenantId, kcUserId, AuditActions.InvitationAccepted,
+            Target: $"id={invitation.Id:N},role={invitation.Role},email={invitation.Email}", IpAddress: null, UserAgent: null, TimestampUtc: at), ct).ConfigureAwait(false);
+        return new TenantSignupOutcome(invitation.TenantId, kcUserId, SignupMode.Invite);
     }
 
-    public InvitationPreview? PreviewInvitation(string? token)
+    private async Task ReleaseQuietlyAsync(InvitationRecord invitation)
+    {
+        try
+        {
+            await _invitations.ReleaseAsync(invitation.TenantId, invitation.Id, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Invitation {InvitationId} could not be released after a failed sign-up; it stays used — send a new one.", invitation.Id);
+        }
+    }
+
+    // The audit row for a claimed invitation whose account creation failed — written after the fact, under
+    // CancellationToken.None, and never over the original failure.
+    private async Task AuditQuietlyAsync(InvitationRecord invitation, string reason, string? userId = null)
+    {
+        try
+        {
+            await _audit.WriteAsync(new AuditEntry(
+                Guid.NewGuid(), invitation.TenantId, userId, AuditActions.InvitationRefused,
+                Target: $"id={invitation.Id:N},reason={reason}", IpAddress: null, UserAgent: null,
+                TimestampUtc: _clock.GetUtcNow()), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "The failed sign-up on invitation {InvitationId} could not be audited ({Reason}).", invitation.Id, reason);
+        }
+    }
+
+    private Task RefusedAsync(InvitationRecord invitation, InvitationAcceptance why, CancellationToken ct)
+        => _audit.WriteAsync(new AuditEntry(
+            Guid.NewGuid(), invitation.TenantId, UserId: null, AuditActions.InvitationRefused,
+            Target: $"id={invitation.Id:N},reason={why}", IpAddress: null, UserAgent: null, TimestampUtc: _clock.GetUtcNow()), ct);
+
+    public async Task<InvitationToken> CreateInvitationAsync(
+        string tenantId, string role, string email, TimeSpan ttl, AuditActor actor, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentNullException.ThrowIfNull(actor);
+        // admin, approver or member (E1.5): the realm roles it amounts to are expanded when the account is created.
+        if (!TenantRoles.IsKnown(role))
+        {
+            throw new ArgumentException("The role must be 'admin', 'approver' or 'member'.", nameof(role));
+        }
+        var address = email?.Trim() ?? string.Empty;
+        var (emailOk, emailErr) = SignupValidation.ValidateEmail(address);
+        if (!emailOk || address.Length > InvitationRules.MaxEmailLength)
+        {
+            throw new ArgumentException(emailOk ? "The email address is too long." : emailErr, nameof(email));
+        }
+        if (ttl <= TimeSpan.Zero || ttl > MaxInvitationLifetime)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ttl), ttl, "An invitation lasts between 1 and 168 hours.");
+        }
+
+        var now = _clock.GetUtcNow();
+        var invitation = new InvitationRecord(
+            Guid.NewGuid(), tenantId, address, InvitationRules.NormalizeEmail(address), role, actor.UserId, now, now + ttl);
+        using (RowLevelSecurity.TenantScopeIfUnbound(tenantId))
+        {
+            await _invitations.AddAsync(invitation, ct).ConfigureAwait(false);
+        }
+        var token = _protector.Protect(JsonSerializer.Serialize(new InvitationPayload(invitation.Id, tenantId), JsonOpts), ttl);
+        await _audit.WriteAsync(new AuditEntry(
+            Guid.NewGuid(), tenantId, actor.UserId, AuditActions.InvitationMinted,
+            Target: $"id={invitation.Id:N},role={role},email={address}",
+            actor.IpAddress, actor.UserAgent, now), ct).ConfigureAwait(false);
+        return new InvitationToken(invitation.Id, token, invitation.ExpiresAtUtc);
+    }
+
+    public async Task<InvitationPreview?> PreviewInvitationAsync(string? token, CancellationToken ct = default)
+    {
+        if (ReadToken(token) is not { } payload) { return null; }
+        // Anonymous by design (the signup page), and the token — signed by us — names the tenant.
+        using var bound = RowLevelSecurity.TenantScope(payload.TenantId);
+        var invitation = await _invitations.GetAsync(payload.TenantId, payload.Id, ct).ConfigureAwait(false);
+        return invitation is null
+            ? null
+            : new InvitationPreview(invitation.Id, invitation.TenantId, invitation.Role, invitation.Email, invitation.ExpiresAtUtc,
+                invitation.StatusAt(_clock.GetUtcNow()));
+    }
+
+    public async Task<IReadOnlyList<InvitationInfo>> ListInvitationsAsync(string tenantId, int max = 100, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        using var bound = RowLevelSecurity.TenantScopeIfUnbound(tenantId);
+        var rows = await _invitations.ListAsync(tenantId, max, ct).ConfigureAwait(false);
+        var now = _clock.GetUtcNow();
+        return [.. rows.Select(r => r.ToInfo(now))];
+    }
+
+    public async Task<bool> RevokeInvitationAsync(string tenantId, Guid invitationId, AuditActor actor, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentNullException.ThrowIfNull(actor);
+        using var bound = RowLevelSecurity.TenantScopeIfUnbound(tenantId);
+        var now = _clock.GetUtcNow();
+        if (!await _invitations.TryRevokeAsync(tenantId, invitationId, now, actor.UserId, ct).ConfigureAwait(false))
+        {
+            return false;
+        }
+        var invitation = await _invitations.GetAsync(tenantId, invitationId, ct).ConfigureAwait(false);
+        await _audit.WriteAsync(new AuditEntry(
+            Guid.NewGuid(), tenantId, actor.UserId, AuditActions.InvitationRevoked,
+            Target: $"id={invitationId:N}{(invitation is null ? string.Empty : $",email={invitation.Email}")}",
+            actor.IpAddress, actor.UserAgent, now), ct).ConfigureAwait(false);
+        return true;
+    }
+
+    // The signed envelope: null for anything that isn't a current, intact invitation token.
+    private InvitationPayload? ReadToken(string? token)
     {
         if (string.IsNullOrWhiteSpace(token)) { return null; }
         string json;
-        DateTimeOffset expires;
         try
         {
-            json = _protector.Unprotect(token, out expires);
+            json = _protector.Unprotect(token, out _);
         }
         catch (CryptographicException)
         {
             return null;
         }
-        InvitationPayload? payload;
         try
         {
-            payload = JsonSerializer.Deserialize<InvitationPayload>(json, JsonOpts);
+            return JsonSerializer.Deserialize<InvitationPayload>(json, JsonOpts) is { } payload
+                && payload.Id != Guid.Empty && !string.IsNullOrWhiteSpace(payload.TenantId)
+                    ? payload
+                    : null;
         }
         catch (JsonException)
         {
             return null;
         }
-        if (payload is null) { return null; }
-        return new InvitationPreview(payload.TenantId, payload.Role, payload.Email, expires);
     }
 
     private async Task<string> GenerateUniqueSlugAsync(string username, CancellationToken ct)
@@ -249,7 +430,10 @@ internal sealed partial class TenantSignupService : ITenantSignupService
         return slug;
     }
 
+    private static readonly string[] AdminRoles = ["admin"];
+
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
-    private sealed record InvitationPayload(string TenantId, string Role, string? Email, DateTimeOffset IssuedAtUtc);
+    // The token carries only what finds the row; everything else comes from the row.
+    private sealed record InvitationPayload(Guid Id, string TenantId);
 }

@@ -43,14 +43,15 @@ internal sealed class SessionRepository : ISessionRepository
             ORDER BY "CreatedAtUtc" DESC
             LIMIT @lim OFFSET @off
             """;
-        return await QuerySessionsAsync(sql, new { tenantId = _tenant.TenantId, lim, off }, ct).ConfigureAwait(false);
+        return await QuerySessionsAsync(_tenant.TenantId, sql, new { tenantId = _tenant.TenantId, lim, off }, ct).ConfigureAwait(false);
     }
 
     public async Task<RemoteSessionEntity?> GetAsync(Guid id, CancellationToken ct = default)
     {
         const string sql = """SELECT * FROM sessions.sessions WHERE "Id" = @id AND "TenantId" = @tenantId""";
-        await using var conn = Conn.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        // RLS (ADR-0012 stage 2): Dapper reads switch to the restricted role like the EF context — a plain connection
+        // ran as the login user, which an owner login (Azure) sees nothing through once "no tenant" means nothing.
+        await using var conn = await Conn.OpenForTenantAsync(_tenant.TenantId, ct).ConfigureAwait(false);
         return await conn.QueryFirstOrDefaultAsync<RemoteSessionEntity>(
             new CommandDefinition(sql, new { id, tenantId = _tenant.TenantId }, cancellationToken: ct)).ConfigureAwait(false);
     }
@@ -83,13 +84,12 @@ internal sealed class SessionRepository : ISessionRepository
             WHERE "TenantId" = @tenantId
             ORDER BY "CreatedAtUtc" DESC
             """;
-        return await QuerySessionsAsync(sql, new { tenantId }, ct).ConfigureAwait(false);
+        return await QuerySessionsAsync(tenantId, sql, new { tenantId }, ct).ConfigureAwait(false);
     }
 
-    private async Task<IReadOnlyList<RemoteSessionEntity>> QuerySessionsAsync(string sql, object parms, CancellationToken ct)
+    private async Task<IReadOnlyList<RemoteSessionEntity>> QuerySessionsAsync(string tenantId, string sql, object parms, CancellationToken ct)
     {
-        await using var conn = Conn.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await Conn.OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<RemoteSessionEntity>(
             new CommandDefinition(sql, parms, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();
@@ -154,19 +154,18 @@ internal sealed class SessionRepository : ISessionRepository
             WHERE "TenantId" = @tenantId AND "SessionId" = @sessionId
             ORDER BY "Owner", "Repo"
             """;
-        return await QueryReposAsync(sql, new { tenantId, sessionId }, ct).ConfigureAwait(false);
+        return await QueryReposAsync(tenantId, sql, new { tenantId, sessionId }, ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<SessionRepoEntity>> ListAllReposForTenantAsync(string tenantId, CancellationToken ct = default)
     {
         const string sql = """SELECT * FROM sessions.session_repos WHERE "TenantId" = @tenantId""";
-        return await QueryReposAsync(sql, new { tenantId }, ct).ConfigureAwait(false);
+        return await QueryReposAsync(tenantId, sql, new { tenantId }, ct).ConfigureAwait(false);
     }
 
-    private async Task<IReadOnlyList<SessionRepoEntity>> QueryReposAsync(string sql, object parms, CancellationToken ct)
+    private async Task<IReadOnlyList<SessionRepoEntity>> QueryReposAsync(string tenantId, string sql, object parms, CancellationToken ct)
     {
-        await using var conn = Conn.Create();
-        await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var conn = await Conn.OpenForTenantAsync(tenantId, ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<SessionRepoEntity>(
             new CommandDefinition(sql, parms, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();

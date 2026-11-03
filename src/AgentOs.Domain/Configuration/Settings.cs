@@ -160,7 +160,10 @@ public interface ISettings
     /// <summary>Every descriptor in <paramref name="category"/> (or all when null) with its effective value; secrets masked.</summary>
     ValueTask<IReadOnlyList<SettingView>> ListAsync(string? tenantId, string? category = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Validate and store <paramref name="value"/> at <paramref name="scope"/>; empty clears the override.</summary>
+    /// <summary>Validate and store <paramref name="value"/> at <paramref name="scope"/>; empty clears the override.
+    /// A <see cref="SettingScope.Platform"/> write is accepted only from a flow that is already a platform operation
+    /// (the caller verified the platform-admin role and entered the platform RLS scope) — the service never elevates
+    /// on its own; otherwise it is refused.</summary>
     ValueTask<SettingWriteResult> SetAsync(
         string key, string? value, SettingScope scope, string? tenantId, string actor, CancellationToken cancellationToken = default);
 }

@@ -8,17 +8,22 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants.Email;
+using AgentOs.Modules.Tenants.Invitations;
 using AgentOs.Modules.Tenants.Keycloak;
 using AgentOs.SharedKernel.Hosting;
 using AgentOs.SharedKernel.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 
 namespace AgentOs.Modules.Tenants.Endpoints;
 
 internal static class TenantEndpoints
 {
+    // Log category of public sign-up failures (the detail the anonymous caller never sees).
+    private const string SignupLogCategory = "AgentOs.Modules.Tenants.Signup";
+
     public static IEndpointRouteBuilder MapTenantEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -97,11 +102,20 @@ internal static class TenantEndpoints
         // Self-service sign-up: dispatches to ITenantSignupService which picks one of three modes
         // (invite / slug / auto-create) by request shape. Creating a NEW workspace needs the platform setting
         // Tenants:OpenSignup (off outside Development — GAP-01); an invitation always works.
+        // The caller is anonymous: our own validation messages are returned as they are, but an identity-service
+        // failure never is — Keycloak's raw response body stays in the server log (SignupErrors).
         app.MapPost("/tenants/register", async (
             RegisterTenantRequest body,
             ITenantSignupService signup,
+            ILoggerFactory loggers,
             CancellationToken ct) =>
         {
+            IResult IdentityFailed(Exception ex)
+            {
+                loggers.CreateLogger(SignupLogCategory).LogError(ex, "Sign-up failed in the identity service; the caller got a generic message.");
+                return Results.Json(new { error = SignupErrors.ForPublic(ex) }, statusCode: SignupErrors.StatusFor(ex));
+            }
+
             try
             {
                 var outcome = await signup.SignupAsync(new TenantSignupRequest(
@@ -119,6 +133,12 @@ internal static class TenantEndpoints
             {
                 return Results.Problem(detail: ex.Message, statusCode: StatusCodes.Status403Forbidden);
             }
+            catch (KeycloakAdminException ex) { return IdentityFailed(ex); }
+            catch (KeycloakUserLeftBehindException ex) { return IdentityFailed(ex); }
+            catch (System.Net.Http.HttpRequestException ex) { return IdentityFailed(ex); }
+            catch (TimeoutException ex) { return IdentityFailed(ex); }
+            // HttpClient reports its own timeout as a cancellation; a caller that went away is not a failure to report.
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested) { return IdentityFailed(ex); }
             catch (InvalidOperationException ex)
             {
                 return Results.BadRequest(new { error = ex.Message });
@@ -129,14 +149,13 @@ internal static class TenantEndpoints
         .WithTags("Tenants")
         .AllowAnonymous();
 
-        // Admin-only: mint a stateless invitation token. The returned `url` (signup page + ?invite=)
-        // is what the inviter pastes into an email or chat. Tokens are signed + time-limited; they
-        // cannot be revoked before expiry — keep TTL short for high-trust environments.
+        // Admin-only: create an invitation (GAP-11). The returned `url` (signup page + ?invite=) is what the inviter
+        // pastes into an email or chat. The invitation is single-use, bound to `email` (required), revocable until it is
+        // used (POST …/invitations/{id}/revoke), and expires after `ttlHours` (1–168, default 24).
         app.MapPost("/tenants/{tenantId}/invitations", async (
             string tenantId,
             CreateInvitationRequest body,
             ITenantSignupService signup,
-            IAuditLog audit,
             IEmailSender email,
             ITenantContext ctx,
             PublicOrigin origin,
@@ -154,59 +173,114 @@ internal static class TenantEndpoints
             {
                 return Results.BadRequest(new { error = "role must be 'admin', 'approver' or 'member'" });
             }
+            // GAP-11: an invitation is bound to the address it is sent to — no address, no invitation.
+            if (string.IsNullOrWhiteSpace(body.Email))
+            {
+                return Results.BadRequest(new { error = "email is required: an invitation can only be accepted by the address it was sent to" });
+            }
             var ttl = TimeSpan.FromHours(body.TtlHours is > 0 and <= 168 ? body.TtlHours.Value : 24);
-            var minted = signup.CreateInvitation(tenantId, role, body.Email, ttl);
+            InvitationToken minted;
+            try
+            {
+                // Audited by the service (invitation.minted) — the row joins the tenant's hash chain there.
+                minted = await signup.CreateInvitationAsync(tenantId, role, body.Email, ttl,
+                    new AuditActor(ctx.UserId, http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString()),
+                    ct).ConfigureAwait(false);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
             // GAP-05: the link points at the configured public desktop URL — never at the request's Host header, which
             // the caller controls (an admin's request through a spoofed Host would mint a link to someone else's server).
-            var url = origin.Link($"/signup?invite={Uri.EscapeDataString(minted.Token)}", http.Request);
-            await audit.WriteAsync(new AuditEntry(
-                Guid.NewGuid(), tenantId, ctx.UserId, AuditActions.InvitationMinted,
-                Target: $"role={role}{(body.Email is null ? "" : $",email={body.Email}")}",
-                IpAddress: http.Connection.RemoteIpAddress?.ToString(),
-                UserAgent: http.Request.Headers.UserAgent.ToString(),
-                TimestampUtc: DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
+            var url = origin.Link(InvitationLinks.PathFor(minted.Token), http.Request);
 
-            // Best-effort: email the link when an address is supplied. The URL is returned regardless
-            // so the admin can still copy/paste it if delivery is unconfigured or fails.
+            // Best-effort: email the link to the invited address. The URL is returned regardless so the admin can still
+            // copy/paste it if delivery is unconfigured or fails.
             var emailed = false;
-            if (!string.IsNullOrWhiteSpace(body.Email))
+            // Already logged by the sender; fall back to the returned URL. The address may also be
+            // unparseable (MimeKit.ParseException) — same outcome: emailed stays false.
+            static void Handle(Exception e) => _ = e.Message;
+            try
             {
-                // Already logged by the sender; fall back to the returned URL. The address may also be
-                // unparseable (MimeKit.ParseException) — same outcome: emailed stays false.
-                static void Handle(Exception e) => _ = e.Message;
-                try
-                {
-                    var (subject, htmlBody, textBody) = InvitationEmail.Build(tenantId, role, url);
-                    await email.SendAsync(body.Email!, subject, htmlBody, textBody, ct).ConfigureAwait(false);
-                    emailed = true;
-                }
-                // ServiceNotConnectedException derives from InvalidOperationException; CommandException →
-                // ProtocolException — derived clauses precede their bases (CS0160).
-                catch (MailKit.ServiceNotConnectedException ex) { Handle(ex); }
-                catch (MailKit.CommandException ex) { Handle(ex); }
-                catch (MailKit.ProtocolException ex) { Handle(ex); }
-                catch (MailKit.Security.AuthenticationException ex) { Handle(ex); }
-                catch (System.Net.Sockets.SocketException ex) { Handle(ex); }
-                catch (System.IO.IOException ex) { Handle(ex); }
-                catch (InvalidOperationException ex) { Handle(ex); }
-                catch (MimeKit.ParseException ex) { Handle(ex); }
+                var (subject, htmlBody, textBody) = InvitationEmail.Build(tenantId, role, url);
+                await email.SendAsync(body.Email.Trim(), subject, htmlBody, textBody, ct).ConfigureAwait(false);
+                emailed = true;
             }
-            return Results.Ok(new CreatedInvitationResponse(minted.Token, url, minted.ExpiresAtUtc, emailed));
+            // ServiceNotConnectedException derives from InvalidOperationException; CommandException →
+            // ProtocolException — derived clauses precede their bases (CS0160).
+            catch (MailKit.ServiceNotConnectedException ex) { Handle(ex); }
+            catch (MailKit.CommandException ex) { Handle(ex); }
+            catch (MailKit.ProtocolException ex) { Handle(ex); }
+            catch (MailKit.Security.AuthenticationException ex) { Handle(ex); }
+            catch (System.Net.Sockets.SocketException ex) { Handle(ex); }
+            catch (System.IO.IOException ex) { Handle(ex); }
+            catch (InvalidOperationException ex) { Handle(ex); }
+            catch (MimeKit.ParseException ex) { Handle(ex); }
+            return Results.Ok(new CreatedInvitationResponse(minted.Token, url, minted.ExpiresAtUtc, emailed, minted.Id));
         })
         .WithName("TenantsCreateInvitation")
-        .WithSummary("Mint a signup invitation URL for the tenant (admin only)")
+        .WithSummary("Create a single-use, email-bound invitation URL for the tenant (admin only)")
         .WithTags("Tenants")
         .RequireAuthorization("Admin");
 
-        // Public preview: decode an invitation token (no side effects). Lets the signup page show
-        // the inviter's tenant + email before the user fills the form.
-        app.MapGet("/tenants/invitations/preview", (
-            string token,
-            ITenantSignupService signup) =>
+        // The tenant's invitations, newest first, with their state (pending / accepted / revoked / expired).
+        app.MapGet("/tenants/{tenantId}/invitations", async (
+            string tenantId,
+            ITenantSignupService signup,
+            ITenantContext ctx,
+            int? max,
+            CancellationToken ct) =>
         {
-            var preview = signup.PreviewInvitation(token);
+            if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal))
+            {
+                return Results.Forbid();
+            }
+            return Results.Ok(await signup.ListInvitationsAsync(tenantId, Math.Clamp(max ?? 100, 1, 500), ct).ConfigureAwait(false));
+        })
+        .WithName("TenantsListInvitations")
+        .WithSummary("List the tenant's invitations and their state (tenant Admin only)")
+        .WithTags("Tenants")
+        .RequireAuthorization("Admin");
+
+        // Withdraw an unused invitation (GAP-11): its link stops working at once. 409 when it was already used or revoked.
+        app.MapPost("/tenants/{tenantId}/invitations/{invitationId:guid}/revoke", async (
+            string tenantId,
+            Guid invitationId,
+            ITenantSignupService signup,
+            ITenantContext ctx,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal))
+            {
+                return Results.Forbid();
+            }
+            var actor = new AuditActor(ctx.UserId, http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString());
+            if (await signup.RevokeInvitationAsync(tenantId, invitationId, actor, ct).ConfigureAwait(false))
+            {
+                return Results.NoContent();
+            }
+            var known = (await signup.ListInvitationsAsync(tenantId, 500, ct).ConfigureAwait(false)).Any(i => i.Id == invitationId);
+            return known
+                ? Results.Conflict(new { error = "Only an invitation that has not been used or revoked can be revoked." })
+                : Results.NotFound();
+        })
+        .WithName("TenantsRevokeInvitation")
+        .WithSummary("Revoke an unused invitation (tenant Admin only)")
+        .WithTags("Tenants")
+        .RequireAuthorization("Admin");
+
+        // Public preview: read an invitation link (no side effects). Lets the signup page show the tenant, role and the
+        // (bound) email — or why the link can't be used (status accepted / revoked / expired).
+        app.MapGet("/tenants/invitations/preview", async (
+            string token,
+            ITenantSignupService signup,
+            CancellationToken ct) =>
+        {
+            var preview = await signup.PreviewInvitationAsync(token, ct).ConfigureAwait(false);
             return preview is null
-                ? Results.NotFound(new { error = "Invitation is invalid or expired" })
+                ? Results.NotFound(new { error = "Invitation is invalid" })
                 : Results.Ok(preview);
         })
         .WithName("TenantsPreviewInvitation")
@@ -348,6 +422,26 @@ internal static class TenantEndpoints
         })
         .WithName("TenantsAudit")
         .WithSummary("Audit trail for the current tenant (tenant Admin only)")
+        .WithTags("Tenants")
+        .RequireAuthorization("Admin");
+
+        // GAP-11b: walk the tenant's audit hash chain — intact, or the first event that was changed or removed.
+        app.MapGet("/tenants/{tenantId}/audit/verify", async (
+            string tenantId,
+            [Microsoft.AspNetCore.Mvc.FromServices] IAuditChainVerifier verifier,
+            ITenantContext ctx,
+            CancellationToken ct) =>
+        {
+            if (!string.Equals(ctx.TenantId, tenantId, StringComparison.Ordinal))
+            {
+                return Results.Forbid();
+            }
+            var report = await verifier.VerifyAsync(tenantId, ct).ConfigureAwait(false);
+            return Results.Ok(new AuditChainResponse(report.TenantId, report.Intact, report.Verified, report.Unchained,
+                report.HeadHash, report.BrokenAt, report.BrokenEventId, report.Problem.ToString(), report.Summary));
+        })
+        .WithName("TenantsAuditVerify")
+        .WithSummary("Verify the tenant's tamper-evident audit chain (tenant Admin only)")
         .WithTags("Tenants")
         .RequireAuthorization("Admin");
 
@@ -518,4 +612,9 @@ public sealed record CreateInvitationRequest(string? Email, string? Role, int? T
 
 /// <summary>Response for POST /tenants/{id}/invitations.</summary>
 /// <param name="Emailed">True when the invitation link was emailed to the supplied address.</param>
-public sealed record CreatedInvitationResponse(string Token, string Url, DateTimeOffset ExpiresAtUtc, bool Emailed = false);
+/// <param name="Id">The invitation's id (revoke it with POST /tenants/{id}/invitations/{invitationId}/revoke).</param>
+public sealed record CreatedInvitationResponse(string Token, string Url, DateTimeOffset ExpiresAtUtc, bool Emailed = false, Guid? Id = null);
+
+/// <summary>Response for GET /tenants/{id}/audit/verify.</summary>
+public sealed record AuditChainResponse(
+    string TenantId, bool Intact, long Verified, long Unchained, string? HeadHash, long? BrokenAt, Guid? BrokenEventId, string Problem, string Summary);

@@ -221,8 +221,9 @@ external Keycloak without its URL, several Web replicas without sticky sessions)
 - **External Postgres** — `postgresql.enabled=false` and `externalDatabase.{host,port,database,username,sslMode}`
   (password: `postgres-password` in the secret). Create the `agentos` and `keycloak` databases first. The user
   must **own** them and hold **`CREATEROLE`**: the hosts create the `agentos_rls` role, its grants and the
-  row-level-security policies at every boot. Without it RLS stays off and the hosts log
-  `Row-level security bootstrap FAILED` (isolation falls back to application filters only).
+  row-level-security policies at every boot. Without it the hosts **refuse to start** with "Row-level security
+  could not be set up, so AgentOS.NET will not start" (`Persistence:RowLevelSecurity=false` runs without it, on
+  application filters only — on purpose, and reported Degraded by `/health`).
 - **External Keycloak** — `keycloak.enabled=false`, `keycloak.publicUrl=https://sso.corp.example`. Import
   [`infra/keycloak/agentic-realm.json`](../infra/keycloak/agentic-realm.json) and copy
   [`infra/keycloak/themes/agentos`](../infra/keycloak/themes/agentos) into its themes directory first; the realm
@@ -285,8 +286,33 @@ Nothing in the stack calls the internet at runtime except the LLM providers you 
    - compose: set `AGENTOS_VERSION` in `.env` (bundle installs) → `docker compose up -d --wait`
    - Helm: `helm upgrade agentos <chart> -n agentos -f my-values.yaml --wait --timeout 15m`
 4. Database migrations run at boot, per module, serialised by an advisory lock — rolling several replicas is
-   safe. The realm step re-runs (idempotent; seed passwords are never re-applied). Verify with `/health` and a
+   safe **between versions on the same row-level-security stage**; the one upgrade that is not rolling-safe is
+   below. The realm step re-runs (idempotent; seed passwords are never re-applied). Verify with `/health` and a
    sign-in.
+
+### Upgrading to row-level security stage 2 — stop the old version first
+
+The release that brings RLS stage 2 ([ADR-0012](adr/0012-postgres-row-level-security.md): a connection with no
+tenant sees **nothing**; settings, the audit trail and invitations under RLS; the audit hash chain) rewrites the
+database policies when its **first** replica boots. From that moment an Api or Web replica still running the
+previous version reads through the new policies with its old assumptions: its tenant-less reads (platform settings
+and model keys resolved off a request, the scheduler, the Autopilot scan, the runner handshake) come back empty, and
+the audit rows it writes carry no chain link, so **Verify chain** reports the trail broken from there. Do this
+upgrade as a stop-then-start cut-over, never side by side:
+
+- **compose:** `docker compose up -d --wait` recreates each container (the old one stops before the new one starts),
+  which is enough with one `api` and one `web`. If you scaled them, run `docker compose stop api web` first.
+- **Helm:** a Deployment rolls new pods up before the old ones go. Scale the old version to zero first, then
+  upgrade (the chart puts `replicaCount` back):
+
+  ```bash
+  kubectl -n agentos scale deployment -l app.kubernetes.io/component=api --replicas=0
+  kubectl -n agentos scale deployment -l app.kubernetes.io/component=web --replicas=0
+  kubectl -n agentos wait --for=delete pod -l 'app.kubernetes.io/component in (api,web)' --timeout=5m
+  helm upgrade agentos <chart> -n agentos -f my-values.yaml --wait --timeout 15m
+  ```
+
+Expect a few minutes without the desktop and the Api. Later upgrades on stage 2 roll as usual.
 
 Notes:
 
@@ -393,7 +419,7 @@ card without a version under the service account.
 | Sign-in loops, *IDX10205 issuer invalid* | `KEYCLOAK_PUBLIC_URL` differs from how browsers reach Keycloak — the issuer is fixed to it. |
 | Api/Web exit: *RequireKeyWrapping is on but the key ring is unwrapped* | The certificate is not mounted or its path/password is wrong. Check `dataprotection/` and `DATAPROTECTION_CERTIFICATE_*`, or the Helm Secret. |
 | HTTP 431 on Keycloak | Oversized cookie jar on a shared host name — compose/Helm raise Keycloak's limit to 128K; use dedicated host names per install (and `COOKIE_PREFIX` / `web.cookiePrefix`). |
-| Log: `Row-level security bootstrap FAILED` | The database user lacks `CREATEROLE`/ownership (external Postgres). Grant it, restart. |
+| Host exits: `Row-level security could not be set up` (log: `Row-level security bootstrap FAILED`) | The database user lacks `CREATEROLE`/ownership (external Postgres). Grant it (or have a DBA create `agentos_rls` and grant it), restart. |
 | Log: `libgssapi_krb5.so.2: cannot open shared object file` | Harmless — Npgsql probing Kerberos; the app uses password auth. |
 | Api/Web exit: *Hosting:PublicBaseUrl is required outside Development* / *must use https://* | Set `WEB_PUBLIC_URL` / `web.publicUrl` to the desktop's `https://` URL (`http://` only for `localhost`). |
 | HTTP 400 with an empty body on every page | The browser's host name is not the public URL's (nor `localhost`) — fix `WEB_PUBLIC_URL` / `web.publicUrl`, or add the extra name to `AllowedHosts`. |

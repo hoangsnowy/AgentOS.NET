@@ -69,12 +69,10 @@ public sealed class ApiTokensRealAuthTests : IClassFixture<AgentOsRealAuthFixtur
                 await using var conn = new NpgsqlConnection(cs);
                 await conn.OpenAsync();
                 await using var cmd = conn.CreateCommand();
-                cmd.CommandText = """
-                    DELETE FROM tenants.api_tokens WHERE "Name" = @n;
-                    DELETE FROM tenants.audit_events WHERE "Action" LIKE 'apitoken.%' AND "Target" LIKE @p;
-                    """;
+                // The apitoken.* audit rows stay: the trail is append-only and hash-chained (GAP-11b) — removing them
+                // would break the operator tenant's chain.
+                cmd.CommandText = """DELETE FROM tenants.api_tokens WHERE "Name" = @n""";
                 cmd.Parameters.AddWithValue("n", name);
-                cmd.Parameters.AddWithValue("p", name + " (%");
                 await cmd.ExecuteNonQueryAsync();
             }
         }

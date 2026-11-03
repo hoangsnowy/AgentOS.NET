@@ -37,10 +37,10 @@ public class HealthChecksTests
         RegisteredCheckNames("Development").ShouldBe(["self"]);
 
     [Fact]
-    public void AddDefaultHealthChecks_WithConnectionString_RegistersPostgres() =>
+    public void AddDefaultHealthChecks_WithConnectionString_RegistersPostgresAndRowLevelSecurity() =>
         RegisteredCheckNames("Development",
             ("ConnectionStrings:DefaultConnection", "Host=localhost;Database=agentos"))
-            .ShouldBe(["self", "postgres"]);
+            .ShouldBe(["self", "postgres", "row-level-security"]);
 
     [Fact]
     public void AddDefaultHealthChecks_AuthorityInDevelopment_SkipsKeycloak() =>

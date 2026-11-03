@@ -8,7 +8,9 @@ using System.Threading.Tasks;
 using AgentOs.Domain.Governance;
 using AgentOs.Modules.Sessions.Persistence;
 using AgentOs.Modules.Sessions.Persistence.Repositories;
+using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Persistence;
+using AgentOs.Tests.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Shouldly;
@@ -127,5 +129,86 @@ public sealed class ApprovalStoreRealDbTests
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         await cmd.ExecuteNonQueryAsync();
+    }
+}
+
+// RLS stage 2 switched ON, through the module's own context (the RLS interceptor on every connection): the Autopilot
+// pass and the gate check act for NO tenant, and "no tenant" now sees nothing — so the store must bind the flow to the
+// tenant it names, or every approval silently reads as "not asked" and a decision never lands. A flow bound to another
+// tenant still sees nothing of the named one. Process-wide RLS state → the non-parallel collection; state restored.
+[Collection(RowLevelSecurityProcessStateGroup.Name)]
+public sealed class ApprovalStoreRlsEnabledRealDbTests
+{
+    private const string A = "approvals-on-a";
+    private const string B = "approvals-on-b";
+
+    [Fact]
+    public async Task Ef_RlsEnabled_UnboundFlow_AsksFindsDecidesAndLists_UnderTheNamedTenant_NeverAnother()
+    {
+        var server = RowLevelSecurityStageTwoRealPostgresTests.ServerConnection ?? string.Empty;
+        if (server.Length == 0) { Assert.Skip("RUN_AGENTOS_E2E_REAL + AGENTOS_PG_CONN required."); }
+
+        var database = "agentos_approvals_rls_" + Guid.NewGuid().ToString("N")[..12];
+        var admin = new NpgsqlConnectionStringBuilder(server) { Database = "postgres", Pooling = false }.ConnectionString;
+        var cs = new NpgsqlConnectionStringBuilder(server) { Database = database, Pooling = false }.ConnectionString;
+        await RowLevelSecurityStageTwoRealPostgresTests.ExecAsync(admin, $"CREATE DATABASE \"{database}\"");
+        var previousState = RowLevelSecurity.State;
+        var previousHttp = RowLevelSecurity.HttpTenant;
+        try
+        {
+            var options = new DbContextOptionsBuilder<SessionsDbContext>()
+                .UseNpgsql(cs, npg => npg.MigrationsHistoryTable("__EFMigrationsHistory", schema: "sessions"))
+                .AddInterceptors(RowLevelSecurityInterceptor.Instance)
+                .Options;
+            await using (var db = new SessionsDbContext(options))
+            {
+                await db.Database.MigrateAsync();   // before the switch: the login user, platform-wide
+            }
+            await using (var conn = new NpgsqlConnection(cs))
+            {
+                await conn.OpenAsync();
+                await RowLevelSecurityStageTwoRealPostgresTests.ExecAsync(conn, RowLevelSecurity.BootstrapSql(conn.PostgreSqlVersion.Major));
+            }
+            RowLevelSecurity.HttpTenant = null;
+            RowLevelSecurity.SetState(RowLevelSecurityState.Enabled);
+
+            var session = Guid.NewGuid();
+            ApprovalRequest asked;
+            await using (var db = new SessionsDbContext(options))
+            {
+                var store = new EfApprovalStore(db);
+                asked = await store.RequestAsync(ApprovalRequest.New(A, Guid.NewGuid(), session, 7, ApprovalGate.Merge, 0,
+                    "#7 Add dark mode", null, "Autopilot", DateTimeOffset.UtcNow));
+                (await store.RequestAsync(ApprovalRequest.New(A, Guid.NewGuid(), session, 7, ApprovalGate.Merge, 0,
+                    "#7 Add dark mode", null, "Autopilot", DateTimeOffset.UtcNow))).Id.ShouldBe(asked.Id);   // asked once
+                (await store.GetAsync(A, session, ApprovalGate.Merge, 0))!.Id.ShouldBe(asked.Id);
+                (await store.FindAsync(A, asked.Id))!.Status.ShouldBe(ApprovalStatus.Pending);
+                (await store.ListRecentAsync(A)).ShouldHaveSingleItem().Id.ShouldBe(asked.Id);
+                (await store.DecideAsync(A, asked.Id, new ApprovalDecision(true, "alice", null, DateTimeOffset.UtcNow)))!
+                    .Status.ShouldBe(ApprovalStatus.Approved);
+                (await store.GetAsync(A, session, ApprovalGate.Merge, 0))!.Status.ShouldBe(ApprovalStatus.Approved);
+            }
+
+            // A flow bound to B that names A: RLS keeps it on B — nothing of A is read or changed.
+            await using (var db = new SessionsDbContext(options))
+            using (AmbientIdentity.Push(B, "eve"))
+            {
+                var store = new EfApprovalStore(db);
+                (await store.FindAsync(A, asked.Id)).ShouldBeNull();
+                (await store.ListRecentAsync(A)).ShouldBeEmpty();
+                (await store.DecideAsync(A, asked.Id, new ApprovalDecision(false, "eve", "x", DateTimeOffset.UtcNow))).ShouldBeNull();
+            }
+            await using (var db = new SessionsDbContext(options))
+            {
+                (await new EfApprovalStore(db).FindAsync(A, asked.Id))!.DecidedBy.ShouldBe("alice");
+            }
+        }
+        finally
+        {
+            RowLevelSecurity.SetState(previousState);
+            RowLevelSecurity.HttpTenant = previousHttp;
+            NpgsqlConnection.ClearAllPools();
+            await RowLevelSecurityStageTwoRealPostgresTests.ExecAsync(admin, $"DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
+        }
     }
 }

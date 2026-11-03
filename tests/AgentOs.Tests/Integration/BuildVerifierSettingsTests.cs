@@ -10,6 +10,7 @@ using AgentOs.Modules.AppConfig;
 using AgentOs.Modules.AppConfig.Settings;
 using AgentOs.Modules.Integration;
 using AgentOs.Modules.Integration.Sandbox;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -54,6 +55,7 @@ public sealed class BuildVerifierSettingsTests
         var source = new SettingsBuildVerifierOptionsSource(settings, Defaults);
         (await source.CurrentAsync()).Enabled.ShouldBeFalse();
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         await settings.SetAsync(BuildVerifierSettings.Enabled, "true", SettingScope.Platform, null, "root");
         await settings.SetAsync(BuildVerifierSettings.Sandbox, "Container", SettingScope.Platform, null, "root");
         await settings.SetAsync(BuildVerifierSettings.MemoryLimit, "512m", SettingScope.Platform, null, "root");
@@ -69,6 +71,7 @@ public sealed class BuildVerifierSettingsTests
     public async Task Settings_RejectFlagLikeImage_AndTenantWrites()
     {
         var settings = Settings();
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await settings.SetAsync(BuildVerifierSettings.ContainerImage, "--privileged", SettingScope.Platform, null, "root")).Ok.ShouldBeFalse();
         (await settings.SetAsync(BuildVerifierSettings.Enabled, "true", SettingScope.Tenant, "acme", "admin")).Ok.ShouldBeFalse();
     }
@@ -77,6 +80,7 @@ public sealed class BuildVerifierSettingsTests
     public async Task ProductionLock_PinsContainerSandbox()
     {
         var settings = Settings(new Dictionary<string, string?> { ["Settings:Locks:Integration:BuildVerifier:Sandbox"] = "Container" });
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await settings.SetAsync(BuildVerifierSettings.Sandbox, "InProcess", SettingScope.Platform, null, "root")).Ok.ShouldBeFalse();
         (await new SettingsBuildVerifierOptionsSource(settings, Defaults).CurrentAsync()).Sandbox.ShouldBe(BuildSandboxMode.Container);
     }
@@ -96,6 +100,7 @@ public sealed class BuildVerifierSettingsTests
         (await verifier.VerifyFilesAsync(files, CancellationToken.None)).Success.ShouldBeFalse();   // gate off
         modesSeen.ShouldBeEmpty();
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         await settings.SetAsync(BuildVerifierSettings.Enabled, "true", SettingScope.Platform, null, "root");
         await settings.SetAsync(BuildVerifierSettings.Sandbox, "Container", SettingScope.Platform, null, "root");
         await verifier.VerifyFilesAsync(files, CancellationToken.None);

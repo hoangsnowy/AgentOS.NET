@@ -1,9 +1,12 @@
 // GAP-05 — links the server hands out (invitation URL, the runner's hub URL) come from Hosting:PublicBaseUrl, never from
 // the Host header of the request that minted them. GAP-19 — the VS Code approve form is antiforgery-protected.
-// Real endpoints (TenantEndpoints, PairingEndpoints) on a TestServer; the request's Host is an attacker's.
+// Real endpoints (TenantEndpoints, PairingEndpoints) on a TestServer; the request's Host is an attacker's. The desktop's
+// Settings › Users builds its invitation link through the same InvitationLinks, never from the circuit's base URI.
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -15,6 +18,7 @@ using AgentOs.Modules.Sessions.Pairing;
 using AgentOs.Modules.Tenants;
 using AgentOs.Modules.Tenants.Email;
 using AgentOs.Modules.Tenants.Endpoints;
+using AgentOs.Modules.Tenants.Invitations;
 using AgentOs.Modules.Tenants.Keycloak;
 using AgentOs.SharedKernel.Hosting;
 using AgentOs.SharedKernel.Identity;
@@ -80,8 +84,10 @@ public sealed partial class PublicLinkTests
         await using var app = await StartAsync(services =>
         {
             var signup = Substitute.For<ITenantSignupService>();
-            signup.CreateInvitation("acme", "member", null, Arg.Any<TimeSpan>())
-                .Returns(new InvitationToken("tok/1", DateTimeOffset.UtcNow.AddHours(1)));
+            // GAP-11: an invitation is single-use and bound to the address it is sent to — the service mints it
+            // for that email and audits it with the caller as actor.
+            signup.CreateInvitationAsync("acme", "member", "bob@acme.test", Arg.Any<TimeSpan>(), Arg.Any<AuditActor>(), Arg.Any<CancellationToken>())
+                .Returns(new InvitationToken(Guid.NewGuid(), "tok/1", DateTimeOffset.UtcNow.AddHours(1)));
             services.AddSingleton(signup);
             services.AddSingleton(Substitute.For<IAuditLog>());
             services.AddSingleton(Substitute.For<IEmailSender>());
@@ -91,11 +97,62 @@ public sealed partial class PublicLinkTests
         }, app => app.MapTenantEndpoints());
         using var client = Client(app, "admin");
 
-        using var response = await client.PostAsJsonAsync("/tenants/acme/invitations", new { }, TestContext.Current.CancellationToken);
+        using var response = await client.PostAsJsonAsync("/tenants/acme/invitations", new { email = "bob@acme.test" }, TestContext.Current.CancellationToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>(TestContext.Current.CancellationToken);
         body!["url"].ToString().ShouldBe(PublicUrl + "/signup?invite=tok%2F1");
+    }
+
+    // ---- Invitation URL in the desktop (Settings › Users) --------------------------------------------------------
+
+    [Fact]
+    public void InvitationLink_Configured_IgnoresTheCircuitBaseUri()
+    {
+        var origin = new PublicOrigin(PublicUrl, allowRequestFallback: false);
+
+        InvitationLinks.Absolute(origin, "tok/1", $"https://{AttackerHost}/").ShouldBe(PublicUrl + "/signup?invite=tok%2F1");
+    }
+
+    [Fact]
+    public void InvitationLink_UnconfiguredInDevelopment_UsesTheCircuitBaseUri()
+    {
+        new PublicOrigin(null, allowRequestFallback: true).ShouldSatisfyAllConditions(
+            o => InvitationLinks.Absolute(o, "t", "https://localhost:5180/").ShouldBe("https://localhost:5180/signup?invite=t"),
+            o => InvitationLinks.PathFor("a b").ShouldBe("/signup?invite=a%20b"));
+    }
+
+    [Fact]
+    public void InvitationLink_UnconfiguredOutsideDevelopment_IsNeverBuiltFromTheCircuit()
+    {
+        Should.Throw<InvalidOperationException>(() =>
+            InvitationLinks.Absolute(new PublicOrigin(null, allowRequestFallback: false), "t", $"https://{AttackerHost}/"));
+    }
+
+    // The desktop is a Blazor circuit: no HttpRequest to pass, so the guard is on the source — every invitation link in
+    // a .razor goes through InvitationLinks with the injected PublicOrigin, never NavigationManager's own origin.
+    [Fact]
+    public void Desktop_InvitationLinks_ComeFromThePublicOrigin_NotTheCircuit()
+    {
+        var web = Path.Join(RepoRoot(), "src", "AgentOs.Web");
+        var razor = Directory.EnumerateFiles(web, "*.razor", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToDictionary(f => Path.GetRelativePath(web, f), File.ReadAllText);
+
+        razor.Where(kv => kv.Value.Contains("signup?invite=", StringComparison.Ordinal) || kv.Value.Contains("ToAbsoluteUri(", StringComparison.Ordinal))
+            .Select(kv => kv.Key).ShouldBeEmpty("Build invitation links with InvitationLinks.Absolute(PublicOrigin, …), not from the circuit's URI");
+        var users = razor.Single(kv => kv.Key.EndsWith("UsersApp.razor", StringComparison.Ordinal)).Value;
+        users.ShouldContain("@inject AgentOs.SharedKernel.Hosting.PublicOrigin Origin");
+        users.ShouldContain("InvitationLinks.Absolute(Origin, ");
+    }
+
+    private static string RepoRoot()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Join(dir.FullName, "AgentOs.slnx"))) { return dir.FullName; }
+        }
+        throw new DirectoryNotFoundException("AgentOs.slnx not found above the test output directory.");
     }
 
     // ---- VS Code pairing ---------------------------------------------------------------------------------------

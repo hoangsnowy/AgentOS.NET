@@ -39,6 +39,9 @@ internal sealed class EfToolInvocationLog : IToolInvocationLog
         ArgumentNullException.ThrowIfNull(entry);
         try
         {
+            // The buffered drain writes from a background loop that acts for no tenant: bind each row to its own tenant
+            // (RLS stage 2 refuses a row written with none). An inline write keeps the producer's tenant.
+            using var bound = RowLevelSecurity.TenantScopeIfUnbound(entry.TenantId);
             await using var scope = _rootProvider.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<ToolsDbContext>();
             db.ToolInvocations.Add(new ToolInvocationEvidenceEntity

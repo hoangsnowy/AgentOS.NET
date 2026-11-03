@@ -2291,6 +2291,16 @@ input[type=range] { accent-color: var(--accent); }
 .audit-when { white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--txt-soft); }
 .audit-detail { overflow-wrap: anywhere; font-size: 12px; }
 .audit-foot { margin-top: var(--space-2); font-size: 12px; }
+/* GAP-11b — "Verify chain" result: intact (ok) or the first broken event (err). State carries text + icon, never colour alone. */
+.audit-seq { white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--txt-dim); }
+.audit-chain { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--r-4); background: var(--bg-3); color: var(--txt); font-size: 12px; }
+.audit-chain.is-intact { background: color-mix(in srgb, var(--ok) 9%, var(--bg-2)); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.audit-chain.is-intact > .icon { flex: none; color: var(--ok-text); }
+.audit-chain.is-broken { background: color-mix(in srgb, var(--err) 9%, var(--bg-2)); border-color: color-mix(in srgb, var(--err) 40%, var(--line)); }
+.audit-chain.is-broken > .icon { flex: none; color: var(--err); }
+.audit-chain-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.audit-chain-title { font-weight: var(--fw-semibold); }
+.audit-chain-head { font-family: var(--mono); font-size: 11px; color: var(--txt-dim); overflow-wrap: anywhere; }
 
 /* Agent profiles (Settings → Agent profiles) — compact editable data-table; tokens only. */
 .agent-profiles-scroll { overflow-x: auto; }
