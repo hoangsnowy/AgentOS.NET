@@ -22,6 +22,21 @@ public sealed class BoardTicketSteps(BoardTaskService tasks, IServiceScopeFactor
     public string? PlanLimited(TicketFlow flow) =>
         planLimits?.Current(board.TenantId, board.AutopilotUserId ?? board.CreatedByUserId ?? string.Empty)?.Sentence;
 
+    // The approval policy (E1.5): checked against the task as it stands (its fix round), asked once when never asked.
+    public async Task<AgentOs.Domain.Governance.ApprovalCheck> ApprovalAsync(TicketFlow flow, AgentOs.Domain.Governance.ApprovalGate gate, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+        using var scope = scopes.CreateScope();
+        var sessions = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+        var session = (await sessions.ListForTenantAsync(flow.TenantId, ct).ConfigureAwait(false)).FirstOrDefault(s => s.Id == flow.SessionId);
+        // A task that can't be read is not approved.
+        if (session is null) { return new(AgentOs.Domain.Governance.ApprovalVerdict.Wait, "The task couldn't be read.", null); }
+        var link = (await sessions.ListReposForTenantAsync(flow.TenantId, flow.SessionId, ct).ConfigureAwait(false))
+            .Select(r => r.PrUrl).FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+        return await scope.ServiceProvider.GetRequiredService<AgentOs.Web.Services.Approvals.ApprovalGateService>()
+            .EnsureAsync(board, session, gate, link, ct).ConfigureAwait(false);
+    }
+
     public Task<TaskRun> CodeAsync(TicketFlow flow, CancellationToken ct) =>
         tasks.BeginStartAsync(flow.TenantId, flow.SessionId, flow.NextChange, ct: ct);
 

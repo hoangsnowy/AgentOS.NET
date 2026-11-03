@@ -296,6 +296,50 @@ containers, networks and volumes a run's Aspire AppHost created (by default the 
 named volumes only when they were created during the run); `REMOTE_AGENT_KEEP_VOLUMES=1` keeps just the volumes
 ([ADR-0018](adr/0018-runs-leave-nothing-behind.md)).
 
+### Settings → Autopilot → Approvals (E1.5)
+
+Approval policies: which steps a person must approve before AgentOS.NET takes them, per tenant and per project. Declared by
+the Integration module (`ApprovalSettings`), shown in their own *Approvals* panel on Settings › Autopilot, read on every
+pass / call. Approvers are people with the **Approver** or **Admin** role (Settings › Users; the `approver` realm role —
+an approver is also a member). They decide on **Board › Tasks › Approvals** — *Approve*, or *Reject* with a reason — and
+every decision is stored with who and when (`sessions.approvals`) and audited (`approval.decided`).
+
+| Key | Default | Values | What it holds |
+|---|---|---|---|
+| `Approvals:Plan` | `false` | on / off | Autopilot creates the task for a ticket, but the Coding agent starts only once the **plan** is approved. A person who clicks *Run* on the Board already decided. |
+| `Approvals:PullRequest` | `false` | on / off | The Coding agent's pushed branch becomes a **pull request** only once approved — the approver reads the branch comparison. Every Board task (Autopilot or a person's click). The Thorough engine can't hold its change for this, so it stops with that reason. |
+| `Approvals:Diff` | `false` | on / off | After the pull request is open (and its checks are green), nothing reviews, tests or merges the **change** until it is approved. |
+| `Approvals:Merge` | `false` | on / off | *Build and merge* merges only once the **merge** is approved — asked when checks, review and testing passed. |
+| `Approvals:DraftPullRequests` | `false` | on / off | Pull requests open as **drafts**; Autopilot marks a draft ready for review only right before a merge it may make. |
+| `Approvals:Projects` | *(empty)* | lines `project: gates` | Per-project policy replacing the four switches and drafts for that project: `web-shop: plan, pr, diff, merge, draft`, `docs: none`. The project is a name (any case) or its id; `#` starts a comment. Refused on save when a line doesn't parse. |
+
+Rules (not settings), all **fail closed** — an approval is never assumed:
+
+- A step that needs an approval asks once (one request per task, gate and change) and then waits. *Diff*, *Pull request*
+  and *Merge* approvals stand for the change they were given on: a fix round (red checks, review or acceptance findings)
+  needs a new one. *Plan* is asked once per task.
+- **Nobody can approve** (the tenant has no enabled user with the approver or admin role, read through the Keycloak admin
+  API, cached a minute): the step stops — the task is blocked with that reason — instead of waiting forever or going
+  ahead. Without a Keycloak admin API (standalone Development) the count is unknown: the step still asks and waits.
+- **Rejected:** the task stops with the approver's reason (its open changes read *Blocked*); the Orchestrator agent never
+  retries around a rejected or held plan. A person decides what next (*Try again*, *Ask for changes*, *Close*).
+- The per-ticket MAF workflow holds at the same gates (Review / Test / Design wait for *Diff*, Merge for *Merge*), hands
+  the task back while it waits, and the step-by-step passes continue once it is approved.
+- The Workflow app's *Human* node is unchanged: it pauses for the operator and fails closed with no operator attached
+  (E0.4, `GraphExecutor.RunHumanAsync`).
+
+**Repository safety** (always on, GitHub): AgentOS.NET never opens a pull request from — or merges one whose branch is —
+the repository's default branch (a pushed default branch fails the change with that reason; the runner also refuses
+`git push origin main|master|HEAD`). Before **every** merge it reads the base branch's protection through the API —
+classic branch protection *and* active rulesets (`GET /rules/branches/{branch}`) — plus the reviews, the head commit's
+checks and statuses, the changed files and `CODEOWNERS` (`.github/`, root, `docs/`), and refuses a merge the protection
+would refuse: too few approving reviews (the author's own never counts), a review requesting changes, a changed file
+without a code owner's approval (a team counts when an approving reviewer is an active member — needs `read:org`), a
+required check that hasn't passed, or GitHub reporting the merge `blocked` — also when the token's owner could bypass the
+protection. Protection the token can't read (no admin rights) counts as "protected, details unknown": GitHub's verdict
+and `CODEOWNERS` still apply. A refused merge is logged in the Autopilot activity with every reason and tried again on
+the next pass.
+
 ### Workflow › Ticket flow
 
 The steps each ticket runs ([ADR-0014](adr/0014-ticket-flow-is-data.md)) are **data, not a setting key**: versioned

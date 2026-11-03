@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Governance;
 using AgentOs.Domain.Pipeline;
 using AgentOs.Domain.Workspaces;
 using AgentOs.Modules.Llm;
@@ -55,7 +56,7 @@ public sealed class GitHubPrService : IGitHubPrService
 
         ArgumentNullException.ThrowIfNull(result);
         EnsureGate(result);
-        return OpenPrCoreAsync(owner!, name!, baseBranch, pat!, baseUrl, result, title, body, ct);
+        return OpenPrCoreAsync(owner!, name!, baseBranch, pat!, baseUrl, result, title, body, draft: false, ct);
     }
 
     // The QA gate (plan 0.5) at the single PR seam: no caller can open a PR for a result QA didn't pass.
@@ -70,7 +71,11 @@ public sealed class GitHubPrService : IGitHubPrService
     }
 
     /// <inheritdoc />
-    public Task<GitHubPrResult> OpenPrAsync(PipelineResult result, WorkspaceDescriptor workspace, string title, string body, CancellationToken ct)
+    public Task<GitHubPrResult> OpenPrAsync(PipelineResult result, WorkspaceDescriptor workspace, string title, string body, CancellationToken ct) =>
+        OpenPrAsync(result, workspace, title, body, draft: false, ct);
+
+    /// <inheritdoc />
+    public Task<GitHubPrResult> OpenPrAsync(PipelineResult result, WorkspaceDescriptor workspace, string title, string body, bool draft, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(result);
@@ -84,7 +89,7 @@ public sealed class GitHubPrService : IGitHubPrService
 
         EnsureGate(result);
         var baseBranch = string.IsNullOrWhiteSpace(workspace.DefaultBranch) ? "main" : workspace.DefaultBranch;
-        return OpenPrCoreAsync(workspace.Owner, workspace.Repo, baseBranch, workspace.AccessToken, workspace.Host, result, title, body, ct);
+        return OpenPrCoreAsync(workspace.Owner, workspace.Repo, baseBranch, workspace.AccessToken, workspace.Host, result, title, body, draft, ct);
     }
 
     // Shared core: branch off base, commit the generated files, open the PR. Both overloads funnel here so
@@ -92,7 +97,7 @@ public sealed class GitHubPrService : IGitHubPrService
     // come from.
     private async Task<GitHubPrResult> OpenPrCoreAsync(
         string owner, string name, string baseBranch, string token, string? host,
-        PipelineResult result, string title, string body, CancellationToken ct)
+        PipelineResult result, string title, string body, bool draft, CancellationToken ct)
     {
         // Never push canned offline output to a real repository: it is placeholder text produced without a
         // model (no API key + Llm:OfflineFallback). Both overloads funnel here, so every caller is covered.
@@ -127,6 +132,8 @@ public sealed class GitHubPrService : IGitHubPrService
         // 2. Create a new timestamped branch off the base. Prefix is hardcoded `agentos/` so
         // operators can clean up auto-generated branches with a single glob.
         var branch = $"{DefaultBranchPrefix}/{DateTime.UtcNow:yyyyMMdd-HHmmss}";
+        // Repo safety (E1.5): every file below is written to this branch — never to the base (default) branch.
+        if (RepoSafety.RefuseDefaultBranch(branch, baseBranch) is { } refused) { throw new InvalidOperationException(refused); }
         ct.ThrowIfCancellationRequested();
         await client.Git.Reference.Create(owner, name, new NewReference($"refs/heads/{branch}", baseSha)).ConfigureAwait(false);
         _logger.LogInformation("Created branch {Branch} on {Owner}/{Name}", branch, owner, name);
@@ -167,6 +174,7 @@ public sealed class GitHubPrService : IGitHubPrService
         var pr = await client.PullRequest.Create(owner, name, new NewPullRequest(title, branch, baseBranch)
         {
             Body = body,
+            Draft = draft,
         }).ConfigureAwait(false);
 
         _logger.LogInformation("Opened PR #{Number} ({Url})", pr.Number, pr.HtmlUrl);

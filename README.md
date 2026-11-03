@@ -411,6 +411,11 @@ in the desktop and applies on the next call:
   once the screenshots are in (until then it says *Waiting for screenshots*; new screenshots clear an earlier
   approval); Autopilot merges such a ticket only after a pass or your approval. A ticket that runs Design must run Test.
   ([ADR-0016](docs/adr/0016-design-gate.md))
+- **Approvals** (E1.5) — per tenant / project, an **Approver** (or admin) approves the plan, opening the pull request,
+  the change and/or the merge on **Board › Tasks › Approvals** (who + when, audited); Autopilot waits and resumes, and
+  fails closed when the step is rejected or nobody can approve. Optional draft PRs. Every merge is checked against the
+  branch's protection, rulesets and `CODEOWNERS` first; the default branch is never pushed or merged from.
+  ([CONFIG.md](docs/CONFIG.md#settings--autopilot--approvals-e15))
 - **Settings → Audit log** — who changed what (settings, keys — never their values —, members, sign-in), CSV export.
 
 **Your repo's own rules.** When a Board ticket runs against a repo, every agent follows the repo's agent

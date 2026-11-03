@@ -52,10 +52,15 @@ public sealed partial class ProjectOrchestrator
         var candidates = AutopilotPlanner.Decide(mode, planTickets, planTasks, canTest, limits.Uncapped);
         var running = planTasks.Count(t => t.Status == "Running");
         var testing = planTasks.Count(t => t.OpenChanges.Any(c => c.Testing == ChangeTesting.Testing));
-        // Work a plan limit cut short is picked up by rule, first — it isn't a decision, and must not wait on one.
-        var resumes = candidates.OfType<AutopilotAction.ResumeTask>().ToList();
-        var stuck = await WithAnswersAsync(StuckTasks(tickets, planTickets, sessions, repos, candidates, limits), board, pat, sessions, sp, ct).ConfigureAwait(false);
-        var moves = candidates.Where(a => a is not AutopilotAction.NeedsPerson and not AutopilotAction.ResumeTask)
+        // Work a plan limit cut short is picked up by rule, first — it isn't a decision, and must not wait on one. So are the
+        // approval policy's moves (E1.5): asking an approver, and starting a task whose plan was approved.
+        var resumes = candidates.Where(a => a is AutopilotAction.ResumeTask or AutopilotAction.RequestApproval).ToList();
+        // A task an approval gate stopped (rejected, nobody can approve) or holds at its plan is never retried around it.
+        var held = _planHeld.GetValueOrDefault(board.Id) ?? new HashSet<Guid>();
+        var gated = candidates.OfType<AutopilotAction.NeedsPerson>().Where(n => n.FromApproval).Select(n => n.SessionId).Concat(held).ToHashSet();
+        var stuck = (await WithAnswersAsync(StuckTasks(tickets, planTickets, sessions, repos, candidates, limits), board, pat, sessions, sp, ct).ConfigureAwait(false))
+            .Where(s => !gated.Contains(s.SessionId)).ToList();
+        var moves = candidates.Where(a => a is not AutopilotAction.NeedsPerson and not AutopilotAction.ResumeTask and not AutopilotAction.RequestApproval)
             .Select((a, i) => (Id: "M" + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), Action: a)).ToList();
         var epics = await EpicsAsync(board, tenant, pat, tickets, sp, ct).ConfigureAwait(false);
         if (moves.Count == 0 && stuck.Count == 0 && epics.Count == 0) { return AutopilotPlanner.WithinCaps(resumes, running, testing, limits); }
@@ -396,6 +401,7 @@ public sealed partial class ProjectOrchestrator
         AutopilotAction.Merge x => x.IssueNumber,
         AutopilotAction.UpdateBranch x => x.IssueNumber,
         AutopilotAction.NeedsPerson x => x.IssueNumber,
+        AutopilotAction.RequestApproval x => x.IssueNumber,
         _ => 0,
     };
 
