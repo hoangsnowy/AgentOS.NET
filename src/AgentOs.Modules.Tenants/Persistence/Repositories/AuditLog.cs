@@ -1,5 +1,7 @@
 // EF-backed IAuditLog + IAuditChainVerifier. Writes are best-effort: a DB outage must not break the surrounding
-// signup / invitation flow, so the writer catches every database exception and logs it. Reads are tenant-scoped and
+// signup / invitation flow, so the writer catches every database exception and logs it; an entry that names no tenant
+// (a caller bug — it belongs to no chain) is refused the same way. Either way the lost row is counted
+// (AuditTelemetry: `agentos.audit.lost{reason}`) and the caller never sees an exception. Reads are tenant-scoped and
 // bounded by `max` — no cross-tenant peek by construction.
 // GAP-11b — append-only and tamper-evident:
 //   • each write extends its tenant's hash chain (AuditChain): under a per-tenant transaction advisory lock it reads the
@@ -41,6 +43,14 @@ internal sealed class EfAuditLog(
     public async Task WriteAsync(AuditEntry entry, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        if (string.IsNullOrWhiteSpace(entry.TenantId))
+        {
+            // Never throw out of a best-effort write: the surrounding operation already happened. Not echoing the
+            // action label, for the reason given in Handle below.
+            AuditTelemetry.RecordLost(AuditTelemetry.Reasons.NoTenant);
+            logger.LogError("Audit entry {EntryId} names no tenant, so it was not recorded — surrounding op continues.", entry.Id);
+            return;
+        }
         using var scope = WriteScope(entry.TenantId);
         try
         {
@@ -83,7 +93,9 @@ internal sealed class EfAuditLog(
         catch (System.Data.Common.DbException ex) { Handle(ex); }
         catch (InvalidOperationException ex) { Handle(ex); }
 
-        void Handle(Exception e) =>
+        void Handle(Exception e)
+        {
+            AuditTelemetry.RecordLost(AuditTelemetry.Reasons.Database);
             // The action label is intentionally NOT echoed here: some action constants are named
             // after sensitive operations (e.g. password reset), which trips static-analysis secret
             // heuristics, and the action is already captured in the persisted audit record. Tenant +
@@ -91,6 +103,7 @@ internal sealed class EfAuditLog(
             logger.LogWarning(e,
                 "Audit write failed for tenant={TenantId} — surrounding op continues.",
                 LogSafe.Scrub(entry.TenantId));
+        }
     }
 
     // The next row of the entry's tenant chain: head + 1, linked to the head's hash, hashed over the stored values.

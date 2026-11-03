@@ -104,6 +104,7 @@ public static class Extensions
                 .AddMeter("AgentOs.Pipeline") // runs by outcome, run duration, budget refusals + utilization (PipelineTelemetry.MeterName)
                 .AddMeter(HealthMetricsPublisher.MeterName) // health check status per check (agentos.health.status)
                 .AddMeter("AgentOs.Persistence") // RLS connections by scope + platform scopes by reason (RowLevelSecurity.MeterName)
+                .AddMeter("AgentOs.Audit") // audit rows not recorded, by reason (Modules.Tenants AuditTelemetry.MeterName)
                 .AddMeter(RequestRateLimitPolicy.MeterName) // 429s from the global request limiter (agentos.http.rate_limited)
                 .AddMeter("Npgsql")) // connection pool + command duration (db.client.*) — the Postgres side of the run SLOs
             .WithTracing(tracing => tracing
