@@ -43,7 +43,11 @@
 //                       PreToolUse hook checks every shell command and file edit (`AgentOs.RemoteAgent guard`,
 //                       ScopedWriteGuard.cs; a guard rail — it fails open) — ADR-0018. The same command, as a
 //                       PermissionRequest hook, lets the run edit the project's skills (.claude/skills/**, a path claude
-//                       protects) and nothing else under .claude/ or .git/.
+//                       protects) and nothing else under .claude/ or .git/. The guard also refuses a skill that pre-approves
+//                       tools (allowed-tools / hooks frontmatter) and any shell command that sends data to another computer
+//                       (curl / wget / iwr to a non-loopback host, ssh, scp, nc, DNS lookups …) — ADR-0019.
+//   REMOTE_AGENT_GIT_HOSTS  git hosts a run may reach besides GitHub / GitLab / Bitbucket / Azure DevOps and the cloned
+//                       repository's own remotes (a self-hosted git server): "git.corp.local,gitea.lan" — ADR-0019.
 //   REMOTE_AGENT_KEEP_AWAKE  "off" lets the computer idle-sleep mid-run (default: while a run or preview is in flight,
 //                       the idle timer is reset so the machine doesn't sleep under the agent — see KeepAwake.cs)
 //   REMOTE_AGENT_PREVIEWS  "off" refuses "Try the app" previews on this machine (default: allowed — the member clicks

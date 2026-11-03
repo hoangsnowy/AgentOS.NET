@@ -44,6 +44,10 @@
 // unanswered, so every other protected path (.claude/settings*, hooks, commands, agents, .git, .husky, .vscode …) stays
 // denied. Verified against Claude Code 2.1.283 with the runner's own flags.
 //
+// Two more rules ride on the same hook (ADR-0019): a skill may not pre-approve tools — no write, copy or invocation of a
+// project skill whose frontmatter declares `allowed-tools` / `hooks` (ScopedWriteGuard.SkillGrants.cs) — and no shell
+// command may send data to another computer, whatever allow rule or skill grant approved it (ScopedWriteGuard.Egress.cs).
+//
 // The hook is a guard rail, not a sandbox: Claude Code runs the tool call anyway when the hook can't run (the runner's
 // executable gone mid-run, a crash, a timeout, `disableAllHooks`) — only exit 2 blocks. And what a build tool does with
 // the repository's own code (an npm script, an MSBuild target, a test the agent wrote) runs with the member's rights; the
@@ -100,8 +104,17 @@ internal sealed class GuardContext
     /// <summary>Asks git about a script (a fake in tests).</summary>
     public Func<string, ScriptState> ScriptStateOf { get; init; } = ScopedWriteGuard.ScriptStateOf;
 
+    /// <summary>The hosts of the git remotes configured where a command runs (a fake in tests).</summary>
+    public Func<string, IReadOnlyCollection<string>> GitRemoteHostsOf { get; init; } = ScopedWriteGuard.GitRemoteHosts;
+
+    /// <summary>Git hosts the computer's owner allows besides the known forges (REMOTE_AGENT_GIT_HOSTS).</summary>
+    public IReadOnlyList<string> ExtraGitHosts { get; init; } = [];
+
     /// <summary>Whether an earlier call of this run wrote that path (the ledger).</summary>
     public Func<string, bool> WrittenEarlier { get; init; } = static _ => false;
+
+    /// <summary>Whether the command being checked names a skill grant (allowed-tools / hooks) anywhere in its text.</summary>
+    public bool CommandMentionsGrant { get; set; }
 
     /// <summary>What this call writes (full paths).</summary>
     public List<string> Written { get; } = [];
@@ -140,7 +153,7 @@ internal static partial class ScopedWriteGuard
     internal const string BlockedPrefix = "Blocked by the AgentOS.NET runner:";
 
     /// <summary>The tools the hook is asked about.</summary>
-    internal const string Matcher = "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit";
+    internal const string Matcher = "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Skill";
 
     /// <summary>The tools whose permission prompts the hook may answer (a project skill's file, nothing else).</summary>
     internal const string PermissionMatcher = "Write|Edit|MultiEdit";
@@ -263,14 +276,20 @@ internal static partial class ScopedWriteGuard
         try
         {
             var ledger = Ledger.Load(ledgerPath);
-            var ctx = new GuardContext(runDir, tempDir) { WrittenEarlier = ledger.Contains };
+            var ctx = new GuardContext(runDir, tempDir)
+            {
+                WrittenEarlier = ledger.Contains,
+                ExtraGitHosts = ParseHosts(Environment.GetEnvironmentVariable(GitHostsVariable)),
+            };
             if (CheckHookInput(json, ctx) is not { } reason)
             {
                 ledger.Append(ctx.Written);
                 return 0;
             }
+            // A network or skill-grant refusal carries its own explanation; the others are about the run folder.
+            var explained = reason.EndsWith(NetworkNote, StringComparison.Ordinal) || reason.Contains(SkillGrantNote, StringComparison.Ordinal);
             error.WriteLine(BlockedPrefix + " " + reason
-                + " This run may only write inside its own folder (" + runDir + ").");
+                + (explained ? string.Empty : " This run may only write inside its own folder (" + runDir + ")."));
             return 2;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -294,7 +313,9 @@ internal static partial class ScopedWriteGuard
         {
             "Bash" => Field("command") is { } bash ? CheckCommand(bash, cwd, ctx, powerShell: false) : null,
             "PowerShell" => Field("command") is { } ps ? CheckCommand(ps, cwd, ctx, powerShell: true) : null,
-            "Write" or "Edit" or "MultiEdit" => CheckFileTool(Field("file_path"), cwd, ctx),
+            "Write" or "Edit" or "MultiEdit" => CheckFileTool(Field("file_path"), cwd, ctx)
+                ?? CheckSkillGrant(tool, toolInput, Field("file_path"), cwd, ctx),
+            "Skill" => CheckSkillUse(Field("skill") ?? Field("command") ?? Field("name"), cwd, ctx),
             "NotebookEdit" => CheckFileTool(Field("notebook_path"), cwd, ctx),
             _ => null,
         };
@@ -439,7 +460,8 @@ internal static partial class ScopedWriteGuard
         var segments = RelativeSegments(full, ctx.RunDir);
         var skills = SkillsAt(segments);
         if (skills < 0 || segments.Skip(skills + 1).Any(s => s.StartsWith('.'))) { return false; }
-        return WriteProblem(full, path, ctx) is null && !ThroughLink(full, ctx.RunDir);
+        return WriteProblem(full, path, ctx) is null && !ThroughLink(full, ctx.RunDir)
+            && CheckSkillGrant(tool, toolInput, path, cwd, ctx) is null; // a skill may not pre-approve tools
     }
 
     /// <summary>The PermissionRequest answer that approves the call.</summary>
@@ -472,10 +494,12 @@ internal static partial class ScopedWriteGuard
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(ctx);
         if (depth > MaxDepth) { return "the command nests other commands too deeply to be checked."; }
+        ctx.CommandMentionsGrant |= MentionsGrant(command);
         if (powerShell && DotNetFileApi().IsMatch(command))
         {
             return "direct .NET file calls ([System.IO.File] / [IO.Directory] …) can't be checked — use the file tools or New-Item / Set-Content.";
         }
+        if (powerShell && PowerShellNetworkCode(command) is { } network) { return network; }
         var state = new ShellState(cwd);
         foreach (var simple in ShellWords.Commands(command, powerShell))
         {
@@ -495,6 +519,7 @@ internal static partial class ScopedWriteGuard
     private static string? CheckSimple(ShellWords.Simple simple, ShellState state, GuardContext ctx, bool powerShell, int depth)
     {
         var cwd = state.Here;
+        if (DevSocketProblem(simple) is { } socket) { return socket; }
 
         // What runs first: the command substitutions, in a subshell from the same folder.
         foreach (var sub in simple.Substitutions)
@@ -509,6 +534,7 @@ internal static partial class ScopedWriteGuard
             if (Expand(target, cwd, ctx) is not { } text) { return $"the redirection target '{target.Text}' is computed, so it can't be checked."; }
             if (cwd is null || Resolve(text, cwd, ctx.TempDir) is not { } full) { return $"the redirection to '{target.Text}' can't be resolved."; }
             if (WriteProblem(full, target.Text, ctx) is { } problem) { return "the redirection is refused: " + problem; }
+            if (ShellSkillWrite(full, target.Text, ctx) is { } skill) { return "the redirection is refused: " + skill; }
             ctx.Written.Add(full);
         }
 
@@ -523,6 +549,9 @@ internal static partial class ScopedWriteGuard
         var program = ProgramName(programWord.Text);
         var args = words.Skip(start + 1).ToList();
 
+        // Network egress is refused whatever approved the call (an allow rule's prefix, a skill's grant).
+        if (CheckEgress(program, args, assignments, cwd, ctx, powerShell) is { } egress) { return egress; }
+
         if (CdCommands.Contains(program)) { return CheckCd(program, args, state, ctx); }
 
         // A program named by its path inside the run folder (`./helper.sh`, `node_modules/.bin/x`) is code the run may
@@ -536,10 +565,16 @@ internal static partial class ScopedWriteGuard
         if (cwd is null) { return "it runs after a 'cd' to a computed folder, so its paths can't be checked."; }
         if (!ctx.IsWritable(cwd)) { return "it runs from a folder outside the run folder."; }
         if (runsAPath && CheckScript(programWord.Text, programWord, cwd, ctx) is { } own) { return own; }
+        if (runsAPath && Resolve(programWord.Text, cwd, ctx.TempDir) is { } helper && IsCopyHelper(helper, ctx))
+        {
+            return CheckCopyIn(args, cwd, ctx);
+        }
 
         if (WriteCommands.Contains(program))
         {
-            return CheckPaths(program, Operands(program, args), cwd, ctx, record: ContentCommands.Contains(program));
+            var operands = Operands(program, args);
+            return CheckPaths(program, operands, cwd, ctx, record: ContentCommands.Contains(program))
+                ?? CopyIntoSkill(program, operands, cwd, ctx);
         }
         return program switch
         {
@@ -630,6 +665,7 @@ internal static partial class ScopedWriteGuard
             if (Expand(p, cwd, ctx) is not { } text) { return $"'{what}' gets a computed path ('{p.Text}'), so it can't be checked."; }
             if (Resolve(text, cwd, ctx.TempDir) is not { } full) { return $"'{what} {p.Text}': the path can't be resolved."; }
             if (WriteProblem(full, p.Text, ctx) is { } problem) { return $"'{what} {p.Text}' is refused: " + problem; }
+            if (record && ShellSkillWrite(full, p.Text, ctx) is { } skill) { return $"'{what} {p.Text}' is refused: " + skill; }
             if (record) { ctx.Written.Add(full); }
         }
         return null;
@@ -798,6 +834,7 @@ internal static partial class ScopedWriteGuard
         }
         if (i >= args.Count) { return null; }
         var program = ProgramName(args[i].Text);
+        if (IsNetworkTool(program)) { return $"'xargs {args[i].Text}' takes its addresses from its input, which can't be checked." + NetworkNote; }
         if (WriteCommands.Contains(program) || Interpreters.Contains(program) || Shells.Contains(program))
         {
             return $"'xargs {args[i].Text}' takes its paths from its input, which can't be checked.";
@@ -1144,7 +1181,11 @@ internal static partial class ScopedWriteGuard
                     ? $"'{program} {text}' runs a computed command."
                     : CheckCommand(args[at].Text, cwd, ctx, powerShell: false, depth + 1);
             }
-            return CheckScript(program, args[i], cwd, ctx); // `sh script.sh`
+            // `sh script.sh`; the runner's copy-in helper also gets its arguments checked.
+            if (CheckScript(program, args[i], cwd, ctx) is { } script) { return script; }
+            return Expand(args[i], cwd, ctx) is { } helperText && Resolve(helperText, cwd, ctx.TempDir) is { } helper && IsCopyHelper(helper, ctx)
+                ? CheckCopyIn(args.Skip(i + 1).ToList(), cwd, ctx)
+                : null;
         }
         return StdinCode(program, simple, cwd, ctx);
     }

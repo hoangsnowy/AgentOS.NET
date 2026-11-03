@@ -120,7 +120,8 @@ internal static class RunFiles
     /// constant of the runner, rewritten on every delivery — never content from the server or the ticket. It copies one
     /// regular file from <c>.agentos/files/</c> to a destination inside the run directory (not under <c>.agentos/</c>),
     /// refuses <c>.</c> / <c>..</c> segments, links on the way, and overwriting a file outside the cloned repository,
-    /// and makes missing folders inside the run directory only.
+    /// and makes missing folders inside the run directory only. It never copies a file whose frontmatter declares
+    /// <c>allowed-tools</c> / <c>hooks</c> into a project skill (<c>.claude/skills</c>, ADR-0019) — the guard checks it too.
     /// </summary>
     internal const string CopyHelperScript = """
         #!/bin/sh
@@ -172,6 +173,18 @@ internal static class RunFiles
         final=$(cd -P -- "$(dirname -- "$dst")" && pwd) || die "refused: $dst"
         case "$final/" in "$run"/*) ;; *) die "refused: $dst is outside the run folder" ;; esac
         case "$final/" in "$run/.agentos/"*) die "refused: $dst is inside .agentos" ;; esac
+        # A project skill may not pre-approve tools (ADR-0019): refuse a file whose frontmatter declares allowed-tools or hooks.
+        case "$(printf '%s/' "$final" | tr '[:upper:]' '[:lower:]')" in
+          */.claude/skills/*)
+            if awk 'BEGIN { s = 0; f = 0 }
+              { l = tolower($0); sub(/\r$/, "", l) }
+              s == 0 { if (l ~ /^[ \t]*$/) next; if (l ~ /^[^a-z0-9]*---[ \t]*$/) { s = 1; next } exit }
+              s == 1 { if (l ~ /^[ \t]*(---|\.\.\.)[ \t]*$/) exit
+                       if (l ~ /allowed[-_]?tools/ || l ~ /(^|[{,?])[ \t]*.?hooks.?[ \t]*:/) { f = 1; exit } }
+              END { exit (f ? 0 : 1) }' "$src"; then
+              die "refused: $src declares allowed-tools (or hooks) in its frontmatter — skills may not pre-approve tools on AgentOS.NET runners; drop that line"
+            fi ;;
+        esac
         cp -- "$src" "$dst"
         echo "copied $src -> $dst"
         """;
