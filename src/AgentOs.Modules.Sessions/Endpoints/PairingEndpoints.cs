@@ -38,7 +38,7 @@ public static class PairingEndpoints
         endpoints.MapPost("/pair/vscode", ApproveAsync).RequireAuthorization("Member").DisableAntiforgery();
         // Anonymous — gated by the one-time code. A typed code is short (≈39 bits), so the host rate-limits this
         // route per client under ExchangeRateLimitPolicy (the Web registers it).
-        endpoints.MapPost("/runner/pair/exchange", ExchangeAsync).RequireRateLimiting(ExchangeRateLimitPolicy);
+        endpoints.MapPost("/runner/pair/exchange", ExchangeAsync).AllowAnonymous().RequireRateLimiting(ExchangeRateLimitPolicy);
     }
 
     // The branded approve page. Self-contained HTML so it renders without the Blazor shell.
@@ -91,12 +91,13 @@ public static class PairingEndpoints
 
         // Hand the editor only the one-time code; it exchanges it for the token over a direct POST.
         var redirect = $"{callback}?code={Uri.EscapeDataString(code)}&state={Uri.EscapeDataString(state ?? string.Empty)}";
+        // A meta refresh, not an inline <script>: the Web's Content-Security-Policy is script-src 'self' (GAP-12).
         return Results.Content(
             Page("Pairing approved",
                 "<p>Approved. Return to your editor — it should connect automatically. "
                 + "You can close this tab.</p>"
-                + $"<a class=\"b\" href=\"{WebUtility.HtmlEncode(redirect)}\">Open editor</a>"
-                + $"<script>location.href={System.Text.Json.JsonSerializer.Serialize(redirect)};</script>"),
+                + $"<a class=\"b\" href=\"{WebUtility.HtmlEncode(redirect)}\">Open editor</a>",
+                head: $"<meta http-equiv=\"refresh\" content=\"0;url={WebUtility.HtmlEncode(redirect)}\" />"),
             "text/html");
     }
 
@@ -123,8 +124,8 @@ public static class PairingEndpoints
     }
 
     // Minimal branded page chrome (AgentOS.NET, dark) — no external CSS dependency.
-    private static string Page(string title, string body) =>
-        "<!doctype html><html><head><meta charset=\"utf-8\" />"
+    private static string Page(string title, string body, string head = "") =>
+        "<!doctype html><html><head><meta charset=\"utf-8\" />" + head
         + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />"
         + $"<title>{WebUtility.HtmlEncode(title)} · AgentOS.NET</title><style>"
         + ":root{color-scheme:dark}*{box-sizing:border-box}"

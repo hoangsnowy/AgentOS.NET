@@ -233,6 +233,15 @@ The owner's standing instructions. They apply to every change; the execution pla
   - `cs/dispose-not-called-on-throw` on a buffer that outlives the call (chunked upload) → `ArrayBufferWriter<byte>`
     (not `IDisposable`) instead of a `MemoryStream`. CA2000 is not its twin (70 ownership-transfer hits, not enabled).
   - `cs/xmldoc/missing-summary`: a `<param>`-only doc comment still needs a `<summary>` (no compiler twin without doc generation).
+- **Blazor stamps its own CSP.** Interactive Server documents get `Content-Security-Policy: frame-ancestors 'self'`
+  from the framework (it guards websocket compression), which silently replaces a policy a middleware adds only "if
+  absent" — the desktop ran with that one directive. `AddInteractiveServerRenderMode(o =>
+  o.ContentSecurityFrameAncestorsPolicy = null)` hands it to `SecurityHeadersMiddleware` (`frame-ancestors 'none'`);
+  `HostSecurityTests` asserts the full policy on `/login`. The CSP is `script-src 'self'`: no inline `<script>` or
+  `on*=""` attributes — wire handlers from a `wwwroot/*.js` file (`page-boot.js`).
+- **Public routes are explicit.** The fallback policy requires a signed-in caller; a route that must stay public gets
+  `.AllowAnonymous()` **and** an entry in the reviewed inventory in `HostSecurityTests` (the test fails otherwise).
+  Blazor's `/_blazor` endpoints are public by convention (`BlazorFrameworkEndpoints`) — pages keep `[Authorize]`.
 - **Row-level security (ADR-0012):** the dev/lab stack connects as the Postgres SUPERUSER, which bypasses RLS even
   when forced — every connection therefore `SET ROLE agentos_rls`. A new tenant table gets the policy by being
   added to `RowLevelSecurity.Tables`; its module context needs `.AddInterceptors(RowLevelSecurityInterceptor.Instance)`

@@ -59,6 +59,8 @@ public sealed class RemoteAgentModule : IModule, IEndpointModule
     public void MapEndpoints(IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        endpoints.MapHub<RemoteAgentHub>(RemoteAgentHub.Path);
+        // Anonymous at the HTTP layer by design (GAP-13 fallback opt-out): the hub authenticates each connection itself
+        // against the runner's salted pairing-token hash (RemoteAgentHub.OnConnectedAsync) — a runner has no user session.
+        endpoints.MapHub<RemoteAgentHub>(RemoteAgentHub.Path).AllowAnonymous();
     }
 }
