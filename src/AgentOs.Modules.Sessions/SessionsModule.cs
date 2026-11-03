@@ -65,6 +65,7 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
             services.AddScoped<IRunnerDirectory, EfRunnerDirectory>();
             services.AddScoped<AgentOs.Domain.Files.IScopedFileStore, EfScopedFileStore>();
             services.AddScoped<AgentOs.Domain.Sessions.IDesignReviewStore, EfDesignReviewStore>();
+            services.AddScoped<AgentOs.Domain.Governance.IApprovalStore, EfApprovalStore>();
         }
         else
         {
@@ -84,6 +85,8 @@ public sealed class SessionsModule : IModule, IEndpointModule, IInitializableMod
             services.AddSingleton<AgentOs.Domain.Files.IScopedFileStore, InMemoryScopedFileStore>();
             // Design reviews too (ADR-0016): the Design panel on Board › Tasks works for real in the standalone desktop.
             services.AddSingleton<AgentOs.Domain.Sessions.IDesignReviewStore, InMemoryDesignReviewStore>();
+            // Approval requests (E1.5) too: Board › Tasks can approve and reject for real in the standalone desktop.
+            services.AddSingleton<AgentOs.Domain.Governance.IApprovalStore, InMemoryApprovalStore>();
         }
     }
 

@@ -411,7 +411,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
     private static readonly string[] InviteActions = new[] { "UPDATE_PASSWORD", "VERIFY_EMAIL" };
     private static readonly string[] VerifyOnlyActions = new[] { "VERIFY_EMAIL" };
     private static readonly string[] VerifyOnlyResetActions = new[] { "UPDATE_PASSWORD" };
-    private static readonly string[] ManagedRoles = new[] { "admin", "member" };
+    private static readonly string[] ManagedRoles = new[] { "admin", "member", "approver" };
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {

@@ -59,12 +59,27 @@ public enum PrState
 /// </summary>
 public interface IPrCreationService
 {
+    /// <summary>Open a (ready) pull request from the pushed <paramref name="branch"/> into the workspace's default branch.
+    /// Refused when <paramref name="branch"/> IS the default branch (repo safety, E1.5).</summary>
     Task<PrCreationResult> CreateFromBranchAsync(
         WorkspaceDescriptor workspace,
         string branch,
         string title,
         string body,
         CancellationToken ct = default);
+
+    /// <summary>Same, opened as a draft when <paramref name="draft"/> is set (the approval policy's "draft pull requests").
+    /// A provider that can't open drafts refuses rather than opening a ready one (fail closed).</summary>
+    Task<PrCreationResult> CreateFromBranchAsync(
+        WorkspaceDescriptor workspace,
+        string branch,
+        string title,
+        string body,
+        bool draft,
+        CancellationToken ct = default) =>
+        draft
+            ? Task.FromResult(new PrCreationResult(false, null, null, "This provider can't open draft pull requests, and the approval policy asks for drafts."))
+            : CreateFromBranchAsync(workspace, branch, title, body, ct);
 
     /// <summary>The current state of pull request <paramref name="number"/> — so a task whose change was merged
     /// stops reading "Ready for review". Never throws; <see cref="PrState.Unknown"/> when it can't tell.</summary>
@@ -108,7 +123,9 @@ public interface IPrCreationService
     Task<bool> CommentAsync(WorkspaceDescriptor workspace, int number, string body, CancellationToken ct = default) =>
         Task.FromResult(false);
 
-    /// <summary>Squash-merge pull request <paramref name="number"/> and delete its branch. Null on success, else the reason.</summary>
+    /// <summary>Squash-merge pull request <paramref name="number"/> and delete its branch. Null on success, else the reason.
+    /// Refuses (with the reason) a merge from the default branch, and a merge the base branch's protection — required
+    /// reviews, code owners, required checks — would refuse (repo safety, E1.5). A draft is marked ready first.</summary>
     Task<string?> MergeAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default) =>
         Task.FromResult<string?>("Merging is not supported for this provider.");
 

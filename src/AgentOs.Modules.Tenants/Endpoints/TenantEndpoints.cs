@@ -151,9 +151,9 @@ internal static class TenantEndpoints
                 return Results.Forbid();
             }
             var role = string.IsNullOrWhiteSpace(body.Role) ? "member" : body.Role;
-            if (role is not ("admin" or "member"))
+            if (!TenantRoles.IsKnown(role))
             {
-                return Results.BadRequest(new { error = "role must be 'admin' or 'member'" });
+                return Results.BadRequest(new { error = "role must be 'admin', 'approver' or 'member'" });
             }
             var ttl = TimeSpan.FromHours(body.TtlHours is > 0 and <= 168 ? body.TtlHours.Value : 24);
             var minted = signup.CreateInvitation(tenantId, role, body.Email, ttl);
@@ -249,13 +249,11 @@ internal static class TenantEndpoints
             {
                 return Results.Forbid();
             }
-            var roles = (body.Roles ?? Array.Empty<string>())
-                .Where(r => r is "admin" or "member")
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
+            // An approver is a member too (TenantRoles.Expand); unknown roles are dropped.
+            var roles = TenantRoles.Expand(body.Roles).ToList();
             if (roles.Count == 0)
             {
-                return Results.BadRequest(new { error = "roles must contain at least one of: admin, member" });
+                return Results.BadRequest(new { error = "roles must contain at least one of: admin, approver, member" });
             }
             // Lock-out guard: an Admin editing themselves must keep the admin role.
             if (string.Equals(ctx.UserId, userId, StringComparison.Ordinal) && !roles.Contains("admin", StringComparer.Ordinal))

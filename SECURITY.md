@@ -65,6 +65,11 @@ When reporting, include: affected component, reproduction steps, and impact.
   shown. Create, revoke, use and refusal are audited (use / refusal at most once per token per 5 minutes, with IP and
   user agent). Service accounts need a workspace admin; a removed member's personal tokens are revoked before their
   account is deleted.
+- **Approval policies + repo safety** — per tenant / project, an approver (or admin) approves the plan, the pull
+  request, the change and/or the merge on Board › Tasks (audited); a gate fails closed — rejected or nobody who can
+  approve stops the task. AgentOS.NET never opens a pull request from, or merges, the default branch, and refuses a
+  merge the branch's protection would refuse (reviews, `CODEOWNERS`, required checks, rulesets), also when its token
+  could bypass it. See [docs/CONFIG.md](docs/CONFIG.md#settings--autopilot--approvals-e15).
 - **SSRF guard** — tenant-supplied hosts are validated and limited to an allowlist.
 - **Paired runners** — a server-driven shell command runs on a developer's machine only if every segment of the
   chain starts with an allowlisted build/test/VCS program (`REMOTE_AGENT_ALLOW` to change); command

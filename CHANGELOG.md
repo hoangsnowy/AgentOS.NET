@@ -64,6 +64,11 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   (`Tenants:ApiTokens:MaxLifetimeDays`), use + refusal auditing. The Api serves every route under `/v1` with a
   published OpenAPI document ([docs/api/openapi-v1.json](docs/api/openapi-v1.json)) and a
   [deprecation policy](docs/API.md#deprecation-policy). The VS Code extension can store a token and start a run.
+- **Approval policies** (E1.5). Per tenant and per project (Settings › Autopilot › Approvals): a person with the
+  new **Approver** role (or an admin) approves the plan, opening the pull request, the change and/or the merge on
+  **Board › Tasks › Approvals** — Approve, or Reject with a reason; who and when are recorded and audited
+  (`approval.decided`). Autopilot and the per-ticket MAF workflow wait at each gate and resume once approved;
+  optional draft pull requests.
 
 ### Changed
 
@@ -103,13 +108,19 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 - Keycloak member admin can use a least-privilege service-account client (`client_credentials`, only the
   user-management roles) instead of a master-realm admin password; outside Development the host refuses to
   start while any setting still holds the on-prem `CHANGE_ME` placeholder.
+- Repository safety (E1.5, threat-model GAP-18): approval gates fail closed (rejected, or nobody can approve, stops
+  the task — never assumed); no pull request from and no merge of the default branch (server + runner deny rules);
+  every merge reads the base branch's classic protection and rulesets, reviews, required checks and `CODEOWNERS`
+  through the GitHub API and refuses what the protection would refuse — also when the token could bypass it.
 - VS Code runner extension: `@vscode/vsce` 4.1.0 brings `@azure/msal-node` to 7.1.2, past the advisory on
   authorization-code-flow parameter disclosure (< 7.1.0; dev-only dependency).
 
 ### Migration notes
 
-- None — there is no earlier tagged release to upgrade from. (Pre-release installs: existing API tokens keep working —
-  the `AddApiTokenScopesAndSalt` migration gives them scopes from their old role and they stay service accounts;
-  scripts calling the unversioned routes should move to `/v1`.)
+- None — there is no earlier tagged release to upgrade from. (Existing deployments: the `approver` realm role is
+  created by the azd post-deploy hook and the Helm realm job; a local realm imported before it needs the role added
+  through the Keycloak admin API, or its volume dropped. Existing API tokens keep working — the
+  `AddApiTokenScopesAndSalt` migration gives them scopes from their old role and they stay service accounts; scripts
+  calling the unversioned routes should move to `/v1`.)
 
 [Unreleased]: https://github.com/hoangsnowy/AgentOS.NET/commits/main

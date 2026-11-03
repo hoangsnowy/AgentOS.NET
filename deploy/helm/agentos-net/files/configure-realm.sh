@@ -15,7 +15,7 @@
 #      secret = KEYCLOAK_ADMIN_CLIENT_SECRET. The hosts use it (client_credentials) instead of the master
 #      admin, so the bootstrap admin can be rotated or disabled after setup.
 #   3. verifyEmail on only when SMTP is configured (KC_SMTP_HOST), else off (signup would dead-end).
-#   4. Ensures the platform-admin realm role (an existing realm is never re-imported).
+#   4. Ensures the platform-admin and approver realm roles (an existing realm is never re-imported).
 #   5. FIRST RUN ONLY (realm attribute agentosSeedApplied): sets the seed `operator` (first admin) password to
 #      OPERATOR_PASSWORD — required, the import's is public — and sets `member` to MEMBER_PASSWORD, or
 #      DISABLES it when that is unset. Later runs never touch them again, so a password changed in Keycloak
@@ -130,6 +130,14 @@ else
   kc create roles -r "$REALM" -s name=platform-admin \
     -s "description=Platform administrator - platform-wide settings for every tenant" >/dev/null
   echo "  role platform-admin created"
+fi
+# 4b. approver realm role (E1.5 approval policies).
+if kc get "roles/approver" -r "$REALM" >/dev/null 2>&1; then
+  echo "  role approver present"
+else
+  kc create roles -r "$REALM" -s name=approver \
+    -s "description=Tenant approver - approves or rejects plan, diff, pull request and merge steps" >/dev/null
+  echo "  role approver created"
 fi
 
 # 5. Seed users — first run only. The marker is a realm attribute (free-form, unlike user attributes, which

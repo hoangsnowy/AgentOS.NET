@@ -758,6 +758,9 @@ else if (_tab == Tab.Sessions)
     @if (_sessions is null) { <Spinner /> }
     else
     {
+        @* E1.5: the steps the approval policy holds (plan, pull request, change, merge) — Approve / Reject, audited. *@
+        <ApprovalsPanel TenantId="@_tenantId" IsAdmin="@_isAdmin" VisibleTasks="@_sessions.Select(s => s.Id).ToHashSet()"
+                        Actor="@(new AgentOs.Web.Services.Approvals.ApprovalActor(_userId, _userLabel, _canApprove))" />
         <DesignChecks TenantId="@_tenantId" IsAdmin="@_isAdmin" VisibleTasks="@_sessions.Select(s => s.Id).ToHashSet()" DecidedBy="@_userLabel" />
         <Panel Title="@(_isAdmin ? "Tasks (all members)" : "Your tasks")">
         <table class="data-table">
@@ -1035,6 +1038,8 @@ else if (_tab == Tab.Sessions)
     // The task whose "Files for the AI" are open.
     private Guid? _filesFor;
     private bool _isAdmin;
+    // Holds the approver or admin role: may approve or reject what the approval policy holds (E1.5).
+    private bool _canApprove;
 
     // ── Data ────────────────────────────────────────────────────────────────────────────────
     private IReadOnlyList<WorkspaceEntity>? _boards;
@@ -1267,6 +1272,7 @@ else if (_tab == Tab.Sessions)
             _userId = user.GetUserId() ?? "";
             _userLabel = string.IsNullOrWhiteSpace(user.Identity?.Name) ? _userId : user.Identity!.Name!;
             _isAdmin = user.IsAdmin();
+            _canApprove = user.CanApprove();
         }
         _resolved = true;
         // Deep-link from the Home app's "Start from idea": prefill the wizard's idea + open the Idea tab.
@@ -2161,6 +2167,8 @@ else if (_tab == Tab.Sessions)
         "Accepted" => "Passed testing",
         "Rejected" => "Failed testing",
         "Closed" => "Closed",
+        "Waiting" => "Waiting for approval",          // E1.5: a pushed change waits for an approver to open its PR
+        "AwaitingApproval" => "Waiting for approval",
         _ => status,
     };
 

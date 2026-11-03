@@ -74,6 +74,16 @@ try {
     else { Write-Warning "Could not ensure realm role platform-admin: $($_.Exception.Message)" }
 }
 
+# 2c. Realm role approver (E1.5 approval policies): approves or rejects the steps a policy holds. Same idempotent ensure.
+try {
+    Invoke-RestMethod -Method Post -Headers $headers -Uri "$kcUrl/admin/realms/$realm/roles" -ContentType 'application/json' `
+        -Body (@{ name = 'approver'; description = 'Tenant approver - approves or rejects plan, diff, pull request and merge steps' } | ConvertTo-Json) | Out-Null
+    Write-Host "Realm role approver created."
+} catch {
+    if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 409) { Write-Host "Realm role approver already present." }
+    else { Write-Warning "Could not ensure realm role approver: $($_.Exception.Message)" }
+}
+
 # 3. Seed users: rotate imported placeholder passwords
 function Rotate-SeedUser([string]$username, [string]$newPass) {
     if (-not $newPass) {

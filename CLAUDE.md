@@ -232,6 +232,8 @@ The owner's standing instructions. They apply to every change; the execution pla
     `… && x is not null`) → nest the work under one `is { } x` pattern instead of re-checking.
   - `cs/dispose-not-called-on-throw` on a buffer that outlives the call (chunked upload) → `ArrayBufferWriter<byte>`
     (not `IDisposable`) instead of a `MemoryStream`. CA2000 is not its twin (70 ownership-transfer hits, not enabled).
+  - `cs/csharp/inappropriate-intimacy`: a test's nested helper type (`private sealed class Fake`) the test class reaches into
+    dozens of times → keep the mocks and helpers as members of the test class itself (xUnit builds one instance per test).
   - `cs/xmldoc/missing-summary`: a `<param>`-only doc comment still needs a `<summary>` (no compiler twin without doc generation).
 - **Row-level security (ADR-0012):** the dev/lab stack connects as the Postgres SUPERUSER, which bypasses RLS even
   when forced — every connection therefore `SET ROLE agentos_rls`. A new tenant table gets the policy by being
