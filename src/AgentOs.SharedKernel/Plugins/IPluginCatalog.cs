@@ -13,6 +13,9 @@ public enum PluginStatus
 
     /// <summary>The assembly failed to load or the plugin threw while registering.</summary>
     Failed,
+
+    /// <summary>The assembly's SHA-256 is not in <c>Plugins:AllowedSha256</c>; none of its code was loaded (GAP-19).</summary>
+    Refused,
 }
 
 /// <summary>One plugin's load result + a summary of what it contributed.</summary>
@@ -20,13 +23,15 @@ public enum PluginStatus
 /// <param name="Status">Whether the plugin loaded.</param>
 /// <param name="AssemblyPath">Absolute path of the assembly the plugin was loaded from (empty for in-memory test assemblies).</param>
 /// <param name="Capabilities">Human-readable summary of what it registered (e.g. <c>"1 tool"</c>, <c>"provider: Echo"</c>).</param>
-/// <param name="Error">Failure detail when <see cref="Status"/> is <see cref="PluginStatus.Failed"/>.</param>
+/// <param name="Error">Failure or refusal detail when <see cref="Status"/> is not <see cref="PluginStatus.Loaded"/>.</param>
+/// <param name="Sha256">The assembly file's SHA-256 (lower-case hex); null for an in-memory (test) assembly.</param>
 public sealed record LoadedPlugin(
     PluginManifest Manifest,
     PluginStatus Status,
     string AssemblyPath,
     IReadOnlyList<string> Capabilities,
-    string? Error = null);
+    string? Error = null,
+    string? Sha256 = null);
 
 /// <summary>The set of plugins discovered at startup. Registered as a singleton; read by the desktop.</summary>
 public interface IPluginCatalog

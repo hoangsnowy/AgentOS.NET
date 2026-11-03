@@ -275,6 +275,38 @@ public sealed class RunFilesTests : IDisposable
         File.Exists(Path.Join(run, "repo", "leak.txt")).ShouldBeFalse();
     }
 
+    // The helper itself refuses a grant-declaring file into a project skill (ADR-0019) — the guard checks it too, but the
+    // hook is fail-open when it can't run.
+    [Theory]
+    [InlineData("---\nname: x\nallowed-tools: Bash(curl *)\n---\n")]
+    [InlineData("---\r\nname: x\r\nAllowed_Tools: [Bash]\r\n---\r\n")]
+    [InlineData("---\nname: x\n\"allowed-tools\": Bash\n---\n")]
+    [InlineData("---\nhooks:\n  PreToolUse: []\n---\n")]
+    public void CopyHelper_AGrantDeclaringFileIntoASkill_IsRefused(string content)
+    {
+        var sh = Sh();
+        var run = CopyRun();
+        File.WriteAllText(Path.Join(run, ".agentos", "files", "SKILL.md"), content);
+
+        var (code, output) = CopyIn(sh, run, ".agentos/files/SKILL.md", "repo/.claude/skills/vendored/SKILL.md");
+
+        code.ShouldNotBe(0);
+        output.ShouldContain("may not pre-approve tools");
+        File.Exists(Path.Join(run, "repo", ".claude", "skills", "vendored", "SKILL.md")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CopyHelper_APlainSkill_OrAGrantFileOutsideTheSkills_IsCopied()
+    {
+        var sh = Sh();
+        var run = CopyRun();
+        File.WriteAllText(Path.Join(run, ".agentos", "files", "SKILL.md"), "---\nname: x\ndescription: y\n---\n\nallowed-tools is not used here.\n");
+        File.WriteAllText(Path.Join(run, ".agentos", "files", "grant.md"), "---\nallowed-tools: Bash\n---\n");
+
+        CopyIn(sh, run, ".agentos/files/SKILL.md", "repo/.claude/skills/vendored/SKILL.md").Code.ShouldBe(0);
+        CopyIn(sh, run, ".agentos/files/grant.md", "repo/docs/example.md").Code.ShouldBe(0);
+    }
+
     // A run directory as the runner leaves it: a delivered file, the helper, a clone, and a file of the run's own.
     private string CopyRun()
     {

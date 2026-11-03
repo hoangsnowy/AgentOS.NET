@@ -54,6 +54,7 @@ public sealed record BoardValidation(bool Ok, string? NodeId = null, string? Tit
 /// <param name="Labels">Issue/PR labels (empty for a draft).</param>
 /// <param name="Status">The board's single-select <c>Status</c> field value (e.g. <c>Todo</c>/<c>In Progress</c>), or null if unset.</param>
 /// <param name="AssigneeLogin">First assignee login, or null.</param>
+/// <param name="Key">How the tracker names it when that isn't <c>#Number</c> (Jira <c>SHOP-12</c>, ADO <c>AB#12</c>); null for GitHub.</param>
 public sealed record BoardTicket(
     string ItemNodeId,
     int? Number,
@@ -65,7 +66,12 @@ public sealed record BoardTicket(
     string HtmlUrl,
     IReadOnlyList<string> Labels,
     string? Status,
-    string? AssigneeLogin);
+    string? AssigneeLogin,
+    string? Key = null)
+{
+    /// <summary>How the ticket is written for people: its tracker key, else <c>#Number</c>.</summary>
+    public string Reference => Key ?? (Number is { } n ? "#" + n.ToString(System.Globalization.CultureInfo.InvariantCulture) : Title);
+}
 
 /// <summary>The items on a board, as read by <see cref="ISourceProvider.ReadBoardTicketsAsync"/>.</summary>
 public sealed record BoardTickets(IReadOnlyList<BoardTicket> Items);

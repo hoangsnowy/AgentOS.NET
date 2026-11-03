@@ -18,6 +18,7 @@ Format: Status · Context · Decision · Consequences. Keep them terse.
 | [0016](0016-design-gate.md) | Design gate: UI tickets are checked against screenshots before merge | Accepted |
 | [0017](0017-member-computer-tool-evidence.md) | Tool calls made on a member's computer are evidence | Accepted |
 | [0018](0018-runs-leave-nothing-behind.md) | A run on a member's computer leaves nothing behind (processes, Aspire containers, writes outside its folder) | Accepted |
+| [0019](0019-skills-cannot-widen-a-runs-permissions.md) | A run can't widen its own permissions through a skill, and can't send data to another computer | Accepted |
 
 > ADRs 0001–0004 (modular monolith, LLM gateway, multi-tenant isolation,
 > one-engine-three-surfaces) are scheduled as a back-fill in [ROADMAP.md](../../ROADMAP.md) Q2;

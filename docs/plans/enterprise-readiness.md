@@ -90,7 +90,7 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 | 15 | Skills / custom agents | SKILL.md packs, tenant-defined agents, per-agent tool allowlist | ❌ | plan 4.5 | **E1.7**, **E2.5** |
 | 16 | Knowledge | per-tenant knowledge base / memory, citations | ❌ (ADR-0008 Proposed) | plan P3 | plan P3 |
 | 17 | LLM choice | Claude, Azure OpenAI **and** an OpenAI-compatible endpoint (vLLM, Ollama, Foundry) for air-gapped; zero-retention + region options | 🟡 Claude/Azure/MAF/RemoteAgent | `LlmClientFactory` | **E0.8** |
-| 18 | Trackers / SCM | GitHub ✅; Azure DevOps boards; GitLab; Jira; Teams/Slack notifications; webhooks | 🟡 GitHub + ADO repos | plan 0.10, 4.3, 7 | **E1.8**, **E2.4** |
+| 18 | Trackers / SCM | GitHub ✅; Azure DevOps boards; GitLab; Jira; Teams/Slack notifications; webhooks | 🟡 GitHub + ADO repos; ADO Boards + Jira as ticket trackers (E1.8, lab run pending); Teams/Slack open | plan 0.10, 4.3, 7 | **E1.8**, **E2.4** |
 | 19 | Deployment | Azure (azd) ✅; on-prem Helm chart + docker compose; air-gapped bundle; upgrade path | ✅ azd/ACA + compose + Helm + offline bundle | `DEPLOYMENT.md`, `ONPREM.md`, `deploy/` | **E1.9** ✅ |
 | 20 | Availability | ≥2 replicas (backplane / sticky), HA Postgres, backups geo-redundant, executed DR drill | ❌ `minReplicas: 1`, geo backup off | `postgres.module.bicep:22-27` | **E2.3** |
 | 21 | Observability | dashboards, alerts, SLOs, live status | ✅ Grafana + App Insights dashboards, 20 alerts with runbooks, SLOs (E1.10); runner-connected gauge open | `deploy/observability`, [OPERATIONS.md](../OPERATIONS.md) | **E1.10** ✅ |
@@ -129,7 +129,7 @@ behaviour, unit + E2E, real integrations verified on the lab, docs updated in th
 | **E1.5** `feat(governance)` | **Approval policies**: per tenant/workspace — require approval for plan, diff, PR, merge; approver role; draft PRs; never push the default branch; respect branch protection + CODEOWNERS | A policy "PR needs approval" holds the run until an approver clicks Approve; the audit shows who |
 | **E1.6** `feat(pipeline)` | **Prompts v2**: every agent's prompt editable (incl. Orchestrator, IssueWork, Decomposer), version history, diff, rollback, per-tenant "engineering rules" block appended to every agent | Roll back a prompt; metrics split by prompt version |
 | **E1.7** `feat(skills)` | **Agent Skills** (= plan 4.5) pulled forward: SKILL.md packs per tenant, name+description in prompt, body on demand, per-agent enablement, usage metrics | A tenant skill changes Coding output; usage counted |
-| **E1.8** `feat(integration)` | **Azure DevOps boards** (= plan 0.10) + **Jira** (native or Atlassian MCP) + Teams/Slack notifications | Lab: ADO + Jira tickets run end to end |
+| **E1.8** `feat(integration)` 🟡 trackers | **Azure DevOps boards** (= plan 0.10) + **Jira** (native or Atlassian MCP) + Teams/Slack notifications | Lab: ADO + Jira tickets run end to end |
 | **E1.9** `feat(deploy)` | **On-prem**: Helm chart + docker compose (Postgres, Keycloak, Web, Api, optional Ollama), offline image bundle, upgrade guide | Cold install on a clean k8s (kind) from docs only |
 | **E1.10** `feat(ops)` ✅ #302 | Dashboards (Grafana JSON + App Insights workbook), alert rules (budget over cap, runner disconnect, failed runs, evidence drops, probe Down), SLOs | Alert fires on a lab over-cap run |
 | **E1.11** `chore(supply-chain)` | CycloneDX SBOM per release, cosign-signed images, SLSA provenance | `cosign verify` passes on a release image |

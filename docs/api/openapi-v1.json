@@ -1840,6 +1840,22 @@
           },
           "accessToken": {
             "type": "string"
+          },
+          "tracker": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TrackerBinding"
+              }
+            ]
+          },
+          "trackerAccessToken": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -2694,6 +2710,97 @@
               {
                 "$ref": "#/components/schemas/QaReport"
               }
+            ]
+          }
+        }
+      },
+      "TrackerBinding": {
+        "required": [
+          "kind",
+          "site",
+          "project",
+          "account",
+          "filter",
+          "startState",
+          "doneState"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SourceProviderKind"
+          },
+          "site": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "account": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "filter": {
+            "$ref": "#/components/schemas/TrackerFilter"
+          },
+          "startState": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "doneState": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "host": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "TrackerFilter": {
+        "type": "object",
+        "properties": {
+          "areaPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "iterationPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "states": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "jql": {
+            "type": [
+              "null",
+              "string"
             ]
           }
         }

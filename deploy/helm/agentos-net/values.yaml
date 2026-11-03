@@ -193,6 +193,13 @@ api:
     limits: { memory: 2Gi }
   extraEnv: []
 
+# GAP-05 — peers whose X-Forwarded-For / X-Forwarded-Proto the hosts trust (besides loopback): your ingress
+# controller's pods. Narrow trustedNetworks to the cluster's pod CIDR (e.g. 10.42.0.0/16 on k3s); a controller with a
+# fixed address can be listed in trustedProxies instead ("10.0.3.7;10.0.3.8").
+forwardedHeaders:
+  trustedNetworks: "10.0.0.0/8;172.16.0.0/12;192.168.0.0/16"
+  trustedProxies: ""
+
 # Shared by Api + Web.
 email:
   from: noreply@agentos.local

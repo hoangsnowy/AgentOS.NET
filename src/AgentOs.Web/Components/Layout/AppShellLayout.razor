@@ -398,7 +398,7 @@
         {
             case ShellActions.Run: OpenAppByKey("home"); break;
             case ShellActions.Idea: OpenAppByKey("board"); break;
-            case ShellActions.SignOut: Nav.NavigateTo("/account/logout", forceLoad: true); break;
+            case ShellActions.SignOut: await AgentOs.Web.Auth.AccountSignOut.SubmitAsync(JS); break;
             case ShellActions.Theme:
                 try
                 {
@@ -451,9 +451,10 @@
         _startOpen = false;
     }
 
-    private void Lock()
+    // Sign-out is a POST with an antiforgery token (GAP-19) — AccountSignOut submits the form App.razor renders.
+    private Task Lock()
     {
         _startOpen = false;
-        Nav.NavigateTo("/account/logout", forceLoad: true);
+        return AgentOs.Web.Auth.AccountSignOut.SubmitAsync(JS);
     }
 }

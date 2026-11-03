@@ -675,7 +675,7 @@ public sealed class ScopedWriteGuardTests : IDisposable
         using var doc = JsonDocument.Parse(ScopedWriteGuard.HookSettingsJson("\"C:/x/AgentOs.RemoteAgent.exe\" guard"));
         var entry = doc.RootElement.GetProperty("hooks").GetProperty("PreToolUse")[0];
 
-        entry.GetProperty("matcher").GetString().ShouldBe("Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit");
+        entry.GetProperty("matcher").GetString().ShouldBe("Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Skill");
         var hook = entry.GetProperty("hooks")[0];
         hook.GetProperty("type").GetString().ShouldBe("command");
         hook.GetProperty("command").GetString().ShouldBe("\"C:/x/AgentOs.RemoteAgent.exe\" guard");

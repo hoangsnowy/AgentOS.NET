@@ -15,6 +15,10 @@
 {
     <Spinner />
 }
+else if (_tenantId is null)
+{
+    <div class="login-error" role="alert">@TenantClaim.MissingMessage</div>
+}
 else
 {
     <header class="page-head">
@@ -117,7 +121,8 @@ else
     private bool _resolved;
     private bool _isAdmin;
     private bool _busy;
-    private string _tenantId = "default";
+    // Null = the sign-in carries no tenant claim: fail closed (GAP-17), never the shared "default" tenant.
+    private string? _tenantId;
     private ApiTokenActor _actor = new("member", null, false);
     private string _name = string.Empty;
     private string _kind = ApiTokenKind.Personal;
@@ -133,16 +138,19 @@ else
         {
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
-            _tenantId = state.User.GetTenantId() ?? "default";
+            _tenantId = state.User.GetTenantId();
             _actor = new ApiTokenActor(state.User.Identity?.Name ?? "member", state.User.GetUserId(), _isAdmin);
         }
         // Admins mostly create CI identities; members can only create personal tokens.
         _kind = _isAdmin ? ApiTokenKind.Service : ApiTokenKind.Personal;
         _scope = _isAdmin ? ApiTokenScopes.Run : ApiTokenScopes.Read;
-        _maxDays = await Tokens.MaxLifetimeDaysAsync(_tenantId);
-        _days = Math.Min(_days, _maxDays);
+        if (_tenantId is { } tenant)
+        {
+            _maxDays = await Tokens.MaxLifetimeDaysAsync(tenant);
+            _days = Math.Min(_days, _maxDays);
+            _rows = await Tokens.ListAsync(tenant, _actor);
+        }
         _resolved = true;
-        _rows = await Tokens.ListAsync(_tenantId, _actor);
     }
 
     private IEnumerable<int> ExpiryChoices()
@@ -161,13 +169,14 @@ else
 
     private async Task CreateAsync()
     {
+        if (_tenantId is not { } tenant) { return; }
         _busy = true;
         try
         {
-            var (_, token) = await Tokens.CreateAsync(new ApiTokenRequest(_tenantId, _name, _kind, [_scope], _days, _actor));
+            var (_, token) = await Tokens.CreateAsync(new ApiTokenRequest(tenant, _name, _kind, [_scope], _days, _actor));
             _newToken = token;
             _name = string.Empty;
-            _rows = await Tokens.ListAsync(_tenantId, _actor);
+            _rows = await Tokens.ListAsync(tenant, _actor);
         }
         catch (InvalidOperationException ex)
         {
@@ -181,11 +190,12 @@ else
 
     private async Task RevokeAsync(ApiTokenInfo token)
     {
+        if (_tenantId is not { } tenant) { return; }
         _busy = true;
         try
         {
-            if (await Tokens.RevokeAsync(_tenantId, token.Id, _actor)) { Toasts.Show("API tokens", $"{token.Name} revoked.", ToastKind.Ok); }
-            _rows = await Tokens.ListAsync(_tenantId, _actor);
+            if (await Tokens.RevokeAsync(tenant, token.Id, _actor)) { Toasts.Show("API tokens", $"{token.Name} revoked.", ToastKind.Ok); }
+            _rows = await Tokens.ListAsync(tenant, _actor);
         }
         finally
         {
