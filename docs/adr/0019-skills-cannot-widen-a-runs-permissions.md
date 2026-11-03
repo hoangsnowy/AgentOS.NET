@@ -74,6 +74,15 @@ Defence in depth, all in the PreToolUse guard the runner already installs for ev
    runner environment variable, like every other runner switch — not a product setting); `git merge`; `gh` pull-request
    and issue commands; `dotnet` / `npm` / `pnpm` / `yarn` restore and build; `npx playwright`.
 
+   **Rust:** `Bash(cargo *)` is allowed (and its PowerShell twin) like `npm` — `cargo build` / `test` / `fmt` /
+   `clippy` / `run` / `fetch` reach crates.io and run the repository's own code (`build.rs`). Refused, by deny rule
+   and by the guard: `cargo install` (into `~/.cargo`, outside the run folder), `publish` / `login` / `owner` /
+   `yank`, `--config` overrides (a source replacement, a proxy, a runner — settings belong in the repository's
+   `.cargo/config.toml`), another registry (`--index`, `--registry`, `CARGO_REGISTRIES_*`), `CARGO_HTTP_*` /
+   `CARGO_NET_*` / `CARGO_HOME` / `RUSTC_WRAPPER` environment, a `--git` source that isn't one of the run's git hosts,
+   and `--target-dir` / `CARGO_TARGET_DIR` / `--artifact-dir` outside the run folder; a single-file package
+   (`cargo run x.rs`) follows the script rule (tracked or committed only).
+
 3. Network and skill refusals explain themselves; they don't carry the "this run may only write inside its own folder"
    suffix of the write rules.
 

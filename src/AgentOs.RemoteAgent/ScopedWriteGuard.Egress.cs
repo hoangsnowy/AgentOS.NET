@@ -62,7 +62,11 @@ internal static partial class ScopedWriteGuard
         "GIT_PROXY_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
         "GIT_CONFIG_COUNT", "GIT_EXEC_PATH", "CURL_HOME", "WGETRC", "RSYNC_RSH", "RSYNC_CONNECT_PROG", "LD_PRELOAD",
         "DYLD_INSERT_LIBRARIES", "BASH_ENV", "npm_config_registry", "NPM_CONFIG_REGISTRY",
+        "CARGO_HOME", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_BUILD_RUSTC",
     };
+
+    // Cargo environment that picks another registry, proxy or source (CARGO_REGISTRIES_X_INDEX, CARGO_HTTP_PROXY …).
+    private static readonly string[] CargoNetworkPrefixes = ["CARGO_HTTP_", "CARGO_NET_", "CARGO_REGISTRIES_", "CARGO_REGISTRY_", "CARGO_SOURCE_"];
 
     private static readonly string[] KnownForges = ["github.com", "gitlab.com", "bitbucket.org", "dev.azure.com", "ssh.dev.azure.com"];
 
@@ -98,6 +102,7 @@ internal static partial class ScopedWriteGuard
             "git" when cwd is not null => CheckGitNetwork(args, cwd, ctx),
             "gh" => CheckGhNetwork(args, cwd, ctx),
             "npm" or "pnpm" or "yarn" => CheckPublish(program, args),
+            "cargo" => CheckCargoNetwork(args, cwd, ctx),
             "dotnet" when Positionals(args, NoValueOptions) is [{ Text: "nuget" }, { Text: "push" or "delete" }, ..] =>
                 "'dotnet nuget push' publishes a package to another computer." + NetworkNote,
             _ when Interpreters.Contains(program) && NetworkModule(args) is { } module =>
@@ -118,7 +123,8 @@ internal static partial class ScopedWriteGuard
         var name = assignment[..eq];
         return NetworkVariables.Contains(name)
             || name.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase)
-            || name.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase);
+            || name.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase)
+            || Array.Exists(CargoNetworkPrefixes, p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsAddTypeAssemblyOnly(string arg) =>
@@ -549,6 +555,31 @@ internal static partial class ScopedWriteGuard
         return first is not null && PublishCommands.Contains(first)
             ? $"'{program} {first}' publishes to (or signs in to) a package registry." + NetworkNote
             : null;
+    }
+
+    // Cargo: build / test / fetch reach crates.io (the default registry) — the run's own tooling. Refused: publishing and
+    // signing in, another registry (--index, --registry), --config overrides (a source replacement, a proxy, a runner),
+    // and a --git source that is not one of the run's git hosts.
+    private static readonly HashSet<string> CargoPublishCommands = new(StringComparer.Ordinal) { "publish", "login", "logout", "owner", "yank" };
+
+    private static string? CheckCargoNetwork(List<ShellWords.Word> args, string? cwd, GuardContext ctx)
+    {
+        var sub = args.FirstOrDefault(a => !a.Text.StartsWith('-') && !a.Text.StartsWith('+'))?.Text;
+        if (sub is not null && CargoPublishCommands.Contains(sub)) { return $"'cargo {sub}' publishes to (or signs in to) a package registry." + NetworkNote; }
+        if (args.Exists(a => a.Text == "--config" || a.Text.StartsWith("--config=", StringComparison.Ordinal)))
+        {
+            return "'cargo --config' can replace the registry, add a proxy or a runner, which can't be checked — put settings in the repository's .cargo/config.toml (it ships in the pull request)." + NetworkNote;
+        }
+        foreach (var index in OptionValues(args, ["--index", "--registry"]))
+        {
+            return $"'cargo' would use another registry ('{index.Text}') than crates.io." + NetworkNote;
+        }
+        foreach (var git in OptionValues(args, ["--git"]))
+        {
+            if (cwd is null) { return "'cargo --git' runs after a 'cd' to a computed folder." + NetworkNote; }
+            if (GitRepositoryProblem("cargo --git", git, cwd, ctx) is { } problem) { return problem; }
+        }
+        return null;
     }
 
     private static string? NetworkModule(List<ShellWords.Word> args)

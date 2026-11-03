@@ -544,6 +544,13 @@ internal static partial class ScopedWriteGuard
         {
             if (CheckNodeOptions(a, cwd, ctx) is { } reason) { return reason; }
         }
+        // CARGO_TARGET_DIR=<dir>: where cargo writes its build output — inside the run folder, like --target-dir.
+        foreach (var a in assignments.Where(a => a.Text.StartsWith("CARGO_TARGET_DIR=", StringComparison.OrdinalIgnoreCase)))
+        {
+            var dir = a with { Text = a.Text["CARGO_TARGET_DIR=".Length..] };
+            if (cwd is null) { return "CARGO_TARGET_DIR is set after a 'cd' to a computed folder."; }
+            if (CheckPaths("CARGO_TARGET_DIR", [dir], cwd, ctx, record: false) is { } reason) { return reason; }
+        }
         if (start >= words.Count) { return null; }
         var programWord = words[start];
         var program = ProgramName(programWord.Text);
@@ -583,6 +590,7 @@ internal static partial class ScopedWriteGuard
             "xargs" => CheckXargs(args, cwd, ctx, powerShell, depth),
             "find" => CheckFind(args, cwd, ctx, powerShell, depth),
             "dotnet" => CheckDotnet(args, simple, cwd, ctx),
+            "cargo" => CheckCargo(args, cwd, ctx),
             "msbuild" => CheckMsBuildProperties(args, cwd, ctx),
             "curl" or "wget" => CheckDownload(program, args, cwd, ctx),
             "sed" => CheckSed(args, cwd, ctx),
@@ -605,7 +613,7 @@ internal static partial class ScopedWriteGuard
 
     private static readonly HashSet<string> GuardedTools = new(StringComparer.OrdinalIgnoreCase)
     {
-        "git", "gh", "xargs", "find", "dotnet", "msbuild", "curl", "wget", "cmd", ".", "source", "iex", "invoke-expression",
+        "git", "gh", "xargs", "find", "dotnet", "cargo", "msbuild", "curl", "wget", "cmd", ".", "source", "iex", "invoke-expression",
         "start-process", "saps", "sed",
     };
 
@@ -992,6 +1000,32 @@ internal static partial class ScopedWriteGuard
         command.AddRange(rest.Skip(i));
         return CheckSynthesized(command, cwd, ctx, powerShell, depth);
     }
+
+    private static readonly HashSet<string> CargoOutputOptions = new(StringComparer.Ordinal)
+    {
+        "--target-dir", "--artifact-dir", "--out-dir", "--root", "--lockfile-path",
+    };
+
+    // cargo: `install` puts a binary in ~/.cargo/bin (outside the run folder); output folders must stay inside; a
+    // single-file package (`cargo run x.rs`, `-Zscript`) is code the run may have written.
+    private static string? CheckCargo(List<ShellWords.Word> args, string cwd, GuardContext ctx)
+    {
+        if (CheckPaths("cargo", OptionValues(args, CargoOutputOptions), cwd, ctx, record: false) is { } output) { return output; }
+        var positional = Positionals(args.Where(a => !a.Text.StartsWith('+')), CargoValueOptions);
+        if (positional.FirstOrDefault()?.Text is "install" or "uninstall")
+        {
+            return $"'cargo {positional[0].Text}' installs outside the run folder (~/.cargo) — add the crate as a dependency instead.";
+        }
+        var script = positional.FirstOrDefault(p => p.Text.EndsWith(".rs", StringComparison.OrdinalIgnoreCase));
+        return script is null ? null : CheckScript("cargo", script, cwd, ctx);
+    }
+
+    private static readonly HashSet<string> CargoValueOptions = new(StringComparer.Ordinal)
+    {
+        "-p", "--package", "--bin", "--example", "--test", "--bench", "-F", "--features", "-j", "--jobs", "--target",
+        "--target-dir", "--artifact-dir", "--manifest-path", "--profile", "--message-format", "--color", "-Z", "--config",
+        "--root", "--index", "--registry", "--git", "--branch", "--tag", "--rev", "--path", "--lockfile-path", "--exclude",
+    };
 
     private static readonly HashSet<string> DotnetOutputOptions = new(StringComparer.Ordinal)
     {
