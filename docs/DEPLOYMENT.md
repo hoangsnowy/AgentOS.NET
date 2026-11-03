@@ -115,6 +115,23 @@ azd deploy        # re-build + re-push images only, no infra changes
 azd up            # provision + deploy (safe to re-run; Postgres and ACA env are idempotent)
 ```
 
+**Upgrading to row-level security stage 2** (the release that brings [ADR-0012](adr/0012-postgres-row-level-security.md)
+stage 2 + the audit hash chain) is the one deploy that must not overlap: the new revision rewrites the database
+policies when it boots, and a revision of the previous version still serving traffic then reads platform settings,
+model keys and scheduled work as *nothing* and writes audit rows the chain verifier reports as a break. Container Apps
+keeps the old revision live until the new one is healthy, so deactivate the running revisions first, then deploy:
+
+```bash
+for app in api web; do
+  for rev in $(az containerapp revision list -n $app -g <rg> --query "[?properties.active].name" -o tsv); do
+    az containerapp revision deactivate -n $app -g <rg> --revision "$rev"
+  done
+done
+azd deploy        # the new revisions start against the stage-2 policies; nothing old is left to read through them
+```
+
+Expect a few minutes of downtime. Later deploys roll as usual. (On-prem compose / Helm: [ONPREM.md §4](ONPREM.md#4-upgrade).)
+
 Tear down when done:
 
 ```bash

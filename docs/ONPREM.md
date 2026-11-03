@@ -286,8 +286,33 @@ Nothing in the stack calls the internet at runtime except the LLM providers you 
    - compose: set `AGENTOS_VERSION` in `.env` (bundle installs) → `docker compose up -d --wait`
    - Helm: `helm upgrade agentos <chart> -n agentos -f my-values.yaml --wait --timeout 15m`
 4. Database migrations run at boot, per module, serialised by an advisory lock — rolling several replicas is
-   safe. The realm step re-runs (idempotent; seed passwords are never re-applied). Verify with `/health` and a
+   safe **between versions on the same row-level-security stage**; the one upgrade that is not rolling-safe is
+   below. The realm step re-runs (idempotent; seed passwords are never re-applied). Verify with `/health` and a
    sign-in.
+
+### Upgrading to row-level security stage 2 — stop the old version first
+
+The release that brings RLS stage 2 ([ADR-0012](adr/0012-postgres-row-level-security.md): a connection with no
+tenant sees **nothing**; settings, the audit trail and invitations under RLS; the audit hash chain) rewrites the
+database policies when its **first** replica boots. From that moment an Api or Web replica still running the
+previous version reads through the new policies with its old assumptions: its tenant-less reads (platform settings
+and model keys resolved off a request, the scheduler, the Autopilot scan, the runner handshake) come back empty, and
+the audit rows it writes carry no chain link, so **Verify chain** reports the trail broken from there. Do this
+upgrade as a stop-then-start cut-over, never side by side:
+
+- **compose:** `docker compose up -d --wait` recreates each container (the old one stops before the new one starts),
+  which is enough with one `api` and one `web`. If you scaled them, run `docker compose stop api web` first.
+- **Helm:** a Deployment rolls new pods up before the old ones go. Scale the old version to zero first, then
+  upgrade (the chart puts `replicaCount` back):
+
+  ```bash
+  kubectl -n agentos scale deployment -l app.kubernetes.io/component=api --replicas=0
+  kubectl -n agentos scale deployment -l app.kubernetes.io/component=web --replicas=0
+  kubectl -n agentos wait --for=delete pod -l 'app.kubernetes.io/component in (api,web)' --timeout=5m
+  helm upgrade agentos <chart> -n agentos -f my-values.yaml --wait --timeout 15m
+  ```
+
+Expect a few minutes without the desktop and the Api. Later upgrades on stage 2 roll as usual.
 
 Notes:
 

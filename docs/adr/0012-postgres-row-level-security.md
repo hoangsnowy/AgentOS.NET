@@ -103,6 +103,9 @@ working). **Stage 2 (2026-11-03)** closes that escape. The mechanism, as it stan
 - Every connection open costs one extra round-trip (`SET ROLE` + two `set_config`).
 - RLS binds sessions against **forgotten predicates**; it is not a boundary against SQL injection (an injected
   statement could set the session settings). Platform scopes are counted, not audited per call.
+- **Upgrade from stage 1 is a cut-over, not a rolling deploy.** The bootstrap replaces the policies as soon as the
+  first stage-2 replica boots; stage-1 replicas still running then see nothing on their tenant-less paths and write
+  unchained audit rows. Stop them first (docs/ONPREM.md §4, docs/DEPLOYMENT.md A.4, CHANGELOG migration notes).
 - **Operations:** the database user needs `CREATEROLE` (or a DBA pre-creates `agentos_rls` and grants it). Azure
   Flexible Server's admin user has it. A user without it now stops the host outside Development instead of running
   without RLS — grant it, or set `Persistence:RowLevelSecurity=false` knowingly.

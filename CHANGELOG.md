@@ -137,6 +137,14 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 - Invitation links minted before invitations became single-use rows stop working — send new ones.
 - Audit events recorded before the hash chain stay readable but are reported as "not chained"; the chain starts
   with the next event.
+- **Row-level security stage 2 is not a rolling upgrade.** The first new replica rewrites the database policies when
+  it boots; a replica of the previous version still running then reads platform settings, model keys and scheduled
+  work as nothing, and the audit rows it writes have no chain link (**Verify chain** reports a break there). Stop
+  every old Api / Web replica before the first new one starts — a stop-then-start cut-over: compose recreates
+  single containers that way already; on Helm scale the `api` / `web` Deployments to 0 before `helm upgrade`; on
+  Azure Container Apps deactivate the active revisions before `azd deploy`. Steps in
+  [docs/ONPREM.md](docs/ONPREM.md#upgrading-to-row-level-security-stage-2--stop-the-old-version-first) and
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#a4--subsequent-deploys).
 - Outside Development the hosts now refuse to start when the row-level-security bootstrap fails (the database user
   needs `CREATEROLE`). Tests or scripts that delete audit rows will make **Verify chain** report a break — that is
   the point; don't clean audit rows up.
