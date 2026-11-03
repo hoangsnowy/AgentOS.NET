@@ -86,8 +86,11 @@ public sealed class HostSecurityTests
 
     private static Uri Rel(string path) => new(path, UriKind.Relative);
 
-    private static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpMethod method, string path) =>
-        await client.SendAsync(new HttpRequestMessage(method, Rel(path)), TestContext.Current.CancellationToken);
+    private static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpMethod method, string path)
+    {
+        using var request = new HttpRequestMessage(method, Rel(path));
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
 
     /// <summary>Route patterns of every endpoint that opts out of authorization (static files excluded — see below).</summary>
     private static string[] AnonymousRoutes(IServiceProvider services) =>
