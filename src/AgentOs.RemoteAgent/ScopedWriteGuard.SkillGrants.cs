@@ -298,10 +298,8 @@ internal static partial class ScopedWriteGuard
             AttributesToSkip = 0, IgnoreInaccessible = true,
         };
         var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-        foreach (var root in roots)
+        foreach (var skills in roots.Select(root => Path.Join(root, ClaudeFolder, SkillsFolder)).Where(Directory.Exists))
         {
-            var skills = Path.Join(root, ClaudeFolder, SkillsFolder);
-            if (!Directory.Exists(skills)) { continue; }
             IEnumerable<string> files;
             try { files = Directory.EnumerateFiles(skills, "SKILL.md", options).Take(MaxSkillFiles).ToList(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

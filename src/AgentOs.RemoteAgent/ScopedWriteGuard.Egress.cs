@@ -346,9 +346,8 @@ internal static partial class ScopedWriteGuard
 
     private static string? CheckRsync(List<ShellWords.Word> args)
     {
-        foreach (var a in args)
+        foreach (var text in args.Select(a => a.Text))
         {
-            var text = a.Text;
             if (text is "-e" or "--rsh" || text.StartsWith("--rsh=", StringComparison.Ordinal) || text.StartsWith("--rsync-path", StringComparison.Ordinal)
                 || (text.StartsWith('-') && !text.StartsWith("--", StringComparison.Ordinal) && text.Contains('e', StringComparison.Ordinal)))
             {
@@ -477,6 +476,8 @@ internal static partial class ScopedWriteGuard
             || ctx.GitRemoteHostsOf(cwd).Contains(h, StringComparer.OrdinalIgnoreCase);
     }
 
+    private static readonly string[] GitRemoteUrlArgs = ["config", "--get-regexp", @"^remote\..*\.(url|pushurl)$"];
+
     /// <summary>The hosts of the remotes configured in the repository at <paramref name="cwd"/> (<c>git config
     /// --get-regexp</c>); empty when there is none or git can't tell.</summary>
     internal static IReadOnlyCollection<string> GitRemoteHosts(string cwd)
@@ -486,7 +487,7 @@ internal static partial class ScopedWriteGuard
             WorkingDirectory = FromGitBash(cwd), RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true,
         };
-        foreach (var a in (string[])["config", "--get-regexp", @"^remote\..*\.(url|pushurl)$"]) { psi.ArgumentList.Add(a); }
+        foreach (var a in GitRemoteUrlArgs) { psi.ArgumentList.Add(a); }
         try
         {
             if (!Directory.Exists(psi.WorkingDirectory)) { return []; }
