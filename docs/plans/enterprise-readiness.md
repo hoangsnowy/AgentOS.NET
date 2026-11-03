@@ -48,6 +48,7 @@ real services:
 | E0.7 repo instruction files | #197 | Real GitHub: the sandbox's `AGENTS.md` read back on the lab |
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
+| E1.5 approval policies + repo safety 🟡 | this PR | Shipped, not yet verified on the lab: policy evaluation, fail-closed paths, Autopilot waiting + resuming, draft PRs and branch-protection / CODEOWNERS refusals unit-tested (mocked GitHub); acceptance — a "merge needs approval" policy holds a lab run until an approver clicks Approve, the audit shows who; a real protected repo refuses an unreviewed merge |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
 | E1.10 dashboards, alerts, SLOs | #302, [OPERATIONS.md](../OPERATIONS.md) | Real code → OTLP → Prometheus 3.7: every dashboard series present, 3 Grafana dashboards render (light + dark), `AgentOsBudgetBlockingRuns` fired + `AgentOsBudgetOverCap` pending on an over-cap tenant; `promtool test rules` green. Lab over-cap run + Azure deploy still to do |
 | E1.9 on-prem install (compose + Helm + offline bundle) | #298, [ONPREM.md](../ONPREM.md) | Compose cold install → themed login → desktop; pg_dump restore drill; air-gapped bundle (`docker save`→`load`, no repo) boots; key ring certificate-wrapped, RLS on; chart lint/template + strict schema check; kind cold install + upgrade in CI (`deploy-lint`) |
@@ -60,7 +61,7 @@ Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machin
 5-agent pipeline completed live.
 
 **Next:**
-- E1.1 SSO brokering, E1.2 RBAC v2, E1.3 API tokens + `/v1`, E1.5 approval policies;
+- E1.1 SSO brokering, E1.2 RBAC v2, E1.3 API tokens + `/v1`; E1.5 lab acceptance;
 - E1.7 skills, E1.8 ADO boards + Jira;
 - E1.10 ops; tag the first release (E1.11/E1.13 acceptance: `cosign verify` on it);
 - the open gaps ranked in [threat-model.md § 15](../security/threat-model.md#15-top-gaps-prioritised).
@@ -73,15 +74,15 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 |---|---|---|---|---|---|
 | 1 | SSO | Entra ID / Okta / ADFS / Google via OIDC or SAML, MFA policy, JIT provisioning | ❌ Keycloak local users only | realm has no `identityProviders` | **E1.1** |
 | 2 | Provisioning | SCIM 2.0 create/update/**deprovision** → sessions revoked | ❌ | — | **E2.1** |
-| 3 | RBAC | viewer · developer · approver · admin · auditor; per-workspace scope; custom roles later | 🟡 3 roles | `IdentityModule.cs:23-25` | **E1.2** |
+| 3 | RBAC | viewer · developer · approver · admin · auditor; per-workspace scope; custom roles later | 🟡 4 roles (admin · approver · member · platform-admin) | `IdentityModule.cs`; `TenantRoles.cs` | **E1.2** |
 | 4 | Machine access | API tokens / service accounts, scoped + expiring, for CI and the CLI | ❌ JWT only | — | **E1.3** |
 | 5 | API contract | versioned REST (`/v1`), published OpenAPI, deprecation policy | 🟡 unversioned | Scalar UI on Api | **E1.3** |
 | 6 | Tenant isolation | DB-enforced, proven by test | 🟡 EF filters + E2E (#192), no RLS | plan 0.9 | **E0.1** |
 | 7 | Key management | DataProtection ring wrapped by KMS (Key Vault / HSM / cert), rotation | 🟡 ring in Postgres, unwrapped | `DataProtectionExtensions.cs` | **E0.2** |
 | 8 | Data lifecycle | retention per data class, tenant export, purge (GDPR), legal hold | ❌ | — | **E1.4** |
 | 9 | Audit | who/what/when for config, members, sign-in, agent actions; export; tamper-evident; SIEM | 🟡 trail + UI + CSV (#194); evidence queue drops oldest past 4096; not hash-chained; no SIEM | `BufferedToolInvocationLog.cs:35` | **E0.3**, **E2.2** |
-| 10 | Human approval | approve plan / diff / PR / merge per policy; fail closed when nobody can approve | 🟡 QA gate (#193); Human node auto-approves without an operator | `GraphExecutor.cs:721-733` | **E0.4**, **E1.5** |
-| 11 | Repo safety | never push the default branch, honour branch protection + CODEOWNERS, draft PRs | 🟡 PR-only path | `GitHubPrService` | **E1.5** |
+| 10 | Human approval | approve plan / diff / PR / merge per policy; fail closed when nobody can approve | ✅ per tenant + per project policy (Settings › Autopilot › Approvals), approver role, Approve / Reject on Board › Tasks (who + when, audited), Autopilot and the MAF ticket flow wait and resume; fails closed (rejected or nobody can approve → stopped); Human node fails closed (E0.4). Lab run + two-tenant check pending | `ApprovalPolicy.cs`; `Approvals.cs`; `ApprovalGateService.cs`; `AutopilotPlanner.cs`; `GraphExecutor.RunHumanAsync` | **E0.4** ✅, **E1.5** 🟡 |
+| 11 | Repo safety | never push the default branch, honour branch protection + CODEOWNERS, draft PRs | ✅ draft PRs per policy; never a PR from / merge of the default branch (server + runner deny rules); every merge reads classic protection + rulesets, reviews, checks, CODEOWNERS and GitHub's `blocked` verdict and refuses what the protection would refuse. Real protected repo on the lab pending | `RepoSafety.cs`; `GitHubMergeGuard.cs`; `GitHubPrCreationService.MergeAsync`; `ScopedAutonomy.cs` | **E1.5** 🟡 |
 | 12 | Runner safety | command allowlist, per-session approval, kill/timeout, no token in URLs | 🟡 server timeout only | plan 0.7 | **E0.5** |
 | 13 | Quotas | per-tenant rate limits on **both** hosts, budget caps, concurrency | 🟡 Api only; budget ✅ | `Api/Program.cs:51-75` | **E0.6** |
 | 14 | Agent instructions | repo instruction files, tenant rules, all-agent prompts with versions + rollback | 🟡 4/7 prompts, no versions; repo files ignored | `PromptCatalog.cs`, `IPromptOverrideService.cs` | **E0.7**, **E1.6** |

@@ -2,13 +2,18 @@
 // The runner pushes the branch; this service calls the GitHub API to open the PR.
 // PAT comes from WorkspaceDescriptor.AccessToken (per-workspace credential), never from
 // tenant-global IRuntimeOverrides — correct grain for the Board per-workspace flow.
+// Repo safety (E1.5, GAP-18): a pull request is never opened FROM the default branch, drafts are opened when the
+// approval policy asks for them, and a merge is refused when it comes from the default branch or the base branch's
+// protection (reviews, code owners, required checks — read through the API by GitHubMergeGuard) would refuse it.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Domain.Governance;
 using AgentOs.Domain.Workspaces;
+using AgentOs.Modules.Integration.Governance;
 using AgentOs.SharedKernel.Logging;
 using Microsoft.Extensions.Logging;
 using Octokit;
@@ -19,11 +24,26 @@ namespace AgentOs.Modules.Integration;
 public sealed partial class GitHubPrCreationService : IPrCreationService
 {
     private readonly ILogger<GitHubPrCreationService> _logger;
+    private readonly Func<string?, string?, IGitHubClient> _clients;
+    private readonly Func<WorkspaceDescriptor, string, CancellationToken, Task> _markReady;
 
     public GitHubPrCreationService(ILogger<GitHubPrCreationService> logger)
+        : this(logger, GitHubClientFactory.Create, MarkReadyForReviewAsync)
+    {
+    }
+
+    /// <summary>For tests: a client factory (a mocked GitHub) and the draft → ready call (GraphQL-only on GitHub).</summary>
+    internal GitHubPrCreationService(ILogger<GitHubPrCreationService> logger, Func<string?, string?, IGitHubClient> clients,
+        Func<WorkspaceDescriptor, string, CancellationToken, Task> markReady)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _clients = clients ?? throw new ArgumentNullException(nameof(clients));
+        _markReady = markReady ?? throw new ArgumentNullException(nameof(markReady));
     }
+
+    // GitHub has no REST call for "ready for review": the markPullRequestReadyForReview mutation.
+    private static Task MarkReadyForReviewAsync(WorkspaceDescriptor workspace, string nodeId, CancellationToken ct) =>
+        Sources.GitHubProjectsClient.MarkReadyForReviewAsync(workspace.AccessToken, workspace.Host, nodeId, ct);
 
     /// <inheritdoc />
     public async Task<PrState> GetStateAsync(WorkspaceDescriptor workspace, int number, CancellationToken ct = default)
@@ -32,7 +52,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return PrState.Unknown; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             ct.ThrowIfCancellationRequested();
             var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
             return pr.Merged ? PrState.Merged
@@ -57,7 +77,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return string.Empty; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
             var runs = await client.Check.Run.GetAllForReference(workspace.Owner, workspace.Repo, pr.Head.Sha).ConfigureAwait(false);
             var report = new System.Text.StringBuilder();
@@ -90,7 +110,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return PrChecksState.None; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
             var runs = (await client.Check.Run.GetAllForReference(workspace.Owner, workspace.Repo, pr.Head.Sha).ConfigureAwait(false)).CheckRuns;
             return Combine(runs.Select(r => (r.Status.Value, r.Conclusion?.Value)));
@@ -126,7 +146,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return PrMergeState.Unknown; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
             return MergeStateOf(pr.Mergeable, pr.MergeableState?.Value);
         }
@@ -152,7 +172,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         try
         {
             // PUT /repos/{owner}/{repo}/pulls/{n}/update-branch — not wrapped by Octokit 14.
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             var uri = new Uri($"repos/{Uri.EscapeDataString(workspace.Owner)}/{Uri.EscapeDataString(workspace.Repo)}/pulls/{number.ToString(System.Globalization.CultureInfo.InvariantCulture)}/update-branch", UriKind.Relative);
             await client.Connection.Put<object>(uri, new { }, null, "application/vnd.github+json").ConfigureAwait(false);
             return null;
@@ -171,7 +191,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || string.IsNullOrWhiteSpace(branch)) { return null; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             await client.Repository.Branch.Get(workspace.Owner, workspace.Repo, branch).ConfigureAwait(false);
             return true;
         }
@@ -194,7 +214,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || string.IsNullOrWhiteSpace(branch)) { return null; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             ct.ThrowIfCancellationRequested();
             var found = await client.Repository.Branch.Get(workspace.Owner, workspace.Repo, branch).ConfigureAwait(false);
             return string.IsNullOrWhiteSpace(found.Commit?.Sha) ? null : found.Commit.Sha;
@@ -217,7 +237,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return []; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             var comments = await client.Issue.Comment.GetAllForIssue(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
             return comments.Select(c => new TicketComment(c.User?.Login ?? "", c.Body ?? "", c.CreatedAt)).OrderBy(c => c.CreatedAt).ToList();
         }
@@ -235,7 +255,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return null; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             ct.ThrowIfCancellationRequested();
             var files = await client.PullRequest.Files(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
             return files.SelectMany(f => f.PreviousFileName is { Length: > 0 } previous ? new[] { f.FileName, previous } : new[] { f.FileName })
@@ -255,7 +275,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || string.IsNullOrWhiteSpace(headPrefix)) { return []; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             var open = await client.PullRequest.GetAllForRepository(workspace.Owner, workspace.Repo,
                 new PullRequestRequest { State = ItemStateFilter.Open }, new ApiOptions { PageSize = 100, PageCount = 1 }).ConfigureAwait(false);
             return open.Where(p => p.Head?.Ref?.StartsWith(headPrefix, StringComparison.Ordinal) == true)
@@ -275,7 +295,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return false; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             if (!string.IsNullOrWhiteSpace(comment))
             {
                 await client.Issue.Comment.Create(workspace.Owner, workspace.Repo, number, comment).ConfigureAwait(false);
@@ -298,7 +318,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0 || string.IsNullOrWhiteSpace(body)) { return false; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             await client.Issue.Comment.Create(workspace.Owner, workspace.Repo, number, body).ConfigureAwait(false);
             return true;
         }
@@ -316,7 +336,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0 || string.IsNullOrWhiteSpace(body)) { return false; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             await client.PullRequest.Update(workspace.Owner, workspace.Repo, number, new PullRequestUpdate { Body = body }).ConfigureAwait(false);
             return true;
         }
@@ -334,8 +354,28 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
         if (workspace.Kind != SourceProviderKind.GitHub || number <= 0) { return "Merging is not supported for this provider."; }
         try
         {
-            var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+            var client = _clients(workspace.AccessToken, workspace.Host);
             var pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            // Never merge from the default branch: deleting the head branch afterwards would delete it.
+            if (RepoSafety.RefuseDefaultBranch(pr.Head.Ref, workspace.DefaultBranch, pr.Base.Ref) is { } fromDefault)
+            {
+                _logger.LogWarning("Refused to merge {Owner}/{Repo}#{Number}: its head is the default branch", workspace.Owner, workspace.Repo, number);
+                return fromDefault;
+            }
+            // A draft (the approval policy opened it so) is marked ready only now, right before a merge that may happen.
+            if (pr.Draft)
+            {
+                await _markReady(workspace, pr.NodeId, ct).ConfigureAwait(false);
+                pr = await client.PullRequest.Get(workspace.Owner, workspace.Repo, number).ConfigureAwait(false);
+            }
+            // Branch protection + CODEOWNERS, read through the API: refuse what the protection would refuse — also when
+            // the token's owner could bypass it.
+            var facts = await GitHubMergeGuard.ReadAsync(client, workspace.Owner, workspace.Repo, pr, ct).ConfigureAwait(false);
+            if (MergeProtection.Refusal(facts) is { } refused)
+            {
+                _logger.LogWarning("Refused to merge {Owner}/{Repo}#{Number}: {Reason}", workspace.Owner, workspace.Repo, number, refused);
+                return refused;
+            }
             var merged = await client.PullRequest.Merge(workspace.Owner, workspace.Repo, number,
                 new MergePullRequest { MergeMethod = PullRequestMergeMethod.Squash, Sha = pr.Head.Sha }).ConfigureAwait(false);
             if (!merged.Merged) { return merged.Message ?? "GitHub did not merge the pull request."; }
@@ -344,7 +384,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
             _logger.LogInformation("Merged {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
             return null;
         }
-        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
             _logger.LogWarning(ex, "Merge failed for {Owner}/{Repo}#{Number}", workspace.Owner, workspace.Repo, number);
             return ex.Message;
@@ -352,7 +392,7 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
     }
 
     // A GitHub Actions check run id is its job id; the job log is plain text with a timestamp per line.
-    private static async Task<string> LogTailAsync(GitHubClient client, WorkspaceDescriptor workspace, long jobId)
+    private static async Task<string> LogTailAsync(IGitHubClient client, WorkspaceDescriptor workspace, long jobId)
     {
         try
         {
@@ -380,11 +420,21 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
     private static partial System.Text.RegularExpressions.Regex AnsiColour();
 
     /// <inheritdoc />
+    public Task<PrCreationResult> CreateFromBranchAsync(
+        WorkspaceDescriptor workspace,
+        string branch,
+        string title,
+        string body,
+        CancellationToken ct = default) =>
+        CreateFromBranchAsync(workspace, branch, title, body, draft: false, ct);
+
+    /// <inheritdoc />
     public async Task<PrCreationResult> CreateFromBranchAsync(
         WorkspaceDescriptor workspace,
         string branch,
         string title,
         string body,
+        bool draft,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);
@@ -397,7 +447,14 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
                 $"PR creation not supported for provider '{workspace.Kind}' yet.");
         }
 
-        var client = GitHubClientFactory.Create(workspace.AccessToken, workspace.Host);
+        // A pull request FROM the default branch means the change was pushed onto it: never open (or later merge) one.
+        if (RepoSafety.RefuseDefaultBranch(branch, workspace.DefaultBranch) is { } refused)
+        {
+            _logger.LogWarning("M5: refused a pull request from the default branch of {Owner}/{Repo}", workspace.Owner, workspace.Repo);
+            return new PrCreationResult(false, null, null, refused);
+        }
+
+        var client = _clients(workspace.AccessToken, workspace.Host);
 
         ct.ThrowIfCancellationRequested();
         try
@@ -405,12 +462,12 @@ public sealed partial class GitHubPrCreationService : IPrCreationService
             var pr = await client.PullRequest.Create(
                 workspace.Owner,
                 workspace.Repo,
-                new NewPullRequest(title, branch, workspace.DefaultBranch) { Body = body })
+                new NewPullRequest(title, branch, workspace.DefaultBranch) { Body = body, Draft = draft })
                 .ConfigureAwait(false);
 
             _logger.LogInformation(
-                "M5: opened PR #{Number} ({Url}) for branch '{Branch}' on {Owner}/{Repo}",
-                pr.Number, pr.HtmlUrl, branch, workspace.Owner, workspace.Repo);
+                "M5: opened PR #{Number} ({Url}) for branch '{Branch}' on {Owner}/{Repo} (draft: {Draft})",
+                pr.Number, pr.HtmlUrl, LogSafe.Scrub(branch), workspace.Owner, workspace.Repo, draft);
 
             return new PrCreationResult(true, pr.Number, pr.HtmlUrl, null);
         }

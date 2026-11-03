@@ -232,6 +232,8 @@ The owner's standing instructions. They apply to every change; the execution pla
     `… && x is not null`) → nest the work under one `is { } x` pattern instead of re-checking.
   - `cs/dispose-not-called-on-throw` on a buffer that outlives the call (chunked upload) → `ArrayBufferWriter<byte>`
     (not `IDisposable`) instead of a `MemoryStream`. CA2000 is not its twin (70 ownership-transfer hits, not enabled).
+  - `cs/csharp/inappropriate-intimacy`: a test's nested helper type (`private sealed class Fake`) the test class reaches into
+    dozens of times → keep the mocks and helpers as members of the test class itself (xUnit builds one instance per test).
   - `cs/xmldoc/missing-summary`: a `<param>`-only doc comment still needs a `<summary>` (no compiler twin without doc generation).
 - **Blazor stamps its own CSP.** Interactive Server documents get `Content-Security-Policy: frame-ancestors 'self'`
   from the framework (it guards websocket compression), which silently replaces a policy a middleware adds only "if

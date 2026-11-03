@@ -31,6 +31,8 @@ public sealed class IdentityModule : IModule
             options.AddPolicy("Admin", policy => policy.RequireRole("admin"));
             options.AddPolicy("Member", policy => policy.RequireRole("admin", "member"));
             options.AddPolicy("PlatformAdmin", policy => policy.RequireRole(ClaimNames.PlatformAdminRole));
+            // E1.5: approve or reject a step an approval policy holds (an admin may too).
+            options.AddPolicy("Approver", policy => policy.RequireRole(ClaimNames.ApproverRole, ClaimNames.AdminRole));
         });
     }
 }
