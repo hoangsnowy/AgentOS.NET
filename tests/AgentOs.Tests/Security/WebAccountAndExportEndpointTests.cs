@@ -64,8 +64,8 @@ public sealed partial class WebAccountAndExportEndpointTests
         using var client = Client(app, roles: "member", tenant: "acme");
 
         // A cross-site form post: the session cookie rides along, the token doesn't.
-        using var response = await client.PostAsync(AccountEndpoints.LogoutPath,
-            new FormUrlEncodedContent(new Dictionary<string, string>()), TestContext.Current.CancellationToken);
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>());
+        using var response = await client.PostAsync(AccountEndpoints.LogoutPath, form, TestContext.Current.CancellationToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Redirect);
         response.Headers.Location!.OriginalString.ShouldBe(AccountEndpoints.LogoutPath);
