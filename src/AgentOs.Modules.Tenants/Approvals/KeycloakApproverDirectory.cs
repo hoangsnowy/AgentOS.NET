@@ -35,7 +35,7 @@ internal sealed class KeycloakApproverDirectory(IServiceScopeFactory scopes, Tim
         try
         {
             var users = await keycloak.ListUsersByTenantAsync(tenantId, ct: ct).ConfigureAwait(false);
-            var count = users.Count(u => u.Enabled && u.Roles.Any(r => r is ClaimNames.ApproverRole or ClaimNames.AdminRole));
+            var count = users.Count(u => u.Enabled && PermissionMatrix.For(u.Roles).Has(Permission.ApproveWork));
             _cache[tenantId] = (now, count);
             return count;
         }

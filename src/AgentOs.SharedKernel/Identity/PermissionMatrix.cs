@@ -12,9 +12,10 @@
 // Roles are additive: a user holding developer + approver gets both sets.
 //
 // Legacy (pre-E1.2) role kept as an alias so existing users keep working with no migration:
-//   member → developer + approver + ManageWorkspaces — everything a member could do before: run agents, decide design
-//   checks on their own tasks, and connect boards (the old "Member" policy covered POST /workspaces). Reassigning a
-//   legacy member to one of the five roles drops what that role doesn't grant.
+//   member → developer + ManageWorkspaces — everything a member could do before: run agents, decide design checks on
+//   their own tasks (the task owner's call — ADR-0016 — which every developer keeps), and connect boards (the old
+//   "Member" policy covered POST /workspaces). No ApproveWork: E1.5's approval gates never accepted a member.
+//   Reassigning a legacy member to one of the five roles drops what that role doesn't grant.
 //   admin keeps its name. platform-admin is orthogonal (platform-wide settings) and grants nothing tenant-scoped.
 //
 // Workspace (board) scope: viewer / developer / approver are WORKSPACE-SCOPABLE. A board with no memberships is open —
@@ -40,10 +41,8 @@ public static class UserRoles
     /// <summary>Runs agents and works tickets.</summary>
     public const string Developer = "developer";
 
-    /// <summary>Decides human gates (design checks, approvals). The same realm role E1.5's approval policies check:
-    /// their gates (plan, diff, pull request, merge) need this role or admin explicitly
-    /// (<see cref="ClaimsPrincipalExtensions.CanApprove"/>) — the legacy <c>member</c> alias's ApproveWork covers design
-    /// checks on the member's own tasks only, as before E1.2.</summary>
+    /// <summary>Holds <see cref="Permission.ApproveWork"/>: decides E1.5's approval-policy gates (plan, diff, pull
+    /// request, merge) and design checks on anyone's task. The same realm role E1.5 introduced.</summary>
     public const string Approver = ClaimNames.ApproverRole;
 
     /// <summary>Read-only compliance: audit log + evidence.</summary>
@@ -52,7 +51,7 @@ public static class UserRoles
     /// <summary>Tenant administrator (same realm role name as before E1.2).</summary>
     public const string Admin = ClaimNames.AdminRole;
 
-    /// <summary>Pre-E1.2 role; an alias for <see cref="Developer"/> + <see cref="Approver"/> + managing boards.</summary>
+    /// <summary>Pre-E1.2 role; an alias for <see cref="Developer"/> + managing boards.</summary>
     public const string LegacyMember = ClaimNames.MemberRole;
 
     /// <summary>The roles an admin can assign, least to most privileged (UI order).</summary>
@@ -91,7 +90,7 @@ public static class UserRoles
         Approver => "Viewer + decide design checks and approvals",
         Auditor => "Viewer + audit log and evidence (read-only)",
         Admin => "Everything in this workspace: members, settings, tokens, data",
-        LegacyMember => "Pre-RBAC role: Developer + Approver + connect boards",
+        LegacyMember => "Pre-RBAC role: Developer + connect boards",
         _ => string.Empty,
     };
 }
@@ -118,7 +117,7 @@ public static class PermissionMatrix
         [UserRoles.Approver] = Approver,
         [UserRoles.Auditor] = Auditor,
         [UserRoles.Admin] = All,
-        [UserRoles.LegacyMember] = Developer | Approver | Permission.ManageWorkspaces,
+        [UserRoles.LegacyMember] = Developer | Permission.ManageWorkspaces,
     }.ToFrozenDictionary(StringComparer.Ordinal);
 
     /// <summary>Roles whose grant applies on every board regardless of board memberships.</summary>

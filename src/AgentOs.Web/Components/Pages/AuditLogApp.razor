@@ -15,6 +15,10 @@ else if (!_canView)
 {
     <div class="login-error">Auditor or admin role required to view the audit log.</div>
 }
+else if (_tenantId is null)
+{
+    <div class="login-error" role="alert">@TenantClaim.MissingMessage</div>
+}
 else
 {
     <header class="page-head">
@@ -84,7 +88,8 @@ else
     private bool _isPlatformAdmin;
     private bool _platformScope;
     private bool _loading;
-    private string _tenantId = "default";
+    // Null = the sign-in carries no tenant claim: fail closed (GAP-17), never the shared "default" tenant.
+    private string? _tenantId;
     private string _kind = "all";
     private IReadOnlyList<AuditEntry>? _rows;
 
@@ -99,18 +104,19 @@ else
             var state = await AuthState;
             _canView = state.User.Can(Permission.ViewAudit); // RBAC v2 re-check (PermissionMatrix)
             _isPlatformAdmin = state.User.IsPlatformAdmin();
-            _tenantId = state.User.GetTenantId() ?? "default";
+            _tenantId = state.User.GetTenantId();
         }
         _resolved = true;
-        if (_canView) { await LoadAsync(); }
+        if (_canView && _tenantId is not null) { await LoadAsync(); }
     }
 
     private async Task LoadAsync()
     {
+        if (_tenantId is not { } tenant) { return; }
         _loading = true;
         try
         {
-            _rows = await Audit.ListAsync(_platformScope ? AuditScopes.Platform : _tenantId, Max);
+            _rows = await Audit.ListAsync(_platformScope ? AuditScopes.Platform : tenant, Max);
         }
         finally
         {

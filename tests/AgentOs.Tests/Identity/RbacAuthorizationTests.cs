@@ -75,12 +75,13 @@ public sealed class RbacAuthorizationTests
     }
 
     [Fact]
-    public async Task Transformation_MapsLegacyMember_OntoDeveloperAndApprover()
+    public async Task Transformation_MapsLegacyMember_OntoDeveloper()
     {
         await using var sp = Services();
         var transformed = await sp.GetRequiredService<IClaimsTransformation>().TransformAsync(User("member"));
         transformed.IsInRole("developer").ShouldBeTrue();
-        transformed.IsInRole("approver").ShouldBeTrue();
+        transformed.IsInRole("approver").ShouldBeFalse();   // E1.5's gates never accepted a member
+        transformed.CanApprove().ShouldBeFalse();
         transformed.IsInRole("member").ShouldBeTrue();
     }
 

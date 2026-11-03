@@ -46,7 +46,6 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
-    <!-- In-process HTTP host for endpoint authorization tests (RBAC v2: every role against every route). -->
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <!-- MTP reporting/coverage extensions (xunit.v3 4.0.0 runs on Microsoft.Testing.Platform).
@@ -74,6 +73,8 @@
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunContinuation.cs" Link="Linked\RunContinuation.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\RunCleanup.cs" Link="Linked\RunCleanup.cs" />
     <Compile Include="..\..\src\AgentOs.RemoteAgent\ScopedWriteGuard.cs" Link="Linked\ScopedWriteGuard.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\ScopedWriteGuard.SkillGrants.cs" Link="Linked\ScopedWriteGuard.SkillGrants.cs" />
+    <Compile Include="..\..\src\AgentOs.RemoteAgent\ScopedWriteGuard.Egress.cs" Link="Linked\ScopedWriteGuard.Egress.cs" />
     <!-- The perf gate's comparer (tests/AgentOs.Benchmarks) is pure BCL: compiled in here so it is unit-tested
          without pulling BenchmarkDotNet into the test run. -->
     <Compile Include="..\AgentOs.Benchmarks\Comparison\BaselineComparer.cs" Link="Linked\BaselineComparer.cs" />

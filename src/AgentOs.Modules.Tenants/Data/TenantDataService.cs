@@ -10,17 +10,21 @@
 //   • Purge runs in ONE transaction: tables in foreign-key order (children before parents, Kahn's algorithm over
 //     pg_constraint), then the registry row; after commit the tenant's live runner connections on this instance are cut
 //     off (GAP-04 — their rows are gone; another host's are cut by its 30 s revalidation), then its Keycloak users;
-//     audited under _platform.
+//     audited under _platform. GAP-17: the service authorizes the purge itself — the caller must hold platform-admin and
+//     may not purge their own tenant — so a future route or job can't skip the check the desktop does
+//     (TenantPurgeDeniedException, raised before any connection is opened).
 // Runs on a raw connection (no RLS role switch); every statement is filtered by the tenant explicitly.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Claims;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants.Keycloak;
+using AgentOs.SharedKernel.Identity;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 
@@ -55,8 +59,23 @@ public interface ITenantDataService
     /// <summary>Write the tenant's data as one JSON document to <paramref name="output"/>.</summary>
     Task ExportAsync(string tenantId, Stream output, CancellationToken ct = default);
 
-    /// <summary>Delete every row the tenant owns, its registry row and its Keycloak users.</summary>
-    Task<TenantPurgeReport> PurgeAsync(string tenantId, string actor, CancellationToken ct = default);
+    /// <summary>Delete every row the tenant owns, its registry row and its Keycloak users. <paramref name="caller"/> must
+    /// hold <c>platform-admin</c> and belong to another tenant, else <see cref="TenantPurgeDeniedException"/> is thrown
+    /// before anything is touched. The audit entry names the caller.</summary>
+    Task<TenantPurgeReport> PurgeAsync(string tenantId, ClaimsPrincipal caller, CancellationToken ct = default);
+}
+
+/// <summary>The caller may not purge this tenant (not a platform admin, or it is their own tenant). Nothing was touched.</summary>
+public sealed class TenantPurgeDeniedException : UnauthorizedAccessException
+{
+    /// <summary>Create the exception.</summary>
+    public TenantPurgeDeniedException() { }
+
+    /// <summary>Create the exception with a message.</summary>
+    public TenantPurgeDeniedException(string message) : base(message) { }
+
+    /// <summary>Create the exception with a message and inner exception.</summary>
+    public TenantPurgeDeniedException(string message, Exception innerException) : base(message, innerException) { }
 }
 
 internal sealed partial class TenantDataService(
@@ -146,9 +165,25 @@ internal sealed partial class TenantDataService(
         await json.FlushAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task<TenantPurgeReport> PurgeAsync(string tenantId, string actor, CancellationToken ct = default)
+    /// <summary>Authorize a purge (GAP-17): platform-admin only, never the caller's own tenant. Returns the audit actor.</summary>
+    internal static string AuthorizePurge(string tenantId, ClaimsPrincipal caller)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        if (caller.Identity?.IsAuthenticated != true || !caller.IsPlatformAdmin())
+        {
+            throw new TenantPurgeDeniedException("Purging a tenant needs the platform-admin role.");
+        }
+        if (string.Equals(caller.GetTenantId(), tenantId, StringComparison.Ordinal))
+        {
+            throw new TenantPurgeDeniedException("A platform admin can't purge their own tenant.");
+        }
+        return caller.Identity.Name ?? caller.GetUserId() ?? "platform-admin";
+    }
+
+    public async Task<TenantPurgeReport> PurgeAsync(string tenantId, ClaimsPrincipal caller, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        var actor = AuthorizePurge(tenantId, caller);
         EnsureAvailable();
         var deleted = new List<(string Table, long Rows)>();
         await using (var conn = new NpgsqlConnection(connectionString))

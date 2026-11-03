@@ -40,6 +40,19 @@ public sealed class WorkspaceEntity
     public string? DefaultBranch { get; set; }
     public string? RemoteUrl { get; set; }
 
+    /// <summary>
+    /// E1.8 — the board's external ticket tracker (Azure DevOps Boards / Jira) as JSON (<see cref="TrackerBinding"/>), or
+    /// null when its tickets come from the code host (GitHub Projects). The code still lives in <see cref="Kind"/>'s repos.
+    /// The tracker's token is in AppConfig under <see cref="TrackerBinding.TokenKey"/>, never here.
+    /// </summary>
+    public string? Tracker { get; set; }
+
+    /// <summary>The parsed <see cref="Tracker"/>, or null.</summary>
+    public TrackerBinding? ReadTracker() => AgentOs.Domain.Workspaces.TrackerBinding.Parse(Tracker);
+
+    /// <summary>Whether the board has tickets to read: a Projects v2 number, or an external tracker.</summary>
+    public bool HasTickets => ProjectNumber is not null || !string.IsNullOrEmpty(Tracker);
+
     /// <summary>Key into the encrypted AppConfig store where the access token lives. Never the secret itself.</summary>
     public string CredentialRef { get; set; } = string.Empty;
 

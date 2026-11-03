@@ -126,14 +126,16 @@ public sealed class WorkspacesTests
     }
 
     [Fact]
-    public async Task AzureDevOps_Boards_NotSupported()
+    public async Task AzureDevOps_BoardWithoutTrackerBinding_NotSupported()
     {
+        // E1.8: Azure DevOps work items are read through a board's tracker binding; a bare board descriptor has none.
         var ado = new AzureDevOpsSourceProvider();
         var creds = new ConnectionCredentials(SourceProviderKind.AzureDevOps, "pat");
         var board = new BoardDescriptor(Guid.NewGuid(), "t1", SourceProviderKind.AzureDevOps, "org", "org", null, null, "pat", "proj");
 
-        await Should.ThrowAsync<NotSupportedException>(() => ado.ListBoardsAsync(creds, CancellationToken.None));
+        (await ado.ListBoardsAsync(creds, CancellationToken.None)).ShouldBeEmpty();
         (await ado.ValidateBoardAsync(board, CancellationToken.None)).Ok.ShouldBeFalse();
+        await Should.ThrowAsync<NotSupportedException>(() => ado.ReadBoardTicketsAsync(board, CancellationToken.None));
     }
 
     [Fact]
@@ -141,5 +143,6 @@ public sealed class WorkspacesTests
     {
         new GitHubSourceProvider().Kind.ShouldBe(SourceProviderKind.GitHub);
         new AzureDevOpsSourceProvider().Kind.ShouldBe(SourceProviderKind.AzureDevOps);
+        new JiraSourceProvider().Kind.ShouldBe(SourceProviderKind.Jira);
     }
 }

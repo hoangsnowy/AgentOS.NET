@@ -181,6 +181,10 @@ namespace AgentOs.Modules.Workspaces.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("Tracker")
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Autopilot");

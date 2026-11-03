@@ -249,6 +249,23 @@ public sealed class GitHubSourceProvider : ISourceProvider
         }
     }
 
+    // E1.8 — a comment on the issue (the Issues API serves pull requests too). No move / link: "Closes #N" in the pull
+    // request links it and closes the issue on merge.
+    public async Task<bool> CommentOnTicketAsync(WorkspaceDescriptor repo, int number, string body, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(repo);
+        if (number <= 0 || string.IsNullOrWhiteSpace(body)) { return false; }
+        try
+        {
+            await CreateClient(repo.AccessToken, repo.Host).Issue.Comment.Create(repo.Owner, repo.Repo, number, body).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is ApiException or System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
     // ── Writes (bootstrap) ───────────────────────────────────────────────────────────────────────
 
     public async Task<LabelSyncResult> EnsureLabelsAsync(WorkspaceDescriptor repo, IReadOnlyList<LabelSpec> labels, CancellationToken cancellationToken = default)

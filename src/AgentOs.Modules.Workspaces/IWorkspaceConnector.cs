@@ -19,7 +19,8 @@ namespace AgentOs.Modules.Workspaces;
 
 /// <summary>Connect-a-board input. <see cref="AccessToken"/> is validated, stored encrypted, and never
 /// persisted on the row or returned. A board (GitHub Projects v2 / ADO board) spans many repos added
-/// separately via <see cref="IWorkspaceConnector.AddRepoAsync"/>.</summary>
+/// separately via <see cref="IWorkspaceConnector.AddRepoAsync"/>. With a <see cref="Tracker"/> (E1.8) the board's tickets
+/// come from Azure DevOps Boards or Jira instead; <see cref="Kind"/> + <see cref="AccessToken"/> stay the CODE host's.</summary>
 public sealed record WorkspaceConnectInput(
     string Name,
     SourceProviderKind Kind,
@@ -28,7 +29,14 @@ public sealed record WorkspaceConnectInput(
     int? ProjectNumber,
     string? Project,
     string? Host,
-    string AccessToken);
+    string AccessToken,
+    TrackerConnectInput? Tracker = null);
+
+/// <summary>E1.8 — where a board's tickets come from when it isn't its code host's own board.</summary>
+/// <param name="Binding">The tracker coordinates, filter and workflow states.</param>
+/// <param name="AccessToken">The tracker's PAT (Azure DevOps) or API token (Jira) — validated, then stored encrypted. Blank
+/// reuses the code host's token when both are the same Azure DevOps organization.</param>
+public sealed record TrackerConnectInput(TrackerBinding Binding, string? AccessToken);
 
 /// <summary>Outcome of a connect attempt. On failure <see cref="Error"/> is a user-facing message.</summary>
 public sealed record WorkspaceConnectResult(bool Ok, WorkspaceEntity? Workspace, string? Error)
@@ -99,7 +107,15 @@ internal sealed class WorkspaceConnector : IWorkspaceConnector
                 $"Host '{input.Host}' is not on the allowed-hosts list. Add it under Workspaces:AllowedHosts to connect a self-hosted server.");
         }
 
+        if (input.Kind == SourceProviderKind.Jira)
+        {
+            return WorkspaceConnectResult.Fail("Jira holds tickets, not code — pick GitHub or Azure Repos for the code, and Jira under \"Tickets from\".");
+        }
+
         var id = Guid.NewGuid();
+        (TrackerBinding? Binding, string? Token, string? Error)? tracker = null;
+        if (input.Tracker is not null) { tracker = await ValidateTrackerAsync(id, tenantId, input, ct).ConfigureAwait(false); }
+        if (tracker is { Error: { } trackerError }) { return WorkspaceConnectResult.Fail(trackerError); }
         var scope = string.IsNullOrWhiteSpace(input.ProjectScope) ? "user" : input.ProjectScope;
         var board = new BoardDescriptor(
             id, tenantId, input.Kind, input.ProjectOwner, scope, input.ProjectNumber, null,
@@ -116,7 +132,7 @@ internal sealed class WorkspaceConnector : IWorkspaceConnector
         // A board number is optional. With one, validate it (and cache the node id); without one this
         // is a repos-only board whose token is first exercised when a repo is added.
         string? nodeId = null;
-        if (input.ProjectNumber is not null)
+        if (input.ProjectNumber is not null && tracker is null)
         {
             var validation = await provider.ValidateBoardAsync(board, ct).ConfigureAwait(false);
             if (!validation.Ok)
@@ -129,6 +145,10 @@ internal sealed class WorkspaceConnector : IWorkspaceConnector
 
         var credentialRef = CredentialKey(id);
         await _credentials.SetForTenantAsync(tenantId, credentialRef, input.AccessToken, ct).ConfigureAwait(false);
+        if (tracker is { Binding: not null, Token: { } trackerToken })
+        {
+            await _credentials.SetForTenantAsync(tenantId, TrackerBinding.TokenKey(id), trackerToken, ct).ConfigureAwait(false);
+        }
 
         var entity = new WorkspaceEntity
         {
@@ -138,8 +158,9 @@ internal sealed class WorkspaceConnector : IWorkspaceConnector
             Kind = input.Kind,
             ProjectOwner = input.ProjectOwner,
             ProjectScope = scope,
-            ProjectNumber = input.ProjectNumber,
+            ProjectNumber = tracker is null ? input.ProjectNumber : null,
             ProjectNodeId = nodeId,
+            Tracker = tracker?.Binding?.Serialize(),
             Project = input.Project,
             CredentialRef = credentialRef,
             CreatedByUserId = userId,
@@ -227,6 +248,56 @@ internal sealed class WorkspaceConnector : IWorkspaceConnector
         };
         await _repo.AddRepoForTenantAsync(entity, ct).ConfigureAwait(false);
         return RepoAddResult.Success(entity);
+    }
+
+    // The tracker must be reachable with its token, and its query must run — checked before anything is stored.
+    private async Task<(TrackerBinding? Binding, string? Token, string? Error)> ValidateTrackerAsync(
+        Guid id, string tenantId, WorkspaceConnectInput input, CancellationToken ct)
+    {
+        var binding = Normalize(input.Tracker!.Binding);
+        if (binding.Problem() is { } problem) { return (null, null, problem); }
+        var token = string.IsNullOrWhiteSpace(input.Tracker.AccessToken) ? null : input.Tracker.AccessToken.Trim();
+        if (token is null)
+        {
+            // Same Azure DevOps organization for code and tickets: one PAT serves both.
+            var sameOrg = binding.Kind == SourceProviderKind.AzureDevOps && input.Kind == SourceProviderKind.AzureDevOps
+                && string.Equals(binding.Site, input.ProjectOwner?.Trim(), StringComparison.OrdinalIgnoreCase);
+            if (!sameOrg) { return (null, null, binding.Kind == SourceProviderKind.Jira ? "The Jira API token is required." : "The Azure DevOps PAT for the tickets is required."); }
+            token = input.AccessToken;
+        }
+        var host = binding.Kind == SourceProviderKind.Jira ? binding.JiraBaseUrl() : binding.Host;
+        if (!_hostPolicy.IsAllowed(host))
+        {
+            return (null, null, $"Host '{host}' is not on the allowed-hosts list. Add it under Workspaces:AllowedHosts to connect a self-hosted tracker.");
+        }
+        if (!_providers.TryResolve(binding.Kind, out var provider) || provider is null)
+        {
+            return (null, null, $"No ticket tracker registered for '{binding.Kind}'.");
+        }
+        var probe = new BoardDescriptor(id, tenantId, binding.Kind, binding.Site, "org", null, null, token, binding.Project, binding.Host)
+        {
+            Tracker = binding,
+        };
+        var validation = await provider.ValidateBoardAsync(probe, ct).ConfigureAwait(false);
+        return validation.Ok ? (binding, token, null) : (null, null, validation.Error ?? "Could not reach the ticket tracker with the supplied credentials.");
+    }
+
+    // Trimmed coordinates; a Jira site as its https origin; the default workflow states when none were given.
+    internal static TrackerBinding Normalize(TrackerBinding b)
+    {
+        var (start, done) = TrackerBinding.DefaultStates(b.Kind);
+        var site = b.Site?.Trim() ?? string.Empty;
+        var normalized = b with
+        {
+            Site = site,
+            Project = b.Project?.Trim() ?? string.Empty,
+            Account = string.IsNullOrWhiteSpace(b.Account) ? null : b.Account.Trim(),
+            Filter = b.Filter ?? TrackerFilter.None,
+            StartState = b.StartState is null ? start : b.StartState.Trim(),
+            DoneState = b.DoneState is null ? done : b.DoneState.Trim(),
+            Host = string.IsNullOrWhiteSpace(b.Host) ? null : b.Host.Trim(),
+        };
+        return b.Kind == SourceProviderKind.Jira && normalized.JiraBaseUrl() is { } origin ? normalized with { Site = origin } : normalized;
     }
 
     internal static string CredentialKey(Guid id) =>

@@ -40,6 +40,8 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
         services.AddScoped<AgentOs.Domain.Workspaces.IBoardRepos, WorkspaceBoardRepos>();
         // RBAC v2 (E1.2): a user's permissions per board (realm roles + board memberships through PermissionMatrix).
         services.AddScoped<AgentOs.SharedKernel.Identity.IWorkspaceAccess, Access.WorkspaceAccess>();
+        // E1.8 — a board's external ticket tracker (Azure DevOps Boards / Jira), read by the source-provider routing.
+        services.AddScoped<AgentOs.Domain.Workspaces.IBoardTrackers, WorkspaceBoardTrackers>();
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))

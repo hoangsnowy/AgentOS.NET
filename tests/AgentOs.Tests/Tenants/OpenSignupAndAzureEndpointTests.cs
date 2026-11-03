@@ -128,6 +128,7 @@ public sealed class OpenSignupAndAzureEndpointTests
         builder.Services.AddSingleton(Substitute.For<IEmailSender>());
         builder.Services.AddSingleton(Substitute.For<ITenantContext>());
         builder.Services.AddSingleton<ITenantSignupService>(service);
+        builder.Services.AddSingleton(new AgentOs.SharedKernel.Hosting.PublicOrigin("https://agentos.example.com", allowRequestFallback: false));
         await using var app = builder.Build();
         app.MapTenantEndpoints();
         var register = ((IEndpointRouteBuilder)app).DataSources.SelectMany(d => d.Endpoints).OfType<RouteEndpoint>()

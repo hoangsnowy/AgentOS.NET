@@ -31,7 +31,7 @@ public sealed class PermissionMatrixTests
         ["approver"] = [V, A],
         ["auditor"] = [V, Au],
         ["admin"] = [V, R, A, W, M, S, T, Au, X],
-        ["member"] = [V, R, A, W],          // legacy alias: everything a pre-E1.2 member could do
+        ["member"] = [V, R, W],             // legacy alias: everything a pre-E1.2 member could do (no E1.5 approvals)
         ["platform-admin"] = [],            // orthogonal: platform-wide settings, nothing tenant-scoped
         ["unknown-role"] = [],
     };
@@ -91,11 +91,12 @@ public sealed class PermissionMatrixTests
         => PermissionMatrix.For("Admin").ShouldBe(Permission.None);
 
     [Fact]
-    public void LegacyMember_KeepsEverythingDeveloperAndApproverHave()
+    public void LegacyMember_KeepsEverythingADeveloperHas_ButApprovesNothing()
     {
         var member = PermissionMatrix.For("member");
         member.Has(PermissionMatrix.For("developer")).ShouldBeTrue();
-        member.Has(PermissionMatrix.For("approver")).ShouldBeTrue();
+        member.Has(Permission.ManageWorkspaces).ShouldBeTrue();
+        member.Has(Permission.ApproveWork).ShouldBeFalse();
         member.Has(Permission.ManageMembers).ShouldBeFalse();
     }
 
@@ -186,6 +187,18 @@ public sealed class PermissionMatrixTests
         UserRoles.IsAssignable("member").ShouldBeFalse();
         UserRoles.IsAssignable(null).ShouldBeFalse();
         UserRoles.Assignable.ShouldAllBe(r => UserRoles.Label(r).Length > 0 && UserRoles.Describe(r).Length > 0);
+    }
+
+    [Fact]
+    public void CanApprove_IsTheMatrixApproveWork_ForE15Gates()
+    {
+        static ClaimsPrincipal As(string role) => new(new ClaimsIdentity([new Claim(ClaimTypes.Role, role)], "test"));
+        As("approver").CanApprove().ShouldBeTrue();
+        As("admin").CanApprove().ShouldBeTrue();
+        foreach (var role in new[] { "viewer", "developer", "auditor", "member", "platform-admin" })
+        {
+            As(role).CanApprove().ShouldBeFalse(role);
+        }
     }
 
     [Fact]

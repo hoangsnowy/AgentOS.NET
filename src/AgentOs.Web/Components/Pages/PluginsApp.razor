@@ -1,6 +1,8 @@
 @* PluginsApp — lists the runtime plugins discovered at startup (from the host's plugins/ folder).
    Reads the IPluginCatalog the PluginLoader populated. Failed loads are shown too, so a broken plugin
-   is visible rather than silently missing. Read-only; enable/disable is a future slice. *@
+   is visible rather than silently missing. Read-only; enable/disable is a future slice.
+   GAP-19: an assembly whose SHA-256 is not in Plugins:AllowedSha256 is listed as Refused (none of its code ran), with
+   the hash an operator approves to load it. *@
 
 @using AgentOs.SharedKernel.Plugins
 @inject IPluginCatalog Catalog
@@ -8,7 +10,7 @@
 <header class="page-head">
     <div>
         <h1 class="page-title">Plugins</h1>
-        <p class="page-sub">Extensions discovered in the host's <code>plugins/</code> folder at startup.</p>
+        <p class="page-sub">Extensions discovered in the host's <code>plugins/</code> folder at startup. Only assemblies whose SHA-256 an operator listed in <code>Plugins:AllowedSha256</code> are loaded.</p>
     </div>
 </header>
 
@@ -16,7 +18,7 @@
 {
     <EmptyState Icon="squares-stack"
                 Title="No plugins installed"
-                Hint="Drop a plugin assembly in the host's plugins/ folder and restart. Build the bundled sample with scripts/build-plugins.ps1, then reload." />
+                Hint="Drop a plugin assembly in the host's plugins/ folder, add its SHA-256 to Plugins:AllowedSha256 and restart. scripts/build-plugins.ps1 builds the bundled sample and prints its hash." />
 }
 else
 {
@@ -37,9 +39,9 @@ else
                     <td>
                         <div>@p.Manifest.Name</div>
                         <div class="muted"><code>@p.Manifest.Id</code></div>
-                        @if (p.Status == PluginStatus.Failed && !string.IsNullOrEmpty(p.Error))
+                        @if (p.Status != PluginStatus.Loaded && !string.IsNullOrEmpty(p.Error))
                         {
-                            <div class="login-error">@p.Error</div>
+                            <div class="login-error" role="status">@p.Error</div>
                         }
                         else if (!string.IsNullOrEmpty(p.Manifest.Description))
                         {
@@ -48,8 +50,8 @@ else
                     </td>
                     <td><code>@p.Manifest.Version</code></td>
                     <td>
-                        <Badge Variant="@(p.Status == PluginStatus.Loaded ? Badge.BadgeVariant.Ok : Badge.BadgeVariant.Err)">
-                            @(p.Status == PluginStatus.Loaded ? "Loaded" : "Failed")
+                        <Badge Variant="@(p.Status switch { PluginStatus.Loaded => Badge.BadgeVariant.Ok, PluginStatus.Refused => Badge.BadgeVariant.Warn, _ => Badge.BadgeVariant.Err })">
+                            @(p.Status switch { PluginStatus.Loaded => "Loaded", PluginStatus.Refused => "Refused", _ => "Failed" })
                         </Badge>
                     </td>
                     <td>@(p.Capabilities.Count == 0 ? "—" : string.Join(", ", p.Capabilities))</td>

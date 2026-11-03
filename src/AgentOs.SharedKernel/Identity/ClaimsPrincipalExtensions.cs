@@ -60,5 +60,15 @@ public static class ClaimsPrincipalExtensions
     /// <summary>True when the user may approve or reject a step held by an approval policy: the <c>approver</c> or the
     /// <c>admin</c> realm role (E1.5).</summary>
     public static bool CanApprove(this ClaimsPrincipal user)
-        => user.IsInRole(ClaimNames.ApproverRole) || user.IsInRole(ClaimNames.AdminRole);
+        => user.Can(Permission.ApproveWork);   // RBAC v2: PermissionMatrix decides (approver, admin)
+}
+
+/// <summary>GAP-17 — a signed-in principal without a <c>tenant</c> claim is a misconfigured token, never "the shared
+/// default tenant": tenant-scoped surfaces refuse it (a 403 on a route, this message in a desktop app) instead of falling
+/// back to <see cref="ITenantContext.DefaultTenantId"/>.</summary>
+public static class TenantClaim
+{
+    /// <summary>What a desktop app shows when the sign-in has no tenant.</summary>
+    public const string MissingMessage =
+        "Your sign-in doesn't name a workspace, so nothing is shown. Sign out and in again; if it persists, ask your administrator to check your account's tenant.";
 }

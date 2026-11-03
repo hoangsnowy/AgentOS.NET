@@ -17,6 +17,10 @@ else if (!_isAdmin)
 {
     <div class="login-error">Admin role required to manage API tokens.</div>
 }
+else if (_tenantId is null)
+{
+    <div class="login-error" role="alert">@TenantClaim.MissingMessage</div>
+}
 else
 {
     <header class="page-head">
@@ -106,7 +110,8 @@ else
     private bool _resolved;
     private bool _isAdmin;
     private bool _busy;
-    private string _tenantId = "default";
+    // Null = the sign-in carries no tenant claim: fail closed (GAP-17), never the shared "default" tenant.
+    private string? _tenantId;
     private string _actor = "admin";
     private string _name = string.Empty;
     private string _role = UserRoles.Developer;
@@ -120,22 +125,23 @@ else
         {
             var state = await AuthState;
             _isAdmin = state.User.Can(Permission.ManageApiTokens); // RBAC v2 re-check (PermissionMatrix)
-            _tenantId = state.User.GetTenantId() ?? "default";
+            _tenantId = state.User.GetTenantId();
             _actor = state.User.Identity?.Name ?? "admin";
         }
         _resolved = true;
-        if (_isAdmin) { _rows = await Tokens.ListAsync(_tenantId); }
+        if (_isAdmin && _tenantId is not null) { _rows = await Tokens.ListAsync(_tenantId); }
     }
 
     private async Task CreateAsync()
     {
+        if (_tenantId is not { } tenant) { return; }
         _busy = true;
         try
         {
-            var (_, token) = await Tokens.CreateAsync(_tenantId, _name, _role, _days, _actor);
+            var (_, token) = await Tokens.CreateAsync(tenant, _name, _role, _days, _actor);
             _newToken = token;
             _name = string.Empty;
-            _rows = await Tokens.ListAsync(_tenantId);
+            _rows = await Tokens.ListAsync(tenant);
         }
         catch (InvalidOperationException ex)
         {
@@ -149,11 +155,12 @@ else
 
     private async Task RevokeAsync(ApiTokenInfo token)
     {
+        if (_tenantId is not { } tenant) { return; }
         _busy = true;
         try
         {
-            if (await Tokens.RevokeAsync(_tenantId, token.Id, _actor)) { Toasts.Show("API tokens", $"{token.Name} revoked.", ToastKind.Ok); }
-            _rows = await Tokens.ListAsync(_tenantId);
+            if (await Tokens.RevokeAsync(tenant, token.Id, _actor)) { Toasts.Show("API tokens", $"{token.Name} revoked.", ToastKind.Ok); }
+            _rows = await Tokens.ListAsync(tenant);
         }
         finally
         {

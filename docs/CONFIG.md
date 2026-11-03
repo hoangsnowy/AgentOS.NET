@@ -49,11 +49,16 @@ to the next request.
 | `DataProtection:RequireKeyWrapping` | `false` | Refuse to start with an unwrapped ring outside Development. System → About shows the key ring's protection either way. |
 | `Api:BaseUrl` | empty | Empty = Web runs the engine in-process. Set = Web is a thin client of the Api host. System → About probes the Api at Aspire's `services:api:*` address first (the AppHost references the Api from the Web for that card only), then this. |
 | `Settings:Locks:<key>` | Production pins 4 keys (below) | Operator locks. Change with an env var, e.g. `Settings__Locks__RemoteAgent__AutoApprove=true` — a deployment decision, not a click. |
-| `Logging:*`, `AllowedHosts` | ASP.NET defaults | |
+| `Hosting:PublicBaseUrl` | empty | **Required outside Development** (the host refuses to start without it). The desktop's public URL, e.g. `https://agentos.example.com` — set on **both** hosts. Every link the server hands out is built from it, never from the request's `Host` header: invitation URLs, the VS Code pairing hand-off, the hub URL a runner trusts, Board › Computers' pair command. `https://` unless the host is loopback; no query/fragment. Development without it: the request's own origin. |
+| `Hosting:TrustedNetworks` | empty | CIDR ranges (`;`-separated or an array) whose `X-Forwarded-For` / `X-Forwarded-Proto` are honoured, **in addition to loopback** — your ingress / reverse proxy. Any other peer's forwarded headers are ignored (client IP and scheme stay the socket's). azd: the private ranges; compose: `TRUSTED_NETWORKS` (`172.16.0.0/12`); Helm: `forwardedHeaders.trustedNetworks`. Narrow to your ingress subnet. `ASPNETCORE_FORWARDEDHEADERS_ENABLED` can no longer widen it. |
+| `Hosting:TrustedProxies` | empty | Single proxy IPs, same effect as `TrustedNetworks`. |
+| `AllowedHosts` | empty → the host of `Hosting:PublicBaseUrl` | Host names the host answers to (`;`-separated, `*.domain` wildcards); anything else is a 400. Loopback names are always allowed and `/health` + `/alive` are exempt (probes send the pod IP). Unset or `*` = derived from the public base URL; no filter in Development without one. Set it on the **Api** to its own names (the templates do). |
+| `Logging:*` | ASP.NET defaults | |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Enable OTLP / App Insights export. Set `OTEL_SERVICE_NAME` (`api` / `web`) too — dashboards and alerts group by it. See [OPERATIONS.md](OPERATIONS.md). |
 | `Email:*` | `SmtpHost` empty → logs instead of sending | `SmtpHost`, `SmtpPort` (1025), `From`, `FromName`, `User`, `Password`, `UseStartTls`. Validated at startup. Aspire injects MailHog in dev. |
 | `Mcp:Servers[]`, `Mcp:CallTimeoutSeconds` | empty / 60 | Upstream MCP servers. Validated at startup. Moves to a per-tenant registry in Phase 4. |
 | `Plugins:Path` | `plugins` | Folder scanned for `IAgentOsPlugin` assemblies. |
+| `Plugins:AllowedSha256` | empty (nothing loads) | SHA-256 (hex, optional `sha256:` prefix; `;`-separated or an array) of every plugin assembly the host may load. Any other `*.dll` in `Plugins:Path` is **refused before any of its code is loaded**: a startup warning names the file and its hash, and **Plugins** in the desktop lists it as *Refused* with that hash. Deploy-time on purpose — loading code into the host is an operator decision, never a tenant setting. `scripts/build-plugins.ps1` prints the sample's hash. |
 
 **Secrets** (`Llm:Claude:ApiKey`, `Llm:AzureOpenAi:ApiKey`, …) can be seeded at deploy
 (`azd env set Llm__Claude__ApiKey …`, user-secrets) *or* entered in Settings → LLM providers, where a
@@ -294,7 +299,12 @@ start deletes those a crashed runner left. `REMOTE_AGENT_KEEP_RUNS` (keep every 
 keeping-for-a-follow-up off: a follow-up then starts in a fresh folder. `REMOTE_AGENT_KEEP_CONTAINERS=1` keeps the
 containers, networks and volumes a run's Aspire AppHost created (by default the runner removes them when the run ends —
 named volumes only when they were created during the run); `REMOTE_AGENT_KEEP_VOLUMES=1` keeps just the volumes
-([ADR-0018](adr/0018-runs-leave-nothing-behind.md)).
+([ADR-0018](adr/0018-runs-leave-nothing-behind.md)). A scoped run may reach only this computer over the network
+(localhost) plus its own tooling — git to GitHub / GitLab / Bitbucket / Azure DevOps or the cloned repository's own
+remotes, gh, the package managers. A self-hosted git server is added on the runner's computer with
+`REMOTE_AGENT_GIT_HOSTS=git.corp.local,gitea.lan` (an environment variable of the runner, like the others here — not a
+product setting); project skills may not pre-approve tools (`allowed-tools` / `hooks` frontmatter)
+([ADR-0019](adr/0019-skills-cannot-widen-a-runs-permissions.md)).
 
 ### Settings → Autopilot → Approvals (E1.5)
 
@@ -417,7 +427,7 @@ buttons are hidden or disabled; every handler re-checks). Roles are Keycloak rea
 |---|:-:|:-:|:-:|:-:|:-:|
 | `ViewWork` — boards, tasks, runs, insights, files | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `RunAgents` — run/stop agents, work tickets, pair a computer, ticket files | | ✓ | | | ✓ |
-| `ApproveWork` — design checks, approval-policy gates (E1.5: plan, diff, PR, merge — these need the explicit `approver` or `admin` role, so the legacy `member` alias decides only its own design checks) | | | ✓ | | ✓ |
+| `ApproveWork` — approval-policy gates (E1.5: plan, diff, PR, merge) and design checks on anyone's task. A task's owner (with `RunAgents`) still decides their own design check (ADR-0016) | | | ✓ | | ✓ |
 | `ViewAudit` — audit log, tool-call evidence, audit CSV | | | | ✓ | ✓ |
 | `ManageWorkspaces` — connect/remove boards + repos, Autopilot | | | | | ✓ |
 | `ManageMembers` — invite, roles, board memberships | | | | | ✓ |
@@ -430,7 +440,7 @@ buttons are hidden or disabled; every handler re-checks). Roles are Keycloak rea
 | Before E1.2 | Now |
 |---|---|
 | `admin` | `admin` (same name, every permission) |
-| `member` | kept as a legacy alias = `developer` + `approver` + `ManageWorkspaces` — exactly what a member could do before (run agents, decide design checks on their own tasks, connect boards). Choosing one of the five roles for that user in Users replaces it. |
+| `member` | kept as a legacy alias = `developer` + `ManageWorkspaces` — exactly what a member could do before (run agents, decide design checks on their own tasks, connect boards — including an Azure DevOps / Jira tracker, E1.8). E1.5's approval gates never accepted a member, so the alias approves nothing. Choosing one of the five roles for that user in Users replaces it. |
 | `approver` (E1.5) | `approver` (same realm role). E1.5 assigned `approver` + `member` together; such a user keeps both until an admin picks one role in Users. New approvers get `approver` alone. |
 | `platform-admin` | unchanged, orthogonal (platform-wide settings only; grants nothing tenant-scoped) |
 

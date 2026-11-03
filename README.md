@@ -43,6 +43,7 @@ with its own DI surface, EF Core context and Postgres schema, so any one can lat
 | I want to… | Read |
 |---|---|
 | Run it locally (standalone or full stack), secrets, CI | [docs/SETUP.md](docs/SETUP.md) |
+| Tickets from GitHub Projects, Azure DevOps Boards or Jira (code on GitHub / Azure Repos) | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Test against real GitHub / Azure DevOps / LLMs (the lab server) | [docs/LAB.md](docs/LAB.md) |
 | Know what to set at deploy vs in the UI | [docs/CONFIG.md](docs/CONFIG.md) |
 | Understand the architecture | [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/README.md) |
@@ -517,7 +518,9 @@ automatically — don't add an appsettings key.
 For an extension that ships *outside* the solution, implement `IAgentOsPlugin`
 (`src/AgentOs.SharedKernel/Plugins/`) and drop the assembly into the host's `plugins/` folder — no
 compile-time reference. A plugin has the same DI surface as a module (tools, LLM providers, desktop
-windows). Use `/plugin-scaffold {Name}`; `samples/AgentOs.Plugins.Sample` is a working example.
+windows). Use `/plugin-scaffold {Name}`; `samples/AgentOs.Plugins.Sample` is a working example. Plugins run with
+full trust, so a host loads only assemblies whose SHA-256 is listed in `Plugins:AllowedSha256` — anything else is
+refused and shown as *Refused* on **Plugins** ([CONFIG.md](docs/CONFIG.md#set-at-deploy-bootstrap)).
 
 ## Deploy
 

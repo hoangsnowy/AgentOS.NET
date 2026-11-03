@@ -85,6 +85,7 @@ public sealed class EndpointAuthorizationByRoleTests : IAsyncLifetime
         builder.Services.AddSingleton(Substitute.For<IEmailSender>());
         builder.Services.AddSingleton(Substitute.For<ITenantSignupService>());
         builder.Services.AddSingleton<IWorkspaceMembershipStore>(_memberships);
+        builder.Services.AddSingleton(new AgentOs.SharedKernel.Hosting.PublicOrigin("https://agentos.example.com", allowRequestFallback: false));
         // Workspaces
         var boards = Substitute.For<IWorkspaceRepository>();
         boards.ListAsync(Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(

@@ -49,7 +49,7 @@
                     }
                     @if (r.Status == ApprovalStatus.Pending)
                     {
-                        @if (Actor.CanApprove)
+                        @if (MayDecide(r))
                         {
                             <div class="approval-actions">
                                 <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="@(() => DecideAsync(r, approve: true))" Disabled="@(_busy == r.Id)"
@@ -103,6 +103,12 @@
     /// <summary>Most decided requests listed under the waiting ones.</summary>
     [Parameter] public int MaxDecided { get; set; } = 5;
 
+    /// <summary>RBAC v2: whether the person may decide the approval of a task (ApproveWork on its board);
+    /// <c>null</c> = <see cref="ApprovalActor.CanApprove"/> alone.</summary>
+    [Parameter] public Func<Guid, bool>? CanDecideFor { get; set; }
+
+    private bool MayDecide(ApprovalRequest r) => Actor.CanApprove && (CanDecideFor?.Invoke(r.SessionId) ?? true);
+
     private List<ApprovalRequest> _requests = [];
     private string? _loadedFor;
     private Guid? _busy;
@@ -138,7 +144,9 @@
             if (scope.ServiceProvider.GetService<IApprovalStore>() is not { } store) { _requests = []; return; }
             var visible = VisibleTasks as ISet<Guid> ?? VisibleTasks.ToHashSet();
             var all = (await store.ListRecentAsync(TenantId, 100))
-                .Where(r => IsAdmin || Actor.CanApprove || visible.Contains(r.SessionId))
+                // RBAC v2: the approvals of the tasks this person sees (an approver sees every task of the boards they can
+                // see — Board's team view); a restricted board's approvals stay with its members.
+                .Where(r => IsAdmin || visible.Contains(r.SessionId))
                 .ToList();
             _requests = all.Where(r => r.Status == ApprovalStatus.Pending).OrderBy(r => r.RequestedAtUtc)
                 .Concat(all.Where(r => r.Status != ApprovalStatus.Pending).OrderByDescending(r => r.DecidedAtUtc).Take(MaxDecided))
@@ -161,7 +169,9 @@
         _busy = request.Id;
         try
         {
-            var outcome = await Approvals.DecideAsync(TenantId, request.Id, approve, approve ? null : _note, Actor);
+            // Re-check in the handler (GAP-17): a hidden button is not the gate.
+            var actor = Actor with { CanApprove = MayDecide(request) };
+            var outcome = await Approvals.DecideAsync(TenantId, request.Id, approve, approve ? null : _note, actor);
             if (outcome.Request is { } stored)
             {
                 var i = _requests.FindIndex(r => r.Id == stored.Id);

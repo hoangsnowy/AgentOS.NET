@@ -22,7 +22,8 @@ public enum Permission : long
     /// <summary>Start and stop agent runs, create and edit tickets and tasks, pair a runner, upload ticket files.</summary>
     RunAgents = 1L << 1,
 
-    /// <summary>Decide human gates: design checks, review steps, plan / diff / PR approvals (E1.5 policies).</summary>
+    /// <summary>Approve or reject what an approval policy holds (E1.5: plan, diff, pull request, merge) and decide the design
+    /// check of anyone's task. Approvers and admins; board-scoped like every permission.</summary>
     ApproveWork = 1L << 2,
 
     /// <summary>Connect and remove boards and their repositories, switch Autopilot, edit ticket flows.</summary>

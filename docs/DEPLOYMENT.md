@@ -262,6 +262,20 @@ Settings UI cannot flip: remote auto-approve off, fail-closed tool policy, offli
 build sandbox = Container. Change one only with an env var (`Settings__Locks__<key>`). Everything
 else is configured in the desktop — see [CONFIG.md](CONFIG.md).
 
+**Public URL, proxies and host names (GAP-05).** The templates (`infra/AgentOs.AppHost/infra/{web,api}.tmpl.yaml`)
+set `Hosting__PublicBaseUrl=https://web.<env domain>` on both hosts — invitation, pairing and hub links are built
+from it, never from the request's `Host` header, and a host outside Development refuses to start without it. If the
+desktop is published under a **custom domain**, set it to that URL instead (`azd env set` + an `env` entry, or
+`az containerapp update --set-env-vars Hosting__PublicBaseUrl=https://agentos.example.com`) — it is also the only
+host name the Web answers to (besides `localhost`; `/health` and `/alive` are exempt for the probes). The Api answers
+to `AllowedHosts=api.<env domain>`; add a custom Api domain there. Forwarded headers are honoured only from loopback
+and `Hosting__TrustedNetworks` (the private ranges — the container is reachable only through the environment's
+ingress); with your own VNet, narrow it to the infrastructure subnet. `ASPNETCORE_FORWARDEDHEADERS_ENABLED` is no
+longer set (it used to trust any peer). All keys: [CONFIG.md](CONFIG.md#set-at-deploy-bootstrap).
+
+**Plugins (GAP-19).** A host loads only plugin assemblies whose SHA-256 is in `Plugins__AllowedSha256`; the
+container images ship none, so leave it unset unless you add a plugin.
+
 Back up and restore the DataProtection key ring (it decrypts every stored setting and key) with
 [dataprotection-dr-runbook.md](dataprotection-dr-runbook.md).
 

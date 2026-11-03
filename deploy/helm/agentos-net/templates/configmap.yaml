@@ -29,6 +29,13 @@ data:
   # privilege — created by the realm Job), never as the master-realm bootstrap admin.
   Auth__Keycloak__Admin__ClientId: {{ .Values.keycloak.adminClientId | quote }}
   Auth__CookiePrefix: {{ .Values.web.cookiePrefix | quote }}
+  # GAP-05: every generated link (invitations, runner pairing, hub URL) uses the desktop's public URL, and the Web
+  # answers only to that host (+ localhost; probes exempt). Forwarded headers are trusted from loopback + these ranges.
+  Hosting__PublicBaseUrl: {{ include "agentos.webUrl" . | quote }}
+  Hosting__TrustedNetworks: {{ .Values.forwardedHeaders.trustedNetworks | quote }}
+  {{- with .Values.forwardedHeaders.trustedProxies }}
+  Hosting__TrustedProxies: {{ . | quote }}
+  {{- end }}
   Email__From: {{ .Values.email.from | quote }}
   Email__FromName: AgentOS.NET
   Email__SmtpHost: {{ .Values.keycloak.smtp.host | quote }}

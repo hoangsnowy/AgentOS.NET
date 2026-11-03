@@ -114,11 +114,11 @@ public sealed class RoleClaimsTransformation : IClaimsTransformation
     }
 }
 
-/// <summary>Maps the pre-E1.2 <c>member</c> role onto <c>developer</c> + <c>approver</c>, so role displays and
-/// <c>IsInRole("developer")</c> agree with the matrix (which already treats <c>member</c> as that alias).</summary>
+/// <summary>Maps the pre-E1.2 <c>member</c> role onto <c>developer</c>, so role displays and <c>IsInRole("developer")</c>
+/// agree with the matrix (which already treats <c>member</c> as developer + managing boards).</summary>
 public sealed class LegacyRoleClaimMapper : IRoleClaimMapper
 {
-    private static readonly string[] MemberRoles = [UserRoles.Developer, UserRoles.Approver];
+    private static readonly string[] MemberRoles = [UserRoles.Developer];
 
     /// <inheritdoc />
     public IEnumerable<string> MapRoles(ClaimsPrincipal user)
