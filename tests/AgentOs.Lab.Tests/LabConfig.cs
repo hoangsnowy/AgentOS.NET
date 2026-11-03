@@ -33,6 +33,22 @@ internal static class LabConfig
     public static string? AzureDevOpsProject => Get("Lab:AzureDevOps:Project");
     public static string? AzureDevOpsRepo => Get("Lab:AzureDevOps:Repo") ?? AzureDevOpsProject;
 
+    // E1.8 — Jira Cloud (a free site is enough) as a ticket tracker.
+    public static string? JiraSite => Get("Lab:Jira:Site");
+    public static string? JiraProject => Get("Lab:Jira:Project");
+    public static string? JiraEmail => Get("Lab:Jira:Email");
+    public static string? JiraToken => Get("Lab:Jira:Token");
+
+    /// <summary>The Azure DevOps project whose work items the Boards lab tests use (defaults to the repo project).</summary>
+    public static string? AzureBoardsProject => Get("Lab:AzureDevOps:BoardsProject") ?? AzureDevOpsProject;
+
+    /// <summary>Why a Jira lab test can't run, or null when it can.</summary>
+    public static string? JiraSkipReason =>
+        !Enabled ? "Lab tests are opt-in: set RUN_AGENTOS_LAB=true (see docs/LAB.md)."
+        : string.IsNullOrWhiteSpace(JiraSite) || string.IsNullOrWhiteSpace(JiraProject) || string.IsNullOrWhiteSpace(JiraEmail) || string.IsNullOrWhiteSpace(JiraToken)
+            ? $"Set Lab:Jira:Site, :Project, :Email and :Token in user-secrets '{UserSecretsId}' (see docs/LAB.md)."
+            : null;
+
     /// <summary>Why a GitHub lab test can't run, or null when it can.</summary>
     public static string? GitHubSkipReason =>
         !Enabled ? "Lab tests are opt-in: set RUN_AGENTOS_LAB=true (see docs/LAB.md)."

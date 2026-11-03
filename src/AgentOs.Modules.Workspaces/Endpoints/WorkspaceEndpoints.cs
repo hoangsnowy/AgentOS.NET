@@ -87,7 +87,8 @@ internal static class WorkspaceEndpoints
 
         var input = new WorkspaceConnectInput(
             request.Name, request.Kind, request.ProjectOwner, request.ProjectScope,
-            request.ProjectNumber, request.Project, request.Host, request.AccessToken);
+            request.ProjectNumber, request.Project, request.Host, request.AccessToken,
+            request.Tracker is null ? null : new TrackerConnectInput(request.Tracker, request.TrackerAccessToken));
         var result = await connector.ConnectAsync(tenant.TenantId, tenant.UserId, input, ct).ConfigureAwait(false);
 
         return result.Ok && result.Workspace is not null
@@ -107,6 +108,10 @@ internal static class WorkspaceEndpoints
         if (removed)
         {
             await credentials.DeleteAsync(row.CredentialRef, ct).ConfigureAwait(false);
+            if (row.Tracker is not null)
+            {
+                await credentials.DeleteAsync(TrackerBinding.TokenKey(row.Id), ct).ConfigureAwait(false);
+            }
         }
         return Results.NoContent();
     }
@@ -259,7 +264,8 @@ internal static class WorkspaceEndpoints
     }
 }
 
-/// <summary>Connect-a-board request body.</summary>
+/// <summary>Connect-a-board request body. <see cref="Tracker"/> (E1.8): the board's tickets come from Azure DevOps Boards
+/// or Jira; <see cref="TrackerAccessToken"/> is its token (blank = the code token, same Azure DevOps organization only).</summary>
 internal sealed record ConnectWorkspaceRequest(
     string Name,
     SourceProviderKind Kind,
@@ -268,7 +274,9 @@ internal sealed record ConnectWorkspaceRequest(
     int? ProjectNumber,
     string? Project,
     string? Host,
-    string AccessToken);
+    string AccessToken,
+    TrackerBinding? Tracker = null,
+    string? TrackerAccessToken = null);
 
 /// <summary>Add-a-repo-under-a-board request body.</summary>
 internal sealed record AddRepoRequest(string Owner, string Repo, string? DefaultBranch);
@@ -290,10 +298,11 @@ internal sealed record WorkspaceDto(
     int? ProjectNumber,
     string? Project,
     string Status,
-    DateTimeOffset CreatedAtUtc)
+    DateTimeOffset CreatedAtUtc,
+    TrackerBinding? Tracker = null)
 {
     public static WorkspaceDto From(WorkspaceEntity e) => new(
-        e.Id, e.Name, e.Kind, e.ProjectOwner, e.ProjectScope, e.ProjectNumber, e.Project, e.Status, e.CreatedAtUtc);
+        e.Id, e.Name, e.Kind, e.ProjectOwner, e.ProjectScope, e.ProjectNumber, e.Project, e.Status, e.CreatedAtUtc, e.ReadTracker());
 }
 
 /// <summary>Repo-under-a-board projection.</summary>
