@@ -263,7 +263,10 @@ the Reviewer and Testing agents for their verdict. The runner keeps the folder o
 JSON (or that stopped at its turn / context limit) for 15 minutes, and the follow-up works in it — for Claude Code it
 resumes the same session (`claude -p --resume <session id>`) unless the context was full; otherwise the follow-up is
 a fresh short prompt with the scrubbed tail (1,500 characters, credentials masked) of what the run said, asking it
-to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). The follow-up never carries the
+to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). If the Coding run's commits never
+reached origin, the follow-up pushes that one branch (`git push -u origin <branch>`, never forced, never another
+branch, nothing new committed) — the kept folder is deleted afterwards, and VNChess #124 lost two finished fix runs
+because the follow-up was told not to push. The follow-up never carries the
 ticket, its files or the original instructions again. Only a run on a member's computer is asked (a server-side
 provider's run has no folder or session left to look at); a Testing run's screenshot target (Design gate) carries
 over, so the screenshots the run already saved in the kept folder are sent back with the recovered verdict.

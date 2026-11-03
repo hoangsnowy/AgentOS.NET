@@ -241,8 +241,10 @@ internal static class IssueWorkPrompt
     internal const string RecoverySystem =
         "You are the Coding Agent of AgentOS.NET, finishing a run on the developer's machine that ended before it sent its reply.";
 
-    /// <summary>The follow-up's ask: look at what the run already did and answer with the JSON summary only. It names the
-    /// repository and branch (from the server, never the ticket) and nothing else — no ticket text, files or lessons.</summary>
+    /// <summary>The follow-up's ask: look at what the run already did, push the work branch if its commits never reached
+    /// origin (the run's checkout is deleted afterwards — VNChess #124 lost two finished runs that way), and answer with
+    /// the JSON summary only. It names the repository and branch (from the server, never the ticket) and nothing else —
+    /// no ticket text, files or lessons.</summary>
     internal static string RecoveryAsk(IssueWorkRequest req, WorkRepo repo)
     {
         ArgumentNullException.ThrowIfNull(req);
@@ -252,15 +254,20 @@ internal static class IssueWorkPrompt
             CultureInfo.InvariantCulture,
             """
             Your previous run on {0}/{1} for ticket #{2} ended before you sent the JSON reply. Do NOT redo or change the
-            work, and do not commit or push anything now. Look at what you already did in the checkout you worked in (this
+            work, and do not commit anything new. Look at what you already did in the checkout you worked in (this
             directory; if it holds no checkout, clone https://github.com/{0}/{1}.git . and run git fetch origin {3}):
                git branch --show-current
                git status -sb
                git log --oneline -10
+            If your commits are on {3} but not on origin yet (the branch is missing on origin, or git status shows it
+            ahead of origin), push that branch now — this machine's checkout is deleted when the run ends, so unpushed
+            work is lost:
+               git push -u origin {3}
+            Push only {3}, never with --force and never another branch; if the push is refused, do not work around it.
             Then reply ONLY with this JSON (no other text):
             {{"branch":"<the branch with your commits, normally {3}>","pushed":true,"summary":"<one sentence describing the change>","description":"<the pull request description, Markdown>"}}
-            "pushed" is false when your commits are only on this machine (the branch is not on origin, or git status
-            shows it ahead of origin).
+            "pushed" is true only when origin has your commits now; it is false when the push was refused or your
+            commits are still only on this machine.
             If no work was committed, reply: {{"branch":"","summary":"","error":"<brief reason>"}}
             """,
             repo.Owner, repo.Repo, req.IssueNumber, branch);
