@@ -2744,6 +2744,10 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 }
 .board-failure-actions { display: flex; align-items: flex-start; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-1); }
 .board-failure-details { margin-top: 0; }
+/* Board › Tasks: a task can carry up to six actions — they wrap inside the cell instead of pushing the table past the
+   window (the generic nowrap .data-table td.actions clipped them, even maximized). */
+.data-table td.board-task-actions { white-space: normal; min-width: 13rem; }
+.data-table td.board-task-actions .btn { margin: 2px 0 2px var(--space-1); }
 .board-failure-details pre { white-space: pre-wrap; word-break: break-word; max-height: 12rem; overflow: auto; font-size: 11px; }
 
 /* "Try the app" — a project's local preview under its repository row (BoardApp PreviewCard). */
