@@ -26,6 +26,7 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Security.Claims;
 
 namespace AgentOs.SharedKernel.Identity;
@@ -161,12 +162,9 @@ public static class PermissionMatrix
     public static IEnumerable<string> EffectiveRoles(IEnumerable<string> roles, bool restricted, string? membershipRole)
     {
         ArgumentNullException.ThrowIfNull(roles);
-        foreach (var role in roles)
+        foreach (var role in roles.Where(r => !restricted || TenantWideRoles.Contains(r)))
         {
-            if (!restricted || TenantWideRoles.Contains(role))
-            {
-                yield return role;
-            }
+            yield return role;
         }
         // A membership row may only carry a workspace-assignable role — anything else grants nothing.
         if (restricted && UserRoles.IsWorkspaceAssignable(membershipRole))
@@ -184,7 +182,7 @@ public static class PermissionMatrix
         For(EffectiveRoles(roles, restricted, membershipRole));
 
     /// <summary>The authorization policy name enforcing <paramref name="permission"/> (registered by the Identity module).</summary>
-    public static string Policy(Permission permission) => PolicyPrefix + permission.ToString();
+    public static string Policy(Permission permission) => $"{PolicyPrefix}{permission}";
 
     /// <summary>Prefix of every permission policy name.</summary>
     public const string PolicyPrefix = "perm:";
