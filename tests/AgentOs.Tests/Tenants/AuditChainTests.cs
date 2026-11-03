@@ -1,15 +1,19 @@
 // GAP-11b — the audit hash chain and its verifier, without a database: a chain built the way EfAuditLog builds it
 // verifies intact; changing any field of an event, deleting one, swapping two, or re-hashing a changed event is reported
 // at the first event that no longer holds; the encoding is unambiguous (moving text between fields changes the hash);
-// timestamps are hashed at the microsecond Postgres stores.
+// timestamps are hashed at the microsecond Postgres stores. An unchained row recorded after the chain started (an insert
+// that bypassed the writer) breaks the chain at the position it takes; one from before the chain is history.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using AgentOs.Modules.Tenants;
+using AgentOs.Modules.Tenants.Persistence;
 using AgentOs.Modules.Tenants.Persistence.Entities;
 using AgentOs.Modules.Tenants.Persistence.Repositories;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using Xunit;
 
@@ -144,6 +148,114 @@ public sealed class AuditChainTests
 
         streamed.ShouldBe(AuditChain.Verify("acme", chain, 1));
     }
+
+    // A forged row with no chain link, recorded after the newest event: the chain is broken at the next position.
+    [Fact]
+    public void Verify_UnchainedEventAfterTheChain_IsInsertedAtTheNextPosition()
+    {
+        var chain = Chain(5);
+        var stray = new AuditChainStray(Guid.NewGuid(), chain[^1].TimestampUtc.AddMinutes(3));
+
+        var report = AuditChain.Verify("acme", chain, unchained: 1, stray);
+
+        report.Intact.ShouldBeFalse();
+        report.Problem.ShouldBe(AuditChainProblem.Inserted);
+        report.BrokenAt.ShouldBe(6);
+        report.BrokenEventId.ShouldBe(stray.Id);
+        report.Verified.ShouldBe(5);
+        report.HeadHash.ShouldBeNull();
+        report.Summary.ShouldBe("Chain broken at event 6: an event without a chain link was recorded there — it was added outside the audit log.");
+    }
+
+    // Recorded between events 2 and 3: reported at 3, before event 3 is even checked.
+    [Fact]
+    public void Verify_UnchainedEventInsideTheChain_IsInsertedWhereItSitsInTime()
+    {
+        var chain = Chain(5);
+        var stray = new AuditChainStray(Guid.NewGuid(), chain[1].TimestampUtc.AddSeconds(30));
+
+        var report = AuditChain.Verify("acme", chain, unchained: 1, stray);
+
+        report.Problem.ShouldBe(AuditChainProblem.Inserted);
+        report.BrokenAt.ShouldBe(3);
+        report.Verified.ShouldBe(2);
+    }
+
+    // Same instant as the first event: the chain had started, so it is not history.
+    [Fact]
+    public void Verify_UnchainedEventAtTheFirstEventsInstant_IsInserted()
+        => AuditChain.Verify("acme", Chain(3), 1, new AuditChainStray(Guid.NewGuid(), Chain(1)[0].TimestampUtc)).BrokenAt.ShouldBe(2);
+
+    // An earlier break still wins: the report names the first position that doesn't hold.
+    [Fact]
+    public void Verify_EarlierBreak_IsReportedBeforeALaterStray()
+    {
+        var chain = Chain(5);
+        chain[1] = chain[1] with { Target = "rewritten" };
+
+        var report = AuditChain.Verify("acme", chain, 1, new AuditChainStray(Guid.NewGuid(), chain[^1].TimestampUtc.AddMinutes(1)));
+
+        report.Problem.ShouldBe(AuditChainProblem.Altered);
+        report.BrokenAt.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Verify_UnchainedEventBeforeTheChain_IsHistory_StillIntact()
+    {
+        var chain = Chain(3);
+        var report = AuditChain.Verify("acme", chain, 1, new AuditChainStray(Guid.NewGuid(), chain[0].TimestampUtc.AddDays(-1)));
+
+        report.Intact.ShouldBeTrue();
+        report.Verified.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task VerifyAsync_WithAStray_MatchesVerify()
+    {
+        var chain = Chain(4);
+        var stray = new AuditChainStray(Guid.NewGuid(), chain[2].TimestampUtc.AddSeconds(1));
+
+        (await AuditChain.VerifyAsync("acme", Stream(chain), 1, stray)).ShouldBe(AuditChain.Verify("acme", chain, 1, stray));
+    }
+
+    // Through the store: legacy rows from before the chain stay history; a row inserted with no link after the chain
+    // started — what the app role's INSERT right allows — makes Verify report the break.
+    [Fact]
+    public async Task EfAuditLog_Verify_UnchainedRowAfterTheChainStarted_IsReportedBroken()
+    {
+        var options = new DbContextOptionsBuilder<TenantsDbContext>().UseInMemoryDatabase($"audit-stray-{Guid.NewGuid()}").Options;
+        await using (var db = new TenantsDbContext(options))
+        {
+            db.AuditEvents.Add(Unchained(T0.AddDays(-30)));   // recorded before the chain existed
+            await db.SaveChangesAsync();
+            var log = new EfAuditLog(db, NullLogger<EfAuditLog>.Instance);
+            for (var i = 1; i <= 3; i++)
+            {
+                await log.WriteAsync(new AuditEntry(Guid.NewGuid(), "acme", "u", AuditActions.SettingChanged, $"t{i}", null, null, T0.AddMinutes(i)));
+            }
+            (await log.VerifyAsync("acme")).ShouldSatisfyAllConditions(
+                r => r.Intact.ShouldBeTrue(r.Summary),
+                r => r.Verified.ShouldBe(3),
+                r => r.Unchained.ShouldBe(1));
+        }
+
+        var forged = Unchained(T0.AddMinutes(10));
+        await using (var db = new TenantsDbContext(options))
+        {
+            db.AuditEvents.Add(forged);
+            await db.SaveChangesAsync();
+            (await new EfAuditLog(db, NullLogger<EfAuditLog>.Instance).VerifyAsync("acme")).ShouldSatisfyAllConditions(
+                r => r.Problem.ShouldBe(AuditChainProblem.Inserted),
+                r => r.BrokenAt.ShouldBe(4),
+                r => r.BrokenEventId.ShouldBe(forged.Id),
+                r => r.Summary.ShouldStartWith("Chain broken at event 4"));
+        }
+    }
+
+    private static AuditEventEntity Unchained(DateTimeOffset at) => new()
+    {
+        Id = Guid.NewGuid(), TenantId = "acme", UserId = "u", Action = AuditActions.MemberRemoved, Target = "forged", TimestampUtc = at,
+    };
 
     // Length-prefixed encoding: the same characters split differently between fields hash differently.
     [Fact]

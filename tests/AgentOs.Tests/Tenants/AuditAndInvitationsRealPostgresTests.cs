@@ -2,7 +2,8 @@
 // here binds its connections exactly like an RLS-enabled host does: SET ROLE agentos_rls + the flow's scope):
 //   • the audit chain: sequential AND concurrent writers for one tenant produce one gap-free chain that verifies intact;
 //     "_platform" rows chain separately; a flow bound to tenant B reads none of A's events; a row changed or deleted
-//     behind the app's back (by the database owner) is reported at its position;
+//     behind the app's back (by the database owner) is reported at its position, and so is a row the app role inserts
+//     with no chain link after the chain started;
 //   • invitations: the row is invisible to another tenant's session; of N concurrent accepts exactly one claims it; a
 //     released claim can be taken again; a used invitation can't be revoked; the whole service flow on the EF store
 //     refuses a second use and the wrong address.
@@ -80,6 +81,19 @@ public sealed class AuditAndInvitationsRealPostgresTests
             (await VerifyAsync(options, B)).ShouldSatisfyAllConditions(
                 r => r.Problem.ShouldBe(AuditChainProblem.Missing),
                 r => r.BrokenAt.ShouldBe(1));
+
+            // The app role may INSERT: a row with no chain link, added after the platform chain started, breaks it.
+            await using (var forger = new TenantsDbContext(options))
+            using (RowLevelSecurity.PlatformScope("test-forgery"))
+            {
+                await forger.Database.ExecuteSqlAsync($"""
+                    INSERT INTO tenants.audit_events ("Id","TenantId","UserId","Action","Target","TimestampUtc")
+                    VALUES ({Guid.NewGuid()}, {AuditScopes.Platform}, 'eve', 'tenant.purged', 'forged', now())
+                    """);
+            }
+            (await VerifyAsync(options, AuditScopes.Platform)).ShouldSatisfyAllConditions(
+                r => r.Problem.ShouldBe(AuditChainProblem.Inserted),
+                r => r.BrokenAt.ShouldBe(2));
         });
     }
 

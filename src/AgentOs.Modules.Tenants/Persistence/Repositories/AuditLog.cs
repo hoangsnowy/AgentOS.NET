@@ -11,6 +11,8 @@
 //   • RLS (ADR-0012 stage 2): an entry is written under its OWN tenant (it names it — a sign-up is anonymous, a platform
 //     admin's export of another tenant is filed under that tenant); "_platform" rows are written and read only inside a
 //     platform scope. A tenant read binds a flow that has no tenant of its own to the tenant asked for.
+//   • the verifier also looks for an unchained row (Sequence null) recorded at or after the chain's first event: the
+//     writer never makes one, so it is an insert that bypassed the chain and breaks it (AuditChainProblem.Inserted).
 
 using System;
 using System.Collections.Generic;
@@ -141,6 +143,7 @@ internal sealed class EfAuditLog(
         using var scope = ReadScope(tenantId);
         var unchained = await db.AuditEvents.AsNoTracking()
             .LongCountAsync(e => e.TenantId == tenantId && e.Sequence == null, ct).ConfigureAwait(false);
+        var stray = unchained == 0 ? null : await StrayAsync(tenantId, ct).ConfigureAwait(false);
         // Oldest first, streamed off one cursor (the (TenantId, Sequence) index serves it): O(1) memory however long.
         var links = db.AuditEvents.AsNoTracking()
             .Where(e => e.TenantId == tenantId && e.Sequence != null)
@@ -148,7 +151,24 @@ internal sealed class EfAuditLog(
             .Select(e => new AuditChainLink(e.Sequence!.Value, e.Id, e.TenantId, e.TimestampUtc, e.UserId, e.Action, e.Target,
                 e.IpAddress, e.UserAgent, e.PrevHash ?? string.Empty, e.Hash ?? string.Empty))
             .AsAsyncEnumerable();
-        return await AuditChain.VerifyAsync(tenantId, links, unchained, ct).ConfigureAwait(false);
+        return await AuditChain.VerifyAsync(tenantId, links, unchained, stray, ct).ConfigureAwait(false);
+    }
+
+    // The earliest unchained row recorded at or after the chain's first event (both reads served by the tenant indexes).
+    private async Task<AuditChainStray?> StrayAsync(string tenantId, CancellationToken ct)
+    {
+        var start = await db.AuditEvents.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && e.Sequence != null)
+            .OrderBy(e => e.Sequence)
+            .Select(e => new { e.TimestampUtc })
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (start is null) { return null; }
+        var row = await db.AuditEvents.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && e.Sequence == null && e.TimestampUtc >= start.TimestampUtc)
+            .OrderBy(e => e.TimestampUtc).ThenBy(e => e.Id)
+            .Select(e => new { e.Id, e.TimestampUtc })
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        return row is null ? null : new AuditChainStray(row.Id, row.TimestampUtc);
     }
 
     // Dapper fast-path: audit_events under the "tenants" schema; the (TenantId, TimestampUtc) index

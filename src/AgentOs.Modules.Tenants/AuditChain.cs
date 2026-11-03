@@ -3,10 +3,14 @@
 // its content plus that previous hash. Changing an event breaks its own hash; removing or re-ordering one breaks the
 // sequence or the next link. The verifier walks a chain in order (streaming, O(1) memory) and names the first event
 // that doesn't hold.
+// Unchained rows (no Sequence / Hash) are legitimate only from before the chain existed. Once a tenant's chain has
+// started, an unchained row recorded at or after its first event is an insert that bypassed the writer (the app role may
+// INSERT): the verifier reports the chain broken at the position that row takes in time (AuditChainProblem.Inserted).
 // Limits, by design (docs/security/threat-model.md MT-3): a database owner who rewrites an event AND every later hash
 // is not detected without an external anchor — the head hash is shown so it can be recorded elsewhere; deleting the
 // newest events (truncating the tail) is not detected by the chain alone either. The app role cannot do either: it may
-// only INSERT and SELECT audit rows (REVOKE UPDATE, DELETE, TRUNCATE — RowLevelSecurity.AppendOnlyTables).
+// only INSERT and SELECT audit rows (REVOKE UPDATE, DELETE, TRUNCATE — RowLevelSecurity.AppendOnlyTables). An unchained
+// row back-dated to before the chain's first event reads as pre-chain history — it is counted, never verified.
 
 using System;
 using System.Buffers;
@@ -47,14 +51,25 @@ public enum AuditChainProblem
 
     /// <summary>An event doesn't link to the one before it (an earlier event was changed or replaced).</summary>
     Relinked = 3,
+
+    /// <summary>An event without a chain link was recorded after the chain started (it was added outside the audit
+    /// writer).</summary>
+    Inserted = 4,
 }
+
+/// <summary>The earliest unchained event recorded at or after a chain's first event — an insert that bypassed the
+/// writer (the verifier's input; null when there is none).</summary>
+/// <param name="Id">The event's id.</param>
+/// <param name="TimestampUtc">When it claims to have happened.</param>
+public sealed record AuditChainStray(Guid Id, DateTimeOffset TimestampUtc);
 
 /// <summary>The verifier's answer for one tenant's chain.</summary>
 /// <param name="TenantId">The chain (a tenant id, or <see cref="AuditScopes.Platform"/>).</param>
 /// <param name="Verified">Chained events checked before the first problem (all of them when intact).</param>
 /// <param name="Unchained">Events recorded before the chain existed — kept, but not verifiable.</param>
 /// <param name="HeadHash">The newest event's hash when intact (record it elsewhere to anchor the chain), else null.</param>
-/// <param name="BrokenAt">The sequence number of the first event that doesn't hold, else null.</param>
+/// <param name="BrokenAt">The sequence number of the first event that doesn't hold, else null. For an
+/// <see cref="AuditChainProblem.Inserted"/> event: the position it takes in time (after event <c>BrokenAt - 1</c>).</param>
 /// <param name="BrokenEventId">That event's id, when it exists (null for a missing one).</param>
 /// <param name="Problem">What is wrong at <paramref name="BrokenAt"/>.</param>
 public sealed record AuditChainReport(
@@ -78,6 +93,7 @@ public sealed record AuditChainReport(
         AuditChainProblem.None => $"Chain intact — {Verified} events verified{(Unchained > 0 ? $"; {Unchained} earlier events predate the chain" : string.Empty)}.",
         AuditChainProblem.Missing => $"Chain broken at event {BrokenAt}: it is missing — an event was deleted.",
         AuditChainProblem.Altered => $"Chain broken at event {BrokenAt}: its content no longer matches its hash — it was changed after it was written.",
+        AuditChainProblem.Inserted => $"Chain broken at event {BrokenAt}: an event without a chain link was recorded there — it was added outside the audit log.",
         _ => $"Chain broken at event {BrokenAt}: it doesn't follow event {BrokenAt - 1} — an earlier event was changed or replaced.",
     };
 }
@@ -119,11 +135,12 @@ public static class AuditChain
         return Convert.ToHexStringLower(digest);
     }
 
-    /// <summary>Walk a chain in sequence order and report the first event that doesn't hold.</summary>
-    public static AuditChainReport Verify(string tenantId, IEnumerable<AuditChainLink> links, long unchained)
+    /// <summary>Walk a chain in sequence order and report the first event that doesn't hold. <paramref name="stray"/> is
+    /// the earliest unchained event recorded at or after the chain's first event (see the file header), if any.</summary>
+    public static AuditChainReport Verify(string tenantId, IEnumerable<AuditChainLink> links, long unchained, AuditChainStray? stray = null)
     {
         ArgumentNullException.ThrowIfNull(links);
-        var walk = new Walk(tenantId, unchained);
+        var walk = new Walk(tenantId, unchained, stray);
         foreach (var link in links)
         {
             if (walk.Step(link) is { } broken) { return broken; }
@@ -133,10 +150,11 @@ public static class AuditChain
 
     /// <summary>Streaming twin of <see cref="Verify"/> (a database cursor; O(1) memory).</summary>
     public static async Task<AuditChainReport> VerifyAsync(
-        string tenantId, IAsyncEnumerable<AuditChainLink> links, long unchained, CancellationToken cancellationToken = default)
+        string tenantId, IAsyncEnumerable<AuditChainLink> links, long unchained, AuditChainStray? stray = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(links);
-        var walk = new Walk(tenantId, unchained);
+        var walk = new Walk(tenantId, unchained, stray);
         await foreach (var link in links.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (walk.Step(link) is { } broken) { return broken; }
@@ -171,13 +189,20 @@ public static class AuditChain
         hash.AppendData("\n"u8);
     }
 
-    private sealed class Walk(string tenantId, long unchained)
+    private sealed class Walk(string tenantId, long unchained, AuditChainStray? stray)
     {
         private long _expected = 1;
         private string _previous = Genesis;
+        private AuditChainStray? _stray = stray;
 
         public AuditChainReport? Step(AuditChainLink link)
         {
+            if (_stray is { } s && s.TimestampUtc < link.TimestampUtc)
+            {
+                // Before the first event: pre-chain history. Later: it sits in front of this event — reported here.
+                if (_expected > 1) { return Broken(_expected, s.Id, AuditChainProblem.Inserted); }
+                _stray = null;
+            }
             if (link.Sequence != _expected)
             {
                 // A jump: event _expected is gone. (A repeat can't happen — the (tenant, sequence) index is unique.)
@@ -197,7 +222,9 @@ public static class AuditChain
         }
 
         public AuditChainReport Done()
-            => new(tenantId, _expected - 1, unchained, _expected == 1 ? null : _previous, null, null, AuditChainProblem.None);
+            => _stray is { } s && _expected > 1
+                ? Broken(_expected, s.Id, AuditChainProblem.Inserted)
+                : new(tenantId, _expected - 1, unchained, _expected == 1 ? null : _previous, null, null, AuditChainProblem.None);
 
         private AuditChainReport Broken(long at, Guid? id, AuditChainProblem problem)
             => new(tenantId, _expected - 1, unchained, null, at, id, problem);
