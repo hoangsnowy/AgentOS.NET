@@ -45,6 +45,9 @@ internal static class ScopedAutonomy
         "Bash(gh repo clone *)", "Bash(gh pr create *)", "Bash(gh pr view*)", "Bash(gh pr list*)", "Bash(gh pr checks*)",
         "Bash(gh pr diff*)", "Bash(gh issue view *)",
         "Bash(dotnet *)", "Bash(npm *)", "Bash(pnpm *)", "Bash(yarn *)",
+        // Rust (cargo build / test / fmt / clippy / run): like npm, it runs the repository's own code (build.rs). The guard
+        // refuses installs, publishing, --config overrides and other registries (ScopedWriteGuard.Egress.cs, ADR-0019).
+        "Bash(cargo *)",
         // The repository's own scripts (a reference decoder, codegen) — a path inside the checkout, never node -e. A live
         // run had to work out a reference decoder's verdicts by hand because node was not allowed at all.
         "Bash(node tools/*)", "Bash(node scripts/*)", "Bash(node ./*)",
@@ -77,6 +80,7 @@ internal static class ScopedAutonomy
         "Bash(git push * --mirror*)", "Bash(git push * --all*)",
         "Bash(git config *)", "Bash(git remote *)", "Bash(git credential*)", "Bash(git reset --hard*)",
         "Bash(gh auth *)", "Bash(gh secret *)", "Bash(gh repo delete*)", "Bash(gh api *)",
+        "Bash(cargo install*)", "Bash(cargo publish*)", "Bash(cargo login*)", "Bash(cargo owner*)", "Bash(cargo yank*)",
         "WebFetch", "WebSearch",
         // Credential and secret stores. Reading outside the working directory needs no approval in claude, so these
         // are denied by path (a leading ~/ is the home directory). Not the whole of AppData: the run directories

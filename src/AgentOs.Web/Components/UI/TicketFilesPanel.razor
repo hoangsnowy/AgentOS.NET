@@ -242,12 +242,10 @@
     }
 
     /// <summary>"3.2 MB".</summary>
-    // `var b when b < …` rather than a bare `< 1024 =>` arm: a line that starts with `<` inside @code reads as markup to
-    // the Razor parser of the 10.0.1xx SDK band (e.g. the Ubuntu-packaged SDK) and the component stops compiling.
     internal static string SizeLabel(long bytes) => bytes switch
     {
-        var b when b < 1024 => $"{b} bytes",
-        var b when b < 1024 * 1024 => $"{b / 1024.0:0.#} KB",
+        _ when bytes < 1024 => $"{bytes} bytes",
+        _ when bytes < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
         _ => $"{bytes / (1024.0 * 1024.0):0.#} MB",
     };
 }

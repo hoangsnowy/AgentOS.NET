@@ -37,8 +37,17 @@ properties:
         env:
           - name: AZURE_CLIENT_ID
             value: {{ .Env.MANAGED_IDENTITY_CLIENT_ID }}
-          - name: ASPNETCORE_FORWARDEDHEADERS_ENABLED
-            value: "true"
+          # GAP-05: X-Forwarded-For/Proto are honoured only from loopback + these ranges. The container is reachable only
+          # through the environment's ingress, whose source addresses are private (RFC 1918 / CGNAT) — narrow this to
+          # your infrastructure subnet when the environment has its own VNet.
+          - name: Hosting__TrustedNetworks
+            value: 10.0.0.0/8;172.16.0.0/12;192.168.0.0/16;100.64.0.0/10
+          # GAP-05: every generated link (invitations, runner pairing, hub URL) points at the desktop's public URL.
+          - name: Hosting__PublicBaseUrl
+            value: https://web.{{ .Env.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN }}
+          # The Api answers on its own FQDN (the desktop's host is the default otherwise).
+          - name: AllowedHosts
+            value: api.{{ .Env.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN }}
           - name: Auth__Keycloak__Admin__BaseUrl
             value: https://keycloak.{{ .Env.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN }}
           - name: Auth__Keycloak__Admin__ClientId

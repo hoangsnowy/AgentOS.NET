@@ -31,6 +31,10 @@ public sealed record WorkspaceDescriptor(
     string AccessToken,
     string? Host = null)
 {
+    /// <summary>The external tracker a ticket call addresses (E1.8) — set by the tracker routing when it hands a ticket
+    /// read/write to the Azure DevOps Boards or Jira provider. Null for a repository call.</summary>
+    public TrackerBinding? Tracker { get; init; }
+
     /// <summary>Validates the required coordinates. Throws <see cref="ArgumentException"/> if invalid.</summary>
     public void Validate()
     {

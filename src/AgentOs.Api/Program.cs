@@ -108,6 +108,9 @@ builder.Services.AddMcpServer()
 
 var app = builder.Build();
 
+// GAP-19: one line per plugin — refused ones (SHA-256 not in Plugins:AllowedSha256) are warnings carrying the hash.
+PluginLoader.LogOutcomes(app.Services.GetRequiredService<IPluginCatalog>(), app.Logger);
+
 await app.Services.InitializeModulesAsync();
 
 // E0.1 / ADR-0012: Postgres row-level security (stage 1), after every module migrated. Each tenant-table

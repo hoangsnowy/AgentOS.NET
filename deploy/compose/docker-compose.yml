@@ -44,6 +44,11 @@ x-app-env: &app-env
   DataProtection__CertificatePassword: "${DATAPROTECTION_CERTIFICATE_PASSWORD:-}"
   DataProtection__RequireKeyWrapping: "${DATAPROTECTION_REQUIRE_KEY_WRAPPING:-true}"
   OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+  # GAP-05: invitation, pairing and hub links are built from the desktop's public URL, never the request Host; the Web
+  # answers only to that host name (+ localhost). Forwarded headers are trusted from loopback + TRUSTED_NETWORKS only
+  # — the docker bridge your TLS proxy's connections arrive from (docs/ONPREM.md → TLS in front).
+  Hosting__PublicBaseUrl: "${WEB_PUBLIC_URL:-http://localhost:8080}"
+  Hosting__TrustedNetworks: "${TRUSTED_NETWORKS:-172.16.0.0/12}"
 
 # The aspnet runtime image ships neither curl nor wget — probe /health with bash's /dev/tcp.
 x-app-healthcheck: &app-healthcheck
@@ -160,6 +165,9 @@ services:
     restart: unless-stopped
     environment:
       <<: *app-env
+      # Host names the Api answers to (+ localhost): `api` is how the Web reaches it on the compose network. Add the
+      # name your proxy publishes it under, if any.
+      AllowedHosts: "${API_ALLOWED_HOSTS:-api}"
     volumes:
       - ./dataprotection:/app/dataprotection:ro
     ports:

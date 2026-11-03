@@ -31,6 +31,10 @@ public sealed class ScopedAutonomyTests
         args.ShouldNotContain("--dangerously-skip-permissions");
         args.ShouldContain("Bash(git clone *)");
         args.ShouldContain("Bash(dotnet *)");
+        args.ShouldContain("Bash(cargo *)");                // Rust: cargo build / test / fmt / clippy, like npm
+        args.ShouldContain("PowerShell(cargo *)");
+        args.ShouldContain("Bash(cargo install*)");         // denied: installs into ~/.cargo, outside the run folder
+        args.ShouldContain("Bash(cargo publish*)");
         args.ShouldContain("Bash(git push --force*)");
         args.ShouldContain("Bash(gh auth *)");
         args.ShouldContain("Read(~/.ssh/**)");

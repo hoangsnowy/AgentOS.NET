@@ -79,6 +79,7 @@ public sealed class WorkspacesDbContext : DbContext
             e.Property(x => x.ProjectNumber);
             e.Property(x => x.ProjectNodeId).HasMaxLength(256);
             e.Property(x => x.Project).HasMaxLength(256);
+            e.Property(x => x.Tracker).HasMaxLength(4096);
 
             // Legacy single-repo coordinates — nullable since the board carries no single repo.
             e.Property(x => x.Owner).HasMaxLength(256);

@@ -48,6 +48,11 @@
         </div>
     </div>
 
+    @* GAP-19: sign-out is a POST carrying an antiforgery token, so a cross-site link or image can't sign anyone out.
+       Rendered here (static, outside the interactive root) so the token comes from this request; the shell's
+       Sign out / Lock submit it through agentosAccount.signOut (AccountSignOut.SubmitAsync). *@
+    <form id="agentos-signout" method="post" action="/account/logout" hidden><AntiforgeryToken /></form>
+
     <script src="@Assets["page-boot.js"]"></script>
     <script src="@Assets["_content/Z.Blazor.Diagrams/script.min.js"]"></script>
     <script src="@Assets["theme.js"]"></script>

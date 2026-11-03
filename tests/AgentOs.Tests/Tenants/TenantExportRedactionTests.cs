@@ -179,7 +179,13 @@ public sealed class TenantExportRedactionTests
             var audit = Substitute.For<IAuditLog>();
             var service = new TenantDataService(cs, keycloak, audit, TimeProvider.System, NullLogger<TenantDataService>.Instance, broker);
 
-            var report = await service.PurgeAsync("acme", "platform-admin");
+            var caller = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+                [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "platform-admin"),
+                 new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, "platform-admin"),
+                 new System.Security.Claims.Claim("tenant", "default")],
+                "test", System.Security.Claims.ClaimTypes.Name, System.Security.Claims.ClaimTypes.Role));
+
+            var report = await service.PurgeAsync("acme", caller);
 
             report.Tables.ShouldContain(t => t.Table == "sessions.runners" && t.Rows == 1);
             broker.IsConnected(acme.RunnerId).ShouldBeFalse();

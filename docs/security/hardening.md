@@ -41,12 +41,18 @@ Tick every box before exposing a deployment to people outside the team that oper
       `Referrer-Policy: same-origin` (`src/AgentOs.ServiceDefaults/SecurityHeaders.cs`). **Don't let the proxy
       replace or weaken them** — and if the desktop must load the Inter webfont from somewhere other than
       `https://rsms.me`, change `ContentSecurityPolicies.WebFontOrigin`. **(GAP-12, fixed)**
-- [ ] **Restrict forwarded headers to your proxy.** The hosts trust `X-Forwarded-For/Proto` from any peer
-      (`src/AgentOs.ServiceDefaults/Extensions.cs:37-42`). Make sure only the ingress can reach the containers
-      (no public container port) and that the proxy **overwrites** — not appends — `X-Forwarded-*` and `Host`.
-      Set `AllowedHosts` to your public hostnames (Api ships `"*"`). **(manual — GAP-05)**
-- [ ] **Runners use `https://`.** Give members the `https://` Web URL; the runner accepts `http://` hub URLs
-      (`src/AgentOs.RemoteAgent/RunnerCredentials.cs:64-81`).
+- [ ] **Public base URL set.** `Hosting:PublicBaseUrl` is the desktop's `https://` URL — every invitation, pairing
+      and hub link is built from it (never the request `Host`), and the hosts refuse to start without it outside
+      Development (`src/AgentOs.SharedKernel/Hosting/PublicOrigin.cs`). The azd / compose / Helm templates set it.
+- [ ] **Forwarded headers trusted from your ingress only.** `X-Forwarded-For/Proto` are honoured from loopback plus
+      `Hosting:TrustedNetworks` / `Hosting:TrustedProxies` (`src/AgentOs.ServiceDefaults/HostingSecurity.cs`). The
+      templates default to the private ranges (azd), the docker bridge (compose) or the pod ranges (Helm,
+      `forwardedHeaders.*`) — **narrow them to your ingress subnet / controller addresses**. Keep the containers
+      reachable only through the ingress, and make the proxy **overwrite** — not append — `X-Forwarded-*`.
+- [ ] **Host names.** The Web answers only to the public URL's host (+ `localhost`; `/health` and `/alive` are
+      exempt for probes). Give the Api its own names in `AllowedHosts` (the templates do: its FQDN / Service name).
+- [ ] **Runners use `https://`.** The runner refuses `http://` exchange and hub URLs except loopback with
+      `DOTNET_ENVIRONMENT=Development` (`src/AgentOs.RemoteAgent/RunnerCredentials.cs`, `InsecureReason`).
 - [ ] **Postgres TLS.** Add `SslMode=VerifyFull` (or at least `Require`) to `ConnectionStrings:DefaultConnection`;
       the shipped string has none (`infra/postgres/postgres.module.bicep:78`). Replace `AllowAllAzureIps`
       (`:44-51`) with a private endpoint / VNet integration. **(manual — GAP-15)**
@@ -126,8 +132,10 @@ Tick every box before exposing a deployment to people outside the team that oper
 - [ ] **Build sandbox = Container** (locked). Give the host a Docker / Podman engine; keep the default image
       pinned or mirror it internally. Enable the verifier only where needed (off by default in Production).
 - [ ] **MCP servers** are operator config (`Mcp:Servers`); `stdio` servers run a process on the host — vet each.
-- [ ] **Plugins** load with full trust and no signature check (`src/AgentOs.SharedKernel/Plugins/PluginLoader.cs`);
-      keep `Plugins:Path` read-only and install only plugins you built or reviewed. **(GAP-19)**
+- [ ] **Plugins** run with full trust, so only approved builds load: list each assembly's SHA-256 in
+      `Plugins:AllowedSha256` (empty = none load; anything else is refused before its code is read, logged as a
+      warning with its hash and shown as *Refused* on **Plugins** — `src/AgentOs.SharedKernel/Plugins/PluginLoader.cs`).
+      Keep `Plugins:Path` read-only and approve only plugins you built or reviewed.
 
 ## 8. Rate limits, run limits and budget caps
 

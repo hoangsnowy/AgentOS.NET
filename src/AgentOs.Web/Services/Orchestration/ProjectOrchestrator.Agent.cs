@@ -130,7 +130,7 @@ public sealed partial class ProjectOrchestrator
             if (stuck.All(s => s.IssueNumber != close.IssueNumber))
             {
                 var epic = tickets.FirstOrDefault(t => t.Number == close.IssueNumber);
-                if (epic is { RepoOwner: { } eo, RepoName: { } en } && await sp.GetRequiredService<IPrCreationService>().CloseAsync(
+                if (epic is { RepoOwner: { } eo, RepoName: { } en } && await TicketWrites.CloseAsync(sp, board,
                         BoardTaskService.RepoDescriptor(board, tenant, eo, en, "main", pat), close.IssueNumber,
                         ClosedByAgent(close.Reason), ct).ConfigureAwait(false))
                 {
@@ -238,13 +238,13 @@ public sealed partial class ProjectOrchestrator
     {
         if (Ticket(board, pat, session) is { } t)
         {
-            await sp.GetRequiredService<IPrCreationService>().CommentAsync(t.Repo, t.Issue, body, ct).ConfigureAwait(false);
+            await TicketWrites.CommentAsync(sp, board, t.Repo, t.Issue, body, ct).ConfigureAwait(false);
         }
     }
 
     private static async Task<bool> CloseTicketAsync(WorkspaceEntity board, string pat, RemoteSessionEntity session, string comment, IServiceProvider sp, CancellationToken ct) =>
         Ticket(board, pat, session) is { } t
-        && await sp.GetRequiredService<IPrCreationService>().CloseAsync(t.Repo, t.Issue, comment, ct).ConfigureAwait(false);
+        && await TicketWrites.CloseAsync(sp, board, t.Repo, t.Issue, comment, ct).ConfigureAwait(false);
 
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _supersededSweep = new();
 
@@ -358,7 +358,7 @@ public sealed partial class ProjectOrchestrator
     {
         if (session.IssueNumber is not { } issue || string.IsNullOrWhiteSpace(session.RepoOwner) || string.IsNullOrWhiteSpace(session.RepoName)) { return; }
         var repo = BoardTaskService.RepoDescriptor(board, board.TenantId, session.RepoOwner, session.RepoName, session.RepoDefaultBranch ?? "main", pat);
-        await sp.GetRequiredService<IPrCreationService>().CommentAsync(repo, issue, QuestionComment(question), ct).ConfigureAwait(false);
+        await TicketWrites.CommentAsync(sp, board, repo, issue, QuestionComment(question), ct).ConfigureAwait(false);
     }
 
     /// <summary>The comment that asks a person a question on a ticket — signed, so the agents' view of the ticket's discussion
