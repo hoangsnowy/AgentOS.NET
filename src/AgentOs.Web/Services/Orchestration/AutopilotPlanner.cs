@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using AgentOs.Domain.Governance;
 using AgentOs.Domain.Workspaces;
 using AgentOs.Modules.Pipeline.Agents;
 
@@ -61,6 +62,15 @@ public sealed record PlanTask(Guid SessionId, int IssueNumber, string Status, IR
     /// automatically (<see cref="AgentOs.Domain.Sessions.DesignReview.CanRetryAutomatically"/>) — unlike a real
     /// "needs a person" verdict, which waits for the owner.</summary>
     public bool DesignRetryable { get; init; }
+
+    /// <summary>The approval policy's plan gate for a task Autopilot created and holds as a draft (E1.5).</summary>
+    public ApprovalCheck PlanApproval { get; init; } = ApprovalCheck.Proceed;
+
+    /// <summary>The diff gate for the task's current change: nothing reviews, tests or merges it until it passes.</summary>
+    public ApprovalCheck DiffApproval { get; init; } = ApprovalCheck.Proceed;
+
+    /// <summary>The merge gate for the task's current change.</summary>
+    public ApprovalCheck MergeApproval { get; init; } = ApprovalCheck.Proceed;
 }
 
 /// <summary>One thing to do, and the sentence that explains it.</summary>
@@ -84,7 +94,18 @@ public abstract record AutopilotAction(string Why)
         public bool Retry { get; init; }
     }
     public sealed record Merge(Guid SessionId, int IssueNumber, Guid RepoId, int PrNumber, string Why) : AutopilotAction(Why);
-    public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why);
+    public sealed record NeedsPerson(Guid SessionId, int IssueNumber, string Reason, string Why) : AutopilotAction(Why)
+    {
+        /// <summary>Block every change of the task, not only its proposed ones (a task held before it ever ran — a plan
+        /// that was rejected or that nobody can approve).</summary>
+        public bool BlockAll { get; init; }
+
+        /// <summary>An approval gate stopped it (rejected, or nobody can approve): no automatic retry may go around it.</summary>
+        public bool FromApproval { get; init; }
+    }
+
+    /// <summary>Ask an approver to approve <paramref name="Gate"/> of the task's current change (E1.5); the task waits.</summary>
+    public sealed record RequestApproval(Guid SessionId, int IssueNumber, ApprovalGate Gate, string Why) : AutopilotAction(Why);
 }
 
 /// <summary>The rules.</summary>
@@ -122,6 +143,16 @@ public static class AutopilotPlanner
             if (running >= maxParallel) { break; }
             actions.Add(new AutopilotAction.ResumeTask(task.SessionId, task.IssueNumber,
                 $"Picked #{task.IssueNumber} up again — your computer's AI plan is open again (no fix round used)."));
+            running++;
+        }
+
+        // 0b) Tasks Autopilot created and holds for the plan approval (E1.5): started once approved, by rule.
+        foreach (var task in tasks.Where(t => t.Status == "Draft"))
+        {
+            if (!PassesGate(task, task.PlanApproval, ApprovalGate.Plan, actions)) { continue; }
+            if (running >= maxParallel) { continue; }
+            actions.Add(new AutopilotAction.ResumeTask(task.SessionId, task.IssueNumber,
+                $"Started #{task.IssueNumber} — {Approved(task.PlanApproval, ApprovalGate.Plan)}."));
             running++;
         }
 
@@ -173,6 +204,8 @@ public static class AutopilotPlanner
             {
                 continue;
             }
+            // The approval policy's diff gate (E1.5): an approver reads the change before anything reviews, tests or merges it.
+            if (!PassesGate(task, task.DiffApproval, ApprovalGate.Diff, actions)) { continue; }
             // The Reviewer agent asked for changes: they go back to the Coding agent (same bounded rounds as any fix).
             var changesRequested = task.OpenChanges.Where(c => c.Review == ChangeReview.ChangesRequested).ToList();
             if (changesRequested.Count > 0)
@@ -280,6 +313,8 @@ public static class AutopilotPlanner
             }
             if (mode == AutopilotMode.BuildAndMerge)
             {
+                // The approval policy's merge gate (E1.5): asked only now, when everything else passed.
+                if (!PassesGate(task, task.MergeApproval, ApprovalGate.Merge, actions)) { continue; }
                 // Its base moved on without conflicts: update the branch first (checks run again), merge next pass.
                 var behind = task.OpenChanges.Where(c => c.Merge == PrMergeState.Behind).ToList();
                 if (behind.Count > 0)
@@ -291,7 +326,8 @@ public static class AutopilotPlanner
                 foreach (var change in task.OpenChanges)
                 {
                     actions.Add(new AutopilotAction.Merge(task.SessionId, task.IssueNumber, change.RepoId, change.PrNumber,
-                        $"Merged #{task.IssueNumber}'s change (PR #{change.PrNumber}) — {Passed(task.Flow)}."));
+                        $"Merged #{task.IssueNumber}'s change (PR #{change.PrNumber}) — {Passed(task.Flow)}"
+                        + (task.MergeApproval.Request is { Status: ApprovalStatus.Approved } ? $"; {Approved(task.MergeApproval, ApprovalGate.Merge)}." : ".")));
                 }
             }
         }
@@ -311,6 +347,35 @@ public static class AutopilotPlanner
         }
         return actions;
     }
+
+    // FAIL CLOSED (E1.5): true when the step may go on; otherwise the move that holds it is added — ask an approver (once:
+    // an asked request just waits), or stop for a person when it was rejected or nobody can approve. Never "go ahead".
+    private static bool PassesGate(PlanTask task, ApprovalCheck check, ApprovalGate gate, List<AutopilotAction> actions)
+    {
+        switch (check.Verdict)
+        {
+            case ApprovalVerdict.Proceed:
+                return true;
+            case ApprovalVerdict.Request:
+                actions.Add(new AutopilotAction.RequestApproval(task.SessionId, task.IssueNumber, gate,
+                    $"#{task.IssueNumber} waits for an approver to approve {ApprovalPolicy.Describe(gate)} (Board › Tasks)."));
+                return false;
+            case ApprovalVerdict.Wait:
+                return false;
+            default:
+                var reason = check.Reason ?? ApprovalRules.NobodyCanApprove(gate);
+                actions.Add(new AutopilotAction.NeedsPerson(task.SessionId, task.IssueNumber, reason, $"Stopped #{task.IssueNumber}: {reason}")
+                {
+                    BlockAll = gate == ApprovalGate.Plan,
+                    FromApproval = true,
+                });
+                return false;
+        }
+    }
+
+    // "the plan approved by alice" — for the log line of a move an approval let through.
+    private static string Approved(ApprovalCheck check, ApprovalGate gate) =>
+        check.Request is { DecidedBy: { Length: > 0 } by } ? $"{ApprovalPolicy.Describe(gate)} approved by {by}" : $"{ApprovalPolicy.Describe(gate)} approved";
 
     // What a change passed before it merges, as its ticket flow ran it ("checks green, review approved and acceptance
     // testing passed").
@@ -368,6 +433,7 @@ public static class AutopilotPlanner
         AutopilotAction.RunDesign a => a.SessionId,
         AutopilotAction.Merge a => a.SessionId,
         AutopilotAction.NeedsPerson a => a.SessionId,
+        AutopilotAction.RequestApproval a => a.SessionId,
         _ => null,
     };
 }

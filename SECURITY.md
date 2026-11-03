@@ -55,6 +55,11 @@ When reporting, include: affected component, reproduction steps, and impact.
 - **QA gate before every PR** — a pipeline result becomes a pull request only when QA passed on real model
   output (`PrGate`, enforced inside the PR service itself): failed runs, the iteration cap with QA still
   failing, and offline canned text are blocked with the reason on the session.
+- **Approval policies + repo safety** — per tenant / project, an approver (or admin) approves the plan, the pull
+  request, the change and/or the merge on Board › Tasks (audited); a gate fails closed — rejected or nobody who can
+  approve stops the task. AgentOS.NET never opens a pull request from, or merges, the default branch, and refuses a
+  merge the branch's protection would refuse (reviews, `CODEOWNERS`, required checks, rulesets), also when its token
+  could bypass it. See [docs/CONFIG.md](docs/CONFIG.md#settings--autopilot--approvals-e15).
 - **SSRF guard** — tenant-supplied hosts are validated and limited to an allowlist.
 - **Paired runners** — a server-driven shell command runs on a developer's machine only if every segment of the
   chain starts with an allowlisted build/test/VCS program (`REMOTE_AGENT_ALLOW` to change); command
