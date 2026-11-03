@@ -271,7 +271,10 @@ a fresh short prompt with the scrubbed tail (1,500 characters, credentials maske
 to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). If the Coding run's commits never
 reached origin, the follow-up pushes that one branch (`git push -u origin <branch>`, never forced, never another
 branch, nothing new committed) — the kept folder is deleted afterwards, and VNChess #124 lost two finished fix runs
-because the follow-up was told not to push. The follow-up never carries the
+because the follow-up was told not to push. If the follow-up gives no summary either (it timed out, or still no JSON)
+but the run was a revision whose pull-request branch head moved since it started, the pushed work carries on to the
+checks, review and acceptance with the summary *"The run pushed its work but sent no summary"* and the pull request's
+own description kept (VNChess #124 was blocked with its work pushed and CI green). The follow-up never carries the
 ticket, its files or the original instructions again. Only a run on a member's computer is asked (a server-side
 provider's run has no folder or session left to look at); a Testing run's screenshot target (Design gate) carries
 over, so the screenshots the run already saved in the kept folder are sent back with the recovered verdict.
