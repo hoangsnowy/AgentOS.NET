@@ -271,7 +271,10 @@ a fresh short prompt with the scrubbed tail (1,500 characters, credentials maske
 to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). If the Coding run's commits never
 reached origin, the follow-up pushes that one branch (`git push -u origin <branch>`, never forced, never another
 branch, nothing new committed) — the kept folder is deleted afterwards, and VNChess #124 lost two finished fix runs
-because the follow-up was told not to push. The follow-up never carries the
+because the follow-up was told not to push. If the follow-up gives no summary either (it timed out, or still no JSON)
+but the run was a revision whose pull-request branch head moved since it started, the pushed work carries on to the
+checks, review and acceptance with the summary *"The run pushed its work but sent no summary"* and the pull request's
+own description kept (VNChess #124 was blocked with its work pushed and CI green). The follow-up never carries the
 ticket, its files or the original instructions again. Only a run on a member's computer is asked (a server-side
 provider's run has no folder or session left to look at); a Testing run's screenshot target (Design gate) carries
 over, so the screenshots the run already saved in the kept folder are sent back with the recovered verdict.
@@ -393,6 +396,21 @@ reverted; a task records the version it started with (`sessions.sessions.TicketF
 **Run limits (per tenant)** — `Pipeline:Limits:MaxConcurrentRuns` (default `4`) and `Pipeline:Limits:RunsPerMinute`
 (default `30`): admission for every Pipeline, Workflow and Quick run, so one tenant's burst or parallel load can't
 starve the others. Separate from the monthly budget cap, which still applies.
+
+**Request limits (per server)** — HTTP requests per minute, counted separately by the Web and the Api (in memory, per
+replica). Over a limit the host answers `429 Too Many Requests` with `Retry-After`, and the metric
+`agentos.http.rate_limited` counts it. Health / liveness, `/version`, static files and a desktop's live circuit
+(SignalR transport on an open connection, plus Blazor's `/_blazor/initializers` and `/_blazor/disconnect`
+housekeeping) never count; the page document and opening a circuit (`/_blazor/negotiate`) do — two per desktop load. A change applies
+on the next request (the limit is part of the bucket key), at the latest 30 s later on another host. In
+**Development** the built-in defaults are 10× higher (6000 / 2400 / 1200): the standalone desktop signs every browser in
+as one fixed dev user, so production-sized per-user buckets would throttle a UI E2E run.
+
+| Key | Default | Range | Notes |
+|---|---|---|---|
+| `Security:RateLimit:TenantRequestsPerMinute` | `600` | 10 – 1 000 000 | One workspace, all its users together. |
+| `Security:RateLimit:UserRequestsPerMinute` | `240` | 10 – 1 000 000 | One signed-in person or API token. |
+| `Security:RateLimit:AnonymousRequestsPerMinute` | `120` | 5 – 1 000 000 | One client IP that isn't signed in (sign-in, sign-up, invitation pages). |
 
 
 | Key | Default | Notes |

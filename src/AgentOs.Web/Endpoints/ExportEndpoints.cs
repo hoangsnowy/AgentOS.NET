@@ -38,7 +38,7 @@ public static class ExportEndpoints
             var summary = await runs.GetCostSummaryForTenantAsync(tenant, since);
             var bytes = System.Text.Encoding.UTF8.GetBytes(AgentOs.Modules.Pipeline.Cost.CostCsv.ToCsv(summary));
             return Results.File(bytes, "text/csv", "agentos-cost.csv");
-        }).RequireAuthorization();
+        }).RequirePermission(Permission.ExportData);
 
         // Tenant data export (Settings → Data, E1.4): one JSON document of every row the tenant owns, secrets excluded,
         // streamed. A tenant admin exports their own tenant; ?tenant= another one needs platform-admin. Audited only once
@@ -69,7 +69,7 @@ public static class ExportEndpoints
             await audit.WriteAsync(new AuditEntry(Guid.NewGuid(), target, http.User.Identity?.Name,
                 AuditActions.TenantExported, $"export of {target}", null, null, DateTimeOffset.UtcNow), CancellationToken.None);
             return Results.Empty;
-        }).RequireAuthorization();
+        }).RequirePermission(Permission.ExportData);
 
         // Audit CSV export (Settings → Audit log). A tenant admin exports their own tenant; scope=platform (platform
         // settings changes) needs platform-admin.
@@ -88,7 +88,7 @@ public static class ExportEndpoints
             var rows = await audit.ListAsync(tenant, 10_000);
             var bytes = System.Text.Encoding.UTF8.GetBytes(AuditCsv.ToCsv(rows));
             return Results.File(bytes, "text/csv", platform ? "agentos-audit-platform.csv" : $"agentos-audit-{tenant}.csv");
-        }).RequireAuthorization();
+        }).RequirePermission(Permission.ViewAudit);
 
         return app;
     }

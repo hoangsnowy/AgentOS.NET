@@ -66,6 +66,14 @@ When reporting, include: affected component, reproduction steps, and impact.
   merge the branch's protection would refuse (reviews, `CODEOWNERS`, required checks, rulesets), also when its token
   could bypass it. See [docs/CONFIG.md](docs/CONFIG.md#settings--autopilot--approvals-e15).
 - **SSRF guard** — tenant-supplied hosts are validated and limited to an allowlist.
+- **Deny by default** — every endpoint needs a signed-in caller unless it is explicitly public (health, sign-in /
+  sign-up, invitation preview, runner download, the self-authenticating runner hub, static files); a test pins the
+  list of public routes. Access tokens are accepted only when signed with RS256.
+- **Browser hardening** — both hosts send HSTS (outside Development), an enforced Content-Security-Policy
+  (`script-src 'self'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
+  `Referrer-Policy: same-origin`.
+- **Request limits** — per-tenant, per-user and per-anonymous-client request rate limits on both hosts
+  (Settings → Platform → Request limits; 429 + `Retry-After` over the limit).
 - **Paired runners** — a server-driven shell command runs on a developer's machine only if every segment of the
   chain starts with an allowlisted build/test/VCS program (`REMOTE_AGENT_ALLOW` to change); command
   substitution is refused; anything else needs approval at the runner console and is denied when nobody is

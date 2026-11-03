@@ -57,7 +57,7 @@ public static class SettingsSearch
         new("session", "Session", Personal, "power", "session sign out logout", Gate.Everyone),
         new("about", "About", Sys, "info", "about version build health services status", Gate.Everyone),
         new("diagnostics", "Diagnostics", Sys, "circle-fill", "status diagnostics effective configuration which provider storage persistence database postgres stateless", Gate.Of(Permission.ManageSettings)),
-        new("platform", "Platform", Sys, "server", "platform safety run limits concurrency sandbox docker openai-compatible self-hosted ollama vllm foundry", Gate.Platform),
+        new("platform", "Platform", Sys, "server", "platform safety run limits request rate limit 429 throttle concurrency sandbox docker openai-compatible self-hosted ollama vllm foundry", Gate.Platform),
     ];
 
     private static readonly Dictionary<string, Page> ByTarget = Pages.ToDictionary(p => p.Target, StringComparer.Ordinal);

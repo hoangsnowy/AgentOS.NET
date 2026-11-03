@@ -35,10 +35,12 @@ Tick every box before exposing a deployment to people outside the team that oper
 ## 2. TLS and the edge
 
 - [ ] **TLS everywhere.** Container Apps ingress ships `allowInsecure: false`
-      (`infra/AgentOs.AppHost/infra/web.tmpl.yaml:15-19`). On-prem: terminate TLS at a reverse proxy; Kestrel does
-      not redirect or send HSTS itself (no `UseHsts` / `UseHttpsRedirection` in either host). **Add HSTS, CSP
-      (`frame-ancestors 'self'`), `X-Content-Type-Options: nosniff` and `Referrer-Policy` at the proxy.**
-      **(manual — GAP-12)**
+      (`infra/AgentOs.AppHost/infra/web.tmpl.yaml:15-19`). On-prem: terminate TLS at a reverse proxy (Kestrel does
+      not redirect http → https itself). Both hosts send HSTS (outside Development, on https), an enforced CSP with
+      `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
+      `Referrer-Policy: same-origin` (`src/AgentOs.ServiceDefaults/SecurityHeaders.cs`). **Don't let the proxy
+      replace or weaken them** — and if the desktop must load the Inter webfont from somewhere other than
+      `https://rsms.me`, change `ContentSecurityPolicies.WebFontOrigin`. **(GAP-12, fixed)**
 - [ ] **Public base URL set.** `Hosting:PublicBaseUrl` is the desktop's `https://` URL — every invitation, pairing
       and hub link is built from it (never the request `Host`), and the hosts refuse to start without it outside
       Development (`src/AgentOs.SharedKernel/Hosting/PublicOrigin.cs`). The azd / compose / Helm templates set it.
@@ -137,10 +139,13 @@ Tick every box before exposing a deployment to people outside the team that oper
 
 ## 8. Rate limits, run limits and budget caps
 
-- [ ] **Api** has a per-tenant token bucket of 120 requests/min (`src/AgentOs.Api/Program.cs:51-76`) — not
-      configurable; partition falls back to client IP for anonymous calls.
-- [ ] **Web** has no global limiter (only pairing exchange, 10/min/IP — `src/AgentOs.Web/Program.cs:294-306`):
-      rate-limit at the proxy / WAF, especially `/signup`. **(manual — GAP-02)**
+- [ ] **Request limits** (Settings → Platform → Request limits), on **both** hosts
+      (`src/AgentOs.ServiceDefaults/RequestRateLimiting.cs`): per tenant (default 600/min), per user or API token
+      (240/min) and per anonymous client IP (120/min), each host counting on its own; over a limit → 429 +
+      `Retry-After`, counted as `agentos.http.rate_limited`. Health, `/version`, static files and a desktop's live
+      circuit are exempt; opening a circuit counts. The buckets are in memory per replica, and the anonymous
+      partition is the client IP **as forwarded by the ingress** (GAP-05) — keep an edge / WAF limit for `/signup`
+      when open signup is on. The pairing exchange keeps its own 10/min/IP on top. **(GAP-02, fixed)**
 - [ ] **Run limits** (Settings → Platform → Run limits): `Pipeline:Limits:MaxConcurrentRuns` (default 4) and
       `Pipeline:Limits:RunsPerMinute` (default 30) per tenant (`src/AgentOs.Modules.Pipeline/Limits/RunAdmission.cs`).
 - [ ] **Budget caps:** each tenant admin sets a monthly cap **and switches enforcement on** — without
