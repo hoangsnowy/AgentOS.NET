@@ -148,6 +148,7 @@ public sealed class TicketWorkflowRunner(IServiceScopeFactory scopes, BoardTaskS
             TicketStage.ReadyToMerge => $"#{flow.IssueNumber} · MAF workflow: reviewed and tested — ready for you to merge{steps}.",
             TicketStage.NeedsPerson => $"#{flow.IssueNumber} · MAF workflow: {flow.Reason}{steps}",
             TicketStage.PlanLimited => $"#{flow.IssueNumber} · MAF workflow paused for your computer's plan limit{steps} — Autopilot picks it up after the reset.",
+            TicketStage.AwaitingApproval => $"#{flow.IssueNumber} · MAF workflow: {flow.Reason} (Board › Tasks){steps} — Autopilot goes on once it is approved.",
             _ => $"#{flow.IssueNumber} · MAF workflow paused: {flow.Reason}{steps} — Autopilot continues step by step.",
         };
         log.Add(board.TenantId, board.Id, line);

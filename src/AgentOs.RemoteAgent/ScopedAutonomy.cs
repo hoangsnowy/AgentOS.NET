@@ -70,6 +70,10 @@ internal static class ScopedAutonomy
         // its legacy prefix syntax, so the colon rules name the target instead of ending in ":*".)
         "Bash(git push --delete*)", "Bash(git push * --delete*)", "Bash(git push -d*)", "Bash(git push * -d *)",
         "Bash(git push *:main*)", "Bash(git push *:master*)", "Bash(git push *:refs/*)", "Bash(git push * :issue*)",
+        // Pushing the default branch by name ("git push origin main" matches the allowed "git push origin *"): a run only
+        // ever pushes its own branch (repo safety, E1.5 / GAP-18). The server refuses a pull request from it as well.
+        "Bash(git push origin main*)", "Bash(git push origin master*)", "Bash(git push -u origin main*)", "Bash(git push -u origin master*)",
+        "Bash(git push origin HEAD*)", "Bash(git push -u origin HEAD*)",
         "Bash(git push * --mirror*)", "Bash(git push * --all*)",
         "Bash(git config *)", "Bash(git remote *)", "Bash(git credential*)", "Bash(git reset --hard*)",
         "Bash(gh auth *)", "Bash(gh secret *)", "Bash(gh repo delete*)", "Bash(gh api *)",

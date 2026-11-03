@@ -123,7 +123,8 @@ internal sealed partial class TenantSignupService : ITenantSignupService
             createTenantRow = true;
         }
 
-        var roles = new[] { role };
+        // An invited approver is a member too (TenantRoles.Expand).
+        var roles = TenantRoles.Expand([role]).ToArray();
         var sendVerify = !string.IsNullOrWhiteSpace(request.Email);
 
         string kcUserId = await _kc.CreateUserAsync(

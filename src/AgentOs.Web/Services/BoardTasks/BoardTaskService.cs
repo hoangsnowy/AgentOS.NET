@@ -898,13 +898,36 @@ public sealed class BoardTaskService(
                 }
 
                 var descriptor = RepoDescriptor(board, tenantId, outcome.Owner, outcome.Repo, child?.DefaultBranch ?? "main", pat);
+                // Repo safety (E1.5): a change pushed onto the default branch is never turned into a pull request.
+                if (AgentOs.Domain.Governance.RepoSafety.RefuseDefaultBranch(outcome.BranchName, descriptor.DefaultBranch) is { } onDefault)
+                {
+                    anyFailure = true;
+                    await sessRepo.UpdateRepoRunResultAsync(tenantId, outcome.SessionRepoId, "Failed", outcome.BranchName, null, onDefault).ConfigureAwait(false);
+                    Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — {onDefault}", repoLabel, "Failed");
+                    continue;
+                }
+                // Approval policy (E1.5): opening the pull request may need an approver first — the pushed branch waits, the
+                // approver reads the comparison on Board › Tasks, and Approve opens it (OpenApprovedPullRequestsAsync).
+                var approvals = scope.ServiceProvider.GetRequiredService<AgentOs.Web.Services.Approvals.ApprovalGateService>();
+                var policy = await approvals.PolicyAsync(board).ConfigureAwait(false);
+                var prGate = await approvals.EnsureAsync(board, session, AgentOs.Domain.Governance.ApprovalGate.PullRequest,
+                    AgentOs.Web.Services.Approvals.ApprovalGateService.CompareLink(board.Kind, outcome.Owner, outcome.Repo, descriptor.DefaultBranch, outcome.BranchName))
+                    .ConfigureAwait(false);
+                if (!prGate.MayProceed)
+                {
+                    var held = prGate.Stops ? "Blocked" : "AwaitingApproval";
+                    await sessRepo.UpdateRepoRunResultAsync(tenantId, outcome.SessionRepoId, held, outcome.BranchName, null, prGate.Reason).ConfigureAwait(false);
+                    Publish(SessionRunEventKind.RepoDone, $"{repoLabel} — pushed; {prGate.Reason}", repoLabel, held);
+                    continue;
+                }
                 try
                 {
                     var prResult = await prService.CreateFromBranchAsync(
                         descriptor,
                         outcome.BranchName,
                         PullRequestText.Title(session.IssueNumber, session.Title, session.TicketType),
-                        PullRequestText.Body(session.IssueNumber, outcome.Summary, outcome.Description)).ConfigureAwait(false);
+                        PullRequestText.Body(session.IssueNumber, outcome.Summary, outcome.Description),
+                        policy.DraftPullRequests).ConfigureAwait(false);
 
                     await sessRepo.UpdateRepoRunResultAsync(tenantId, outcome.SessionRepoId,
                         prResult.Ok ? "Done" : "Failed", outcome.BranchName, prResult.HtmlUrl,
@@ -917,7 +940,7 @@ public sealed class BoardTaskService(
                             PullRequestText.Title(session.IssueNumber, session.Title, session.TicketType), outcome.Summary).ConfigureAwait(false);
                     }
                     Publish(SessionRunEventKind.RepoDone,
-                        prResult.Ok ? $"{repoLabel} — PR opened" : $"{repoLabel} — PR failed: {prResult.Error}",
+                        prResult.Ok ? $"{repoLabel} — {(policy.DraftPullRequests ? "draft PR" : "PR")} opened" : $"{repoLabel} — PR failed: {prResult.Error}",
                         repoLabel, prResult.Ok ? "Done" : "Failed", prResult.HtmlUrl);
                     if (prResult.Ok)
                     {
@@ -1077,13 +1100,26 @@ public sealed class BoardTaskService(
             return;
         }
 
+        // Approval policy (E1.5): the Thorough pipeline commits and opens in one step, so it can't hold a pushed branch for
+        // an approver — when opening the pull request needs an approval it stops (fail closed) instead of opening it.
+        var approvals = scope.ServiceProvider.GetRequiredService<AgentOs.Web.Services.Approvals.ApprovalGateService>();
+        var policy = await approvals.PolicyAsync(board, CancellationToken.None).ConfigureAwait(false);
+        if (policy.Requires(AgentOs.Domain.Governance.ApprovalGate.PullRequest))
+        {
+            const string needsApproval = "This project needs an approval before a pull request is opened, and the Thorough engine can't hold its change "
+                + "for one. Run the ticket with the Quick engine (on a computer) — its pushed branch waits for the approver.";
+            await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Blocked", null, null, needsApproval, CancellationToken.None).ConfigureAwait(false);
+            await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id, CancellationToken.None).ConfigureAwait(false);
+            Publish(SessionRunEventKind.Failed, $"{repoLabel} — {needsApproval}", repoLabel, "Blocked");
+            return;
+        }
         var descriptor = RepoDescriptor(board, tenantId, primary.Owner, primary.Repo, primary.DefaultBranch, pat);
         var title = PullRequestText.Title(session.IssueNumber, session.Title, session.TicketType);
         var body = PullRequestText.Body(session.IssueNumber,
             $"Generated by the AgentOS.NET Thorough pipeline (5-agent SDLC loop) for ticket #{session.IssueNumber}.");
         try
         {
-            var pr = await prService.OpenPrAsync(result, descriptor, title, body, CancellationToken.None).ConfigureAwait(false);
+            var pr = await prService.OpenPrAsync(result, descriptor, title, body, policy.DraftPullRequests, CancellationToken.None).ConfigureAwait(false);
             await sessRepo.UpdateRepoRunResultAsync(tenantId, primary.Id, "Done", pr.Branch, pr.HtmlUrl, null, CancellationToken.None).ConfigureAwait(false);
             await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, session.Id, CancellationToken.None).ConfigureAwait(false);
             Publish(SessionRunEventKind.Done, $"{repoLabel} — PR opened.", repoLabel, "Done", pr.HtmlUrl);
@@ -1101,6 +1137,43 @@ public sealed class BoardTaskService(
     public int QualityNMax() => Math.Clamp(Math.Min(3, pipelineOptions.Value.MaxIterations), 1, 10);
 
     /// <summary>A repo of a board as the source-control services address it.</summary>
+    /// <summary>
+    /// The pull-request gate was approved (E1.5): open the pull request of every change of the task whose pushed branch
+    /// waits for it ("AwaitingApproval"), as a draft when the policy says so. Null when all opened, else what failed (the
+    /// change reads Failed with the reason, like a pull request that failed right after the run).
+    /// </summary>
+    public async Task<string?> OpenApprovedPullRequestsAsync(string tenantId, Guid sessionId, CancellationToken ct = default)
+    {
+        using var scope = scopes.CreateScope();
+        var sp = scope.ServiceProvider;
+        var sessRepo = sp.GetRequiredService<ISessionRepository>();
+        var session = (await sessRepo.ListForTenantAsync(tenantId, ct).ConfigureAwait(false)).FirstOrDefault(s => s.Id == sessionId);
+        if (session is null) { return "The task no longer exists."; }
+        var board = await sp.GetRequiredService<IWorkspaceRepository>().GetForTenantAsync(tenantId, session.WorkspaceId, ct).ConfigureAwait(false);
+        if (board is null) { return "The task's project no longer exists."; }
+        var pat = await sp.GetRequiredService<IAppConfigStore>().GetForTenantAsync(tenantId, board.CredentialRef, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(pat)) { return "GitHub access has expired — reconnect the project, then approve again."; }
+        var policy = await sp.GetRequiredService<AgentOs.Web.Services.Approvals.ApprovalGateService>().PolicyAsync(board, ct).ConfigureAwait(false);
+        var prService = sp.GetRequiredService<IPrCreationService>();
+        string? failure = null;
+        foreach (var r in (await sessRepo.ListReposForTenantAsync(tenantId, sessionId, ct).ConfigureAwait(false))
+                     .Where(r => r.Status == "AwaitingApproval" && !string.IsNullOrWhiteSpace(r.BranchName)))
+        {
+            var label = $"{r.Owner}/{r.Repo}";
+            var result = await prService.CreateFromBranchAsync(RepoDescriptor(board, tenantId, r.Owner, r.Repo, r.DefaultBranch, pat), r.BranchName!,
+                PullRequestText.Title(session.IssueNumber, session.Title, session.TicketType),
+                PullRequestText.Body(session.IssueNumber, "Opened after an approver approved the change."), policy.DraftPullRequests, ct).ConfigureAwait(false);
+            await sessRepo.UpdateRepoRunResultAsync(tenantId, r.Id, result.Ok ? "Done" : "Failed", r.BranchName, result.HtmlUrl, result.Ok ? null : result.Error, ct)
+                .ConfigureAwait(false);
+            feed.Publish(new SessionRunEvent(tenantId, sessionId, SessionRunEventKind.RepoDone,
+                result.Ok ? $"{label} — approved; {(policy.DraftPullRequests ? "draft PR" : "PR")} opened" : $"{label} — PR failed: {result.Error}",
+                DateTimeOffset.UtcNow, label, result.Ok ? "Done" : "Failed", result.HtmlUrl));
+            if (!result.Ok) { failure ??= result.Error; }
+        }
+        await sessRepo.RecomputeSessionStatusForTenantAsync(tenantId, sessionId, ct).ConfigureAwait(false);
+        return failure;
+    }
+
     public static WorkspaceDescriptor RepoDescriptor(
         WorkspaceEntity board, string tenantId, string owner, string repo, string defaultBranch, string pat)
     {

@@ -10,6 +10,9 @@
 // graph ends without a merge — "needs a person", or an agent that couldn't run — the task is handed back to the
 // Orchestrator agent and the step-by-step rules, which also pick up any flow a restart cut short. A member's plan limit
 // (their computer's Claude/Codex plan said "no more for now") pauses the flow before it spends a round on it.
+// The approval policy (E1.5) holds it too: Review, Test and Design wait for the diff approval, Merge for the merge
+// approval — the graph asks and ends ("waits for an approver"); the step-by-step passes go on once it is approved. A
+// rejection, or nobody who could approve, hands the task to a person. An approval is never assumed.
 
 using System;
 using System.Collections.Generic;
@@ -48,6 +51,8 @@ public enum TicketStage
     PlanLimited,
     /// <summary>A step of a kind added later (the Design gate) passed: on to the next step.</summary>
     Passed,
+    /// <summary>The approval policy holds the next step for an approver — handed back; Autopilot goes on once approved.</summary>
+    AwaitingApproval,
 }
 
 /// <summary>The state a ticket's workflow threads along every edge.</summary>
@@ -154,6 +159,11 @@ public interface ITicketSteps
     /// <summary>Why no agent should run now — the member's AI plan is at its limit (plain words) — or null.</summary>
     string? PlanLimited(TicketFlow flow) => null;
 
+    /// <summary>The approval policy's <paramref name="gate"/> for the task's current change (E1.5): proceed, or — when it was
+    /// never asked — ask now and wait. Without a policy wired, nothing is required.</summary>
+    Task<AgentOs.Domain.Governance.ApprovalCheck> ApprovalAsync(TicketFlow flow, AgentOs.Domain.Governance.ApprovalGate gate, CancellationToken ct) =>
+        Task.FromResult(AgentOs.Domain.Governance.ApprovalCheck.Proceed);
+
     /// <summary>The Design gate (ADR-0016): run the Designer agent on the screenshots the Testing agent sent back (unless the
     /// owner already decided) and say where the gate stands. Without a design reviewer wired, a person decides.</summary>
     Task<DesignStep> DesignAsync(TicketFlow flow, CancellationToken ct) =>
@@ -236,6 +246,18 @@ public static class TicketWorkflow
     // would be spent on nothing.
     private static TicketFlow? PlanPause(ITicketSteps steps, TicketFlow f) => steps.PlanLimited(f) is { } why ? f.PausedForPlan(why) : null;
 
+    // The approval policy holds this step (E1.5): null when it may run; otherwise the flow ends waiting for an approver, or
+    // — rejected, nobody can approve — for a person. FAIL CLOSED: anything but Proceed stops the step.
+    private static async Task<TicketFlow?> ApprovalHoldAsync(ITicketSteps steps, TicketFlow f, AgentOs.Domain.Governance.ApprovalGate gate, CancellationToken ct)
+    {
+        var check = await steps.ApprovalAsync(f, gate, ct).ConfigureAwait(false);
+        if (check.MayProceed) { return null; }
+        f.Stage = check.Stops ? TicketStage.NeedsPerson : TicketStage.AwaitingApproval;
+        f.Reason = check.Reason ?? $"Waiting for an approver to approve {AgentOs.Domain.Governance.ApprovalPolicy.Describe(gate)}.";
+        f.Trail.Add(check.Stops ? $"{AgentOs.Domain.Governance.ApprovalPolicy.Label(gate).ToLowerInvariant()} not approved" : "waits for approval");
+        return f;
+    }
+
     private sealed class CodeExecutor(TicketFlowNode node, ITicketSteps steps) : Executor<TicketFlow, TicketFlow>(node.Id)
     {
         public override async ValueTask<TicketFlow> HandleAsync(TicketFlow f, IWorkflowContext context, CancellationToken ct)
@@ -310,6 +332,7 @@ public static class TicketWorkflow
         {
             f.Enter(node);
             if (PlanPause(steps, f) is { } before) { return before; }
+            if (await ApprovalHoldAsync(steps, f, AgentOs.Domain.Governance.ApprovalGate.Diff, ct).ConfigureAwait(false) is { } held) { return held; }
             var run = await steps.ReviewAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Reviewer agent couldn't start: {run.Status}."); }
             await run.Completion.ConfigureAwait(false);
@@ -336,6 +359,7 @@ public static class TicketWorkflow
         {
             f.Enter(node);
             if (PlanPause(steps, f) is { } before) { return before; }
+            if (await ApprovalHoldAsync(steps, f, AgentOs.Domain.Governance.ApprovalGate.Diff, ct).ConfigureAwait(false) is { } held) { return held; }
             var run = await steps.TestAsync(f, ct).ConfigureAwait(false);
             if (run.Status != TaskStart.Started) { return f.Stop($"The Testing agent couldn't start: {run.Status}."); }
             await run.Completion.ConfigureAwait(false);
@@ -364,6 +388,7 @@ public static class TicketWorkflow
         {
             f.Enter(node);
             if (PlanPause(steps, f) is { } before) { return before; }
+            if (await ApprovalHoldAsync(steps, f, AgentOs.Domain.Governance.ApprovalGate.Diff, ct).ConfigureAwait(false) is { } held) { return held; }
             var step = await steps.DesignAsync(f, ct).ConfigureAwait(false);
             if (PlanPause(steps, f) is { } after) { return after; }
             switch (step.Gate)
@@ -396,6 +421,7 @@ public static class TicketWorkflow
                 f.Trail.Add("ready for you to merge");
                 return f;
             }
+            if (await ApprovalHoldAsync(steps, f, AgentOs.Domain.Governance.ApprovalGate.Merge, ct).ConfigureAwait(false) is { } held) { return held; }
             foreach (var c in (await steps.ChangesAsync(f, ct).ConfigureAwait(false)).Where(c => c.Pr is not null))
             {
                 if (await steps.MergeAsync(f, c, ct).ConfigureAwait(false) is { } error) { return f.Stop($"Couldn't merge PR #{c.Pr}: {error}"); }

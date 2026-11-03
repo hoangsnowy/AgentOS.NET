@@ -42,6 +42,7 @@
     "realm": [
       { "name": "admin", "description": "Tenant administrator" },
       { "name": "member", "description": "Tenant member" },
+      { "name": "approver", "description": "Tenant approver - approves or rejects plan, diff, pull request and merge steps" },
       { "name": "platform-admin", "description": "Platform administrator - platform-wide settings for every tenant" }
     ]
   },

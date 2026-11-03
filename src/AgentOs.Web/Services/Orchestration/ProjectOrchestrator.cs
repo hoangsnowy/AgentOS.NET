@@ -120,7 +120,8 @@ public sealed partial class ProjectOrchestrator(
     TicketWorkflowRunner workflows,
     RetrospectiveService retrospectives,
     IPlanLimits planLimits,
-    TicketFlowService flows) : IDisposable
+    TicketFlowService flows,
+    AgentOs.Web.Services.Approvals.ApprovalGateService approvals) : IDisposable
 {
     /// <inheritdoc />
     public void Dispose() => _oneAtATime.Dispose();
@@ -134,6 +135,8 @@ public sealed partial class ProjectOrchestrator(
     // Ticket bodies (for dependencies) change rarely; read each at most every 10 minutes.
     private readonly ConcurrentDictionary<(Guid, int), (DateTimeOffset At, IReadOnlyList<int> Deps)> _deps = new();
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
+    // Tasks held at the plan gate (asked, not approved) per board, this pass: no automatic retry may start them.
+    private readonly ConcurrentDictionary<Guid, IReadOnlySet<Guid>> _planHeld = new();
 
     public static AutopilotMode ParseMode(string? value) =>
         Enum.TryParse<AutopilotMode>(value, ignoreCase: true, out var mode) ? mode : AutopilotMode.Off;
@@ -189,6 +192,21 @@ public sealed partial class ProjectOrchestrator(
             var labels = TicketLabels(tickets);
             var taskFlows = new Dictionary<int, EffectiveTicketFlow>();
             var planTasks = new List<PlanTask>();
+            // Approval policy (E1.5) of this project: the gates each task waits at — read only here; asking is a move.
+            var policy = await approvals.PolicyAsync(board, ct).ConfigureAwait(false);
+            var planHeld = new HashSet<Guid>();
+            if (policy.Requires(AgentOs.Domain.Governance.ApprovalGate.Plan))
+            {
+                foreach (var s in sessions.Where(s => s.Status is not ("Closed" or "Merged")))
+                {
+                    var plan = await approvals.CheckAsync(board, policy, s.Id, AgentOs.Domain.Governance.ApprovalGate.Plan, s.FixRounds, ct).ConfigureAwait(false);
+                    // Only a task Autopilot held for its plan has a request; a person's own draft is theirs to run.
+                    if (plan.Request is null) { continue; }
+                    if (!plan.MayProceed) { planHeld.Add(s.Id); }
+                    if (s.Status == "Draft") { planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, "Draft", [], s.FixRounds) { PlanApproval = plan }); }
+                }
+            }
+            _planHeld[board.Id] = planHeld;
             foreach (var s in sessions.Where(s => s.Status is "Failed" && !workflows.IsRunning(tenant, s.Id) && CutShortByPlanLimit(s, repos)))
             {
                 planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, "Failed", [], s.FixRounds) { CutShortByPlanLimit = true });
@@ -250,6 +268,12 @@ public sealed partial class ProjectOrchestrator(
                 }
                 planTasks.Add(new PlanTask(s.Id, s.IssueNumber ?? 0, s.Status, open, s.FixRounds)
                 {
+                    DiffApproval = s.Status == "Done"
+                        ? await approvals.CheckAsync(board, policy, s.Id, AgentOs.Domain.Governance.ApprovalGate.Diff, s.FixRounds, ct).ConfigureAwait(false)
+                        : AgentOs.Domain.Governance.ApprovalCheck.Proceed,
+                    MergeApproval = s.Status == "Done"
+                        ? await approvals.CheckAsync(board, policy, s.Id, AgentOs.Domain.Governance.ApprovalGate.Merge, s.FixRounds, ct).ConfigureAwait(false)
+                        : AgentOs.Domain.Governance.ApprovalCheck.Proceed,
                     Flow = plan,
                     Design = design?.Gate ?? AgentOs.Domain.Sessions.DesignGateState.NotChecked,
                     DesignFindings = design?.Gate == AgentOs.Domain.Sessions.DesignGateState.ChangesRequested ? design.ChangeRequest() : null,
@@ -335,6 +359,15 @@ public sealed partial class ProjectOrchestrator(
                 await sp.GetRequiredService<ISessionRepository>().SetTicketFlowVersionForTenantAsync(tenant, session.Id, flow.Version, ct).ConfigureAwait(false);
                 var plan = flow.Definition.Resolve(ticket.Labels);
                 var flowNote = flow.Version == 0 && plan.Skipped.Count == 0 ? "" : $" · ticket flow v{flow.Version}: {plan.Summary}";
+                // Approval policy (E1.5): the task is created, but the Coding agent starts only once an approver approved the
+                // plan on Board › Tasks (a later pass starts it then).
+                var policy = await approvals.PolicyAsync(board, ct).ConfigureAwait(false);
+                if (policy.Requires(AgentOs.Domain.Governance.ApprovalGate.Plan))
+                {
+                    await approvals.RequestAsync(board, session, AgentOs.Domain.Governance.ApprovalGate.Plan, ticket.HtmlUrl, ct: ct).ConfigureAwait(false);
+                    log.Add(tenant, board.Id, $"#{start.Number} is ready to start — it waits for an approver to approve the plan (Board › Tasks){flowNote}.");
+                    break;
+                }
                 // A MAF workflow runs the ticket's whole agent flow (TicketWorkflow); step by step, the passes drive it.
                 var engine = await sp.GetRequiredService<AgentOs.Domain.Configuration.ISettings>()
                     .GetAsync(AgentOs.Modules.Pipeline.Agents.AutopilotSettings.TicketEngineKey, tenant, ct).ConfigureAwait(false);
@@ -413,10 +446,23 @@ public sealed partial class ProjectOrchestrator(
                 }
                 break;
             }
+            case AutopilotAction.RequestApproval request:
+            {
+                var sessions = sp.GetRequiredService<ISessionRepository>();
+                var session = (await sessions.ListForTenantAsync(tenant, ct).ConfigureAwait(false)).FirstOrDefault(s => s.Id == request.SessionId);
+                if (session is null) { break; }
+                // What the approver reads: the pull request (the task's first one; every one is listed on the task).
+                var link = (await sessions.ListReposForTenantAsync(tenant, request.SessionId, ct).ConfigureAwait(false))
+                    .Select(r => r.PrUrl).FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+                await approvals.RequestAsync(board, session, request.Gate, link, ct: ct).ConfigureAwait(false);
+                log.Add(tenant, board.Id, request.Why);
+                break;
+            }
             case AutopilotAction.NeedsPerson ask:
             {
                 var sessions = sp.GetRequiredService<ISessionRepository>();
-                foreach (var r in (await sessions.ListReposForTenantAsync(tenant, ask.SessionId, ct).ConfigureAwait(false)).Where(r => HoldsAProposedChange(r.Status)))
+                foreach (var r in (await sessions.ListReposForTenantAsync(tenant, ask.SessionId, ct).ConfigureAwait(false))
+                             .Where(r => HoldsAProposedChange(r.Status) || (ask.BlockAll && r.Status is not ("Merged" or "Closed" or "Blocked"))))
                 {
                     await sessions.UpdateRepoRunResultAsync(tenant, r.Id, "Blocked", r.BranchName, r.PrUrl, ask.Reason, ct).ConfigureAwait(false);
                 }

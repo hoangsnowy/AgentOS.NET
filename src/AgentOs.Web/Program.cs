@@ -28,6 +28,7 @@ using AgentOs.Web.Shell.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -91,6 +92,8 @@ builder.Services.AddSingleton(new AgentOs.Web.Services.DevModeState(devAutoLogin
 if (devAutoLogin && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
 {
     builder.Services.AddHostedService<AgentOs.Web.Services.BoardTasks.DesignGateSample>();
+    // Approval policies (E1.5): sample requests for Board › Tasks › Approvals, same guard.
+    builder.Services.AddHostedService<AgentOs.Web.Services.Approvals.ApprovalSample>();
 }
 
 if (devAutoLogin)
@@ -247,6 +250,9 @@ builder.Services.AddSingleton<AgentOs.Web.Orchestrations.OrchestrationStore>();
 builder.Services.AddSingleton<AgentOs.Web.Services.TaskStopRegistry>();
 // Board tasks run here, off any circuit — the Board UI and the project orchestrator share it.
 builder.Services.AddSingleton<AgentOs.Web.Services.BoardTasks.BoardTaskService>();
+// Approval policies (E1.5): the gates Board tasks and Autopilot wait at, and the approvers' decisions on Board › Tasks.
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<AgentOs.Web.Services.Approvals.ApprovalGateService>();
 // "Try the app": previews run on a member's paired computer; their state lives as long as the runner connection.
 builder.Services.AddSingleton<AgentOs.Web.Services.Preview.PreviewService>();
 // The project orchestrator (Autopilot): a pass over every autopilot board each minute, decisions logged per board.
