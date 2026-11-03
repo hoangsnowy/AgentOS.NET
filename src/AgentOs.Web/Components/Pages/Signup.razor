@@ -3,8 +3,10 @@
 @attribute [AllowAnonymous]
 @using AgentOs.Modules.Tenants
 @using AgentOs.Modules.Tenants.Invitations
+@using Microsoft.Extensions.Logging
 @inject AgentOs.Modules.Tenants.ITenantSignupService SignupSvc
 @inject NavigationManager Nav
+@inject ILogger<Signup> Log
 
 <PageTitle>Create workspace — AgentOS.NET</PageTitle>
 
@@ -158,7 +160,8 @@ else
             }
 
             // Public signup page: Keycloak transport + DB faults (incl. Polly timeout/circuit-breaker,
-            // which derive from System.Exception) must surface as a message, never crash the circuit.
+            // which derive from System.Exception) must surface as a message, never crash the circuit. The visitor is
+            // anonymous: an identity-service failure shows a plain message and its detail goes to the log only.
             var ok = await CircuitSafe.RunAsync(
                 async () => await SignupSvc.SignupAsync(new TenantSignupRequest(
                     Username: _username,
@@ -167,9 +170,14 @@ else
                     TenantId: string.IsNullOrWhiteSpace(_tenantId) ? null : _tenantId,
                     TenantName: string.IsNullOrWhiteSpace(_tenantName) ? null : _tenantName,
                     InviteToken: InviteToken)),
-                ex => _error = ex is System.Net.Http.HttpRequestException or OperationCanceledException
-                    ? "Could not reach the identity service. Please try again."
-                    : ex.Message);
+                ex =>
+                {
+                    if (SignupErrors.IsIdentityFailure(ex))
+                    {
+                        Log.LogError(ex, "Sign-up failed in the identity service; the visitor got a generic message.");
+                    }
+                    _error = SignupErrors.ForPublic(ex);
+                });
             if (!ok) { return; }
 
             Nav.NavigateTo("/signup/verify-email", forceLoad: false);

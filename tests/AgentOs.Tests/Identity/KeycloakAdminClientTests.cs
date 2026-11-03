@@ -201,7 +201,7 @@ public sealed class KeycloakAdminClientTests
         var ex = await Should.ThrowAsync<KeycloakUserLeftBehindException>(() => client.CreateUserAsync("alice", "alice@example.com", "acme", AdminRole, sendVerifyEmail: true));
 
         ex.UserId.ShouldBe("u-stuck");
-        ex.InnerException.ShouldBeOfType<InvalidOperationException>().Message.ShouldContain("grant-roles failed (500)");
+        ex.InnerException.ShouldBeOfType<KeycloakAdminException>().Message.ShouldContain("grant-roles failed (500)");
     }
 
     private static StringContent JsonContent(string body)

@@ -15,11 +15,15 @@ using AgentOs.SharedKernel.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 
 namespace AgentOs.Modules.Tenants.Endpoints;
 
 internal static class TenantEndpoints
 {
+    // Log category of public sign-up failures (the detail the anonymous caller never sees).
+    private const string SignupLogCategory = "AgentOs.Modules.Tenants.Signup";
+
     public static IEndpointRouteBuilder MapTenantEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -98,11 +102,20 @@ internal static class TenantEndpoints
         // Self-service sign-up: dispatches to ITenantSignupService which picks one of three modes
         // (invite / slug / auto-create) by request shape. Creating a NEW workspace needs the platform setting
         // Tenants:OpenSignup (off outside Development — GAP-01); an invitation always works.
+        // The caller is anonymous: our own validation messages are returned as they are, but an identity-service
+        // failure never is — Keycloak's raw response body stays in the server log (SignupErrors).
         app.MapPost("/tenants/register", async (
             RegisterTenantRequest body,
             ITenantSignupService signup,
+            ILoggerFactory loggers,
             CancellationToken ct) =>
         {
+            IResult IdentityFailed(Exception ex)
+            {
+                loggers.CreateLogger(SignupLogCategory).LogError(ex, "Sign-up failed in the identity service; the caller got a generic message.");
+                return Results.Json(new { error = SignupErrors.ForPublic(ex) }, statusCode: SignupErrors.StatusFor(ex));
+            }
+
             try
             {
                 var outcome = await signup.SignupAsync(new TenantSignupRequest(
@@ -120,6 +133,12 @@ internal static class TenantEndpoints
             {
                 return Results.Problem(detail: ex.Message, statusCode: StatusCodes.Status403Forbidden);
             }
+            catch (KeycloakAdminException ex) { return IdentityFailed(ex); }
+            catch (KeycloakUserLeftBehindException ex) { return IdentityFailed(ex); }
+            catch (System.Net.Http.HttpRequestException ex) { return IdentityFailed(ex); }
+            catch (TimeoutException ex) { return IdentityFailed(ex); }
+            // HttpClient reports its own timeout as a cancellation; a caller that went away is not a failure to report.
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested) { return IdentityFailed(ex); }
             catch (InvalidOperationException ex)
             {
                 return Results.BadRequest(new { error = ex.Message });
