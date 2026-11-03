@@ -360,6 +360,52 @@ starve the others. Separate from the monthly budget cap, which still applies.
 - **Per-viewer preferences** (theme, wallpaper, glass, clock, *Animations*) — System → Appearance,
   stored in the browser only.
 
+## Roles and permissions (RBAC v2)
+
+Who may do what is **not a setting**: it is one permission matrix in code
+([`PermissionMatrix`](../src/AgentOs.SharedKernel/Identity/PermissionMatrix.cs)), enforced on every Api/Web endpoint
+(`perm:<Permission>` authorization policies) **and** in the desktop (apps, Settings pages, Activities search and
+buttons are hidden or disabled; every handler re-checks). Roles are Keycloak realm roles, assigned in
+**Settings → People & data → Users** (or `PATCH /tenants/{tenantId}/members/{userId}`); they are additive.
+
+| Permission | viewer | developer | approver | auditor | admin |
+|---|:-:|:-:|:-:|:-:|:-:|
+| `ViewWork` — boards, tasks, runs, insights, files | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `RunAgents` — run/stop agents, work tickets, pair a computer, ticket files | | ✓ | | | ✓ |
+| `ApproveWork` — design checks, approvals (E1.5 policies) | | | ✓ | | ✓ |
+| `ViewAudit` — audit log, tool-call evidence, audit CSV | | | | ✓ | ✓ |
+| `ManageWorkspaces` — connect/remove boards + repos, Autopilot | | | | | ✓ |
+| `ManageMembers` — invite, roles, board memberships | | | | | ✓ |
+| `ManageSettings` — model keys, agents, prompts, tool policy, MCP | | | | | ✓ |
+| `ManageApiTokens` | | | | | ✓ |
+| `ExportData` — tenant export, cost CSV | | | | | ✓ |
+
+**Existing users keep working — role mapping.** No migration is needed:
+
+| Before E1.2 | Now |
+|---|---|
+| `admin` | `admin` (same name, every permission) |
+| `member` | kept as a legacy alias = `developer` + `approver` + `ManageWorkspaces` — exactly what a member could do before (run agents, decide design checks on their own tasks, connect boards). Choosing one of the five roles for that user in Users replaces it. |
+| `platform-admin` | unchanged, orthogonal (platform-wide settings only; grants nothing tenant-scoped) |
+
+API tokens take the same roles (Settings → API tokens); existing `member` tokens keep the alias.
+
+**Per-board (workspace) membership.** **Users → Board access** (or
+`PUT /tenants/{tenantId}/boards/{boardId}/members/{userId}` with `{ "role": "viewer|developer|approver" }`) gives a
+member a role on one board, stored in `workspaces.workspace_members` (RLS-bound). A board with no memberships is
+**open**: tenant roles apply. Its first membership makes it **restricted**: only its members (with their board
+role, which replaces their viewer/developer/approver realm role there — it may raise or lower it) plus tenant-wide
+`admin` and `auditor` see it; it is 404 to everyone else (board list, `/workspaces/{id}`, its sessions and ticket
+files). Every change is audited (`member.board_role_set`, `member.board_role_removed`).
+
+**IdP groups (E1.1 hook).** `IRoleClaimMapper` (SharedKernel) maps claims onto roles on every request
+(`RoleClaimsTransformation`); register one to turn Entra ID / Okta groups into AgentOS.NET roles. The built-in one
+maps the legacy `member` role. Unknown role names grant nothing.
+
+**Keycloak.** The realm import carries the five roles; an existing realm (never re-imported) gets them from the
+azd `postdeploy` hook, the Helm/compose `configure-realm.sh`, `lab.ps1`, or — on first assignment — from the hosts
+themselves (`KeycloakAdminClient` creates a missing managed role).
+
 ## Legacy `/settings` endpoint
 
 `POST /settings` (admin) still accepts exactly `Llm:ForceProvider`, `Llm:Claude:ApiKey`,

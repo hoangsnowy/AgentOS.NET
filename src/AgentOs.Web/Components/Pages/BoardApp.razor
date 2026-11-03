@@ -23,6 +23,7 @@
 @using AgentOs.Domain.Files
 @inject IWorkspaceRepository Workspaces
 @inject IWorkspaceConnector Connector
+@inject IWorkspaceAccess Access
 @inject IRunnerRepository Runners
 @inject ISessionRepository Sessions
 @inject IRunnerPairingService Pairing
@@ -150,10 +151,10 @@ else if (_tab == Tab.Boards)
             </div>
             <div class="form-actions">
                 <Btn Variant="Btn.ButtonVariant.Ghost" OnClick="FindBoards"
-                     Disabled="_busy || _findingBoards || _wsKind != SourceProviderKind.GitHub">
+                     Disabled="@(_busy || _findingBoards || _wsKind != SourceProviderKind.GitHub || !Can(Permission.ManageWorkspaces))">
                     @(_findingBoards ? "Finding…" : "Find boards")
                 </Btn>
-                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ConnectBoard" Disabled="_busy">
+                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="ConnectBoard" Disabled="@(_busy || !Can(Permission.ManageWorkspaces))">
                     @(_busy ? "Connecting…" : "Connect")
                 </Btn>
             </div>
@@ -239,7 +240,7 @@ else if (_tab == Tab.Boards)
                 </Field>
             </div>
             <div class="form-actions">
-                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="AddRepo" Disabled="_busy">
+                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="AddRepo" Disabled="@(_busy || !CanOnBoard(Permission.ManageWorkspaces))">
                     @(_busy ? "Adding…" : "Add repository")
                 </Btn>
             </div>
@@ -259,16 +260,16 @@ else if (_tab == Tab.Boards)
                                 <td class="actions">
                                     @{ var preview = Previews.Get(_tenantId, r.Id); }
                                     <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary"
-                                         OnClick="@(() => TryTheApp(r))" Disabled="@(_previewBusy == r.Id || preview is { IsActive: true })"
+                                         OnClick="@(() => TryTheApp(r))" Disabled="@(_previewBusy == r.Id || preview is { IsActive: true } || !CanOnBoard(Permission.RunAgents))"
                                          Title="Run the latest version of this project on your computer">
                                         <Icon Name="play" Size="13" /> @(_previewBusy == r.Id ? "Checking…" : "Try the app")
                                     </Btn>
                                     <Btn Size="Btn.ButtonSize.Sm"
-                                         OnClick="@(() => SeedLabels(r))" Disabled="@(_busyId == r.Id)">
+                                         OnClick="@(() => SeedLabels(r))" Disabled="@(_busyId == r.Id || !CanOnBoard(Permission.ManageWorkspaces))">
                                         <Icon Name="tag" Size="13" /> Seed labels
                                     </Btn>
                                     <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger"
-                                         OnClick="@(() => RemoveRepo(r))" Disabled="@(_busyId == r.Id)">
+                                         OnClick="@(() => RemoveRepo(r))" Disabled="@(_busyId == r.Id || !CanOnBoard(Permission.ManageWorkspaces))">
                                         <Icon Name="x" Size="13" /> Remove
                                     </Btn>
                                 </td>
@@ -343,7 +344,7 @@ else if (_tab == Tab.Boards)
                 @if (readyCount > 0)
                 {
                     <div class="form-actions board-runall">
-                        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RunAllReady" Disabled="_busy">
+                        <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RunAllReady" Disabled="@(_busy || !CanOnBoard(Permission.RunAgents))">
                             <Icon Name="lightning" Size="13" /> Start approved tickets (@readyCount)
                         </Btn>
                     </div>
@@ -400,7 +401,7 @@ else if (_tab == Tab.Boards)
                                     </Btn>
                                     <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary"
                                          OnClick="@(() => OpenWorkDialog(ticket))"
-                                         Disabled="@(_busy || ticket.Kind == BoardTicketKind.DraftIssue || ticket.RepoOwner is null)">
+                                         Disabled="@(_busy || ticket.Kind == BoardTicketKind.DraftIssue || ticket.RepoOwner is null || !CanOnBoard(Permission.RunAgents))">
                                         Work on this <Icon Name="arrow-right" Size="13" />
                                     </Btn>
                                 </td>
@@ -457,7 +458,7 @@ else if (_tab == Tab.Idea)
                               Note="Every ticket created from this idea gets them." />
             @if (_ideaError is not null) { <p class="login-error">@_ideaError</p> }
             <div class="form-actions">
-                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="GenerateIdea" Disabled="_ideaBusy">
+                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="GenerateIdea" Disabled="@(_ideaBusy || !Can(Permission.RunAgents))">
                     @(_ideaBusy ? "Generating…" : "Generate spec + tickets")
                 </Btn>
             </div>
@@ -475,7 +476,7 @@ else if (_tab == Tab.Idea)
                     <strong>The AI couldn't split this into tickets this time.</strong>
                     <span>These are rough drafts, one per requirement line — try again (your computer may have been busy), or edit and remove rows below.</span>
                     <div class="board-failure-actions">
-                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="GenerateIdea" Disabled="_ideaBusy">
+                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="GenerateIdea" Disabled="@(_ideaBusy || !Can(Permission.RunAgents))">
                             <Icon Name="arrow-clockwise" Size="13" /> @(_ideaBusy ? "Trying…" : "Try again")
                         </Btn>
                     </div>
@@ -526,10 +527,10 @@ else if (_tab == Tab.Idea)
             @WhereToWork
             <div class="form-actions">
                 <Btn OnClick="@(() => { _ideaStep = IdeaStep.Input; _ideaError = null; })" Disabled="_ideaBusy">Back</Btn>
-                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="@(() => CreateTickets(true))" Disabled="@(_ideaBusy || _draftRows.Count == 0)">
+                <Btn Variant="Btn.ButtonVariant.Primary" OnClick="@(() => CreateTickets(true))" Disabled="@(_ideaBusy || _draftRows.Count == 0 || !Can(Permission.RunAgents))">
                     @(_ideaBusy ? "Working…" : "Create & run all ready")
                 </Btn>
-                <Btn OnClick="@(() => CreateTickets(false))" Disabled="@(_ideaBusy || _draftRows.Count == 0)">
+                <Btn OnClick="@(() => CreateTickets(false))" Disabled="@(_ideaBusy || _draftRows.Count == 0 || !Can(Permission.RunAgents))">
                     Create only
                 </Btn>
             </div>
@@ -568,7 +569,7 @@ else if (_tab == Tab.Runners)
             </Field>
         </div>
         <div class="form-actions">
-            <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RegisterRunner" Disabled="_busy">
+            <Btn Variant="Btn.ButtonVariant.Primary" OnClick="RegisterRunner" Disabled="@(_busy || !Can(Permission.RunAgents))">
                 @(_busy ? "Connecting…" : "Connect this computer")
             </Btn>
         </div>
@@ -608,7 +609,7 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                steps — each keeps a live pairing secret, and its helper needs a new code to come back. *@
             <div class="form-actions">
                 <Btn Size="Btn.ButtonSize.Sm" Variant="@(_confirmOffline ? Btn.ButtonVariant.Danger : Btn.ButtonVariant.Default)"
-                     OnClick="@(() => DisconnectOffline(offline))" Disabled="_busy">
+                     OnClick="@(() => DisconnectOffline(offline))" Disabled="@(_busy || !Can(Permission.RunAgents))">
                     @(_confirmOffline ? $"Click again to disconnect {offline.Count} offline computers" : $"Disconnect offline computers ({offline.Count})")
                 </Btn>
             </div>
@@ -640,7 +641,7 @@ REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                         <td title="@((r.LastSeenUtc ?? r.CreatedAtUtc).ToString("u"))">@(Broker.IsConnected(r.Id) ? "now" : Ago(r.LastSeenUtc ?? r.CreatedAtUtc))</td>
                         <td class="actions">
                             <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger"
-                                 OnClick="@(() => RevokeRunner(r))" Disabled="@(_busyId == r.Id || r.Status == "Revoked")">
+                                 OnClick="@(() => RevokeRunner(r))" Disabled="@(_busyId == r.Id || r.Status == "Revoked" || !Can(Permission.RunAgents))">
                                 <Icon Name="x" Size="13" /> Disconnect
                             </Btn>
                         </td>
@@ -685,16 +686,19 @@ else if (_tab == Tab.Autopilot)
                     <div class="board-repo-picker">
                         <label class="board-repo-option">
                             <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off)"
+                                   disabled="@(!Can(b.Id, Permission.ManageWorkspaces))"
                                    @onchange="@(() => SetAutopilot(b, "Off"))" />
                             <span><strong>Nothing</strong> <span class="muted">— it only works when you click</span></span>
                         </label>
                         <label class="board-repo-option">
                             <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Build)"
+                                   disabled="@(!Can(b.Id, Permission.ManageWorkspaces))"
                                    @onchange="@(() => SetAutopilot(b, "Build"))" />
                             <span><strong>Build</strong> <span class="muted">— start approved tickets in order, @AtATime(_autopilotLimits.MaxParallel), and send red checks, conflicts and review or test findings back to the AI (up to @Rounds(_autopilotLimits.MaxFixRounds) per task). You merge.</span></span>
                         </label>
                         <label class="board-repo-option">
                             <input type="radio" name="@($"autopilot-{b.Id}")" checked="@(mode == AgentOs.Web.Services.Orchestration.AutopilotMode.BuildAndMerge)"
+                                   disabled="@(!Can(b.Id, Permission.ManageWorkspaces))"
                                    @onchange="@(() => SetAutopilot(b, "BuildAndMerge"))" />
                             <span><strong>Build and merge</strong> <span class="muted">— also merge each change once its checks are green, the Reviewer agent approved it and the Testing agent passed it on your connected computer.</span></span>
                         </label>
@@ -713,7 +717,7 @@ else if (_tab == Tab.Autopilot)
                         </div>
                     }
                     <div class="form-actions">
-                        <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => AutopilotNow(b))" Disabled="@(_busy || mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off)">
+                        <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => AutopilotNow(b))" Disabled="@(_busy || mode == AgentOs.Web.Services.Orchestration.AutopilotMode.Off || !Can(b.Id, Permission.ManageWorkspaces))">
                             <Icon Name="arrow-clockwise" Size="13" /> Check now
                         </Btn>
                         <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Ghost" OnClick="@(() => OpenTicketFlow(b.Id))">
@@ -758,15 +762,16 @@ else if (_tab == Tab.Sessions)
     @if (_sessions is null) { <Spinner /> }
     else
     {
-        <DesignChecks TenantId="@_tenantId" IsAdmin="@_isAdmin" VisibleTasks="@_sessions.Select(s => s.Id).ToHashSet()" DecidedBy="@_userLabel" />
-        <Panel Title="@(_isAdmin ? "Tasks (all members)" : "Your tasks")">
+        <DesignChecks TenantId="@_tenantId" IsAdmin="@_isAdmin" VisibleTasks="@_sessions.Select(s => s.Id).ToHashSet()" DecidedBy="@_userLabel"
+                      CanDecideFor="@CanDecideFor" />
+        <Panel Title="@(TeamView ? "Tasks (all members)" : "Your tasks")">
         <table class="data-table">
             <thead>
                 <tr>
                     <th>Title</th>
                     <th>Project</th>
                     <th>Code</th>
-                    @if (_isAdmin) { <th>Member</th> }
+                    @if (TeamView) { <th>Member</th> }
                     <th>Status</th>
                     <th>Started</th>
                     <th class="actions">Actions</th>
@@ -825,7 +830,7 @@ else if (_tab == Tab.Sessions)
                                 <span class="muted">—</span>
                             }
                         </td>
-                        @if (_isAdmin) { <td title="@s.MemberUserId">@MemberLabel(s.MemberUserId)</td> }
+                        @if (TeamView) { <td title="@s.MemberUserId">@MemberLabel(s.MemberUserId)</td> }
                         <td><Badge>@PlainStatus(s.Status)</Badge></td>
                         <td title="@s.CreatedAtUtc.ToString("u")">@Ago(s.CreatedAtUtc)</td>
                         <td class="actions board-task-actions">
@@ -836,7 +841,7 @@ else if (_tab == Tab.Sessions)
                             {
                                 <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary"
                                      OnClick="@(() => RunSession(s))"
-                                     Disabled="@(_busyId == s.Id)">
+                                     Disabled="@(_busyId == s.Id || !Can(s.WorkspaceId, Permission.RunAgents))">
                                     <Icon Name="play" Size="13" /> @(s.Status == "Failed" ? "Try again" : "Run")
                                 </Btn>
                             }
@@ -849,7 +854,7 @@ else if (_tab == Tab.Sessions)
                             }
                             @if (s.Status is "Done" or "Failed" or "Blocked" && HasOpenChange(s.Id))
                             {
-                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => TestTask(s))" Disabled="@(_busyId == s.Id)"
+                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => TestTask(s))" Disabled="@(_busyId == s.Id || !Can(s.WorkspaceId, Permission.RunAgents))"
                                      aria-label="@($"Test task #{s.IssueNumber} against its acceptance criteria")">
                                     <Icon Name="check" Size="13" /> Test it
                                 </Btn>
@@ -869,7 +874,7 @@ else if (_tab == Tab.Sessions)
                                 </Btn>
                             }
                             <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => CloseSession(s))"
-                                 Disabled="@(_busyId == s.Id || s.Status is "Closed" or "Running")">
+                                 Disabled="@(_busyId == s.Id || s.Status is "Closed" or "Running" || !Can(s.WorkspaceId, Permission.RunAgents))">
                                 <Icon Name="check" Size="13" /> Close
                             </Btn>
                         </td>
@@ -877,7 +882,7 @@ else if (_tab == Tab.Sessions)
                     @if (s.Status == "Running" && CurrentStep(s.Id) is var step && step >= 0)
                     {
                         <tr class="board-activity-tr">
-                            <td colspan="@(_isAdmin ? 7 : 6)">
+                            <td colspan="@(TeamView ? 7 : 6)">
                                 @* Live progress in plain steps (reported by the computer doing the work). Static — no looping motion. *@
                                 <ol class="task-steps" aria-label="@($"Progress of task #{s.IssueNumber}")">
                                     @for (var i = 0; i < AgentOs.Domain.Sessions.TaskSteps.All.Count; i++)
@@ -892,7 +897,7 @@ else if (_tab == Tab.Sessions)
                     @if (_changesFor == s.Id)
                     {
                         <tr class="board-activity-tr">
-                            <td colspan="@(_isAdmin ? 7 : 6)">
+                            <td colspan="@(TeamView ? 7 : 6)">
                                 @* Review in words: what to change on the open proposed change. The AI continues on the same
                                    branch and pull request; "Fix the failing checks" fills this from the CI log. *@
                                 <div class="board-where board-changes">
@@ -901,8 +906,8 @@ else if (_tab == Tab.Sessions)
                                               placeholder="e.g. The second test is wrong: reload the page before checking the duplicate email."></textarea>
                                     <div class="board-failure-actions">
                                         <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="@(() => SendChanges(s))"
-                                             Disabled="@(_busyId == s.Id || string.IsNullOrWhiteSpace(_changesText))">Send to the AI</Btn>
-                                        <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => FixFailingChecks(s))" Disabled="@(_busyId == s.Id || _loadingChecks)">
+                                             Disabled="@(_busyId == s.Id || string.IsNullOrWhiteSpace(_changesText) || !Can(s.WorkspaceId, Permission.RunAgents))">Send to the AI</Btn>
+                                        <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => FixFailingChecks(s))" Disabled="@(_busyId == s.Id || _loadingChecks || !Can(s.WorkspaceId, Permission.RunAgents))">
                                             @(_loadingChecks ? "Reading the checks…" : "Fix the failing checks")
                                         </Btn>
                                     </div>
@@ -913,7 +918,7 @@ else if (_tab == Tab.Sessions)
                     @if (_filesFor == s.Id)
                     {
                         <tr class="board-activity-tr">
-                            <td colspan="@(_isAdmin ? 7 : 6)">
+                            <td colspan="@(TeamView ? 7 : 6)">
                                 <TicketFilesPanel TenantId="@_tenantId" ScopeKey="@TicketFileScope.ForTask(s.WorkspaceId, s.IssueNumber, s.Id)"
                                                   UploadedBy="@_userLabel" Note="Every run of this task gets them — the next one too." />
                             </td>
@@ -922,16 +927,16 @@ else if (_tab == Tab.Sessions)
                     @if (_designFor == s.Id)
                     {
                         <tr class="board-activity-tr">
-                            <td colspan="@(_isAdmin ? 7 : 6)">
+                            <td colspan="@(TeamView ? 7 : 6)">
                                 <DesignPanel TenantId="@_tenantId" SessionId="@s.Id" IssueNumber="@(s.IssueNumber ?? 0)"
-                                             CanDecide="@(_isAdmin || s.MemberUserId == _userId)" DecidedBy="@_userLabel" />
+                                             CanDecide="@CanDecide(s)" DecidedBy="@_userLabel" />
                             </td>
                         </tr>
                     }
                     @if (_activity.TryGetValue(s.Id, out var feed) && feed.Count > 0)
                     {
                         <tr class="board-activity-tr">
-                            <td colspan="@(_isAdmin ? 7 : 6)">
+                            <td colspan="@(TeamView ? 7 : 6)">
                                 <div class="board-activity">
                                     @foreach (var ev in feed.TakeLast(8))
                                     {
@@ -940,7 +945,7 @@ else if (_tab == Tab.Sessions)
                                             <span>@ev.Message</span>
                                         </div>
                                     }
-                                    @if (_isAdmin)
+                                    @if (Can(Permission.ViewAudit))
                                     {
                                         @* Governance: every tool the agent used on a member's computer is evidence (Settings › Activity log). *@
                                         <div class="board-failure-actions">
@@ -955,7 +960,7 @@ else if (_tab == Tab.Sessions)
                         </tr>
                     }
                 }
-                @if (_sessions.Count == 0) { <tr><td colspan="@(_isAdmin ? 7 : 6)" class="data-empty">No tasks yet. Open a project and pick "Work on this" on a ticket.</td></tr> }
+                @if (_sessions.Count == 0) { <tr><td colspan="@(TeamView ? 7 : 6)" class="data-empty">No tasks yet. Open a project and pick "Work on this" on a ticket.</td></tr> }
             </tbody>
         </table>
         </Panel>
@@ -1035,6 +1040,11 @@ else if (_tab == Tab.Sessions)
     // The task whose "Files for the AI" are open.
     private Guid? _filesFor;
     private bool _isAdmin;
+    // RBAC v2 (E1.2): tenant permissions + per-board access (PermissionMatrix). Every mutating handler re-checks with
+    // Demand/BoardDemand before acting (GAP-17: never UI-only); the markup only hides what the role can't do.
+    private Permission _perms;
+    private string[] _roles = [];
+    private WorkspaceAccessMap? _access;
 
     // ── Data ────────────────────────────────────────────────────────────────────────────────
     private IReadOnlyList<WorkspaceEntity>? _boards;
@@ -1107,6 +1117,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task DisconnectOffline(IReadOnlyList<RunnerEntity> offline)
     {
+        if (!Demand(Permission.RunAgents, "disconnect computers")) { return; }
         if (!_confirmOffline) { _confirmOffline = true; return; }
         _confirmOffline = false;
         _busy = true;
@@ -1267,6 +1278,8 @@ else if (_tab == Tab.Sessions)
             _userId = user.GetUserId() ?? "";
             _userLabel = string.IsNullOrWhiteSpace(user.Identity?.Name) ? _userId : user.Identity!.Name!;
             _isAdmin = user.IsAdmin();
+            _perms = user.GetPermissions();
+            _roles = [.. user.GetRoles()];
         }
         _resolved = true;
         // Deep-link from the Home app's "Start from idea": prefill the wizard's idea + open the Idea tab.
@@ -1316,18 +1329,66 @@ else if (_tab == Tab.Sessions)
         }
     }
 
+    /// <summary>True when the signed-in user holds <paramref name="permission"/> on <paramref name="boardId"/>
+    /// (tenant scope until the board access map has loaded).</summary>
+    private bool Can(Guid boardId, Permission permission) =>
+        _access is null ? _perms.Has(permission) : _access.Can(boardId, permission);
+
+    /// <summary>Tenant-scope check (computers, connecting boards, ideas).</summary>
+    private bool Can(Permission permission) => _perms.Has(permission);
+
+    /// <summary>Check on the open board (tenant scope when none is open).</summary>
+    private bool CanOnBoard(Permission permission) =>
+        _selectedBoard is { } b ? Can(b.Id, permission) : Can(permission);
+
+    private bool Demand(Permission permission, string what) => Refuse(Can(permission), what);
+
+    private bool Demand(Guid boardId, Permission permission, string what) => Refuse(Can(boardId, permission), what);
+
+    private bool BoardDemand(Permission permission, string what) => Refuse(CanOnBoard(permission), what);
+
+    // Who sees whose tasks: admins every task; viewers, approvers and auditors the tasks of every board they can see
+    // (reading and approving others' work is their job); developers (and legacy members) their own, as before E1.2.
+    private static readonly System.Collections.Frozen.FrozenSet<string> TeamRoles =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { UserRoles.Viewer, UserRoles.Approver, UserRoles.Auditor }, StringComparer.Ordinal);
+
+    private bool TeamView => _isAdmin || _roles.Any(TeamRoles.Contains) || (_access is not null && (_boards ?? []).Any(b => _access.RolesOn(b.Id).Any(TeamRoles.Contains)));
+
+    private bool TaskVisible(RemoteSessionEntity s) =>
+        _isAdmin || s.MemberUserId == _userId
+        || (_access is { } map && map.CanSee(s.WorkspaceId) && map.RolesOn(s.WorkspaceId).Any(TeamRoles.Contains));
+
+    // Design decisions (ADR-0016) need ApproveWork on the task's board. An approver decides anyone's task on it; a
+    // holder of ApproveWork without the approver role (legacy member) only their own — exactly as before E1.2.
+    private bool CanDecide(RemoteSessionEntity s) =>
+        Can(s.WorkspaceId, Permission.ApproveWork)
+        && (_isAdmin || s.MemberUserId == _userId || IsApproverOn(s.WorkspaceId));
+
+    private bool IsApproverOn(Guid boardId) =>
+        (_access?.RolesOn(boardId) ?? _roles).Contains(UserRoles.Approver, StringComparer.Ordinal);
+
+    private bool CanDecideFor(Guid sessionId) =>
+        (_sessions ?? []).FirstOrDefault(x => x.Id == sessionId) is { } s && CanDecide(s);
+
+    private bool Refuse(bool allowed, string what)
+    {
+        if (!allowed) { Toasts.Show("Board", $"Your role can't {what}. Ask an admin for a role that allows it.", ToastKind.Warn); }
+        return allowed;
+    }
+
     private async Task ReloadAll()
     {
         _loading = true;
         try
         {
-            _boards = await Workspaces.ListForTenantAsync(_tenantId);
+            _access = await Access.ForUserAsync(_tenantId, _roles, _userId);
+            _boards = [.. (await Workspaces.ListForTenantAsync(_tenantId)).Where(b => _access.CanSee(b.Id))];
 
             var allRunners = await Runners.ListForTenantAsync(_tenantId);
             _runners = _isAdmin ? allRunners : allRunners.Where(r => r.OwnerUserId == _userId).ToList();
 
             var allSessions = await Sessions.ListForTenantAsync(_tenantId);
-            _sessions = _isAdmin ? allSessions : allSessions.Where(s => s.MemberUserId == _userId).ToList();
+            _sessions = [.. allSessions.Where(TaskVisible)];
             _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
             _ = SyncMergedAsync();
         }
@@ -1349,7 +1410,7 @@ else if (_tab == Tab.Sessions)
         try
         {
             var all = await Sessions.ListForTenantAsync(_tenantId);
-            _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
+            _sessions = [.. all.Where(TaskVisible)];
             _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
             StateHasChanged();
             if (_sessions.All(s => s.Status != "Running"))
@@ -1425,7 +1486,7 @@ else if (_tab == Tab.Sessions)
         try
         {
             var all = await Sessions.ListForTenantAsync(_tenantId);
-            _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
+            _sessions = [.. all.Where(TaskVisible)];
             _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
         }
         // Best-effort; the next event or poll retries.
@@ -1525,6 +1586,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task AddRepo()
     {
+        if (!BoardDemand(Permission.ManageWorkspaces, "change this board's repositories")) { return; }
         if (_busy || _selectedBoard is null) { return; }
         if (string.IsNullOrWhiteSpace(_addRepoOwner) || string.IsNullOrWhiteSpace(_addRepoName))
         {
@@ -1560,6 +1622,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task RemoveRepo(WorkspaceRepoEntity repo)
     {
+        if (!BoardDemand(Permission.ManageWorkspaces, "change this board's repositories")) { return; }
         if (_selectedBoard is null) { return; }
         _busyId = repo.Id;
         try
@@ -1582,6 +1645,7 @@ else if (_tab == Tab.Sessions)
     // labels are skipped. Writes to real GitHub, so it surfaces scope/credential errors as toasts.
     private async Task SeedLabels(WorkspaceRepoEntity repo)
     {
+        if (!BoardDemand(Permission.ManageWorkspaces, "change this board's repositories")) { return; }
         if (_selectedBoard is null) { return; }
         _busyId = repo.Id;
         try
@@ -1636,6 +1700,7 @@ else if (_tab == Tab.Sessions)
     // constructs an LLM client and crashes the circuit (the documented eager-DI landmine).
     private async Task GenerateIdea()
     {
+        if (!Demand(Permission.RunAgents, "turn ideas into tickets")) { return; }
         if (_ideaBusy) { return; }
         if (string.IsNullOrWhiteSpace(_ideaText))
         {
@@ -1708,6 +1773,7 @@ else if (_tab == Tab.Sessions)
     // this is the autonomous idea→PRs path.
     private async Task CreateTickets(bool runReady)
     {
+        if (!Demand(Permission.RunAgents, "turn ideas into tickets")) { return; }
         if (_ideaBusy) { return; }
         var board = IdeaBoards().FirstOrDefault(b => b.Id.ToString() == _ideaBoardId);
         var repo = (_ideaRepos ?? Array.Empty<WorkspaceRepoEntity>()).FirstOrDefault(r => r.Id.ToString() == _ideaRepoId);
@@ -1840,6 +1906,7 @@ else if (_tab == Tab.Sessions)
     // pre-selecting the ticket's repo.
     private void OpenWorkDialog(BoardTicket ticket)
     {
+        if (!BoardDemand(Permission.RunAgents, "start work on a ticket")) { return; }
         if (ticket.RepoOwner is null || ticket.RepoName is null) { return; }
         _workTicket = ticket;
         _workRepoOptions.Clear();
@@ -1898,6 +1965,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task ConfirmWorkSession()
     {
+        if (!BoardDemand(Permission.RunAgents, "start work on a ticket")) { return; }
         if (_busy || _selectedBoard is null || _workTicket is null) { return; }
         if (NeedsPerson(_workTicket) && !_confirmPersonTicket) { return; }
         var selected = _workRepoOptions.Where(o => o.Selected).ToList();
@@ -2002,6 +2070,7 @@ else if (_tab == Tab.Sessions)
     // path, unattended). Shares PersistSessionAsync + RunSession with the single-ticket flow.
     private async Task RunAllReady()
     {
+        if (!BoardDemand(Permission.RunAgents, "start work on tickets")) { return; }
         if (_busy || _selectedBoard is null) { return; }
         var candidates = ReadyTickets();
         if (candidates.Count == 0)
@@ -2112,7 +2181,7 @@ else if (_tab == Tab.Sessions)
             }
             if (!changed) { return; }
             var all = await Sessions.ListForTenantAsync(_tenantId);
-            _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
+            _sessions = [.. all.Where(TaskVisible)];
             _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
             await InvokeAsync(StateHasChanged);
         }
@@ -2180,6 +2249,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task RunSession(RemoteSessionEntity session, string? changeRequest = null)
     {
+        if (!Demand(session.WorkspaceId, Permission.RunAgents, "run this task")) { return; }
         if (_busyId == session.Id) { return; }
         _busyId = session.Id;
         try
@@ -2191,7 +2261,7 @@ else if (_tab == Tab.Sessions)
                 case AgentOs.Web.Services.BoardTasks.TaskStart.Started:
                     _sessionRepos = await Sessions.ListAllReposForTenantAsync(_tenantId);
                     var all = await Sessions.ListForTenantAsync(_tenantId);
-                    _sessions = _isAdmin ? all : all.Where(s => s.MemberUserId == _userId).ToList();
+                    _sessions = [.. all.Where(TaskVisible)];
                     Toasts.Show("Board", $"Task #{session.IssueNumber} started — the AI is working on it. You can close this window.", ToastKind.Ok);
                     StartPolling();
                     break;
@@ -2231,6 +2301,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task RegisterRunner()
     {
+        if (!Demand(Permission.RunAgents, "connect a computer")) { return; }
         if (_busy) { return; }
         if (string.IsNullOrWhiteSpace(_runnerLabel))
         {
@@ -2274,6 +2345,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task RevokeRunner(RunnerEntity r)
     {
+        if (!Demand(Permission.RunAgents, "disconnect a computer")) { return; }
         _busyId = r.Id;
         try
         {
@@ -2299,6 +2371,7 @@ else if (_tab == Tab.Sessions)
     // The failure card's one button.
     private async Task OnFailureAction(RemoteSessionEntity s, AgentOs.Web.Services.TaskFailureAction action)
     {
+        if (!Demand(s.WorkspaceId, Permission.RunAgents, "act on this task")) { return; }
         switch (action)
         {
             case AgentOs.Web.Services.TaskFailureAction.ConnectAiAccount:
@@ -2356,6 +2429,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task SendChanges(RemoteSessionEntity s)
     {
+        if (!Demand(s.WorkspaceId, Permission.RunAgents, "ask for changes on this task")) { return; }
         var text = _changesText;
         if (string.IsNullOrWhiteSpace(text)) { return; }
         _changesFor = null;
@@ -2366,6 +2440,7 @@ else if (_tab == Tab.Sessions)
     // The checks of each open pull request of this task that failed, with the tail of their logs, as the request.
     private async Task FixFailingChecks(RemoteSessionEntity s)
     {
+        if (!Demand(s.WorkspaceId, Permission.RunAgents, "fix this task's checks")) { return; }
         var board = _boards?.FirstOrDefault(b => b.Id == s.WorkspaceId);
         if (board is null) { return; }
         _loadingChecks = true;
@@ -2414,6 +2489,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task TryTheApp(WorkspaceRepoEntity r)
     {
+        if (!BoardDemand(Permission.RunAgents, "run the app preview")) { return; }
         if (_selectedBoard is null) { return; }
         _previewBusy = r.Id;
         try { _previewAsk[r.Id] = await Previews.ReadRecipeAsync(_tenantId, _selectedBoard, r); }
@@ -2422,6 +2498,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task RunPreview(WorkspaceRepoEntity r, AgentOs.Domain.Preview.PreviewRecipe recipe)
     {
+        if (!BoardDemand(Permission.RunAgents, "run the app preview")) { return; }
         if (_selectedBoard is null) { return; }
         _previewAsk.Remove(r.Id);
         if (await Previews.StartAsync(_tenantId, _userId, _selectedBoard.Id, r, recipe) == AgentOs.Web.Services.Preview.PreviewStartResult.NoComputer)
@@ -2432,6 +2509,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task AskForRecipe(WorkspaceRepoEntity r)
     {
+        if (!BoardDemand(Permission.RunAgents, "run the app preview")) { return; }
         if (_selectedBoard is null) { return; }
         _previewBusy = r.Id;
         try
@@ -2584,6 +2662,7 @@ else if (_tab == Tab.Sessions)
     }
     private async Task SetAutopilot(WorkspaceEntity board, string mode)
     {
+        if (!Demand(board.Id, Permission.ManageWorkspaces, "switch Autopilot")) { return; }
         if (!await Workspaces.SetAutopilotForTenantAsync(_tenantId, board.Id, mode, _userId))
         {
             Toasts.Show("Board", "Couldn't change Autopilot — reload and try again.", ToastKind.Err);
@@ -2602,6 +2681,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task AutopilotNow(WorkspaceEntity board)
     {
+        if (!Demand(board.Id, Permission.ManageWorkspaces, "run Autopilot")) { return; }
         _busy = true;
         try
         {
@@ -2619,6 +2699,7 @@ else if (_tab == Tab.Sessions)
     // Agentic Testing on demand: the Testing agent checks the open change against the ticket's criteria on your computer.
     private async Task TestTask(RemoteSessionEntity s)
     {
+        if (!Demand(s.WorkspaceId, Permission.RunAgents, "test this task")) { return; }
         _busyId = s.Id;
         try
         {
@@ -2637,6 +2718,7 @@ else if (_tab == Tab.Sessions)
 
     private void StopSession(RemoteSessionEntity s)
     {
+        if (!Demand(s.WorkspaceId, Permission.RunAgents, "stop this task")) { return; }
         Toasts.Show("Board", StopRegistry.Stop(_tenantId, s.Id)
             ? $"Stopping task #{s.IssueNumber}… the AI finishes its current step and stops."
             : $"Task #{s.IssueNumber} isn't running here any more — refresh to see where it ended.",
@@ -2645,13 +2727,14 @@ else if (_tab == Tab.Sessions)
 
     private async Task CloseSession(RemoteSessionEntity s)
     {
+        if (!Demand(s.WorkspaceId, Permission.RunAgents, "close this task")) { return; }
         _busyId = s.Id;
         try
         {
             await Sessions.CloseForTenantAsync(_tenantId, s.Id, DateTimeOffset.UtcNow);
             Toasts.Show("Board", $"Closed '{s.Title}'.", ToastKind.Ok);
             var s0 = await Sessions.ListForTenantAsync(_tenantId);
-            _sessions = _isAdmin ? s0 : s0.Where(s => s.MemberUserId == _userId).ToList();
+            _sessions = [.. s0.Where(TaskVisible)];
         }
         catch (System.Net.Http.HttpRequestException ex) { Toasts.Show("Board", $"Close failed: {ex.Message}", ToastKind.Err); }
         catch (InvalidOperationException ex) { Toasts.Show("Board", $"Close failed: {ex.Message}", ToastKind.Err); }
@@ -2667,6 +2750,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task FindBoards()
     {
+        if (!Demand(Permission.ManageWorkspaces, "connect a board")) { return; }
         if (_findingBoards) { return; }
         if (string.IsNullOrWhiteSpace(_wsProjectOwner) || string.IsNullOrWhiteSpace(_wsToken))
         {
@@ -2712,6 +2796,7 @@ else if (_tab == Tab.Sessions)
 
     private async Task ConnectBoard()
     {
+        if (!Demand(Permission.ManageWorkspaces, "connect a board")) { return; }
         if (_busy) { return; }
         if (string.IsNullOrWhiteSpace(_wsName) || string.IsNullOrWhiteSpace(_wsProjectOwner)
             || string.IsNullOrWhiteSpace(_wsToken))
@@ -2744,7 +2829,8 @@ else if (_tab == Tab.Sessions)
                 Toasts.Show("Board", $"Connected '{_wsName.Trim()}'.", ToastKind.Ok);
                 _wsName = _wsProjectOwner = _wsNumberText = _wsProject = _wsToken = "";
                 _foundBoards = null;
-                _boards = await Workspaces.ListForTenantAsync(_tenantId);
+                _access = await Access.ForUserAsync(_tenantId, _roles, _userId);
+            _boards = [.. (await Workspaces.ListForTenantAsync(_tenantId)).Where(b => _access.CanSee(b.Id))];
             }
             else
             {

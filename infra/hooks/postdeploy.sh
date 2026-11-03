@@ -67,6 +67,23 @@ case "$code" in
   *)   echo "WARN: Could not ensure realm role platform-admin (HTTP $code)." ;;
 esac
 
+# 2c. RBAC v2 realm roles (E1.2): viewer / developer / approver / auditor. Same reason as 2b (no re-import); the hosts
+#     also create a missing one on first assignment, this just makes them visible in Keycloak from day one.
+ensure_role() {
+  local name="$1" desc="$2" rc
+  rc=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${auth[@]}" "$KC_URL/admin/realms/$REALM/roles" \
+    -d "$(jq -n --arg n "$name" --arg d "$desc" '{name:$n,description:$d}')")
+  case "$rc" in
+    201) echo "Realm role $name created." ;;
+    409) echo "Realm role $name already present." ;;
+    *)   echo "WARN: Could not ensure realm role $name (HTTP $rc)." ;;
+  esac
+}
+ensure_role viewer    "Read-only access to the tenant's work"
+ensure_role developer "Runs agents and works tickets"
+ensure_role approver  "Decides design checks and approvals"
+ensure_role auditor   "Read-only audit log and evidence"
+
 # 3. Seed users: rotate imported placeholder passwords
 rotate_user() {
   local username="$1" newpass="$2"

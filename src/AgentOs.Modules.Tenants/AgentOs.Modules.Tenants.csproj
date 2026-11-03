@@ -9,6 +9,8 @@
     <ProjectReference Include="..\AgentOs.Domain\AgentOs.Domain.csproj" />
     <ProjectReference Include="..\AgentOs.SharedKernel\AgentOs.SharedKernel.csproj" />
     <ProjectReference Include="..\AgentOs.Modules.Identity\AgentOs.Modules.Identity.csproj" />
+    <!-- RBAC v2: member management assigns board (workspace) memberships, stored by the Workspaces module. -->
+    <ProjectReference Include="..\AgentOs.Modules.Workspaces\AgentOs.Modules.Workspaces.csproj" />
   </ItemGroup>
 
   <ItemGroup>

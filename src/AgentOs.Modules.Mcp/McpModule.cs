@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using AgentOs.SharedKernel.Identity;
 
 namespace AgentOs.Modules.Mcp;
 
@@ -54,7 +55,7 @@ public sealed class McpModule : IModule, IEndpointModule, IInitializableModule
             .WithName("McpServers")
             .WithSummary("Configured upstream MCP servers + startup connection status")
             .WithTags("Mcp")
-            .RequireAuthorization("Admin");
+            .RequirePermission(Permission.ManageSettings);
     }
 
     public async Task InitializeAsync(IServiceProvider services, CancellationToken ct)

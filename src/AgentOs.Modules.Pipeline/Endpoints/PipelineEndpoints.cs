@@ -51,7 +51,7 @@ public static class PipelineEndpoints
         .Produces<RequirementSpec>()
         .ProducesValidationProblem()
         .ProducesProblem(StatusCodes.Status402PaymentRequired)
-        .RequireAuthorization();
+        .RequirePermission(Permission.RunAgents);
 
         app.MapPost("/code", async (CodeRequest? body, ICodingAgent agent, IBudgetGuard budget, ITenantContext tenant, CancellationToken ct) =>
         {
@@ -72,7 +72,7 @@ public static class PipelineEndpoints
         .Produces<CodeArtifact>()
         .ProducesValidationProblem()
         .ProducesProblem(StatusCodes.Status402PaymentRequired)
-        .RequireAuthorization();
+        .RequirePermission(Permission.RunAgents);
 
         app.MapPost("/test", async (TestRequest? body, ITestingAgent agent, IBudgetGuard budget, ITenantContext tenant, CancellationToken ct) =>
         {
@@ -93,7 +93,7 @@ public static class PipelineEndpoints
         .Produces<TestArtifact>()
         .ProducesValidationProblem()
         .ProducesProblem(StatusCodes.Status402PaymentRequired)
-        .RequireAuthorization();
+        .RequirePermission(Permission.RunAgents);
 
         app.MapPost("/qa", async (QaRequest? body, IQaAgent agent, IBudgetGuard budget, ITenantContext tenant, CancellationToken ct) =>
         {
@@ -114,7 +114,7 @@ public static class PipelineEndpoints
         .Produces<QaReport>()
         .ProducesValidationProblem()
         .ProducesProblem(StatusCodes.Status402PaymentRequired)
-        .RequireAuthorization();
+        .RequirePermission(Permission.RunAgents);
 
         app.MapPost("/pipeline", async (UserStory? body, IOrchestratorAgent orchestrator, CancellationToken ct) =>
         {
@@ -132,7 +132,7 @@ public static class PipelineEndpoints
         .Produces<PipelineResult>()
         .Produces<PipelineResult>(StatusCodes.Status500InternalServerError)
         .ProducesValidationProblem()
-        .RequireAuthorization();
+        .RequirePermission(Permission.RunAgents);
 
         // Phase 8 — Server-Sent Events stream of progress + final result.
         // Wire shape per event:   event: progress|result|error \n data: {json}\n\n
@@ -167,7 +167,7 @@ public static class PipelineEndpoints
         .WithSummary("KC4 — Streamed pipeline run. SSE events: progress | result | error")
         .WithTags("Agents")
         .ProducesValidationProblem()
-        .RequireAuthorization();
+        .RequirePermission(Permission.RunAgents);
 
         app.MapGet("/runs", async (IPipelineRunRepository repo, CancellationToken ct, int? limit, int? offset) =>
         {
@@ -180,7 +180,7 @@ public static class PipelineEndpoints
         .WithSummary("Pipeline run history (summaries, newest first). ?limit (≤500) and ?offset page through it.")
         .WithTags("History")
         .Produces<IReadOnlyList<PipelineRunSummary>>()
-        .RequireAuthorization();
+        .RequirePermission(Permission.ViewWork);
 
         app.MapGet("/runs/{id:guid}", async (Guid id, IPipelineRunRepository repo, CancellationToken ct) =>
         {
@@ -194,7 +194,7 @@ public static class PipelineEndpoints
         .WithTags("History")
         .Produces<PipelineRunRecord>()
         .Produces(StatusCodes.Status404NotFound)
-        .RequireAuthorization();
+        .RequirePermission(Permission.ViewWork);
 
         return app;
     }

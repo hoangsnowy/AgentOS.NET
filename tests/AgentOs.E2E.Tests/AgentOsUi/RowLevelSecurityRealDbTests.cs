@@ -21,6 +21,7 @@ public sealed class RowLevelSecurityRealDbTests
         "pipeline.pipeline_runs", "pipeline.run_metrics", "pipeline.orchestrations",
         "sessions.sessions", "sessions.session_repos", "sessions.runners", "sessions.ticket_files",
         "tools.tool_invocations", "workspaces.workspaces", "workspaces.workspace_repos", "workspaces.ticket_flows",
+        "workspaces.workspace_members",
     ];
 
     private static string? Conn =>

@@ -29,6 +29,7 @@ public sealed class TenantEndpointAuthorizationTests
         builder.Services.AddSingleton(Substitute.For<IEmailSender>());
         builder.Services.AddSingleton(Substitute.For<ITenantContext>());
         builder.Services.AddSingleton(Substitute.For<ITenantSignupService>());
+        builder.Services.AddSingleton(Substitute.For<AgentOs.Modules.Workspaces.Access.IWorkspaceMembershipStore>());
         var app = builder.Build();
         app.MapTenantEndpoints();
         return [.. ((IEndpointRouteBuilder)app).DataSources.SelectMany(d => d.Endpoints).OfType<RouteEndpoint>()];
@@ -44,18 +45,36 @@ public sealed class TenantEndpointAuthorizationTests
         var endpoint = Endpoints().Single(e => e.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == name);
         Policies(endpoint).ShouldContain("PlatformAdmin");
         Policies(endpoint).ShouldNotContain("Admin");
+        Policies(endpoint).ShouldNotContain(PermissionMatrix.Policy(Permission.ManageMembers));
     }
 
     [Fact]
     public void EveryTenantScopedAdminRoute_CarriesTheTenantInItsPath()
     {
-        // Routes a TENANT admin may call must be scoped by {tenantId} (checked against the caller's claim in the
-        // handler); an Admin-policy route without it would act across tenants.
+        // Routes a TENANT admin (or auditor) may call must be scoped by {tenantId} (checked against the caller's claim in
+        // the handler); a tenant-permission route without it would act across tenants. RBAC v2: those are the "perm:*"
+        // policies (and the legacy "Admin" one).
         var offenders = Endpoints()
-            .Where(e => Policies(e).Contains("Admin"))
+            .Where(e => Policies(e).Any(p => p == "Admin" || p?.StartsWith(PermissionMatrix.PolicyPrefix, System.StringComparison.Ordinal) == true))
             .Where(e => !e.RoutePattern.RawText!.Contains("{tenantId}", System.StringComparison.Ordinal))
             .Select(e => e.RoutePattern.RawText)
             .ToArray();
         offenders.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("TenantsListMembers", Permission.ManageMembers)]
+    [InlineData("TenantsUpdateMemberRoles", Permission.ManageMembers)]
+    [InlineData("TenantsRemoveMember", Permission.ManageMembers)]
+    [InlineData("TenantsInviteMember", Permission.ManageMembers)]
+    [InlineData("TenantsCreateInvitation", Permission.ManageMembers)]
+    [InlineData("TenantsSetBoardRole", Permission.ManageMembers)]
+    [InlineData("TenantsRemoveBoardRole", Permission.ManageMembers)]
+    [InlineData("TenantsListBoardMembers", Permission.ManageMembers)]
+    [InlineData("TenantsAudit", Permission.ViewAudit)]
+    public void MemberManagementRoutes_RequireTheirPermission(string name, Permission permission)
+    {
+        var endpoint = Endpoints().Single(e => e.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == name);
+        Policies(endpoint).ShouldContain(PermissionMatrix.Policy(permission));
     }
 }

@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using AgentOs.SharedKernel.Logging;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using AgentOs.SharedKernel.Identity;
 
 namespace AgentOs.Modules.Tenants.Keycloak;
 
@@ -107,14 +108,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
             var roleMappings = new List<object>(realmRoles.Count);
             foreach (var roleName in realmRoles)
             {
-                using var roleReq = BuildRequest(HttpMethod.Get, $"admin/realms/{_options.Realm}/roles/{Uri.EscapeDataString(roleName)}", token);
-                using var roleResp = await _http.SendAsync(roleReq, ct).ConfigureAwait(false);
-                if (!roleResp.IsSuccessStatusCode)
-                {
-                    _logger.LogWarning("Keycloak role {Role} lookup failed: {Status}", LogSafe.Scrub(roleName), roleResp.StatusCode);
-                    continue;
-                }
-                var roleJson = await roleResp.Content.ReadFromJsonAsync<KeycloakRoleDto>(ct).ConfigureAwait(false);
+                var roleJson = await ResolveRoleAsync(roleName, token, ct).ConfigureAwait(false);
                 if (roleJson is null)
                 {
                     continue;
@@ -256,14 +250,7 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
         var toAdd = new List<object>();
         foreach (var roleName in desired.Where(d => !currentNames.Contains(d)))
         {
-            using var roleReq = BuildRequest(HttpMethod.Get, $"admin/realms/{_options.Realm}/roles/{Uri.EscapeDataString(roleName)}", token);
-            using var roleResp = await _http.SendAsync(roleReq, ct).ConfigureAwait(false);
-            if (!roleResp.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Keycloak role {Role} lookup failed: {Status}", roleName, roleResp.StatusCode);
-                continue;
-            }
-            var dto = await roleResp.Content.ReadFromJsonAsync<KeycloakRoleDto>(ct).ConfigureAwait(false);
+            var dto = await ResolveRoleAsync(roleName, token, ct).ConfigureAwait(false);
             if (dto is not null) { toAdd.Add(new { id = dto.Id, name = dto.Name }); }
         }
         if (toAdd.Count > 0)
@@ -278,6 +265,56 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
             }
         }
     }
+
+    // A realm imported before RBAC v2 (E1.2) lacks viewer/developer/approver/auditor — an existing realm is never
+    // re-imported. Assigning one of OUR managed roles therefore creates it on first use (idempotent: 409 = a concurrent
+    // create won), so a lab / prod realm self-heals without a manual step. Any other missing role is only logged.
+    private async Task<KeycloakRoleDto?> ResolveRoleAsync(string roleName, string token, CancellationToken ct)
+    {
+        var path = $"admin/realms/{_options.Realm}/roles/{Uri.EscapeDataString(roleName)}";
+        using (var roleReq = BuildRequest(HttpMethod.Get, path, token))
+        using (var roleResp = await _http.SendAsync(roleReq, ct).ConfigureAwait(false))
+        {
+            if (roleResp.IsSuccessStatusCode)
+            {
+                return await roleResp.Content.ReadFromJsonAsync<KeycloakRoleDto>(ct).ConfigureAwait(false);
+            }
+            if (roleResp.StatusCode != System.Net.HttpStatusCode.NotFound || !ManagedRoles.Contains(roleName, StringComparer.Ordinal))
+            {
+                _logger.LogWarning("Keycloak role {Role} lookup failed: {Status}", LogSafe.Scrub(roleName), roleResp.StatusCode);
+                return null;
+            }
+        }
+
+        using (var create = BuildRequest(HttpMethod.Post, $"admin/realms/{_options.Realm}/roles", token,
+            new { name = roleName, description = RoleDescription(roleName) }))
+        using (var createResp = await _http.SendAsync(create, ct).ConfigureAwait(false))
+        {
+            if (!createResp.IsSuccessStatusCode && createResp.StatusCode != System.Net.HttpStatusCode.Conflict)
+            {
+                _logger.LogWarning("Keycloak role {Role} could not be created: {Status}", LogSafe.Scrub(roleName), createResp.StatusCode);
+                return null;
+            }
+        }
+        _logger.LogInformation("Keycloak realm role {Role} created (RBAC v2)", LogSafe.Scrub(roleName));
+
+        using var again = BuildRequest(HttpMethod.Get, path, token);
+        using var againResp = await _http.SendAsync(again, ct).ConfigureAwait(false);
+        return againResp.IsSuccessStatusCode
+            ? await againResp.Content.ReadFromJsonAsync<KeycloakRoleDto>(ct).ConfigureAwait(false)
+            : null;
+    }
+
+    // ASCII only: a non-ASCII description made the Keycloak admin API return 400 (CLAUDE.md).
+    internal static string RoleDescription(string role) => role switch
+    {
+        UserRoles.Viewer => "Read-only access to the tenant's work",
+        UserRoles.Developer => "Runs agents and works tickets",
+        UserRoles.Approver => "Decides design checks and approvals",
+        UserRoles.Auditor => "Read-only audit log and evidence",
+        UserRoles.Admin => "Tenant administrator",
+        _ => "AgentOS.NET role",
+    };
 
     /// <inheritdoc />
     public async Task SendPasswordResetEmailAsync(string userId, CancellationToken ct = default)
@@ -411,7 +448,8 @@ public sealed class KeycloakAdminClient : IKeycloakAdminClient, IDisposable
     private static readonly string[] InviteActions = new[] { "UPDATE_PASSWORD", "VERIFY_EMAIL" };
     private static readonly string[] VerifyOnlyActions = new[] { "VERIFY_EMAIL" };
     private static readonly string[] VerifyOnlyResetActions = new[] { "UPDATE_PASSWORD" };
-    private static readonly string[] ManagedRoles = new[] { "admin", "member" };
+    // RBAC v2: the five roles + the legacy `member` alias — setting a user's roles revokes the managed ones not chosen.
+    private static readonly IReadOnlyList<string> ManagedRoles = UserRoles.Managed;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {

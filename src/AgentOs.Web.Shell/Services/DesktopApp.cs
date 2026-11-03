@@ -3,6 +3,8 @@
 // and render a desktop app. The host owns the actual catalog (built-in component types + plugin apps) and
 // exposes it through IAppRegistry; the shell only needs this record shape.
 
+using AgentOs.SharedKernel.Identity;
+
 namespace AgentOs.Web.Shell.Services;
 
 /// <summary>A launchable desktop application.</summary>
@@ -14,9 +16,13 @@ namespace AgentOs.Web.Shell.Services;
 /// <param name="W">Default window width.</param>
 /// <param name="H">Default window height.</param>
 /// <param name="Pinned">Whether the app appears in the dock + pinned grid.</param>
-/// <param name="AdminOnly">When true the app is only shown to users holding the tenant <c>admin</c> role.</param>
+/// <param name="AdminOnly">When true the app is only shown to tenant admins (kept for plugins; built-ins use
+/// <paramref name="Requires"/>). Treated as requiring <see cref="Permission.ManageSettings"/>.</param>
 /// <param name="ComponentType">The Blazor component the (app-agnostic) WindowHost renders via
 /// <c>DynamicComponent</c> — set for every app, built-in and plugin alike. The shell never names an app.</param>
+/// <param name="Color">Launcher tile colour.</param>
+/// <param name="Requires">RBAC v2: the permission (PermissionMatrix) a user needs to see and open the app;
+/// <see cref="Permission.None"/> = every signed-in user.</param>
 public sealed record DesktopApp(
     string Key,
     string Title,
@@ -28,4 +34,12 @@ public sealed record DesktopApp(
     bool Pinned = true,
     bool AdminOnly = false,
     System.Type? ComponentType = null,
-    string Color = "#3584e4");
+    string Color = "#3584e4",
+    Permission Requires = Permission.None)
+{
+    /// <summary>The permission this app needs, folding the legacy <see cref="AdminOnly"/> flag in.</summary>
+    public Permission Required => Requires != Permission.None ? Requires : AdminOnly ? Permission.ManageSettings : Permission.None;
+
+    /// <summary>True when a user granted <paramref name="granted"/> may see and open the app.</summary>
+    public bool IsVisibleTo(Permission granted) => Required == Permission.None || granted.Has(Required);
+}

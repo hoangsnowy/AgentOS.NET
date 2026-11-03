@@ -51,8 +51,10 @@ public static class ApiTokenFormat
     /// <summary>Every token starts with this.</summary>
     public const string Scheme = "aos_";
 
-    /// <summary>Roles a token may hold.</summary>
-    public static IReadOnlyList<string> Roles { get; } = ["member", "admin"];
+    /// <summary>Roles a token may hold: the RBAC v2 roles (PermissionMatrix) plus the legacy <c>member</c> alias for
+    /// pre-E1.2 clients. Never platform-admin.</summary>
+    public static IReadOnlyList<string> Roles { get; } =
+        [.. AgentOs.SharedKernel.Identity.UserRoles.Assignable, AgentOs.SharedKernel.Identity.UserRoles.LegacyMember];
 
     private const string Base32 = "abcdefghijklmnopqrstuvwxyz234567";
 

@@ -3,6 +3,7 @@
 // host wires cookie + OIDC explicitly. No DbContext; tenant state lives in JWT/cookie claims.
 
 using System;
+using AgentOs.Modules.Identity.Authorization;
 using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
 using Microsoft.Extensions.Configuration;
@@ -21,8 +22,11 @@ public sealed class IdentityModule : IModule
         services.AddAuthorization(options =>
         {
             options.AddPolicy("Admin", policy => policy.RequireRole("admin"));
-            options.AddPolicy("Member", policy => policy.RequireRole("admin", "member"));
+            // RBAC v2 (E1.2): "Member" = any role of the tenant (ViewWork); writes use the "perm:*" policies.
+            options.AddPolicy("Member", policy => policy.RequirePermission(Permission.ViewWork));
             options.AddPolicy("PlatformAdmin", policy => policy.RequireRole(ClaimNames.PlatformAdminRole));
+            options.AddPermissionPolicies();
         });
+        services.AddRbac();
     }
 }

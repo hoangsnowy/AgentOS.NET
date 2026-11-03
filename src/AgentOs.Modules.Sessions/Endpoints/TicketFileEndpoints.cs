@@ -29,11 +29,12 @@ internal static class TicketFileEndpoints
     public static void MapTicketFileEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        var files = endpoints.MapGroup(Route).RequireAuthorization("Member");
+        var files = endpoints.MapGroup(Route).RequireAuthorization("Member")
+            .RequireWorkspacePermission("boardId", Permission.RunAgents);
         files.MapGet(string.Empty, ListAsync);
         files.MapGet("/{**path}", DownloadAsync);
-        files.MapPut("/{**path}", UploadAsync);
-        files.MapDelete("/{**path}", DeleteAsync);
+        files.MapPut("/{**path}", UploadAsync).RequirePermission(Permission.RunAgents);
+        files.MapDelete("/{**path}", DeleteAsync).RequirePermission(Permission.RunAgents);
     }
 
     /// <summary>A file as the API returns it (no content).</summary>

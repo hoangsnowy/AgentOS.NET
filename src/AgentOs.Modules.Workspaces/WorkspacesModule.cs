@@ -38,6 +38,8 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
         services.AddScoped<IWorkspaceConnector, WorkspaceConnector>();
         // A board's repositories for agents that see the whole board (the Autopilot lead reads their practices).
         services.AddScoped<AgentOs.Domain.Workspaces.IBoardRepos, WorkspaceBoardRepos>();
+        // RBAC v2 (E1.2): a user's permissions per board (realm roles + board memberships through PermissionMatrix).
+        services.AddScoped<AgentOs.SharedKernel.Identity.IWorkspaceAccess, Access.WorkspaceAccess>();
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (!string.IsNullOrWhiteSpace(connectionString))
@@ -49,6 +51,7 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
             services.AddNpgsqlConnectionFactory(connectionString);
             services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
             services.AddScoped<ITicketFlowStore, EfTicketFlowStore>();
+            services.AddScoped<Access.IWorkspaceMembershipStore, Access.EfWorkspaceMembershipStore>();
         }
         else
         {
@@ -63,6 +66,8 @@ public sealed class WorkspacesModule : IModule, IEndpointModule, IInitializableM
             services.AddSingleton<IWorkspaceRepository, NullWorkspaceRepository>();
             // The standalone Web keeps ticket flows in memory, so the Workflow › Ticket flow editor saves and reverts.
             services.AddSingleton<ITicketFlowStore, InMemoryTicketFlowStore>();
+            // Board memberships (RBAC v2) likewise live in memory, so Users › Board access works standalone.
+            services.AddSingleton<Access.IWorkspaceMembershipStore, Access.InMemoryWorkspaceMembershipStore>();
         }
     }
 

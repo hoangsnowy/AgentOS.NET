@@ -62,6 +62,7 @@
 
     private bool _isAdmin;
     private bool _isPlatformAdmin;
+    private Permission _granted;
     private string _tab = "general";
     // The tool-call view's filter from a deep link (SettingsLinks.MemberComputerToolCalls).
     private string? _evidenceOrigin;
@@ -69,36 +70,34 @@
     private string _filter = string.Empty;
     private int _filterGeneration;
 
-    private enum Access { Everyone, Admin, Platform }
-
     // Rail order, grouped. "Host" pages are components with their own padded .prefs-content (Settings, System).
     // "Hidden" pages stay routable (deep links, search) but have no rail entry of their own.
-    private sealed record Item(string Key, string Group, string Label, string Icon, Access Access, bool Host = false, bool Hidden = false);
+    private sealed record Item(string Key, string Group, string Label, string Icon, Gate Gate, bool Host = false, bool Hidden = false);
 
     private static readonly Item[] Items =
     [
-        new("keys",        "AI",            "Model keys",     "key",              Access.Admin, Host: true),
-        new("routing",     "AI",            "Routing",        "lightning",        Access.Admin, Host: true),
-        new("agents",      "AI",            "Agent profiles", "diamond",          Access.Admin),
-        new("prompts",     "AI",            "Prompts",        "file",             Access.Admin),
-        new("autopilot",   "AI",            "Autopilot",      "play",             Access.Admin),
-        new("github",      "Connections",   "GitHub",         "git-pull-request", Access.Admin, Host: true),
-        new("mcp",         "Connections",   "MCP servers",    "arrow-square-out", Access.Admin),
-        new("plugins",     "Connections",   "Plugins",        "squares-stack",    Access.Everyone),
-        new("policy",      "Governance",    "Tool policy",    "shield",           Access.Admin),
-        new("audit",       "Governance",    "Activity log",   "clock-counter",    Access.Admin),
-        new("evidence",    "Governance",    "Tool calls",     "scroll",           Access.Admin, Hidden: true),   // a view of Activity log
-        new("users",       "People & data", "Users",          "user",             Access.Admin),
-        new("tokens",      "People & data", "API tokens",     "tag",              Access.Admin),
-        new("data",        "People & data", "Data",           "floppy-disk",      Access.Admin),
-        new("general",     "Personal",      "General",        "gear",             Access.Everyone, Host: true),
-        new("appearance",  "Personal",      "Appearance",     "palette",          Access.Everyone, Host: true),
-        new("datetime",    "Personal",      "Date & time",    "clock",            Access.Everyone, Host: true),
-        new("notifs",      "Personal",      "Notifications",  "bell",             Access.Everyone, Host: true),
-        new("session",     "Personal",      "Session",        "power",            Access.Everyone, Host: true),
-        new("about",       "System",        "About",          "info",             Access.Everyone, Host: true),
-        new("diagnostics", "System",        "Diagnostics",    "circle-fill",      Access.Admin, Host: true),
-        new("platform",    "System",        "Platform",       "server",           Access.Platform),
+        new("keys",        "AI",            "Model keys",     "key",              Gate.Of(Permission.ManageSettings), Host: true),
+        new("routing",     "AI",            "Routing",        "lightning",        Gate.Of(Permission.ManageSettings), Host: true),
+        new("agents",      "AI",            "Agent profiles", "diamond",          Gate.Of(Permission.ManageSettings)),
+        new("prompts",     "AI",            "Prompts",        "file",             Gate.Of(Permission.ManageSettings)),
+        new("autopilot",   "AI",            "Autopilot",      "play",             Gate.Of(Permission.ManageSettings)),
+        new("github",      "Connections",   "GitHub",         "git-pull-request", Gate.Of(Permission.ManageSettings), Host: true),
+        new("mcp",         "Connections",   "MCP servers",    "arrow-square-out", Gate.Of(Permission.ManageSettings)),
+        new("plugins",     "Connections",   "Plugins",        "squares-stack",    Gate.Everyone),
+        new("policy",      "Governance",    "Tool policy",    "shield",           Gate.Of(Permission.ManageSettings)),
+        new("audit",       "Governance",    "Activity log",   "clock-counter",    Gate.Of(Permission.ViewAudit)),
+        new("evidence",    "Governance",    "Tool calls",     "scroll",           Gate.Of(Permission.ViewAudit), Hidden: true),   // a view of Activity log
+        new("users",       "People & data", "Users",          "user",             Gate.Of(Permission.ManageMembers)),
+        new("tokens",      "People & data", "API tokens",     "tag",              Gate.Of(Permission.ManageApiTokens)),
+        new("data",        "People & data", "Data",           "floppy-disk",      Gate.Of(Permission.ExportData)),
+        new("general",     "Personal",      "General",        "gear",             Gate.Everyone, Host: true),
+        new("appearance",  "Personal",      "Appearance",     "palette",          Gate.Everyone, Host: true),
+        new("datetime",    "Personal",      "Date & time",    "clock",            Gate.Everyone, Host: true),
+        new("notifs",      "Personal",      "Notifications",  "bell",             Gate.Everyone, Host: true),
+        new("session",     "Personal",      "Session",        "power",            Gate.Everyone, Host: true),
+        new("about",       "System",        "About",          "info",             Gate.Everyone, Host: true),
+        new("diagnostics", "System",        "Diagnostics",    "circle-fill",      Gate.Of(Permission.ManageSettings), Host: true),
+        new("platform",    "System",        "Platform",       "server",           Gate.Platform),
     ];
 
     protected override async Task OnInitializedAsync()
@@ -108,9 +107,11 @@
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
             _isPlatformAdmin = state.User.IsPlatformAdmin();
+            _granted = state.User.GetPermissions();
         }
-        // Admins land on Model keys (the first thing a new workspace needs); members on their own preferences.
-        _tab = _isAdmin ? "keys" : "general";
+        // Admins land on Model keys (the first thing a new workspace needs); auditors on the Activity log; everyone
+        // else on their own preferences.
+        _tab = _isAdmin ? "keys" : _granted.Has(Permission.ViewAudit) ? "audit" : "general";
         Apply(WM.ConsumeLaunchTab(SettingsLinks.AppKey));
         WM.Changed += OnWindowsChanged;
     }
@@ -135,12 +136,8 @@
 
     public void Dispose() => WM.Changed -= OnWindowsChanged;
 
-    private IEnumerable<Item> Allowed() => Items.Where(i => i.Access switch
-    {
-        Access.Admin => _isAdmin,
-        Access.Platform => _isPlatformAdmin,
-        _ => true,
-    });
+    // RBAC v2: a page shows only to who holds its permission (PermissionMatrix) — the page re-checks on its own too.
+    private IEnumerable<Item> Allowed() => Items.Where(i => i.Gate.Allows(_granted, _isPlatformAdmin));
 
     // The rail filter matches a page's label, or any setting / keyword SettingsSearch maps to that page.
     private IEnumerable<Item> VisibleItems()
@@ -148,7 +145,7 @@
         var q = _filter.Trim();
         if (q.Length == 0) { return Allowed().Where(i => !i.Hidden); }
         var catalog = Services.GetService<AgentOs.Domain.Configuration.ISettingsCatalog>();
-        var targets = SettingsSearch.Find(q, catalog?.All ?? [], _isAdmin, _isPlatformAdmin, max: 50)
+        var targets = SettingsSearch.Find(q, catalog?.All ?? [], _granted, _isPlatformAdmin, max: 50)
             .Select(h => h.Target).ToHashSet(StringComparer.Ordinal);
         return Allowed().Where(i => !i.Hidden && (targets.Contains(i.Key) || i.Label.Contains(q, StringComparison.OrdinalIgnoreCase)
             || (i.Key == "audit" && targets.Contains("evidence"))));

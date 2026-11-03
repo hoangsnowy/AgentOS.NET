@@ -157,6 +157,19 @@ function Sync-LabRealm {
                 "$kcAdmin/admin/realms/agentic/clients/$($client.id)" -Body ($client | ConvertTo-Json -Depth 20) | Out-Null
             Write-Host "Realm: agentic-web now accepts $WebUrl"
         }
+        # RBAC v2 (E1.2) realm roles — an existing lab realm never got them from the import.
+        $existing = @((Invoke-RestMethod -SkipCertificateCheck -Headers $headers "$kcAdmin/admin/realms/agentic/roles").name)
+        $rbacRoles = [ordered]@{
+            viewer    = "Read-only access to the tenant's work"
+            developer = 'Runs agents and works tickets'
+            approver  = 'Decides design checks and approvals'
+            auditor   = 'Read-only audit log and evidence'
+        }
+        foreach ($role in $rbacRoles.GetEnumerator() | Where-Object { $existing -notcontains $_.Key }) {
+            Invoke-RestMethod -SkipCertificateCheck -Method Post -Headers $headers -ContentType 'application/json' `
+                "$kcAdmin/admin/realms/agentic/roles" -Body (@{ name = $role.Key; description = $role.Value } | ConvertTo-Json) | Out-Null
+            Write-Host "Realm: role $($role.Key) created"
+        }
     } catch {
         Write-Warning "Could not sync the lab realm ($($_.Exception.Message)). Sign-in may fail until it is synced."
     }

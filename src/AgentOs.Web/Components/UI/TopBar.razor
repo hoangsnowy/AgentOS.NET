@@ -69,9 +69,13 @@
     @if (Dev.DevAutoLogin)
     {
         <div class="dd-sep"></div>
-        <button class="dd-item" @onclick="@(() => ViewAs("admin"))"><span class="dd-ic"><Icon Name="user" Size="14" /></span> View as: Admin (dev)</button>
-        <button class="dd-item" @onclick="@(() => ViewAs("member"))"><span class="dd-ic"><Icon Name="user" Size="14" /></span> View as: Member (dev)</button>
-        <button class="dd-item" @onclick="@(() => ViewAs("both"))"><span class="dd-ic"><Icon Name="user" Size="14" /></span> View as: Both (dev)</button>
+        @* RBAC v2: preview the desktop as each role (PermissionMatrix) without a second Keycloak user. *@
+        @foreach (var role in UserRoles.Assignable)
+        {
+            <button class="dd-item" @onclick="@(() => ViewAs(role))"><span class="dd-ic"><Icon Name="user" Size="14" /></span> View as: @UserRoles.Label(role) (dev)</button>
+        }
+        <button class="dd-item" @onclick="@(() => ViewAs("member"))"><span class="dd-ic"><Icon Name="user" Size="14" /></span> View as: Member, legacy (dev)</button>
+        <button class="dd-item" @onclick="@(() => ViewAs("both"))"><span class="dd-ic"><Icon Name="user" Size="14" /></span> View as: Everything (dev)</button>
     }
     <div class="dd-sep"></div>
     <button class="dd-item" @onclick="Lock"><span class="dd-ic"><Icon Name="lock" Size="14" /></span> Lock screen</button>

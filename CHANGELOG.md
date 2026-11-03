@@ -43,6 +43,9 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 - **UI-first configuration** ([ADR-0011](docs/adr/0011-ui-first-configuration.md)): one flat Settings rail
   with search, Agent profiles (pick a model, the provider follows), Model keys per provider with Test,
   Platform settings for platform admins, Autopilot settings and agent run time limits.
+- **RBAC v2** (E1.2): roles viewer · developer · approver · auditor · admin over one permission matrix in code,
+  enforced on every endpoint and in the desktop; per-board memberships (Users → Board access) restrict a board
+  to its members; an `IRoleClaimMapper` hook for IdP groups (E1.1).
 - **Enterprise basics.** API tokens / service accounts, tenant export + purge (Settings → Data), audit log of
   every settings and config write, workspace rules + versioned agent prompts, per-tenant run admission
   (concurrency + burst), scheduled runs (once or cron).
@@ -97,5 +100,8 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 ### Migration notes
 
 - None — there is no earlier tagged release to upgrade from.
+- RBAC v2: the `workspaces.workspace_members` table is added by the Workspaces module's migration at startup.
+  Existing `member` users keep their access (alias = developer + approver + manage boards); new invitations default
+  to `developer`. Existing Keycloak realms get the new roles from the deploy hooks or on first assignment.
 
 [Unreleased]: https://github.com/hoangsnowy/AgentOS.NET/commits/main

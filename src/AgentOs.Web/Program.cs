@@ -425,7 +425,7 @@ app.MapGet("/runner/version", (IHostEnvironment env, string? rid) =>
 // Tenant comes from the OIDC 'tenant' claim; admin-gated; `days` (0/absent = all time) sets the cutoff.
 app.MapGet("/cost/export", async (HttpContext http, AgentOs.Modules.Pipeline.Persistence.IPipelineRunRepository runs, int? days) =>
 {
-    if (!http.User.IsAdmin())
+    if (!http.User.Can(Permission.ExportData))
     {
         return Results.Forbid();
     }
@@ -443,7 +443,7 @@ app.MapGet("/cost/export", async (HttpContext http, AgentOs.Modules.Pipeline.Per
 app.MapGet("/tenant/export", async (HttpContext http, AgentOs.Modules.Tenants.Data.ITenantDataService data,
     AgentOs.Modules.Tenants.IAuditLog audit, ILoggerFactory loggers, string? tenant) =>
 {
-    if (!http.User.IsAdmin()) { return Results.Forbid(); }
+    if (!http.User.Can(Permission.ExportData)) { return Results.Forbid(); }
     var own = http.User.GetTenantId() ?? "default";
     var target = string.IsNullOrWhiteSpace(tenant) ? own : tenant;
     if (!string.Equals(target, own, StringComparison.Ordinal) && !http.User.IsPlatformAdmin()) { return Results.Forbid(); }
@@ -471,11 +471,11 @@ app.MapGet("/tenant/export", async (HttpContext http, AgentOs.Modules.Tenants.Da
 }).RequireAuthorization();
 
 // Audit CSV export (Settings → Audit log). Same-origin cookie-authed download like /cost/export. A tenant admin
-// exports their own tenant; scope=platform (platform settings changes) needs platform-admin.
+// exports their own tenant (ViewAudit: admin or auditor); scope=platform (platform settings changes) needs platform-admin.
 app.MapGet("/audit/export", async (HttpContext http, AgentOs.Modules.Tenants.IAuditLog audit, string? scope) =>
 {
     var platform = string.Equals(scope, "platform", StringComparison.Ordinal);
-    if (!http.User.IsAdmin() || (platform && !http.User.IsPlatformAdmin()))
+    if (!http.User.Can(Permission.ViewAudit) || (platform && !http.User.IsPlatformAdmin()))
     {
         return Results.Forbid();
     }
@@ -520,12 +520,12 @@ if (devAutoLogin)
         Results.Redirect(SafeLocalReturn(returnUrl)));
     app.MapGet("/account/logout", () => Results.Redirect("/"));
 
-    // Dev-only "View as": narrow the auto-login principal's roles to preview the member (or admin)
+    // Dev-only "View as": narrow the auto-login principal's roles to preview one RBAC v2 role (or the legacy member)
     // desktop without standing up a second Keycloak user. Writes the cookie DevAutoAuthHandler reads,
     // then reloads so the new principal takes effect. Available only because devAutoLogin is on.
     app.MapGet("/dev/view-as", (HttpContext ctx, string? role) =>
     {
-        if (role is "admin" or "member")
+        if (AgentOs.SharedKernel.Identity.UserRoles.IsAssignable(role) || role is "member")
         {
             ctx.Response.Cookies.Append(DevAutoAuthHandler.ViewAsCookie, role,
                 new Microsoft.AspNetCore.Http.CookieOptions

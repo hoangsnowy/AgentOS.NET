@@ -87,7 +87,7 @@
                     </div>
                 }
                 @* Every app this user may open, grouped by category (pinned first within each group). *@
-                @foreach (var group in AppCatalog.VisibleAll(_isAdmin).GroupBy(a => a.Category))
+                @foreach (var group in AppCatalog.VisibleAll(_granted).GroupBy(a => a.Category))
                 {
                     <div class="ko-section-row">
                         <span class="ko-section">@group.Key</span>
@@ -239,7 +239,7 @@
     private string _query = "";
     private int _searchGeneration;   // bump to get an empty search box (the input is uncontrolled)
     private string? _user;
-    private bool _isAdmin;
+    private Permission _granted;
     private ElementReference _searchRef;
     private bool _focusOnRender;
 
@@ -249,7 +249,7 @@
         if (AuthState is not null)
         {
             var state = await AuthState;
-            _isAdmin = state.User.IsAdmin();
+            _granted = state.User.GetPermissions();
             _isPlatformAdmin = state.User.IsPlatformAdmin();
         }
     }
@@ -356,7 +356,7 @@
         var q = _query.Trim();
         _results = string.IsNullOrEmpty(q)
             ? new()
-            : AppCatalog.VisibleAll(_isAdmin)
+            : AppCatalog.VisibleAll(_granted)
                 .Where(a => a.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
                          || a.Caption.Contains(q, StringComparison.OrdinalIgnoreCase)
                          || a.Category.Contains(q, StringComparison.OrdinalIgnoreCase))
@@ -365,8 +365,8 @@
         var catalog = Services.GetService<AgentOs.Domain.Configuration.ISettingsCatalog>();
         _settingHits = string.IsNullOrEmpty(q)
             ? []
-            : SettingsSearch.Find(q, catalog?.All ?? [], _isAdmin, _isPlatformAdmin);
-        _actionHits = string.IsNullOrEmpty(q) ? [] : ShellActions.Find(q, _isAdmin);
+            : SettingsSearch.Find(q, catalog?.All ?? [], _granted, _isPlatformAdmin);
+        _actionHits = string.IsNullOrEmpty(q) ? [] : ShellActions.Find(q, _granted);
     }
 
     private void OnSearchKey(KeyboardEventArgs e)
@@ -374,7 +374,7 @@
         if (e.Key == "Escape") { CloseStart(); }
         else if (e.Key == "Enter")
         {
-            var first = !string.IsNullOrWhiteSpace(_query) ? _results.FirstOrDefault() : AppCatalog.VisiblePinned(_isAdmin).FirstOrDefault();
+            var first = !string.IsNullOrWhiteSpace(_query) ? _results.FirstOrDefault() : AppCatalog.VisiblePinned(_granted).FirstOrDefault();
             if (first is not null) { Launch(first); }
             else if (!string.IsNullOrWhiteSpace(_query) && _actionHits.Count > 0) { _ = RunActionAsync(_actionHits[0]); }
             else if (!string.IsNullOrWhiteSpace(_query) && _settingHits.Count > 0) { OpenSetting(_settingHits[0]); }

@@ -107,7 +107,7 @@ else
         if (AuthState is not null)
         {
             var state = await AuthState;
-            _isAdmin = state.User.IsAdmin();
+            _isAdmin = state.User.Can(Permission.ExportData); // RBAC v2 re-check (PermissionMatrix)
             _isPlatformAdmin = state.User.IsPlatformAdmin();
             _tenantId = state.User.GetTenantId() ?? "default";
             _actor = state.User.Identity?.Name ?? "admin";

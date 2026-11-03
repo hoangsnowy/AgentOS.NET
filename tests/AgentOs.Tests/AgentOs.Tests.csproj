@@ -46,6 +46,8 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <!-- In-process HTTP host for endpoint authorization tests (RBAC v2: every role against every route). -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <!-- MTP reporting/coverage extensions (xunit.v3 4.0.0 runs on Microsoft.Testing.Platform).
          Every test project in a solution-wide run must understand the coverage / trx-report args,

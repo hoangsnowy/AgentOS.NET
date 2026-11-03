@@ -58,8 +58,8 @@ public sealed class DevAutoAuthHandler : AuthenticationHandler<AuthenticationSch
     /// including platform-admin (the standalone dev box is its own platform).</summary>
     private static string[] RolesFor(string? viewAs) => viewAs switch
     {
-        "admin" => ["admin"],
         "member" => ["member"],
+        { } role when AgentOs.SharedKernel.Identity.UserRoles.IsAssignable(role) => [role],
         _ => ["admin", "member", "platform-admin"],
     };
 }

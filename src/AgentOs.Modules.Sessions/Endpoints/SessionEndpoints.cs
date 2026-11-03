@@ -1,5 +1,6 @@
 // M3 — Sessions + Runners HTTP endpoints. Create a member × workspace session, list/get/close them;
-// register a runner (a paired dev machine) and revoke it. Auth: Member policy; tenant + member resolved
+// register a runner (a paired dev machine) and revoke it. Auth (RBAC v2): reads need ViewWork, writes RunAgents,
+// and a restricted board's sessions follow its memberships (IWorkspaceAccess); tenant + member resolved
 // from the token by ITenantContext.
 //
 // Secret handling: a runner's pairing token is generated server-side, its salted hash is persisted on
@@ -32,35 +33,46 @@ internal static class SessionEndpoints
         var sessions = endpoints.MapGroup("/sessions").RequireAuthorization("Member");
         sessions.MapGet(string.Empty, ListSessionsAsync);
         sessions.MapGet("/{id:guid}", GetSessionAsync);
-        sessions.MapPost(string.Empty, CreateSessionAsync);
-        sessions.MapPost("/{id:guid}/close", CloseSessionAsync);
+        sessions.MapPost(string.Empty, CreateSessionAsync).RequirePermission(Permission.RunAgents);
+        sessions.MapPost("/{id:guid}/close", CloseSessionAsync).RequirePermission(Permission.RunAgents);
 
         var runners = endpoints.MapGroup("/runners").RequireAuthorization("Member");
         runners.MapGet(string.Empty, ListRunnersAsync);
-        runners.MapPost(string.Empty, RegisterRunnerAsync);
-        runners.MapPost("/{id:guid}/revoke", RevokeRunnerAsync);
+        runners.MapPost(string.Empty, RegisterRunnerAsync).RequirePermission(Permission.RunAgents);
+        runners.MapPost("/{id:guid}/revoke", RevokeRunnerAsync).RequirePermission(Permission.RunAgents);
     }
 
     // ---- Sessions ----
 
-    private static async Task<IResult> ListSessionsAsync(ISessionRepository repo, CancellationToken ct, int? limit = null, int? offset = null)
+    private static async Task<IResult> ListSessionsAsync(
+        ISessionRepository repo, ITenantContext tenant, System.Security.Claims.ClaimsPrincipal user, CancellationToken ct,
+        int? limit = null, int? offset = null, [Microsoft.AspNetCore.Mvc.FromServices] IWorkspaceAccess? access = null)
     {
         var rows = await repo.ListAsync(limit ?? Page.DefaultLimit, offset ?? 0, ct).ConfigureAwait(false);
-        return Results.Ok(rows.Select(SessionDto.From).ToList());
+        // RBAC v2: a session on a restricted board is listed only to who may see that board.
+        var map = access is null ? null : await access.ForUserAsync(tenant.TenantId, user, ct).ConfigureAwait(false);
+        return Results.Ok(rows.Where(r => map?.CanSee(r.WorkspaceId) != false).Select(SessionDto.From).ToList());
     }
 
-    private static async Task<IResult> GetSessionAsync(Guid id, ISessionRepository repo, CancellationToken ct)
+    private static async Task<IResult> GetSessionAsync(
+        Guid id, ISessionRepository repo, ITenantContext tenant, System.Security.Claims.ClaimsPrincipal user, CancellationToken ct,
+        [Microsoft.AspNetCore.Mvc.FromServices] IWorkspaceAccess? access = null)
     {
         var row = await repo.GetAsync(id, ct).ConfigureAwait(false);
-        return row is null ? Results.NotFound() : Results.Ok(SessionDto.From(row));
+        if (row is null) { return Results.NotFound(); }
+        var map = access is null ? null : await access.ForUserAsync(tenant.TenantId, user, ct).ConfigureAwait(false);
+        // Not-found, not forbidden: a restricted board's sessions don't exist for an outsider.
+        return map?.CanSee(row.WorkspaceId) == false ? Results.NotFound() : Results.Ok(SessionDto.From(row));
     }
 
     private static async Task<IResult> CreateSessionAsync(
         CreateSessionRequest? request,
         ISessionRepository repo,
         ITenantContext tenant,
+        System.Security.Claims.ClaimsPrincipal user,
         TimeProvider clock,
-        CancellationToken ct)
+        CancellationToken ct,
+        [Microsoft.AspNetCore.Mvc.FromServices] IWorkspaceAccess? access = null)
     {
         if (request is null)
         {
@@ -81,6 +93,12 @@ internal static class SessionEndpoints
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);
+        }
+        // RBAC v2: the caller must be allowed to run agents ON THIS BOARD (a restricted board's membership decides).
+        if (access is not null
+            && !(await access.ForUserAsync(tenant.TenantId, user, ct).ConfigureAwait(false)).Can(request.WorkspaceId, Permission.RunAgents))
+        {
+            return Results.Forbid();
         }
 
         var entity = new RemoteSessionEntity
