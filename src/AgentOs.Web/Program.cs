@@ -22,6 +22,7 @@ using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
 using AgentOs.SharedKernel.Plugins;
 using AgentOs.Web.Components;
+using AgentOs.Web.Endpoints;
 using AgentOs.Web.Services;
 using AgentOs.Web.Shell.Services;
 using Microsoft.AspNetCore.Authentication;
@@ -313,6 +314,9 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+// GAP-19: one line per plugin — refused ones (SHA-256 not in Plugins:AllowedSha256) are warnings carrying the hash.
+PluginLoader.LogOutcomes(app.Services.GetRequiredService<IPluginCatalog>(), app.Logger);
+
 await app.Services.InitializeModulesAsync();
 
 // E0.1 / ADR-0012: Postgres row-level security (stage 1), after every module migrated. Each tenant-table
@@ -426,70 +430,9 @@ app.MapGet("/runner/version", (IHostEnvironment env, string? rid) =>
     return Results.Text(token);
 });
 
-// Cost CSV export for the admin Cost app. Mapped here on the Web (not via the API's MapModuleEndpoints)
-// so the Cost circuit can trigger a same-origin, cookie-authed browser download — like /runner/download.
-// Tenant comes from the OIDC 'tenant' claim; admin-gated; `days` (0/absent = all time) sets the cutoff.
-app.MapGet("/cost/export", async (HttpContext http, AgentOs.Modules.Pipeline.Persistence.IPipelineRunRepository runs, int? days) =>
-{
-    if (!http.User.IsAdmin())
-    {
-        return Results.Forbid();
-    }
-
-    var tenant = http.User.GetTenantId() ?? "default";
-    DateTimeOffset? since = days is > 0 ? DateTimeOffset.UtcNow.AddDays(-days.Value) : null;
-    var summary = await runs.GetCostSummaryForTenantAsync(tenant, since);
-    var bytes = System.Text.Encoding.UTF8.GetBytes(AgentOs.Modules.Pipeline.Cost.CostCsv.ToCsv(summary));
-    return Results.File(bytes, "text/csv", "agentos-cost.csv");
-}).RequireAuthorization();
-
-// Tenant data export (Settings → Data, E1.4): one JSON document of every row the tenant owns, secrets excluded,
-// streamed. A tenant admin exports their own tenant; ?tenant= another one needs platform-admin. Audited only once the
-// export has been written — a refused export (a secret column it can't safely redact) is a 409, not an audited success.
-app.MapGet("/tenant/export", async (HttpContext http, AgentOs.Modules.Tenants.Data.ITenantDataService data,
-    AgentOs.Modules.Tenants.IAuditLog audit, ILoggerFactory loggers, string? tenant) =>
-{
-    if (!http.User.IsAdmin()) { return Results.Forbid(); }
-    var own = http.User.GetTenantId() ?? "default";
-    var target = string.IsNullOrWhiteSpace(tenant) ? own : tenant;
-    if (!string.Equals(target, own, StringComparison.Ordinal) && !http.User.IsPlatformAdmin()) { return Results.Forbid(); }
-    if (!data.IsAvailable) { return Results.NotFound("No database in this run — nothing to export."); }
-    http.Response.ContentType = "application/json";
-    http.Response.Headers.ContentDisposition = $"attachment; filename=\"agentos-{target}-{DateTime.UtcNow:yyyyMMdd}.json\"";
-    try
-    {
-        await data.ExportAsync(target, http.Response.Body, http.RequestAborted);
-    }
-    catch (AgentOs.Modules.Tenants.Data.TenantExportRefusedException ex) when (!http.Response.HasStarted)
-    {
-        // Fail closed: the redaction check runs before the first byte, so nothing was sent. Detail stays in the log.
-        loggers.CreateLogger("TenantExport").LogWarning(ex, "Tenant export refused");
-        http.Response.Headers.ContentDisposition = default;
-        return Results.Problem(
-            title: "Export stopped",
-            detail: "The export was stopped before anything was written: a table that holds secrets has changed and can't be "
-                + "safely redacted yet. Nothing was exported. Ask your operator to update AgentOS.NET, then try again.",
-            statusCode: StatusCodes.Status409Conflict);
-    }
-    await audit.WriteAsync(new AgentOs.Modules.Tenants.AuditEntry(Guid.NewGuid(), target, http.User.Identity?.Name,
-        AgentOs.Modules.Tenants.AuditActions.TenantExported, $"export of {target}", null, null, DateTimeOffset.UtcNow), CancellationToken.None);
-    return Results.Empty;
-}).RequireAuthorization();
-
-// Audit CSV export (Settings → Audit log). Same-origin cookie-authed download like /cost/export. A tenant admin
-// exports their own tenant; scope=platform (platform settings changes) needs platform-admin.
-app.MapGet("/audit/export", async (HttpContext http, AgentOs.Modules.Tenants.IAuditLog audit, string? scope) =>
-{
-    var platform = string.Equals(scope, "platform", StringComparison.Ordinal);
-    if (!http.User.IsAdmin() || (platform && !http.User.IsPlatformAdmin()))
-    {
-        return Results.Forbid();
-    }
-    var tenant = platform ? AgentOs.Modules.Tenants.AuditScopes.Platform : http.User.GetTenantId() ?? "default";
-    var rows = await audit.ListAsync(tenant, 10_000);
-    var bytes = System.Text.Encoding.UTF8.GetBytes(AgentOs.Modules.Tenants.AuditCsv.ToCsv(rows));
-    return Results.File(bytes, "text/csv", platform ? "agentos-audit-platform.csv" : $"agentos-audit-{tenant}.csv");
-}).RequireAuthorization();
+// Same-origin, cookie-authed downloads for the admin apps: /cost/export, /tenant/export, /audit/export
+// (AgentOs.Web.Endpoints.ExportEndpoints). A sign-in without a tenant claim gets a 403 there (GAP-17).
+app.MapExportEndpoints();
 
 // VS Code browser-pairing: the approve page (/pair/vscode, OIDC-cookie authed) + the one-time code
 // exchange (/runner/pair/exchange). Mapped here on the Web — the extension and browser both target the
@@ -509,62 +452,8 @@ AgentOs.Modules.Sessions.Endpoints.DesignReviewEndpoints.MapDesignReviewEndpoint
 // there is no browser session to require here.
 app.MapHub<AgentOs.Modules.RemoteAgent.RemoteAgentHub>(AgentOs.Modules.RemoteAgent.RemoteAgentHub.Path);
 
-// OIDC challenge / sign-out — buttons in the UI hit these endpoints. /signin-oidc and
-// /signout-callback-oidc are owned by the OIDC middleware. In dev-auto-login mode there are no
-// Cookie/OIDC schemes, so these become simple redirects (the dev user is always signed in).
-// Only follow a returnUrl that is a local path (starts with a single '/'), never an absolute or
-// protocol-relative URL — otherwise /account/login?returnUrl=https://evil is an open redirect.
-static string SafeLocalReturn(string? url) =>
-    !string.IsNullOrEmpty(url) && url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal)
-        && !url.StartsWith("/\\", StringComparison.Ordinal)
-            ? url
-            : "/";
-
-if (devAutoLogin)
-{
-    app.MapGet("/account/login", (string? returnUrl) =>
-        Results.Redirect(SafeLocalReturn(returnUrl)));
-    app.MapGet("/account/logout", () => Results.Redirect("/"));
-
-    // Dev-only "View as": narrow the auto-login principal's roles to preview the member (or admin)
-    // desktop without standing up a second Keycloak user. Writes the cookie DevAutoAuthHandler reads,
-    // then reloads so the new principal takes effect. Available only because devAutoLogin is on.
-    app.MapGet("/dev/view-as", (HttpContext ctx, string? role) =>
-    {
-        if (role is "admin" or "member")
-        {
-            ctx.Response.Cookies.Append(DevAutoAuthHandler.ViewAsCookie, role,
-                new Microsoft.AspNetCore.Http.CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = true,
-                    SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax,
-                    Path = "/",
-                });
-        }
-        else
-        {
-            ctx.Response.Cookies.Delete(DevAutoAuthHandler.ViewAsCookie);
-        }
-        return Results.Redirect("/");
-    });
-}
-else
-{
-    app.MapGet("/account/login", (string? returnUrl) =>
-        Results.Challenge(
-            new AuthenticationProperties { RedirectUri = SafeLocalReturn(returnUrl) },
-            new[] { OpenIdConnectDefaults.AuthenticationScheme }));
-
-    // Shown only after a sign-in callback failed twice in a row (see AuthCookies.HandleRemoteFailureAsync).
-    app.MapGet("/account/signin-failed", (string? reason, string? returnUrl) => AuthCookies.FailedPage(reason, returnUrl))
-        .AllowAnonymous();
-
-    app.MapGet("/account/logout", () =>
-        Results.SignOut(
-            new AuthenticationProperties { RedirectUri = "/" },
-            new[] { CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme }));
-}
+// /account/login + /account/logout (POST with an antiforgery token — GAP-19) and the dev-only /dev/view-as.
+app.MapAccountEndpoints(devAutoLogin);
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

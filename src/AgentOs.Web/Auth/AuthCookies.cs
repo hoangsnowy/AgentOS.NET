@@ -100,8 +100,8 @@ internal static partial class AuthCookies
               :root { color-scheme: light dark; }
               body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 15px/1.5 "Inter", system-ui, sans-serif;
                      background: #f6f7f9; color: #1e1e1e; }
-              @media (prefers-color-scheme: dark) { body { background: #1e1e1e; color: #eee; } .card { background: #2a2a2a; border-color: #3a3a3a; } }
               .card { max-width: 440px; margin: 16px; padding: 28px; background: #fff; border: 1px solid #d7d7db; border-radius: 12px; }
+              @media (prefers-color-scheme: dark) { body { background: #1e1e1e; color: #eee; } .card { background: #2a2a2a; border-color: #3a3a3a; } }
               h1 { font-size: 18px; margin: 0 0 8px; } p { margin: 0 0 12px; } ul { margin: 0 0 16px 18px; padding: 0; }
               a.btn { display: inline-block; padding: 8px 16px; border-radius: 8px; background: #3584e4; color: #fff; text-decoration: none; }
             </style></head>

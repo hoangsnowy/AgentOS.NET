@@ -103,11 +103,25 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   through the GitHub API and refuses what the protection would refuse — also when the token could bypass it.
 - VS Code runner extension: `@vscode/vsce` 4.1.0 brings `@azure/msal-node` to 7.1.2, past the advisory on
   authorization-code-flow parameter disclosure (< 7.1.0; dev-only dependency).
+- Edge hardening (threat model GAP-05): forwarded headers are trusted only from loopback and the configured
+  ingress (`Hosting:TrustedNetworks` / `Hosting:TrustedProxies`); every link the server hands out — invitations,
+  VS Code pairing, the runner's hub URL — comes from `Hosting:PublicBaseUrl`, never the request `Host`; the hosts
+  answer only to that host name (or `AllowedHosts`); the runner refuses plain `http://` servers except localhost in
+  Development.
+- Authorization in the service, not only the UI (GAP-17): tenant purge checks platform-admin itself; a sign-in
+  without a tenant claim is refused instead of falling back to the `default` tenant.
+- Sign-out is a POST with an antiforgery token, the VS Code approve form is antiforgery-protected, and plugins load
+  only when their SHA-256 is listed in `Plugins:AllowedSha256` (GAP-19).
 
 ### Migration notes
 
-- None — there is no earlier tagged release to upgrade from. (Existing deployments: the `approver` realm role is
-  created by the azd post-deploy hook and the Helm realm job; a local realm imported before it needs the role added
-  through the Keycloak admin API, or its volume dropped.)
+- No tagged release to upgrade from, but existing deployments built from `main` need, before upgrading:
+  `Hosting__PublicBaseUrl` set to the desktop's `https://` URL on both hosts (outside Development they refuse to
+  start without it — the azd, compose and Helm templates now set it), the ingress ranges in
+  `Hosting__TrustedNetworks` if they are not the template defaults, `AllowedHosts` on the Api for any custom Api host
+  name, and the SHA-256 of every plugin in `Plugins__AllowedSha256` (an unlisted plugin is refused). See
+  [docs/CONFIG.md](docs/CONFIG.md#set-at-deploy-bootstrap).
+- The `approver` realm role (E1.5) is created by the azd post-deploy hook and the Helm realm job; a local realm
+  imported before it needs the role added through the Keycloak admin API, or its volume dropped.
 
 [Unreleased]: https://github.com/hoangsnowy/AgentOS.NET/commits/main

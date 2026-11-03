@@ -73,9 +73,11 @@ public sealed class {Name}Plugin : IAgentOsPlugin   // MUST have a public parame
 
 ### 4. Build + load
 
-`scripts/build-plugins.ps1` builds the sample and drops its DLL into `src/AgentOs.{Api,Web}/plugins/`.
-Extend it (or copy the pattern) to also build the new plugin, then restart the host — the loader
-(`AgentOs.SharedKernel.Plugins.PluginLoader`) discovers it and the **Plugins** desktop app lists it.
+`scripts/build-plugins.ps1` builds the sample, drops its DLL into `src/AgentOs.{Api,Web}/plugins/` and prints its
+SHA-256. Extend it (or copy the pattern) to also build the new plugin, **approve the hash** in `Plugins:AllowedSha256`
+(user-secrets / env var — an unapproved assembly is refused, GAP-19), then restart the host — the loader
+(`AgentOs.SharedKernel.Plugins.PluginLoader`) discovers it and the **Plugins** desktop app lists it (a refused one shows
+as *Refused* with the hash to approve).
 
 ## Notes / rules
 

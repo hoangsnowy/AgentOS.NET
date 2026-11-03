@@ -200,7 +200,15 @@ web
     .WithEnvironment("Email__SmtpHost", smtpHost)
     .WithEnvironment("Email__SmtpPort", smtpPort);
 
-if (!isPublish) { web.WaitFor(mailhog!); }
+if (!isPublish)
+{
+    web.WaitFor(mailhog!);
+    // GAP-05: links (invitations minted on the Api, runner pairing on the Web) point at the desktop's own origin — the
+    // same value the realm's redirect URIs are pinned to. Cloud: infra/*.tmpl.yaml set it from the ACA domain.
+    var webOrigin = stack.IsLab ? StackProfile.LabWebOrigin : $"https://localhost:{stack.Port(5180)}";
+    web.WithEnvironment("Hosting__PublicBaseUrl", webOrigin);
+    api.WithEnvironment("Hosting__PublicBaseUrl", webOrigin);
+}
 
 // Lab only: optional real LLM keys for live agent runs, seeded from the AppHost's user-secrets
 // (Lab:Claude:ApiKey, Lab:AzureOpenAi:ApiKey / :Endpoint — see docs/LAB.md). They become the platform seed

@@ -45,6 +45,7 @@
 @inject AgentOs.Web.Services.Preview.PreviewService Previews
 @inject ITicketFiles TicketFiles
 @inject NavigationManager Nav
+@inject AgentOs.SharedKernel.Hosting.PublicOrigin Origin
 @inject AgentOs.Web.Shell.Services.WindowManagerService WM
 @implements IDisposable
 
@@ -582,13 +583,13 @@ else if (_tab == Tab.Runners)
                 else
                 {
                     <p class="cred-readout-hint">On <strong>@_newRunnerLabel</strong>, open the AgentOS.NET helper folder and run this once — it connects the computer and remembers it:</p>
-                    <pre class="pair-command" data-testid="pair-command">AgentOs.RemoteAgent pair @Nav.BaseUri.TrimEnd('/') @_newRunnerCode</pre>
+                    <pre class="pair-command" data-testid="pair-command">AgentOs.RemoteAgent pair @PublicBase @_newRunnerCode</pre>
                     <p class="cred-readout-hint">Code <strong class="pair-code">@_newRunnerCode</strong> works once, for 10 minutes. This page turns to “connected” by itself.</p>
                 }
                 <details class="prefs-details">
                     <summary>Set it up by hand (advanced)</summary>
                     <p class="cred-readout-hint">Shown <strong>once</strong>. Set these on the computer, then start the helper:</p>
-                    <textarea readonly rows="2" aria-label="Manual pairing values">REMOTE_AGENT_HUB=@(Nav.BaseUri)hubs/remote-agent
+                    <textarea readonly rows="2" aria-label="Manual pairing values">REMOTE_AGENT_HUB=@(PublicBase)/hubs/remote-agent
 REMOTE_AGENT_ID=@_newRunner.Value.Id
 REMOTE_AGENT_TOKEN=@_newRunner.Value.Token</textarea>
                 </details>
@@ -1009,6 +1010,9 @@ else if (_tab == Tab.Sessions)
 
 @code {
     private enum Tab { Boards, Idea, Runners, Sessions, Log, Files, Autopilot, Knowledge }
+
+    // GAP-05: the server address a computer pairs to — Hosting:PublicBaseUrl; the circuit's own origin in Development only.
+    private string PublicBase => Origin.BaseUrl(Nav.BaseUri);
 
     /// <summary>Board deep-link tabs (WM.RequestLaunchTab("board", …)): the setup checklist's "Pair" → runners, etc.</summary>
     public static class LaunchTabs
@@ -2264,7 +2268,7 @@ else if (_tab == Tab.Sessions)
             _newRunner = (entity.Id, secret.Token);
             _newRunnerLabel = entity.Label;
             _newRunnerConnected = false;
-            _newRunnerCode = PairingCodes.IssueTypedCode(entity.Id, secret.Token, Nav.BaseUri + "hubs/remote-agent");
+            _newRunnerCode = PairingCodes.IssueTypedCode(entity.Id, secret.Token, PublicBase + "/hubs/remote-agent");
             _runnerLabel = "";
             _ = WatchForConnectionAsync(entity.Id);
             var r0 = await Runners.ListForTenantAsync(_tenantId);

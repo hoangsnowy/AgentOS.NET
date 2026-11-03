@@ -20,3 +20,12 @@ window.agentosShellKeys = {
         }
     }
 };
+
+// GAP-19: sign-out is a POST with an antiforgery token. App.razor renders the form (#agentos-signout) with the token;
+// Sign out / Lock submit it. Without the form (it should always be there) the GET page asks to confirm instead.
+window.agentosAccount = {
+    signOut: function () {
+        var form = document.getElementById('agentos-signout');
+        if (form) { form.submit(); } else { location.href = '/account/logout'; }
+    }
+};

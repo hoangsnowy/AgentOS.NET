@@ -10,7 +10,8 @@
 // Configure via environment variables:
 //   (none needed)       after `AgentOs.RemoteAgent pair <server> <code>` (Board › Computers › Connect this computer):
 //                       the credentials are saved for this OS user (RunnerCredentials.cs); the variables below override them
-//   REMOTE_AGENT_HUB    hub URL      (default https://localhost:5080/hubs/remote-agent)
+//   REMOTE_AGENT_HUB    hub URL      (default https://localhost:5080/hubs/remote-agent). Must be https:// — plain http:// is
+//                       refused (the token would travel unencrypted) except a loopback address with DOTNET_ENVIRONMENT=Development
 //   REMOTE_AGENT_ID     runner id    (the Guid returned by POST /runners)
 //   REMOTE_AGENT_TOKEN  pairing token (the plaintext returned ONCE by POST /runners)
 //   REMOTE_AGENT_CLI    default CLI-agent profile: "claude" | "codex" (default "claude"). The server can
@@ -128,7 +129,17 @@ if (args.Length > 0 && string.Equals(args[0], "pair", StringComparison.OrdinalIg
     }
     using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
     AgentOs.RemoteAgent.RunnerCredentials? paired;
-    try { paired = await AgentOs.RemoteAgent.RunnerCredentials.ExchangeAsync(http, args[1], args[2]).ConfigureAwait(false); }
+    try
+    {
+        paired = await AgentOs.RemoteAgent.RunnerCredentials.ExchangeAsync(
+            http, args[1], args[2], AgentOs.RemoteAgent.RunnerCredentials.IsDevelopment()).ConfigureAwait(false);
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.WriteLine($"[agent] Not pairing: {ex.Message}");
+        Environment.Exit(1);
+        return;
+    }
     catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
     {
         Console.WriteLine($"[agent] Could not reach {args[1]}: {ex.Message}");
@@ -149,6 +160,12 @@ var saved = AgentOs.RemoteAgent.RunnerCredentials.Load(credentialsPath);
 var hubUrl = Environment.GetEnvironmentVariable("REMOTE_AGENT_HUB") ?? saved?.HubUrl ?? "https://localhost:5080/hubs/remote-agent";
 var runnerId = Environment.GetEnvironmentVariable("REMOTE_AGENT_ID") ?? saved?.RunnerId ?? "";
 var token = Environment.GetEnvironmentVariable("REMOTE_AGENT_TOKEN") ?? saved?.Token ?? "";
+// GAP-05: never send the token over plain http:// (loopback in Development excepted) — see RunnerCredentials.InsecureReason.
+if (AgentOs.RemoteAgent.RunnerCredentials.InsecureReason(hubUrl, AgentOs.RemoteAgent.RunnerCredentials.IsDevelopment()) is { } insecureHub)
+{
+    Console.WriteLine($"[agent] Not connecting: {insecureHub}");
+    Environment.Exit(2);
+}
 
 var connection = new HubConnectionBuilder()
     .WithUrl(hubUrl, options =>
