@@ -299,7 +299,12 @@ start deletes those a crashed runner left. `REMOTE_AGENT_KEEP_RUNS` (keep every 
 keeping-for-a-follow-up off: a follow-up then starts in a fresh folder. `REMOTE_AGENT_KEEP_CONTAINERS=1` keeps the
 containers, networks and volumes a run's Aspire AppHost created (by default the runner removes them when the run ends —
 named volumes only when they were created during the run); `REMOTE_AGENT_KEEP_VOLUMES=1` keeps just the volumes
-([ADR-0018](adr/0018-runs-leave-nothing-behind.md)).
+([ADR-0018](adr/0018-runs-leave-nothing-behind.md)). A scoped run may reach only this computer over the network
+(localhost) plus its own tooling — git to GitHub / GitLab / Bitbucket / Azure DevOps or the cloned repository's own
+remotes, gh, the package managers. A self-hosted git server is added on the runner's computer with
+`REMOTE_AGENT_GIT_HOSTS=git.corp.local,gitea.lan` (an environment variable of the runner, like the others here — not a
+product setting); project skills may not pre-approve tools (`allowed-tools` / `hooks` frontmatter)
+([ADR-0019](adr/0019-skills-cannot-widen-a-runs-permissions.md)).
 
 ### Settings → Autopilot → Approvals (E1.5)
 

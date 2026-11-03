@@ -80,3 +80,6 @@ recorded. The comment in `IRemoteAgentBroker.cs` that claimed identical governan
 - Codex runs (no stream-json on the runner yet) and operator-customised `REMOTE_AGENT_ARGS` runs report no tool calls;
   a runner older than this change reports none either — the server simply records nothing for them.
 - Server-driven `runner_shell` calls (M4) are unchanged: they still go through `IToolGateway` before dispatch.
+- What the CLI's permissions stop on that computer was widened by one rule set in [ADR-0019](0019-skills-cannot-widen-a-runs-permissions.md):
+  a skill can't pre-approve tools for the run, and no shell command may send data to another computer. Those
+  refusals are reported like every other refused call (`Blocked by the AgentOS.NET runner: …`).
