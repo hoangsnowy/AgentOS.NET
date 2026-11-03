@@ -35,10 +35,9 @@ public static class ApiTokenScopes
     public static IReadOnlyList<string> Normalize(IEnumerable<string>? requested)
     {
         var highest = -1;
-        foreach (var raw in requested ?? [])
+        var scopes = (requested ?? []).Select(raw => raw?.Trim().ToLowerInvariant() ?? string.Empty).Where(s => s.Length > 0);
+        foreach (var scope in scopes)
         {
-            var scope = raw?.Trim().ToLowerInvariant() ?? string.Empty;
-            if (scope.Length == 0) { continue; }
             var rank = Rank(scope);
             if (rank < 0)
             {
