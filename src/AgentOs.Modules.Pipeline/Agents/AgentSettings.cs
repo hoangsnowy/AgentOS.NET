@@ -25,6 +25,12 @@ public sealed class AgentSettings : ISettingsContributor
     /// <summary>QA-loop iteration cap.</summary>
     public const string MaxIterations = "Pipeline:MaxIterations";
 
+    /// <summary>How long one specialist answer (a spec, a code step, a review, a decision) may take on a paired computer.</summary>
+    public const string AnswerTimeoutMinutes = "Agents:AnswerTimeoutMinutes";
+
+    /// <summary>Bounds of <see cref="AnswerTimeoutMinutes"/>.</summary>
+    public const int AnswerTimeoutMin = 1, AnswerTimeoutMax = 60;
+
     /// <summary>Largest output any current model accepts (Claude 5.x / GPT long-context: 128K). The per-model
     /// limit is enforced against the model catalog; this is the absolute ceiling.</summary>
     public const int MaxOutputTokensCeiling = 128_000;
@@ -79,6 +85,15 @@ public sealed class AgentSettings : ISettingsContributor
             Min = 1m,
             Max = 10m,
             Help = "How many Coding → Testing → QA rounds before the run stops.",
+        };
+
+        yield return new(AnswerTimeoutMinutes, SettingKind.WholeNumber, Category, "Answer time limit (minutes)")
+        {
+            DefaultValue = ((int)LlmRequest.AgentAnswerTimeout.TotalMinutes).ToString(CultureInfo.InvariantCulture),
+            Min = AnswerTimeoutMin,
+            Max = AnswerTimeoutMax,
+            Help = "How long one agent answer may take on a member's computer before it is stopped. Thinking models doing real "
+                + "work need several minutes; Board runs (Coding, Review, Testing) have their own limits under Autopilot.",
         };
     }
 

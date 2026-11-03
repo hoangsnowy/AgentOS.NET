@@ -161,7 +161,10 @@ with `REMOTE_AGENT_AUTONOMY=off`. With the runner paired, `RUN_AGENTOS_E2E_REAL=
 
 The runner keeps two lanes: work runs (scoped: clone, build, push — `REMOTE_AGENT_MAX_PARALLEL`, default 2) and
 answer-only runs such as a New idea spec or ticket split (`REMOTE_AGENT_MAX_ANSWERS`, default 2), so a person waiting on
-the screen never queues behind Autopilot's coding. Specialist answers get a 5-minute deadline (`LlmRequest.AgentAnswerTimeout`).
+the screen never queues behind Autopilot's coding. Specialist answers get the *Answer time limit* deadline
+(`Agents:AnswerTimeoutMinutes`, default 15 min, Settings › Agent profiles). A profile model claude can't serve (e.g.
+`gpt-4.1`) runs as `REMOTE_AGENT_CLAUDE_FALLBACK_MODEL` (default `sonnet`; empty = the CLI's own default) instead of
+silently becoming the machine's default model.
 
 ### Try the app on the lab
 

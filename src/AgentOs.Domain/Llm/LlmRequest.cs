@@ -46,9 +46,11 @@ public sealed record LlmRequest(
 {
     /// <summary>
     /// Deadline for one specialist answer (a spec, a ticket split, a review) on a paired computer: a CLI answer takes a
-    /// minute or two, more on a busy machine. Above the 120 s dispatch default, far below a coding run's budget.
+    /// minute or two, more on a busy machine — and a thinking model doing real Coding work in the Workflow pipeline
+    /// took over 5 minutes, so the old 5-minute cap killed it mid-answer (lab, 2026-11-04). The default of the
+    /// `Agents:AnswerTimeoutMinutes` setting; agents read the tenant's value per call.
     /// </summary>
-    public static readonly System.TimeSpan AgentAnswerTimeout = System.TimeSpan.FromMinutes(5);
+    public static readonly System.TimeSpan AgentAnswerTimeout = System.TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// Optional canonical agent role behind this request (<c>"Requirement"</c>/<c>"Coding"</c>/<c>"Testing"</c>/

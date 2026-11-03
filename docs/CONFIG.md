@@ -182,6 +182,11 @@ aliases); `Temperature` is hidden for models that reject sampling params; `MaxTo
   Knowledge) before they work.
 
 `Pipeline:MaxIterations` (QA-loop cap when a story sets no `NMax`) — default 3, range 1–10.
+`Agents:AnswerTimeoutMinutes` (*Answer time limit* in Agent profiles) — how long one specialist answer (a spec, a
+Workflow code step, a review, an Autopilot decision, a ticket split, a retrospective) may take on a member's computer
+before it is stopped — default 15, range 1–60, read per call. It was a hard-coded 5 minutes until a thinking model's
+Workflow Coding answers ran past it and were killed (lab, 2026-11-04). Board runs (Coding, Review, Testing) keep their
+own `Autopilot:*RunMinutes` limits.
 An unpriced model is charged at the fail-closed $15/$75 per 1M rate until added to `CostCalculator`.
 
 ### Settings → Autopilot

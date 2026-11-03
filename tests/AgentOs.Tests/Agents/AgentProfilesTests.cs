@@ -79,6 +79,35 @@ public sealed class AgentProfilesTests
         calls[^1].Request.Model.ShouldBe("claude-sonnet-5-5");
     }
 
+    // A thinking model's Coding answer ran past the old hard-coded 5-minute cap and was killed (lab, 2026-11-04): the
+    // deadline is a per-tenant setting now, read per call, bounded.
+    [Fact]
+    public async Task Agent_AnswerTimeout_ComesFromTheTenantSetting_PerCall_AndIsBounded()
+    {
+        var settings = Settings();
+        var (factory, calls) = RecordingFactory();
+        var agent = Agent(factory, new SettingsAgentProfiles(settings));
+
+        using (AmbientIdentity.Push("acme", "u1"))
+        {
+            await agent.RunAsync(new UserStory("Build a todo app"));
+            calls[^1].Request.Timeout.ShouldBe(LlmRequest.AgentAnswerTimeout);   // default
+            LlmRequest.AgentAnswerTimeout.ShouldBe(TimeSpan.FromMinutes(15));
+
+            (await settings.SetAsync(AgentSettings.AnswerTimeoutMinutes, "30", SettingScope.Tenant, "acme", "admin")).Ok.ShouldBeTrue();
+            await agent.RunAsync(new UserStory("Build a todo app"));               // same instance — next call
+            calls[^1].Request.Timeout.ShouldBe(TimeSpan.FromMinutes(30));
+        }
+        using (AmbientIdentity.Push("globex", "u2"))
+        {
+            await agent.RunAsync(new UserStory("Build a todo app"));
+            calls[^1].Request.Timeout.ShouldBe(LlmRequest.AgentAnswerTimeout);   // another tenant keeps the default
+        }
+
+        (await settings.SetAsync(AgentSettings.AnswerTimeoutMinutes, "500", SettingScope.Tenant, "acme", "admin")).Ok
+            .ShouldBeFalse();                                                     // above the descriptor's Max
+    }
+
     [Fact]
     public async Task Agent_TenantOverride_DoesNotLeakToAnotherTenant()
     {
