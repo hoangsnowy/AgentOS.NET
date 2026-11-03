@@ -545,9 +545,9 @@ internal static partial class ScopedWriteGuard
             if (CheckNodeOptions(a, cwd, ctx) is { } reason) { return reason; }
         }
         // CARGO_TARGET_DIR=<dir>: where cargo writes its build output — inside the run folder, like --target-dir.
-        foreach (var a in assignments.Where(a => a.Text.StartsWith("CARGO_TARGET_DIR=", StringComparison.OrdinalIgnoreCase)))
+        foreach (var dir in assignments.Where(a => a.Text.StartsWith("CARGO_TARGET_DIR=", StringComparison.OrdinalIgnoreCase))
+            .Select(a => a with { Text = a.Text["CARGO_TARGET_DIR=".Length..] }))
         {
-            var dir = a with { Text = a.Text["CARGO_TARGET_DIR=".Length..] };
             if (cwd is null) { return "CARGO_TARGET_DIR is set after a 'cd' to a computed folder."; }
             if (CheckPaths("CARGO_TARGET_DIR", [dir], cwd, ctx, record: false) is { } reason) { return reason; }
         }
