@@ -176,6 +176,12 @@ public sealed partial class ProjectOrchestrator(
                 repos = (await sessionsRepo.ListAllReposForTenantAsync(tenant, ct).ConfigureAwait(false)).ToLookup(r => r.SessionId);
             }
             await CloseSupersededAsync(board, pat, sessions, repos, sp, ct).ConfigureAwait(false);
+            // A maintainer answered a blocked task on its ticket: it runs again (and is no longer stuck for this pass).
+            if (await ResumeAnsweredAsync(board, mode, pat, tickets, sessions, repos, limits, sp, ct).ConfigureAwait(false))
+            {
+                sessions = (await sessionsRepo.ListForTenantAsync(tenant, ct).ConfigureAwait(false)).Where(s => s.WorkspaceId == board.Id).ToList();
+                repos = (await sessionsRepo.ListAllReposForTenantAsync(tenant, ct).ConfigureAwait(false)).ToLookup(r => r.SessionId);
+            }
 
             // Proposed changes: merged ones are recorded; open ones get their check state. Every task carries its
             // persisted fix rounds — the one counter the caps read, whichever engine sent the change back — and its

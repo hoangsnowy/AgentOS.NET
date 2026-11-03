@@ -136,7 +136,9 @@ internal sealed class SessionRepository : ISessionRepository
         {
             return false;
         }
+        var previous = row.Status;
         row.Status = status;
+        StampBlocked(row, previous);
         row.PrUrl = prUrl;
         row.Error = errorMessage;
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -223,6 +225,21 @@ internal sealed class SessionRepository : ISessionRepository
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
+    public async Task MarkTicketAnswerForTenantAsync(string tenantId, Guid sessionId, DateTimeOffset answeredAt, CancellationToken ct = default)
+    {
+        var session = await _db.Sessions.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.TenantId == tenantId, ct).ConfigureAwait(false);
+        if (session is null || session.TicketAnswerAtUtc >= answeredAt) { return; }
+        session.TicketAnswerAtUtc = answeredAt;
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    // A task that becomes Blocked (from anything else) is stamped then: a ticket answer must come after it.
+    internal static void StampBlocked(RemoteSessionEntity session, string? previousStatus)
+    {
+        if (session.Status == "Blocked" && previousStatus != "Blocked") { session.BlockedAtUtc = DateTimeOffset.UtcNow; }
+    }
+
     public async Task DecrementFixRoundsForTenantAsync(string tenantId, Guid sessionId, CancellationToken ct = default)
     {
         var session = await _db.Sessions.IgnoreQueryFilters()
@@ -264,6 +281,7 @@ internal sealed class SessionRepository : ISessionRepository
             return false;
         }
 
+        var previous = session.Status;
         session.Status = repos.Any(r => r.Status == "Failed") ? "Failed"
             : repos.Any(r => r.Status == "Blocked") ? "Blocked"   // QA gate refused the PR (plan 0.5)
             : repos.All(r => r.Status == "Merged") ? "Merged"               // every proposed change is in
@@ -272,6 +290,7 @@ internal sealed class SessionRepository : ISessionRepository
             : repos.All(r => r.Status is "Done" or "Merged" or "Accepted" or "Rejected" or "Reviewed" or "ChangesRequested") ? "Done"
             : "Running";
         if (session.Status == "Merged") { session.MergedAtUtc ??= DateTimeOffset.UtcNow; }
+        StampBlocked(session, previous);
 
         // Mirror the first PR + first error onto the parent for back-compat display.
         session.PrUrl = repos.FirstOrDefault(r => !string.IsNullOrEmpty(r.PrUrl))?.PrUrl;

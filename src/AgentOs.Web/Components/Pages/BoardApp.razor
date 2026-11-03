@@ -2317,6 +2317,10 @@ else if (_tab == Tab.Sessions)
                     WM.OpenApp(insights.Key, insights.Title, insights.Icon, insights.W, insights.H);
                 }
                 break;
+            case AgentOs.Web.Services.TaskFailureAction.AskForChanges:
+                // Autopilot waits for a decision: open this task's "What should the AI change?" panel (never close it).
+                if (_changesFor != s.Id) { ToggleChanges(s.Id); }
+                break;
             default:
                 await RunSession(s);
                 break;

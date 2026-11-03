@@ -102,6 +102,9 @@ public sealed class AutopilotSettings : ISettingsContributor
     /// agents read with its description; 0 = none.</summary>
     public const string TicketDiscussionCommentsKey = "Autopilot:TicketDiscussionComments";
 
+    /// <summary>Whether a task blocked for a person resumes when a maintainer answers on its ticket.</summary>
+    public const string ResumeOnTicketAnswerKey = "Autopilot:ResumeOnTicketAnswer";
+
     internal const int DefaultMaxParallel = 2;
     internal const int DefaultMaxParallelTests = 1;
     internal const int DefaultMaxFixRounds = 3;
@@ -173,6 +176,11 @@ public sealed class AutopilotSettings : ISettingsContributor
             "Try the app keeps the app running on your computer — also when the computer's AgentOS.NET connection restarts — until you press Stop, or until nobody has had it open for this long.");
         yield return Bound(TicketDiscussionCommentsKey, "Ticket comments the agents read",
             "How many of a ticket's newest comments the Coding, Reviewer, Testing and Designer agents read with its description. Comments by the repository's owner, members and collaborators count as decisions and win over the description (the newest one wins); other people's comments are context only. AgentOS.NET's own comments and bots are left out. 0 = the description only.");
+        yield return new(ResumeOnTicketAnswerKey, SettingKind.Boolean, Category, "Continue when a maintainer answers on the ticket")
+        {
+            DefaultValue = "true",
+            Help = "When a task waits for a person (its automatic fixes are used up) and the repository's owner, a member or a collaborator then comments on its ticket, Autopilot sends the task back to the AI with that comment — on the same branch and pull request, like Ask for changes. Each answer is used once. AgentOS.NET's own comments and bots never count.",
+        };
         yield return new(RecoverMissingReplyKey, SettingKind.Boolean, Category, "Ask again for a missing reply")
         {
             DefaultValue = "true",
@@ -209,6 +217,13 @@ public sealed class AutopilotSettings : ISettingsContributor
     {
         ArgumentNullException.ThrowIfNull(settings);
         return settings.GetBoolAsync(RecoverMissingReplyKey, tenantId, true, ct);
+    }
+
+    /// <summary>Whether a blocked task resumes on a maintainer's ticket answer (<see cref="ResumeOnTicketAnswerKey"/>), read now.</summary>
+    public static ValueTask<bool> ReadResumeOnTicketAnswerAsync(ISettings settings, string? tenantId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return settings.GetBoolAsync(ResumeOnTicketAnswerKey, tenantId, true, ct);
     }
 
     /// <summary>How many ticket comments the agents read (<see cref="TicketDiscussionCommentsKey"/>), read now and clamped.</summary>

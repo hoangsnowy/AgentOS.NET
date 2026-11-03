@@ -64,6 +64,10 @@ public interface ISessionRepository
     /// <summary>Record the ticket flow version the task runs (snapshot when Autopilot starts it; 0 = the built-in flow).</summary>
     Task SetTicketFlowVersionForTenantAsync(string tenantId, Guid sessionId, int version, CancellationToken ct = default) => Task.CompletedTask;
 
+    /// <summary>Record that Autopilot resumed the blocked task with the ticket's maintainer comments up to
+    /// <paramref name="answeredAt"/> (the newest one's time) — so the same answer never resumes it again. Never moves back.</summary>
+    Task MarkTicketAnswerForTenantAsync(string tenantId, Guid sessionId, DateTimeOffset answeredAt, CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>Delivery of the tenant's tasks merged since <paramref name="since"/> (null = all time).</summary>
     Task<DeliverySummary> GetDeliveryForTenantAsync(string tenantId, DateTimeOffset? since = null, CancellationToken ct = default) =>
         Task.FromResult(DeliverySummary.Empty);

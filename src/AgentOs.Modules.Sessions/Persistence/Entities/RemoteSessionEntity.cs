@@ -67,4 +67,13 @@ public sealed class RemoteSessionEntity
     // running that flow — through the MAF workflow and, after a restart, the step-by-step rules — even when the flow is
     // changed meanwhile. 0 = the built-in flow; null = a task started before ticket flows (it follows the current one).
     public int? TicketFlowVersion { get; set; }
+
+    // When the task last became "Blocked" (waiting for a person) — stamped by the status roll-up on the transition, so
+    // Autopilot only treats a maintainer's ticket comment written AFTER it as an answer. Null for a task never blocked
+    // (or blocked before this column existed).
+    public DateTimeOffset? BlockedAtUtc { get; set; }
+
+    // The newest maintainer comment on the ticket Autopilot already resumed the task with (its CreatedAt): an answer
+    // resumes a blocked task at most once, across restarts.
+    public DateTimeOffset? TicketAnswerAtUtc { get; set; }
 }

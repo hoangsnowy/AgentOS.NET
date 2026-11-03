@@ -22,6 +22,9 @@ public enum TaskFailureAction
     ReconnectGitHub,
     /// <summary>Insights › budget.</summary>
     RaiseSpendingLimit,
+    /// <summary>Board › Tasks › the task's "Ask for changes" panel: Autopilot used up its automatic fixes and waits for
+    /// a person's decision (which can also be a maintainer's answer on the ticket).</summary>
+    AskForChanges,
 }
 
 /// <summary>The explained failure: a short headline, one sentence of what to do, and the action button.</summary>
@@ -30,10 +33,35 @@ public sealed record TaskFailureInfo(string Kind, string Headline, string Advice
 /// <summary>Maps a stored task/repo error to <see cref="TaskFailureInfo"/>.</summary>
 public static class TaskFailure
 {
+    private const string NeedsDecision = "The AI needs your decision";
+
+    private const string DecisionHow =
+        "Read the latest review on the pull request, then tell the AI what to do here — or answer on the ticket and Autopilot picks it up.";
+
+    private const string TellTheAi = "Tell the AI what to do";
+
     private static readonly (string Kind, string[] Needles, string Headline, string Advice, TaskFailureAction Action, string Label)[] Rules =
     [
         ("stopped", ["Stopped — you pressed Stop", "Stopped by you"],
             "You stopped this task", "Nothing more will happen. Try again whenever you're ready.", TaskFailureAction.TryAgain, "Try again"),
+        // Autopilot used up its automatic fixes ("… — needs a person.", AutopilotPlanner + the MAF TicketWorkflow): nothing
+        // broke, a decision is missing. Before "tests"/"build", whose needles a reason could share.
+        ("needs-decision-conflicts", ["conflicts with its base after"],
+            NeedsDecision, "The change clashes with newer work, and the AI couldn't settle it by itself. " + DecisionHow,
+            TaskFailureAction.AskForChanges, TellTheAi),
+        ("needs-decision-checks", ["Checks still fail after", "Checks failed after"],
+            NeedsDecision, "The automated checks kept failing after the AI's fixes. " + DecisionHow, TaskFailureAction.AskForChanges, TellTheAi),
+        ("needs-decision-review", ["Code review still asks for changes after", "Code review asked for changes after"],
+            NeedsDecision, "The code review kept asking for changes after the AI's fixes. " + DecisionHow, TaskFailureAction.AskForChanges, TellTheAi),
+        ("needs-decision-acceptance", ["Acceptance testing still fails after", "Acceptance testing failed after"],
+            NeedsDecision, "The acceptance test kept failing after the AI's fixes. " + DecisionHow, TaskFailureAction.AskForChanges, TellTheAi),
+        ("needs-decision-design", ["Design review still asks for changes after", "Design review asked for changes after"],
+            NeedsDecision, "The design check kept asking for changes after the AI's fixes. " + DecisionHow, TaskFailureAction.AskForChanges, TellTheAi),
+        ("needs-decision-design-eye", ["The design needs a person's eye"],
+            NeedsDecision, "The design check wants a person to look at the screens. Approve the design in Design, or tell the AI what to change here — or answer on the ticket and Autopilot picks it up.",
+            TaskFailureAction.AskForChanges, TellTheAi),
+        ("needs-decision", ["needs a person"],
+            NeedsDecision, "The AI stopped after its automatic fixes. " + DecisionHow, TaskFailureAction.AskForChanges, TellTheAi),
         ("no-ai-account", ["API key configured", "Model keys", "LLM client init failed", "No API key"],
             "No AI account is connected", "Connect an AI account (Anthropic, OpenAI…) in Settings, then try again.",
             TaskFailureAction.ConnectAiAccount, "Connect an AI account"),
@@ -65,7 +93,7 @@ public static class TaskFailure
         "Your Claude or Codex plan is used up for now. Nothing is lost — Autopilot picks this up again after the reset, or try again then.",
         TaskFailureAction.TryAgain, "Try again");
 
-    private static readonly TaskFailureInfo Unknown =new("unknown", "The AI couldn't finish this task",
+    private static readonly TaskFailureInfo Unknown = new("unknown", "The AI couldn't finish this task",
         "See the details below. Trying again often works.", TaskFailureAction.TryAgain, "Try again");
 
     /// <summary>Explain <paramref name="error"/>; null/blank → null (nothing failed).</summary>
