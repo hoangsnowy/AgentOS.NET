@@ -132,6 +132,14 @@ else
     -s "description=Platform administrator - platform-wide settings for every tenant" >/dev/null
   echo "  role platform-admin created"
 fi
+# 4b. approver realm role (E1.5 approval policies).
+if kc get "roles/approver" -r "$REALM" >/dev/null 2>&1; then
+  echo "  role approver present"
+else
+  kc create roles -r "$REALM" -s name=approver \
+    -s "description=Tenant approver - approves or rejects plan, diff, pull request and merge steps" >/dev/null
+  echo "  role approver created"
+fi
 
 # 4b. RBAC v2 realm roles (E1.2) — viewer / developer / approver / auditor (the hosts also create one on first use).
 ensure_role() {

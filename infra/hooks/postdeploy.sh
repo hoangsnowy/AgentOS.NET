@@ -81,7 +81,7 @@ ensure_role() {
 }
 ensure_role viewer    "Read-only access to the tenant's work"
 ensure_role developer "Runs agents and works tickets"
-ensure_role approver  "Decides design checks and approvals"
+ensure_role approver  "Approves plan, diff, pull request and merge steps; decides design checks"
 ensure_role auditor   "Read-only audit log and evidence"
 
 # 3. Seed users: rotate imported placeholder passwords

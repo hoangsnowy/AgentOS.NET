@@ -40,8 +40,11 @@ public static class UserRoles
     /// <summary>Runs agents and works tickets.</summary>
     public const string Developer = "developer";
 
-    /// <summary>Decides human gates (design checks, approvals).</summary>
-    public const string Approver = "approver";
+    /// <summary>Decides human gates (design checks, approvals). The same realm role E1.5's approval policies check:
+    /// their gates (plan, diff, pull request, merge) need this role or admin explicitly
+    /// (<see cref="ClaimsPrincipalExtensions.CanApprove"/>) — the legacy <c>member</c> alias's ApproveWork covers design
+    /// checks on the member's own tasks only, as before E1.2.</summary>
+    public const string Approver = ClaimNames.ApproverRole;
 
     /// <summary>Read-only compliance: audit log + evidence.</summary>
     public const string Auditor = "auditor";

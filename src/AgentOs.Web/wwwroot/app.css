@@ -2813,6 +2813,27 @@ button.syn-live-tag:focus-visible { outline: 2px solid var(--accent); outline-of
 .design-checks { display: flex; flex-direction: column; gap: var(--space-2); }
 .design-checks-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-size: var(--fs-sm); }
 
+/* ===== Approvals (ApprovalsPanel.razor, Board › Tasks — E1.5) =====
+   One card per step the approval policy holds; state by Badge text + colour, never colour alone. Static — no motion. */
+.approvals { display: flex; flex-direction: column; gap: var(--space-2); }
+.approvals-hint { margin: 0; font-size: var(--fs-sm); }
+.approval-card {
+    display: flex; flex-direction: column; gap: var(--space-1);
+    padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--r-4); background: var(--bg-2);
+}
+.approval-card[data-status="Pending"] { border-color: var(--line-strong); }
+.approval-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.approval-title { margin: 0; color: var(--txt); overflow-wrap: anywhere; }
+.approval-meta { margin: 0; font-size: var(--fs-sm); display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.approval-link { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--accent); }
+.approval-link:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-1); }
+.approval-note {
+    margin: 0; padding: var(--space-1) var(--space-2); border-left: 2px solid var(--line-strong);
+    color: var(--txt-soft); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.approval-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1); }
+.approval-reject { display: flex; flex-direction: column; gap: var(--space-1); max-width: 80ch; }
+
 /* ===== Brand mark (BrandMark.razor) — the AgentOS.NET product icon =====
    An agent face on the accent squircle, in the character palette. Still at rest; blinks + waves its antenna once
    on hover (of the mark or the brand row around it). favicon.svg / the Keycloak tile are its static twins. */

@@ -79,7 +79,7 @@ try {
 $rbacRoles = [ordered]@{
     viewer    = "Read-only access to the tenant's work"
     developer = 'Runs agents and works tickets'
-    approver  = 'Decides design checks and approvals'
+    approver  = 'Approves plan, diff, pull request and merge steps; decides design checks'
     auditor   = 'Read-only audit log and evidence'
 }
 foreach ($role in $rbacRoles.GetEnumerator()) {

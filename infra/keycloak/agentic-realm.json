@@ -43,7 +43,7 @@
       { "name": "admin", "description": "Tenant administrator" },
       { "name": "viewer", "description": "Read-only access to the tenant's work" },
       { "name": "developer", "description": "Runs agents and works tickets" },
-      { "name": "approver", "description": "Decides design checks and approvals" },
+      { "name": "approver", "description": "Approves plan, diff, pull request and merge steps; decides design checks" },
       { "name": "auditor", "description": "Read-only audit log and evidence" },
       { "name": "member", "description": "Legacy tenant member - developer + approver + connect boards (RBAC v2)" },
       { "name": "platform-admin", "description": "Platform administrator - platform-wide settings for every tenant" }

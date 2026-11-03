@@ -25,6 +25,8 @@ public sealed class IdentityModule : IModule
             // RBAC v2 (E1.2): "Member" = any role of the tenant (ViewWork); writes use the "perm:*" policies.
             options.AddPolicy("Member", policy => policy.RequirePermission(Permission.ViewWork));
             options.AddPolicy("PlatformAdmin", policy => policy.RequireRole(ClaimNames.PlatformAdminRole));
+            // E1.5: approve or reject a step an approval policy holds (an admin may too).
+            options.AddPolicy("Approver", policy => policy.RequireRole(ClaimNames.ApproverRole, ClaimNames.AdminRole));
             options.AddPermissionPolicies();
         });
         services.AddRbac();

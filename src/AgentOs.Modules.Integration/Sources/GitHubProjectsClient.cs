@@ -359,6 +359,16 @@ internal static class GitHubProjectsClient
         return new BoardTicket(itemId, number, title, state, kind, repoOwner, repoName, url, labels, status, assignee);
     }
 
+    /// <summary>Mark draft pull request <paramref name="pullRequestNodeId"/> ready for review (GraphQL only — there is no
+    /// REST call). Throws on an HTTP/GraphQL error, like every call here.</summary>
+    public static async Task MarkReadyForReviewAsync(string token, string? host, string pullRequestNodeId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pullRequestNodeId);
+        const string mutation = "mutation($id:ID!){ markPullRequestReadyForReview(input:{pullRequestId:$id}){ pullRequest{ isDraft } } }";
+        await PostAsync(mutation, new { id = pullRequestNodeId }, token, host, ct,
+            forbiddenHint: "GitHub refused to mark the draft pull request ready — the token needs write access to pull requests.").ConfigureAwait(false);
+    }
+
     private static Uri GraphQlEndpoint(string? host)
     {
         if (string.IsNullOrWhiteSpace(host))

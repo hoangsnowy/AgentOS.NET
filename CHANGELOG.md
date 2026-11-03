@@ -62,6 +62,12 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
   and theme, Api, Web and optional Ollama, with the key ring certificate-wrapped and row-level security on by
   default. CI lints and templates the chart and runs a cold install plus an upgrade on kind.
 
+- **Approval policies** (E1.5). Per tenant and per project (Settings › Autopilot › Approvals): a person with the
+  new **Approver** role (or an admin) approves the plan, opening the pull request, the change and/or the merge on
+  **Board › Tasks › Approvals** — Approve, or Reject with a reason; who and when are recorded and audited
+  (`approval.decided`). Autopilot and the per-ticket MAF workflow wait at each gate and resume once approved;
+  optional draft pull requests.
+
 ### Changed
 
 - The dock is the MVP: Home · Board · Insights · Settings; Terminal and Files are Board tabs, and one
@@ -94,6 +100,10 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 - Keycloak member admin can use a least-privilege service-account client (`client_credentials`, only the
   user-management roles) instead of a master-realm admin password; outside Development the host refuses to
   start while any setting still holds the on-prem `CHANGE_ME` placeholder.
+- Repository safety (E1.5, threat-model GAP-18): approval gates fail closed (rejected, or nobody can approve, stops
+  the task — never assumed); no pull request from and no merge of the default branch (server + runner deny rules);
+  every merge reads the base branch's classic protection and rulesets, reviews, required checks and `CODEOWNERS`
+  through the GitHub API and refuses what the protection would refuse — also when the token could bypass it.
 - VS Code runner extension: `@vscode/vsce` 4.1.0 brings `@azure/msal-node` to 7.1.2, past the advisory on
   authorization-code-flow parameter disclosure (< 7.1.0; dev-only dependency).
 
@@ -102,6 +112,6 @@ Everything on `main` before the first tagged release. AgentOS.NET has not shippe
 - None — there is no earlier tagged release to upgrade from.
 - RBAC v2: the `workspaces.workspace_members` table is added by the Workspaces module's migration at startup.
   Existing `member` users keep their access (alias = developer + approver + manage boards); new invitations default
-  to `developer`. Existing Keycloak realms get the new roles from the deploy hooks or on first assignment.
+  to `developer`. Existing Keycloak realms get the new roles (incl. E1.5's `approver`) from the azd post-deploy hook, the Helm realm job, `lab.ps1`, or on first assignment.
 
 [Unreleased]: https://github.com/hoangsnowy/AgentOS.NET/commits/main

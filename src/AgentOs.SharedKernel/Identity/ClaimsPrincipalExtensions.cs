@@ -26,6 +26,10 @@ public static class ClaimNames
 
     /// <summary>Realm role for an ordinary tenant member.</summary>
     public const string MemberRole = "member";
+
+    /// <summary>Realm role that may approve or reject the steps an approval policy holds (plan, diff, pull request,
+    /// merge — E1.5). A tenant admin may approve too.</summary>
+    public const string ApproverRole = "approver";
 }
 
 /// <summary>Reads AgentOS.NET identity off a <see cref="ClaimsPrincipal"/>. The single source for the
@@ -52,4 +56,9 @@ public static class ClaimsPrincipalExtensions
     /// tenant <c>admin</c>, who only governs their own tenant.</summary>
     public static bool IsPlatformAdmin(this ClaimsPrincipal user)
         => user.IsInRole(ClaimNames.PlatformAdminRole);
+
+    /// <summary>True when the user may approve or reject a step held by an approval policy: the <c>approver</c> or the
+    /// <c>admin</c> realm role (E1.5).</summary>
+    public static bool CanApprove(this ClaimsPrincipal user)
+        => user.IsInRole(ClaimNames.ApproverRole) || user.IsInRole(ClaimNames.AdminRole);
 }

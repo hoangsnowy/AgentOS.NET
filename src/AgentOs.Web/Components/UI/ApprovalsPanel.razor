@@ -1,0 +1,225 @@
+@* ApprovalsPanel — the approval policy's held steps at the top of Board › Tasks (E1.5): one card per request (ticket, the
+   step it holds — plan, pull request, change, merge — what to look at, who asked and when), with Approve / Reject for a
+   person holding the approver or admin role. Every decision shows who made it and when (and is audited); a rejection
+   needs a reason, which stops the task with it. Waiting requests come first, then the latest decisions. Renders nothing
+   when there are none. A circuit has no HttpContext: the tenant and the person come in as parameters; the list refreshes
+   when a request is made or decided (ApprovalGateService.Changed) and at most every 30 seconds otherwise. *@
+
+@using AgentOs.Domain.Governance
+@using AgentOs.Web.Services.Approvals
+@using Microsoft.Extensions.DependencyInjection
+@implements IDisposable
+@inject IServiceScopeFactory Scopes
+@inject ApprovalGateService Approvals
+@inject AgentOs.Web.Shell.Services.ToastService Toasts
+
+@if (_requests.Count > 0)
+{
+    <Panel Title="Approvals">
+        <div class="approvals" data-testid="approvals">
+            <p class="muted approvals-hint">Steps your workspace's approval policy holds until someone with the Approver or Admin role decides (Settings › Autopilot › Approvals). Nothing goes ahead without an approval.</p>
+            @foreach (var r in _requests)
+            {
+                var headingId = $"approval-{r.Id:N}";
+                <article class="approval-card" @key="r.Id" aria-labelledby="@headingId" data-status="@r.Status" data-testid="approval-card">
+                    <div class="approval-head">
+                        <strong id="@headingId">#@r.IssueNumber · @ApprovalPolicy.Label(r.Gate)</strong>
+                        <Badge Variant="@Variant(r.Status)">@StatusLabel(r.Status)</Badge>
+                    </div>
+                    <p class="approval-title">@r.Title</p>
+                    <p class="muted approval-meta">
+                        @Explain(r.Gate)
+                        @if (!string.IsNullOrWhiteSpace(r.Link))
+                        {
+                            <a href="@r.Link" target="_blank" rel="noopener" class="approval-link">
+                                <Icon Name="arrow-square-out" Size="12" /> @LinkLabel(r)
+                            </a>
+                        }
+                    </p>
+                    <p class="muted approval-meta">
+                        Asked by @r.RequestedBy · <time datetime="@r.RequestedAtUtc.ToString("o")">@When(r.RequestedAtUtc)</time>
+                        @if (r.DecidedAtUtc is { } at)
+                        {
+                            <span> · @(r.Status == ApprovalStatus.Approved ? "Approved" : "Rejected") by <strong>@r.DecidedBy</strong> · <time datetime="@at.ToString("o")">@When(at)</time></span>
+                        }
+                    </p>
+                    @if (!string.IsNullOrWhiteSpace(r.Note))
+                    {
+                        <blockquote class="approval-note">@r.Note</blockquote>
+                    }
+                    @if (r.Status == ApprovalStatus.Pending)
+                    {
+                        @if (Actor.CanApprove)
+                        {
+                            <div class="approval-actions">
+                                <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Primary" OnClick="@(() => DecideAsync(r, approve: true))" Disabled="@(_busy == r.Id)"
+                                     aria-label="@($"Approve {ApprovalPolicy.Describe(r.Gate)} of #{r.IssueNumber}")" data-testid="approval-approve">
+                                    <Icon Name="check" Size="13" /> Approve
+                                </Btn>
+                                <Btn Size="Btn.ButtonSize.Sm" OnClick="@(() => ToggleReject(r.Id))" Disabled="@(_busy == r.Id)"
+                                     aria-expanded="@(_rejecting == r.Id ? "true" : "false")"
+                                     aria-label="@($"Reject {ApprovalPolicy.Describe(r.Gate)} of #{r.IssueNumber}")" data-testid="approval-reject">
+                                    <Icon Name="x" Size="13" /> Reject
+                                </Btn>
+                            </div>
+                            @if (_rejecting == r.Id)
+                            {
+                                var noteId = $"approval-note-{r.Id:N}";
+                                <div class="approval-reject">
+                                    <label for="@noteId"><strong>Why do you reject it?</strong></label>
+                                    <textarea id="@noteId" class="prefs-input" rows="3" @bind="_note" @bind:event="oninput"
+                                              placeholder="e.g. Not this sprint — and the migration must not drop the old column yet."></textarea>
+                                    <div class="approval-actions">
+                                        <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="@(() => DecideAsync(r, approve: false))"
+                                             Disabled="@(_busy == r.Id || string.IsNullOrWhiteSpace(_note))" data-testid="approval-reject-confirm">Reject and stop the task</Btn>
+                                    </div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <p class="muted approval-meta" role="status">Waiting for someone with the Approver or Admin role.</p>
+                        }
+                    }
+                </article>
+            }
+        </div>
+    </Panel>
+}
+
+@code {
+    /// <summary>The tenant (from the circuit's AuthenticationState).</summary>
+    [Parameter, EditorRequired] public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>Who is looking (and whether they may decide).</summary>
+    [Parameter, EditorRequired] public ApprovalActor Actor { get; set; } = new(string.Empty, string.Empty, false);
+
+    /// <summary>An admin sees every request of the workspace.</summary>
+    [Parameter] public bool IsAdmin { get; set; }
+
+    /// <summary>The tasks this person sees (a member's own) — an approver or admin sees every request regardless.</summary>
+    [Parameter] public IReadOnlyCollection<Guid> VisibleTasks { get; set; } = [];
+
+    /// <summary>Most decided requests listed under the waiting ones.</summary>
+    [Parameter] public int MaxDecided { get; set; } = 5;
+
+    private List<ApprovalRequest> _requests = [];
+    private string? _loadedFor;
+    private Guid? _busy;
+    private Guid? _rejecting;
+    private string _note = string.Empty;
+
+    protected override void OnInitialized() => Approvals.Changed += OnChanged;
+
+    public void Dispose() => Approvals.Changed -= OnChanged;
+
+    // Called off the circuit: marshal, and only for this tenant.
+    private void OnChanged(string tenantId)
+    {
+        if (!string.Equals(tenantId, TenantId, StringComparison.Ordinal)) { return; }
+        _ = InvokeAsync(async () =>
+        {
+            _loadedFor = null;
+            await LoadAsync();
+            StateHasChanged();
+        });
+    }
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var key = $"{TenantId}|{IsAdmin}|{Actor.CanApprove}|{VisibleTasks.Count}|{DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30}";
+        if (key == _loadedFor) { return; }
+        _loadedFor = key;
+        try
+        {
+            using var scope = Scopes.CreateScope();
+            if (scope.ServiceProvider.GetService<IApprovalStore>() is not { } store) { _requests = []; return; }
+            var visible = VisibleTasks as ISet<Guid> ?? VisibleTasks.ToHashSet();
+            var all = (await store.ListRecentAsync(TenantId, 100))
+                .Where(r => IsAdmin || Actor.CanApprove || visible.Contains(r.SessionId))
+                .ToList();
+            _requests = all.Where(r => r.Status == ApprovalStatus.Pending).OrderBy(r => r.RequestedAtUtc)
+                .Concat(all.Where(r => r.Status != ApprovalStatus.Pending).OrderByDescending(r => r.DecidedAtUtc).Take(MaxDecided))
+                .ToList();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException)
+        {
+            _requests = [];
+        }
+    }
+
+    private void ToggleReject(Guid id)
+    {
+        _rejecting = _rejecting == id ? null : id;
+        _note = string.Empty;
+    }
+
+    private async Task DecideAsync(ApprovalRequest request, bool approve)
+    {
+        _busy = request.Id;
+        try
+        {
+            var outcome = await Approvals.DecideAsync(TenantId, request.Id, approve, approve ? null : _note, Actor);
+            if (outcome.Request is { } stored)
+            {
+                var i = _requests.FindIndex(r => r.Id == stored.Id);
+                if (i >= 0) { _requests[i] = stored; }
+            }
+            if (outcome.Ok)
+            {
+                Toasts.Show("Approvals", approve
+                    ? $"Approved {ApprovalPolicy.Describe(request.Gate)} of #{request.IssueNumber}."
+                    : $"Rejected {ApprovalPolicy.Describe(request.Gate)} of #{request.IssueNumber} — the task stopped.",
+                    AgentOs.Web.Shell.Services.ToastKind.Ok);
+                _rejecting = null;
+                _note = string.Empty;
+            }
+            else
+            {
+                Toasts.Show("Approvals", outcome.Error ?? "The decision couldn't be recorded.", AgentOs.Web.Shell.Services.ToastKind.Err);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException or System.Net.Http.HttpRequestException)
+        {
+            Toasts.Show("Approvals", $"The decision couldn't be recorded: {ex.Message}", AgentOs.Web.Shell.Services.ToastKind.Err);
+        }
+        finally
+        {
+            _busy = null;
+        }
+    }
+
+    private static string Explain(ApprovalGate gate) => gate switch
+    {
+        ApprovalGate.Plan => "The Coding agent starts on this ticket once you approve.",
+        ApprovalGate.PullRequest => "The change is pushed; its pull request opens once you approve.",
+        ApprovalGate.Diff => "Read the change: nothing reviews, tests or merges it until you approve.",
+        ApprovalGate.Merge => "Checks, review and testing passed; it is merged once you approve.",
+        _ => string.Empty,
+    };
+
+    private static string LinkLabel(ApprovalRequest r) => r.Gate switch
+    {
+        ApprovalGate.Plan => "Open the ticket",
+        ApprovalGate.PullRequest => "Compare the branch",
+        _ => "Open the pull request",
+    };
+
+    private static string StatusLabel(ApprovalStatus status) => status switch
+    {
+        ApprovalStatus.Approved => "Approved",
+        ApprovalStatus.Rejected => "Rejected",
+        _ => "Waiting for approval",
+    };
+
+    private static Badge.BadgeVariant Variant(ApprovalStatus status) => status switch
+    {
+        ApprovalStatus.Approved => Badge.BadgeVariant.Ok,
+        ApprovalStatus.Rejected => Badge.BadgeVariant.Err,
+        _ => Badge.BadgeVariant.Info,
+    };
+
+    private static string When(DateTimeOffset at) => at.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture);
+}
