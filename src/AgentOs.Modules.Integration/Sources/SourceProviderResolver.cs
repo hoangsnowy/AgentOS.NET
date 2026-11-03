@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AgentOs.Domain.Workspaces;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -29,9 +30,9 @@ internal sealed class SourceProviderResolver : ISourceProviderResolver
         }
         if (scopes is null) { return; }
         var trackers = new Dictionary<SourceProviderKind, ISourceProvider>(_byKind);
-        foreach (var kind in new[] { SourceProviderKind.GitHub, SourceProviderKind.AzureDevOps })
+        foreach (var (kind, host) in trackers.Where(p => p.Key is SourceProviderKind.GitHub or SourceProviderKind.AzureDevOps))
         {
-            if (_byKind.TryGetValue(kind, out var host)) { _byKind[kind] = new TrackerRoutingSourceProvider(host, trackers, scopes, clock); }
+            _byKind[kind] = new TrackerRoutingSourceProvider(host, trackers, scopes, clock);
         }
     }
 

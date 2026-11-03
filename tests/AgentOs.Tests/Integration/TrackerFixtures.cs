@@ -194,12 +194,19 @@ internal sealed class RecordingHandler : HttpMessageHandler
         var url = request.RequestUri!;
         Requests.Add(new RecordedRequest(request.Method, url, request.Headers.Authorization?.ToString(),
             request.Content?.Headers.ContentType?.MediaType, body));
-        var route = _routes.FirstOrDefault(r => (r.Method is null || r.Method == request.Method) && url.ToString().Contains(r.UrlPart, StringComparison.Ordinal)
-            && (r.BodyPart is null || (body?.Contains(r.BodyPart, StringComparison.Ordinal) ?? false)));
+        var route = _routes.FirstOrDefault(r => Matches(r.Method, r.UrlPart, r.BodyPart));
         return route.UrlPart is null
             ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") }
             : new HttpResponseMessage(route.Status) { Content = new StringContent(route.Body, Encoding.UTF8, "application/json") };
+
+        bool Matches(HttpMethod? method, string urlPart, string? bodyPart) =>
+            MethodMatches(method, request.Method) && url.ToString().Contains(urlPart, StringComparison.Ordinal) && BodyMatches(bodyPart, body);
     }
+
+    private static bool MethodMatches(HttpMethod? wanted, HttpMethod actual) => wanted is null || wanted == actual;
+
+    private static bool BodyMatches(string? wanted, string? body) =>
+        wanted is null || (body?.Contains(wanted, StringComparison.Ordinal) ?? false);
 }
 
 /// <summary>An <see cref="IHttpClientFactory"/> handing out clients over one handler.</summary>

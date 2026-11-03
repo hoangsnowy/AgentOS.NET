@@ -154,12 +154,11 @@ internal sealed partial class AzureDevOpsBoardsClient
     {
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("workItems", out var items) || items.ValueKind != JsonValueKind.Array) { return []; }
-        var ids = new List<int>(items.GetArrayLength());
-        foreach (var item in items.EnumerateArray())
-        {
-            if (item.TryGetProperty("id", out var id) && id.TryGetInt32(out var n) && n > 0) { ids.Add(n); }
-        }
-        return ids.Take(MaxItems).ToList();
+        return items.EnumerateArray()
+            .Select(item => item.TryGetProperty("id", out var id) && id.TryGetInt32(out var n) ? n : 0)
+            .Where(n => n > 0)
+            .Take(MaxItems)
+            .ToList();
     }
 
     /// <summary>Pure parser for the batch work item read (<c>GET …/wit/workitems?ids=…</c>).</summary>
@@ -359,10 +358,7 @@ internal sealed partial class AzureDevOpsBoardsClient
             var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (identity.TryGetProperty("memberOf", out var memberOf) && memberOf.ValueKind == JsonValueKind.Array)
             {
-                foreach (var g in memberOf.EnumerateArray())
-                {
-                    if (Descriptor(g) is { Length: > 0 } descriptor) { groups.Add(descriptor); }
-                }
+                groups.UnionWith(memberOf.EnumerateArray().Select(Descriptor).OfType<string>().Where(d => d.Length > 0));
             }
             list.Add((id, groups));
         }

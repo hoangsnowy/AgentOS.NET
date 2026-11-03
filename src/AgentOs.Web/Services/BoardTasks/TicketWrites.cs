@@ -55,9 +55,9 @@ public static class TicketWrites
     {
         ArgumentNullException.ThrowIfNull(sp);
         ArgumentNullException.ThrowIfNull(board);
-        if (Tracker(board) is null || number is not > 0) { return Task.FromResult(false); }
-        return Safe(sp, board, number.Value, milestone == TicketMilestone.Started ? "move (started)" : "move (merged)", () => Provider(sp, board) is { } p
-            ? p.MoveTicketAsync(repo, number.Value, milestone, ct)
+        if (Tracker(board) is null || number is not { } n || n <= 0) { return Task.FromResult(false); }
+        return Safe(sp, board, n, milestone == TicketMilestone.Started ? "move (started)" : "move (merged)", () => Provider(sp, board) is { } p
+            ? p.MoveTicketAsync(repo, n, milestone, ct)
             : Task.FromResult(false));
     }
 
@@ -66,9 +66,9 @@ public static class TicketWrites
     {
         ArgumentNullException.ThrowIfNull(sp);
         ArgumentNullException.ThrowIfNull(board);
-        if (Tracker(board) is null || number is not > 0 || string.IsNullOrWhiteSpace(url)) { return Task.FromResult(false); }
-        return Safe(sp, board, number.Value, "link a pull request to", () => Provider(sp, board) is { } p
-            ? p.LinkPullRequestAsync(repo, number.Value, url, title, ct)
+        if (Tracker(board) is null || number is not { } n || n <= 0 || string.IsNullOrWhiteSpace(url)) { return Task.FromResult(false); }
+        return Safe(sp, board, n, "link a pull request to", () => Provider(sp, board) is { } p
+            ? p.LinkPullRequestAsync(repo, n, url, title, ct)
             : Task.FromResult(false));
     }
 

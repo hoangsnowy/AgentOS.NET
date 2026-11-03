@@ -31,7 +31,8 @@ public sealed class TrackerRoutingTests
         _github.Kind.Returns(SourceProviderKind.GitHub);
         _jira.Kind.Returns(SourceProviderKind.Jira);
         _trackers.GetAsync("t1", TrackedBoard, Arg.Any<CancellationToken>()).Returns(new TrackerConnection(TrackerFixtures.Jira, "jira-token"));
-        _trackers.GetAsync("t1", PlainBoard, Arg.Any<CancellationToken>()).Returns((TrackerConnection?)null);
+        TrackerConnection? none = null;
+        _trackers.GetAsync("t1", PlainBoard, Arg.Any<CancellationToken>()).Returns(none);
         _repos.RepoKeysAsync("t1", TrackedBoard, Arg.Any<CancellationToken>()).Returns(["octo/shop-api", "octo/shop-web"]);
         var services = new ServiceCollection().AddScoped(_ => _trackers).AddScoped(_ => _repos).BuildServiceProvider();
         return new SourceProviderResolver([_github, _jira], services.GetRequiredService<IServiceScopeFactory>());
