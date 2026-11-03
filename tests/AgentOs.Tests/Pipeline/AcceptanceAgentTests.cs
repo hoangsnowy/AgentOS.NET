@@ -73,7 +73,7 @@ public sealed class AcceptanceAgentTests
 
         s.ShouldContain("git checkout issue-4-ai-fix");
         s.ShouldContain("NEVER change");
-        s.ShouldContain("Never report \"pass\" for something you did not run");
+        s.ShouldContain("Never report \"pass\" for something neither you nor CI ran");
     }
 }
 
@@ -98,6 +98,23 @@ public sealed class AcceptanceBaseFailureTests
     {
         var r = new AcceptanceRequest(Guid.NewGuid(), "t", "m", new WorkRepo(Guid.NewGuid(), "o", "r", "main", "issue-11-ai-fix"), 11, "t", "b");
 
-        AcceptanceAgent.Instructions(r).ShouldContain("git worktree add ../base origin/main");
+        // In the run's temp folder — the write guard refuses ../ next to the checkout (VNChess #124's run hit that).
+        var text = AcceptanceAgent.Instructions(r);
+        text.ShouldContain("git worktree add \"$AGENTOS_RUN_TMP/base\" origin/main");
+        text.ShouldNotContain("git worktree add ../base");
+    }
+
+    [Fact]
+    public void Instructions_LetCiProveWhatThisComputerCannotRun()
+    {
+        var r = new AcceptanceRequest(Guid.NewGuid(), "t", "m", new WorkRepo(Guid.NewGuid(), "o", "r", "main", "issue-129-ai-fix"), 129, "t", "b");
+
+        var text = AcceptanceAgent.Instructions(r);
+
+        // Docker / scripts / external services: a passing CI job whose steps exercise the criterion is evidence (VNChess
+        // #129 reported its compose criteria "not-checked" although the PR's deploy smoke job ran them) — cited, never assumed.
+        text.ShouldContain("gh pr checks issue-129-ai-fix");
+        text.ShouldContain("whose steps really exercise that criterion PASSED");
+        text.ShouldContain("Never report \"pass\" for something neither you nor CI ran.");
     }
 }

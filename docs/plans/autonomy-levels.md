@@ -41,7 +41,11 @@ others learned. The board shows each ticket's phase (Discovery → Coding → Te
 3. ✅ (#244) **Acceptance agent.** What a human reviewer did by hand on the lab: read the ticket's criteria and the project's
    `docs/ACCEPTANCE.md`, run the unit tests, bring the stack up and run the Playwright specs, run data checks
    (e.g. the CBL corpus), and post the evidence on the PR. Pass → approve; fail → *Ask for changes* with the
-   findings.
+   findings. A criterion the member's computer can't run (Docker / `docker compose`, shell scripts, an external
+   service) may pass on the pull request's CI — only when a passing job's steps really exercise it, cited as
+   *"CI: workflow › job passed — file:line"*; otherwise it is `not-checked` (VNChess #129's deploy smoke job). A
+   failing test is compared with the default branch in a worktree in the run's temp folder (`$AGENTOS_RUN_TMP`), never
+   `../` next to the checkout, which the write guard refuses.
 3c. ✅ (#270) **One ticket = one MAF workflow.** The Autopilot Orchestrator agent decides which ticket starts; a
    Microsoft Agent Framework Workflow (`TicketWorkflow`) then runs it — Coding → checks → Reviewer → Testing → merge —
    with conditional edges back to Coding (red checks, conflicts, requested changes, failed acceptance; the same fix
