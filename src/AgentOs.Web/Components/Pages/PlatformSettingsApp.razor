@@ -29,6 +29,10 @@ else
     <Panel Title="Run limits (per tenant)">
         <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@LimitKeys" />
     </Panel>
+    <Panel Title="Request limits (per server)">
+        <p class="muted platform-hint">Each server (web desktop and API) counts requests per minute separately. Over a limit the server answers 429 with a Retry-After; health checks, static files and a desktop's live connection never count.</p>
+        <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@RequestLimitKeys" />
+    </Panel>
     <Panel Title="Build sandbox">
         <SettingsFields Area="Platform" TenantId="@_tenantId" Actor="@_actor" CanEditPlatform="true" Keys="@BuildKeys" />
     </Panel>
@@ -66,6 +70,8 @@ else
         AgentOs.Modules.Pipeline.Limits.RunLimitSettings.MaxConcurrent,
         AgentOs.Modules.Pipeline.Limits.RunLimitSettings.PerMinute,
     ];
+
+    private static readonly IReadOnlyList<string> RequestLimitKeys = AgentOs.ServiceDefaults.RequestRateLimitSettings.Keys;
 
     private static readonly string[] BuildKeys =
     [

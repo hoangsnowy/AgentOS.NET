@@ -459,9 +459,11 @@ tenant. Settings and keys are stored per `(tenant, key)` and always read for an 
 
 ## API
 
-Everything except `/`, `/health`, `/alive`, `/health/llm` and `/version` requires an authenticated
-principal: the Api validates a Keycloak bearer token; the Web uses a cookie session
-(`/account/login` → OIDC). The complete, always-current list is the **Scalar UI** at `/scalar/v1`.
+Every route requires an authenticated principal unless it is explicitly public (fallback policy): on the
+Api that is `/`, `/version`, `/health`, `/alive`, `POST /tenants/register`, `GET /tenants/invitations/preview`,
+the runner hub (it authenticates the runner itself) and, outside Production, `/openapi` + `/scalar`. The Api
+validates a Keycloak bearer token (RS256 only); the Web uses a cookie session (`/account/login` → OIDC). Both hosts
+rate-limit per tenant, per user and per anonymous client (Settings → Platform → Request limits). The complete, always-current list is the **Scalar UI** at `/scalar/v1`.
 The most used routes:
 
 | Method | Path | Auth | Description |
@@ -474,7 +476,8 @@ The most used routes:
 | `GET` `POST` `DELETE` | `/settings*` | Admin | Legacy runtime-config endpoint (see CONFIG.md) |
 | `POST` | `/llm/test` | signed in | Probe the configured provider with a minimal call |
 | — | `/mcp` | signed in | AgentOS.NET as an MCP server |
-| `GET`  | `/health` · `/alive` · `/health/llm` | none | Readiness, liveness, provider-key readiness |
+| `GET`  | `/health` · `/alive` | none | Readiness, liveness |
+| `GET`  | `/health/llm` | signed in | Provider-key readiness |
 
 ## Extending
 

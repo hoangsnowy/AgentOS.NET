@@ -3,6 +3,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using AgentOs.SharedKernel.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -102,6 +103,7 @@ public static class Extensions
                 .AddMeter("AgentOs.Tools") // evidence health (inline writes, lost rows, runner-reported refusals) + tool-output savings (ToolTelemetry.MeterName)
                 .AddMeter("AgentOs.Pipeline") // runs by outcome, run duration, budget refusals + utilization (PipelineTelemetry.MeterName)
                 .AddMeter(HealthMetricsPublisher.MeterName) // health check status per check (agentos.health.status)
+                .AddMeter(RequestRateLimitPolicy.MeterName) // 429s from the global request limiter (agentos.http.rate_limited)
                 .AddMeter("Npgsql")) // connection pool + command duration (db.client.*) — the Postgres side of the run SLOs
             .WithTracing(tracing => tracing
                 .AddAspNetCoreInstrumentation()
@@ -178,15 +180,16 @@ public static class Extensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
+        // Probes carry no credentials and must never be throttled (GAP-13 fallback policy / GAP-02 limiter).
         app.MapHealthChecks("/health", new HealthCheckOptions
         {
             ResponseWriter = HealthJsonWriter.WriteAsync,
-        });
+        }).AllowAnonymous().DisableRateLimiting();
         app.MapHealthChecks("/alive", new HealthCheckOptions
         {
             Predicate = r => r.Tags.Contains("live"),
             ResponseWriter = HealthJsonWriter.WriteAsync,
-        });
+        }).AllowAnonymous().DisableRateLimiting();
 
         return app;
     }

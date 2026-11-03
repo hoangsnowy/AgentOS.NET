@@ -396,6 +396,21 @@ reverted; a task records the version it started with (`sessions.sessions.TicketF
 (default `30`): admission for every Pipeline, Workflow and Quick run, so one tenant's burst or parallel load can't
 starve the others. Separate from the monthly budget cap, which still applies.
 
+**Request limits (per server)** — HTTP requests per minute, counted separately by the Web and the Api (in memory, per
+replica). Over a limit the host answers `429 Too Many Requests` with `Retry-After`, and the metric
+`agentos.http.rate_limited` counts it. Health / liveness, `/version`, static files and a desktop's live circuit
+(SignalR transport on an open connection, plus Blazor's `/_blazor/initializers` and `/_blazor/disconnect`
+housekeeping) never count; the page document and opening a circuit (`/_blazor/negotiate`) do — two per desktop load. A change applies
+on the next request (the limit is part of the bucket key), at the latest 30 s later on another host. In
+**Development** the built-in defaults are 10× higher (6000 / 2400 / 1200): the standalone desktop signs every browser in
+as one fixed dev user, so production-sized per-user buckets would throttle a UI E2E run.
+
+| Key | Default | Range | Notes |
+|---|---|---|---|
+| `Security:RateLimit:TenantRequestsPerMinute` | `600` | 10 – 1 000 000 | One workspace, all its users together. |
+| `Security:RateLimit:UserRequestsPerMinute` | `240` | 10 – 1 000 000 | One signed-in person or API token. |
+| `Security:RateLimit:AnonymousRequestsPerMinute` | `120` | 5 – 1 000 000 | One client IP that isn't signed in (sign-in, sign-up, invitation pages). |
+
 
 | Key | Default | Notes |
 |---|---|---|
