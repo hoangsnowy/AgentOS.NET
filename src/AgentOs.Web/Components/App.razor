@@ -7,8 +7,9 @@
     <base href="/" />
     <title>AgentOS.NET</title>
     <link rel="preconnect" href="https://rsms.me/" />
-    @* Webfont is non-blocking: first paint uses the system UI font, Inter swaps in when it arrives. *@
-    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" media="print" onload="this.media='all'" />
+    @* Webfont is non-blocking: first paint uses the system UI font, Inter swaps in when it arrives (page-boot.js flips
+       media — no inline onload, the CSP is script-src 'self'). *@
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" media="print" data-async-style />
     @* Local assets go through @Assets: fingerprinted URLs served with long-lived immutable caching by
        MapStaticAssets (precompressed in Release), instead of a revalidation round trip on every load. *@
     <ResourcePreloader />
@@ -41,8 +42,8 @@
             <div class="reconnect-sub reconnect-when-rejected">Reload the page to continue.</div>
 
             <div class="reconnect-actions">
-                <button class="reconnect-btn reconnect-when-failed" onclick="window.Blazor.reconnect()">Retry now</button>
-                <button class="reconnect-btn reconnect-when-rejected" onclick="location.reload()">Reload</button>
+                <button type="button" class="reconnect-btn reconnect-when-failed" data-reconnect="retry">Retry now</button>
+                <button type="button" class="reconnect-btn reconnect-when-rejected" data-reconnect="reload">Reload</button>
             </div>
         </div>
     </div>
@@ -52,6 +53,7 @@
        Sign out / Lock submit it through agentosAccount.signOut (AccountSignOut.SubmitAsync). *@
     <form id="agentos-signout" method="post" action="/account/logout" hidden><AntiforgeryToken /></form>
 
+    <script src="@Assets["page-boot.js"]"></script>
     <script src="@Assets["_content/Z.Blazor.Diagrams/script.min.js"]"></script>
     <script src="@Assets["theme.js"]"></script>
     <script src="@Assets["workflow-keys.js"]"></script>

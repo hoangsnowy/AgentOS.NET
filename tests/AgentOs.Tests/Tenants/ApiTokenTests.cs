@@ -390,6 +390,30 @@ public sealed class ApiTokenTests
         claims.Where(c => c.Type == System.Security.Claims.ClaimTypes.Role).Select(c => c.Value).ShouldBe(["admin"]);
     }
 
+    // GAP-02 limiter: a token principal lands in the same buckets a Keycloak JWT for the same caller would — its tenant,
+    // and (personal token) its owner's user bucket, so a token can't buy a second allowance; a service account is its
+    // own user.
+    [Fact]
+    public void RateLimitKeys_TokenPrincipals_PartitionLikeJwtCallers()
+    {
+        var limits = new AgentOs.ServiceDefaults.RequestRateLimits(Tenant: 600, User: 240, Anonymous: 120);
+        static DefaultHttpContext As(System.Collections.Generic.IEnumerable<System.Security.Claims.Claim> claims, string scheme)
+            => new() { User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(claims, scheme)) };
+        var jwt = As([new(ClaimNames.Tenant, "acme"), new(ClaimNames.Subject, "user-bob")], "Bearer");
+        var id = Guid.NewGuid();
+        var personal = As(ApiTokenAuthentication.ClaimsFor(new ApiTokenIdentity(id, "acme", "laptop", ApiTokenKind.Personal,
+            ["read"], "user-bob", "bob", DateTimeOffset.MaxValue)), ApiTokenAuthentication.Scheme);
+        var service = As(ApiTokenAuthentication.ClaimsFor(new ApiTokenIdentity(id, "acme", "ci", ApiTokenKind.Service,
+            ["read", "run"], null, "alice", DateTimeOffset.MaxValue)), ApiTokenAuthentication.Scheme);
+
+        AgentOs.ServiceDefaults.RequestRateLimitPolicy.TenantKey(personal, limits)
+            .ShouldBe(AgentOs.ServiceDefaults.RequestRateLimitPolicy.TenantKey(jwt, limits));
+        AgentOs.ServiceDefaults.RequestRateLimitPolicy.UserKey(personal, limits)
+            .ShouldBe(AgentOs.ServiceDefaults.RequestRateLimitPolicy.UserKey(jwt, limits));
+        AgentOs.ServiceDefaults.RequestRateLimitPolicy.TenantKey(service, limits).ShouldBe("t|600|acme");
+        AgentOs.ServiceDefaults.RequestRateLimitPolicy.UserKey(service, limits).ShouldBe($"u|240|acme|apitoken:{id}");
+    }
+
     [Fact]
     public void ForwardSelector_RoutesOnlyApiTokens()
     {

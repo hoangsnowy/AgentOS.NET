@@ -56,7 +56,7 @@ public static class AccountEndpoints
 
         if (devAutoLogin)
         {
-            app.MapGet("/account/login", (string? returnUrl) => Results.Redirect(SafeLocalReturn(returnUrl)));
+            app.MapGet("/account/login", (string? returnUrl) => Results.Redirect(SafeLocalReturn(returnUrl))).AllowAnonymous();
 
             // Dev-only "View as": narrow the auto-login principal's roles to preview the member (or admin)
             // desktop without standing up a second Keycloak user. Writes the cookie DevAutoAuthHandler reads,
@@ -85,7 +85,10 @@ public static class AccountEndpoints
             app.MapGet("/account/login", (string? returnUrl) =>
                 Results.Challenge(
                     new AuthenticationProperties { RedirectUri = SafeLocalReturn(returnUrl) },
-                    [OpenIdConnectDefaults.AuthenticationScheme]));
+                    [OpenIdConnectDefaults.AuthenticationScheme]))
+                // Public by necessity (GAP-13 fallback policy): this IS the sign-in. /signin-oidc + /signout-callback-oidc are
+                // handled by the OIDC handler inside UseAuthentication, before authorization runs.
+                .AllowAnonymous();
 
             // Shown only after a sign-in callback failed twice in a row (see AuthCookies.HandleRemoteFailureAsync).
             app.MapGet("/account/signin-failed", (string? reason, string? returnUrl) => AuthCookies.FailedPage(reason, returnUrl))

@@ -30,9 +30,9 @@
     <ProjectReference Include="..\..\src\AgentOs.Modules.Sessions\AgentOs.Modules.Sessions.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.ServiceDefaults\AgentOs.ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.Web\AgentOs.Web.csproj" />
+    <!-- Aliased: the Api and the Web both compile a top-level `Program` into the global namespace. -->
+    <ProjectReference Include="..\..\src\AgentOs.Api\AgentOs.Api.csproj" Aliases="ApiHost" />
     <ProjectReference Include="..\..\src\AgentOs.Modules.Memory\AgentOs.Modules.Memory.csproj" />
-    <!-- E1.3: the Api host, booted in-process by WebApplicationFactory (auth handler, /v1 routes, OpenAPI). -->
-    <ProjectReference Include="..\..\src\AgentOs.Api\AgentOs.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>

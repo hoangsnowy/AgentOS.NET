@@ -22,7 +22,6 @@ using AgentOs.SharedKernel.Http;
 using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
 using AgentOs.SharedKernel.Plugins;
-using System.Threading.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
@@ -48,36 +47,11 @@ builder.Services.AddProblemDetails();
 // the Api ↔ Web hosts. Replaces a bare AddDataProtection() (in-memory, per-host).
 builder.AddAgentOsDataProtection();
 
-// S2 — per-tenant request rate limiting. An in-flight throttle on the request pipeline, INDEPENDENT
-// of the month-to-date BudgetGuard (which is post-hoc and cannot bound a burst). Partitioned by the
-// tenant claim so one tenant's spike can't starve another; a token bucket smooths bursts. Health +
-// service-identity routes are exempt so liveness/readiness probes are never throttled.
-builder.Services.AddRateLimiter(options =>
-{
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
-    {
-        var path = httpContext.Request.Path;
-        if (path.StartsWithSegments("/health") || path.StartsWithSegments("/alive")
-            || path.StartsWithSegments("/version") || path.Value == "/")
-        {
-            return RateLimitPartition.GetNoLimiter("exempt");
-        }
-
-        var tenant = httpContext.User.GetTenantId()
-            ?? httpContext.Connection.RemoteIpAddress?.ToString()
-            ?? "anonymous";
-
-        return RateLimitPartition.GetTokenBucketLimiter(tenant, _ => new TokenBucketRateLimiterOptions
-        {
-            TokenLimit = 120,
-            TokensPerPeriod = 120,
-            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
-            QueueLimit = 0,
-            AutoReplenishment = true,
-        });
-    });
-});
+// S2 / GAP-02 — global request rate limiting, shared with the Web host (ServiceDefaults): a per-tenant token bucket
+// (anonymous callers: per client IP) chained with a per-user one, limits from Settings › Platform › Request limits.
+// An in-flight throttle INDEPENDENT of the month-to-date BudgetGuard (post-hoc, can't bound a burst). Health, /version
+// and / are exempt (DisableRateLimiting) so liveness/readiness probes are never throttled.
+builder.Services.AddAgentOsRequestRateLimiting(builder.Environment.IsDevelopment());
 
 // Response compression — Brotli + Gzip for REST/JSON + Scalar responses. The default compressible
 // MIME set excludes text/event-stream, so the streaming MCP endpoint (/mcp) is left uncompressed
@@ -157,6 +131,14 @@ await app.Services.InitializeModulesAsync();
 // generation see the original https scheme + client IP.
 app.UseAgentOsForwardedHeaders();
 
+// GAP-12: HSTS (outside Development), nosniff, frame-ancestors 'none', Referrer-Policy and a CSP on every response —
+// nothing may load from or frame a JSON response; the dev-only Scalar UI gets its own (inline-script) policy.
+app.UseAgentOsSecurityHeaders(o =>
+{
+    o.ContentSecurityPolicy = ContentSecurityPolicies.Api;
+    o.PathPolicies.Add(new("/scalar", ContentSecurityPolicies.ApiDocs));
+});
+
 if (!app.Environment.IsDevelopment())
 {
     // Renders unhandled exceptions through IProblemDetailsService (AddProblemDetails above).
@@ -183,13 +165,15 @@ app.UseAgentOsRequestLogContext();
 
 if (!app.Environment.IsProduction())
 {
-    app.MapOpenApi();
+    // Docs only (never mapped in Production): public so the browser-based reference works without a bearer; every
+    // operation it calls still needs one.
+    app.MapOpenApi().AllowAnonymous();
     app.MapScalarApiReference(options =>
     {
         options.WithTitle("AgentOS.NET API")
                .WithTheme(ScalarTheme.BluePlanet)
                .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
-    });
+    }).AllowAnonymous();
 }
 
 // Build-stamped version (Directory.Build.props <Version>), surfaced on / and /version so operators
@@ -206,12 +190,16 @@ app.MapGet("/", () => Results.Ok(new
 }))
    .WithName("Root")
    .WithSummary("Service identity")
-   .WithTags("Meta");
+   .WithTags("Meta")
+   .AllowAnonymous()
+   .DisableRateLimiting();
 
 app.MapGet("/version", () => Results.Ok(new { name = "agentos-api", version = informationalVersion }))
    .WithName("Version")
    .WithSummary("Running release version (monitoring/upgrade verification)")
-   .WithTags("Meta");
+   .WithTags("Meta")
+   .AllowAnonymous()
+   .DisableRateLimiting();
 
 // /health (readiness: self + postgres + keycloak when configured) and /alive (liveness) come from
 // ServiceDefaults — real dependency probes with a JSON body naming each failing check.
@@ -219,6 +207,7 @@ app.MapDefaultEndpoints();
 
 // LLM provider configuration detail — kept off the readiness path: a missing LLM key is a
 // configuration state the Settings UI surfaces, not a reason for the orchestrator to recycle pods.
+// Signed-in callers only (GAP-13): which providers have keys is configuration detail, not a public probe.
 app.MapGet("/health/llm", (IOptions<LlmOptions> llm) =>
 {
     var o = llm.Value;
@@ -239,7 +228,8 @@ app.MapGet("/health/llm", (IOptions<LlmOptions> llm) =>
 })
    .WithName("HealthLlm")
    .WithSummary("LLM provider configuration readiness (not a pod-recycle signal)")
-   .WithTags("Meta");
+   .WithTags("Meta")
+   .RequireAuthorization();
 
 // E1.3: every module REST route under /v1 (+ its deprecated unversioned twin); SignalR hubs stay at their own path.
 app.MapVersionedModuleEndpoints(routes => routes.MapPost("/llm/test", LlmTestAsync)

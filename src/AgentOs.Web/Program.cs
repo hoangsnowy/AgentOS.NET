@@ -96,6 +96,9 @@ if (devAutoLogin && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectio
     builder.Services.AddHostedService<AgentOs.Web.Services.Approvals.ApprovalSample>();
 }
 
+// The IdP's origin, for the CSP's form-action (a form post that ends in a redirect to Keycloak is checked against it).
+string? oidcOrigin = null;
+
 if (devAutoLogin)
 {
     builder.Services
@@ -128,6 +131,7 @@ var oidcAuthority = keycloak["Authority"] is { Length: > 0 } configuredAuthority
         ? "http://localhost:8080/realms/agentic"
         : throw new InvalidOperationException(
             "Auth:Keycloak:Authority is required outside Development when DevAutoLogin is off.");
+oidcOrigin = ContentSecurityPolicies.OriginOf(oidcAuthority);
 // Per-instance cookie names. Cookies are scoped to the HOST, not the port, so two AgentOS.NET instances on the
 // same host (dev + lab on localhost, or several deployments under one parent domain) would otherwise share
 // and overwrite each other's auth/correlation/antiforgery cookies. The default prefix keeps today's names.
@@ -195,6 +199,8 @@ builder.Services
         options.Scope.Add("openid");
         options.TokenValidationParameters = new TokenValidationParameters
         {
+            // GAP-13: ID tokens from the realm are RS256 — the same pin as the Api's access tokens.
+            ValidAlgorithms = JwtAuthExtensions.ValidAlgorithms,
             NameClaimType = "preferred_username",
             RoleClaimType = ClaimTypes.Role,
         };
@@ -297,10 +303,15 @@ builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.
 builder.Services.AddSingleton<AgentOs.Web.Services.About.IServiceProbe, AgentOs.Web.Services.About.SmtpProbe>();
 builder.Services.AddSingleton<AgentOs.Web.Services.About.SystemStatusService>();
 
-// The anonymous pairing-code exchange: a typed code is short, so each client gets a handful of tries a minute.
+// GAP-02: the global per-tenant + per-user request limiter, shared with the Api (ServiceDefaults; limits in Settings ›
+// Platform › Request limits). Static assets, health, /version and the live circuit's transport traffic are exempt —
+// only opening a circuit (/_blazor/negotiate) counts, so the desktop's websocket is never throttled mid-session.
+builder.Services.AddAgentOsRequestRateLimiting(builder.Environment.IsDevelopment());
+
+// The anonymous pairing-code exchange: a typed code is short, so each client gets a handful of tries a minute
+// (on top of the global limiter).
 builder.Services.AddRateLimiter(options =>
 {
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy(AgentOs.Modules.Sessions.Endpoints.PairingEndpoints.ExchangeRateLimitPolicy, http =>
         System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
             http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -342,6 +353,11 @@ AppCatalog.RegisterPluginApps(app.Services.GetServices<PluginAppDescriptor>().Se
 // — the OIDC redirect_uri + secure-cookie decisions depend on the request being seen as https.
 app.UseAgentOsForwardedHeaders();
 
+// GAP-12: HSTS (outside Development), nosniff, frame-ancestors 'none', Referrer-Policy and the desktop's CSP on every
+// response (ContentSecurityPolicies.WebDesktop documents each source). After the forwarded headers so HSTS sees https.
+var desktopCsp = ContentSecurityPolicies.WebDesktop(oidcOrigin is null ? null : [oidcOrigin], app.Environment.IsDevelopment());
+app.UseAgentOsSecurityHeaders(o => o.ContentSecurityPolicy = desktopCsp);
+
 // Early in the pipeline so it wraps every downstream response. Skips assets MapStaticAssets already
 // served pre-compressed (their Content-Encoding is set), so there is no double-compression.
 app.UseResponseCompression();
@@ -368,7 +384,9 @@ app.MapDefaultEndpoints();
 var informationalVersion = System.Reflection.CustomAttributeExtensions
     .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(Program).Assembly)
     ?.InformationalVersion ?? "0.0.0";
-app.MapGet("/version", () => Results.Ok(new { name = "agentos-web", version = informationalVersion }));
+app.MapGet("/version", () => Results.Ok(new { name = "agentos-web", version = informationalVersion }))
+   .AllowAnonymous()
+   .DisableRateLimiting();
 
 // Serve the self-contained AgentOs.RemoteAgent exe so the VS Code extension (and the Runners tab) can
 // fetch the runner with no .NET SDK and no source checkout. scripts/build-runner.ps1 publishes one
@@ -412,7 +430,7 @@ app.MapGet("/runner/download", (IHostEnvironment env, string? rid) =>
     }
     var downloadName = resolved.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? "agentos-runner.exe" : "agentos-runner";
     return Results.File(resolved, "application/octet-stream", downloadName);
-});
+}).AllowAnonymous();
 
 // Version probe for the extension's auto-update: a cheap build token (size + mtime) of the published
 // binary for a RID. The extension stores it and re-downloads when it changes. No assembly-version
@@ -428,7 +446,7 @@ app.MapGet("/runner/version", (IHostEnvironment env, string? rid) =>
     var token = string.Create(System.Globalization.CultureInfo.InvariantCulture,
         $"{info.Length:x}-{info.LastWriteTimeUtc.Ticks:x}");
     return Results.Text(token);
-});
+}).AllowAnonymous();
 
 // Same-origin, cookie-authed downloads for the admin apps: /cost/export, /tenant/export, /audit/export
 // (AgentOs.Web.Endpoints.ExportEndpoints). A sign-in without a tenant claim gets a 403 there (GAP-17).
@@ -450,13 +468,22 @@ AgentOs.Modules.Sessions.Endpoints.DesignReviewEndpoints.MapDesignReviewEndpoint
 // Api's hub would be invisible to it. Anonymous by design — the hub authenticates the connection
 // itself against the runner's salted pairing-token hash (see RemoteAgentHub.OnConnectedAsync), so
 // there is no browser session to require here.
-app.MapHub<AgentOs.Modules.RemoteAgent.RemoteAgentHub>(AgentOs.Modules.RemoteAgent.RemoteAgentHub.Path);
+app.MapHub<AgentOs.Modules.RemoteAgent.RemoteAgentHub>(AgentOs.Modules.RemoteAgent.RemoteAgentHub.Path).AllowAnonymous();
 
 // /account/login + /account/logout (POST with an antiforgery token — GAP-19) and the dev-only /dev/view-as.
 app.MapAccountEndpoints(devAutoLogin);
 
-app.MapStaticAssets();
+// Static assets are public (the sign-in and sign-up pages need the CSS / JS / icons) and never rate-limited.
+app.MapStaticAssets().AllowAnonymous().DisableRateLimiting();
 app.MapRazorComponents<App>()
-   .AddInteractiveServerRenderMode();
+   // Blazor stamps its own one-directive CSP (frame-ancestors 'self', guarding websocket compression against framing)
+   // on interactive documents, which would replace the desktop's full policy. Null hands it to the security-headers
+   // middleware, whose policy has the stricter frame-ancestors 'none' on every document (GAP-12).
+   .AddInteractiveServerRenderMode(o => o.ContentSecurityFrameAncestorsPolicy = null)
+   // The circuit's own endpoints (/_blazor, /_blazor/negotiate, /initializers, /disconnect) are public (GAP-13): the
+   // sign-in and sign-up pages are interactive, so an anonymous visitor needs a circuit. Pages keep their own
+   // [Authorize] (_Imports.razor) / [AllowAnonymous]; AuthorizeRouteView enforces them inside the circuit.
+   // Its housekeeping calls (/initializers, /disconnect) aren't rate-limited either — only opening a circuit counts (GAP-02).
+   .Add(BlazorFrameworkEndpoints.Apply);
 
 app.Run();

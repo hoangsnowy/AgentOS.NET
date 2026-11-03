@@ -22,6 +22,8 @@
     <PackageVersion Include="Azure.Extensions.AspNetCore.DataProtection.Keys" Version="1.6.5" />
     <PackageVersion Include="Anthropic.SDK" Version="5.10.0" />
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.14" />
+    <!-- Host-level integration tests (WebApplicationFactory over the real Api / Web Program). -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
 
     <!-- Microsoft Agent Framework (MAF) + Microsoft.Extensions.AI -->
     <PackageVersion Include="Microsoft.Agents.AI" Version="1.27.0" />
@@ -66,8 +68,6 @@
 
     <!-- API host: OpenAPI + Scalar + App Insights -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
-    <!-- Tests: boot the real Api in-process (E1.3 auth handler + /v1 + OpenAPI integration tests). -->
-    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
     <!-- Pin the transitive Microsoft.OpenApi past GHSA-v5pm-xwqc-g5wc (CVE-2026-49451, published
          2026-06-30): circular schema refs can stack-overflow the OpenAPI reader below 2.7.5. Microsoft.
          AspNetCore.OpenApi 10.0.9 floors it at 2.0.0 (no upper bound), so an explicit direct reference

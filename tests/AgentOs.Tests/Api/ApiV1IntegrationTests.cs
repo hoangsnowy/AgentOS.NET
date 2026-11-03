@@ -1,3 +1,5 @@
+extern alias ApiHost;
+
 // E1.3 integration — the REAL Api host booted in-process (WebApplicationFactory, Development, no database) with the
 // token store swapped for the real ApiTokenService on EF InMemory. Proves, through the actual middleware pipeline:
 //   • Bearer aos_… authenticates next to the Keycloak JWT scheme and maps to the token's tenant + scopes;
@@ -39,7 +41,7 @@ using Xunit;
 namespace AgentOs.Tests.Api;
 
 /// <summary>The Api with an in-memory token store.</summary>
-public sealed class ApiHostFixture : WebApplicationFactory<AgentOs.Api.ApiDocumentV1>
+public sealed class ApiHostFixture : WebApplicationFactory<ApiHost::AgentOs.Api.ApiDocumentV1>
 {
     private readonly string _db = "api-tokens-" + Guid.NewGuid().ToString("N");
 
@@ -224,6 +226,29 @@ public sealed class ApiV1IntegrationTests(ApiHostFixture api) : IClassFixture<Ap
         using var client = api.ClientWith(null);
         (await client.GetAsync("/v1/tenants/me", Ct)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         (await client.GetAsync("/version", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    // GAP-13 fallback policy (deny by default): a route's explicit AllowAnonymous travels with it to both twins, and a
+    // token principal satisfies "authenticated" exactly like a JWT.
+    [Theory]
+    [InlineData("/v1/tenants/invitations/preview")]
+    [InlineData("/tenants/invitations/preview")]
+    public async Task FallbackPolicy_PublicRoutesStayPublicOnBothTwins(string path)
+    {
+        using var client = api.ClientWith(null);
+        using var response = await client.GetAsync(path, Ct);
+        response.StatusCode.ShouldNotBe(HttpStatusCode.Unauthorized);
+        response.StatusCode.ShouldNotBe(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task FallbackPolicy_TokenPrincipalCountsAsAuthenticated()
+    {
+        using var anonymous = api.ClientWith(null);
+        using var token = api.ClientWith(await api.CreateTokenAsync(ApiTokenScopes.Read));
+
+        (await anonymous.GetAsync("/health/llm", Ct)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        (await token.GetAsync("/health/llm", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
     // ── versioning + deprecation ────────────────────────────────────────────────────────────────────────────────────
