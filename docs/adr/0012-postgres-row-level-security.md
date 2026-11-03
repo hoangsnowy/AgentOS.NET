@@ -63,7 +63,7 @@ working). **Stage 2 (2026-11-03)** closes that escape. The mechanism, as it stan
      handshake), an audit entry's own tenant (the audit writer), a tenant export / purge;
    - `RowLevelSecurity.TenantScopeIfUnbound(tenant)` — an explicit tenant **fills** a flow that has none (a
      background worker, the runner hub) and never overrides a flow's own: used by tenant-explicit stores
-     (`EfAppConfigStore`, the Dapper repositories, the evidence drain, the autopilot log, preview re-attach). A flow
+     (`EfAppConfigStore`, `EfApprovalStore`, the Dapper repositories, the evidence drain, the autopilot log, preview re-attach). A flow
      bound to tenant A that names tenant B still sees nothing of B;
    - otherwise the ambient identity (runs, Board sessions, the scheduler's run; every Blazor circuit event through
      `CircuitIdentityHandler`), else the authenticated HTTP request's `tenant` claim, else **none — nothing**.

@@ -1,6 +1,9 @@
 // Approval policies (E1.5) — the two stores of approval requests: EF Core over sessions.approvals, and a process-local map
 // for the no-database path (standalone Development, its E2E). Every EF query is tenant-explicit (IgnoreQueryFilters + a
 // TenantId predicate — a background pass or a Blazor circuit has no ambient HTTP tenant), with RLS as the second wall.
+// RLS stage 2 (ADR-0012): a flow with no tenant of its own (the Autopilot pass, a circuit event that lost its identity)
+// sees NOTHING, so every EF path binds the flow to the tenant it names — TenantScopeIfUnbound, which fills a missing
+// tenant and never overrides the flow's own (a flow bound to tenant B that names A still sees nothing of A).
 // A decision is a narrow conditional write: only a PENDING request changes, so two approvers clicking at once (or a
 // stale page) can never flip a decision that was already made.
 
@@ -12,6 +15,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AgentOs.Domain.Governance;
 using AgentOs.Modules.Sessions.Persistence.Entities;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgentOs.Modules.Sessions.Persistence.Repositories;
@@ -72,6 +76,7 @@ internal sealed class EfApprovalStore(SessionsDbContext db) : IApprovalStore
 
     public async Task<ApprovalRequest?> GetAsync(string tenantId, Guid sessionId, ApprovalGate gate, int run, CancellationToken ct = default)
     {
+        using var bound = RowLevelSecurity.TenantScopeIfUnbound(tenantId);
         var name = gate.ToString();
         var row = await Of(tenantId).AsNoTracking().FirstOrDefaultAsync(r => r.SessionId == sessionId && r.Gate == name && r.Run == run, ct)
             .ConfigureAwait(false);
@@ -80,6 +85,7 @@ internal sealed class EfApprovalStore(SessionsDbContext db) : IApprovalStore
 
     public async Task<ApprovalRequest?> FindAsync(string tenantId, Guid id, CancellationToken ct = default)
     {
+        using var bound = RowLevelSecurity.TenantScopeIfUnbound(tenantId);
         var row = await Of(tenantId).AsNoTracking().FirstOrDefaultAsync(r => r.Id == id, ct).ConfigureAwait(false);
         return row is null ? null : ApprovalRows.ToDomain(row);
     }
@@ -87,6 +93,7 @@ internal sealed class EfApprovalStore(SessionsDbContext db) : IApprovalStore
     public async Task<ApprovalRequest> RequestAsync(ApprovalRequest request, CancellationToken ct = default)
     {
         ApprovalRows.EnsureTenant(request);
+        using var bound = RowLevelSecurity.TenantScopeIfUnbound(request.TenantId);
         if (await GetAsync(request.TenantId, request.SessionId, request.Gate, request.Run, ct).ConfigureAwait(false) is { } existing) { return existing; }
         var row = ApprovalRows.NewRow(request);
         db.Approvals.Add(row);
@@ -107,6 +114,7 @@ internal sealed class EfApprovalStore(SessionsDbContext db) : IApprovalStore
     public async Task<ApprovalRequest?> DecideAsync(string tenantId, Guid id, ApprovalDecision decision, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(decision);
+        using var bound = RowLevelSecurity.TenantScopeIfUnbound(tenantId);
         var row = await Of(tenantId).FirstOrDefaultAsync(r => r.Id == id, ct).ConfigureAwait(false);
         if (row is null) { return null; }
         if (!ApprovalRows.Apply(row, decision)) { return ApprovalRows.ToDomain(row); }
@@ -126,6 +134,7 @@ internal sealed class EfApprovalStore(SessionsDbContext db) : IApprovalStore
 
     public async Task<IReadOnlyList<ApprovalRequest>> ListRecentAsync(string tenantId, int max = 50, CancellationToken ct = default)
     {
+        using var bound = RowLevelSecurity.TenantScopeIfUnbound(tenantId);
         var rows = await Of(tenantId).AsNoTracking()
             .OrderByDescending(r => r.RequestedAtUtc)
             .Take(Math.Clamp(max, 1, 200))
