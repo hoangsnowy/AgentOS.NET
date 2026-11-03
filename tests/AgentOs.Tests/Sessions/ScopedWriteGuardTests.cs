@@ -703,11 +703,15 @@ public sealed class ScopedWriteGuardTests : IDisposable
     public void Guards_OnlyScopedClaudeRuns(bool scoped, bool yolo, bool customArgs, string command, bool expected) =>
         ScopedWriteGuard.Guards(scoped, yolo, customArgs, command).ShouldBe(expected);
 
+    private static bool IsSkillScriptRule(string rule) => rule is "Bash(node .claude/skills/*)" or "PowerShell(node .claude/skills/*)";
+
     [Fact]
     public void ArgsFor_NeverAllowsTheClaudeFolderByRule()
     {
+        // Running a skill's own script is not an edit (edits to .claude/skills ride on the guard's hook only) — the one
+        // .claude rule allowed, for Bash and its PowerShell twin.
         ScopedAutonomy.ArgsFor("claude").ShouldNotContain(a => a.Contains(".claude", StringComparison.OrdinalIgnoreCase)
-            && !a.StartsWith("Read(", StringComparison.Ordinal));
+            && !a.StartsWith("Read(", StringComparison.Ordinal) && !IsSkillScriptRule(a));
         ScopedAutonomy.ClaudeAllowed.ShouldNotContain(a => a.StartsWith("Edit", StringComparison.Ordinal) || a.StartsWith("Write", StringComparison.Ordinal));
     }
 
