@@ -828,7 +828,7 @@ else if (_tab == Tab.Sessions)
                         @if (_isAdmin) { <td title="@s.MemberUserId">@MemberLabel(s.MemberUserId)</td> }
                         <td><Badge>@PlainStatus(s.Status)</Badge></td>
                         <td title="@s.CreatedAtUtc.ToString("u")">@Ago(s.CreatedAtUtc)</td>
-                        <td class="actions">
+                        <td class="actions board-task-actions">
                             @* A failed session can be run again in place (after fixing what its error says) instead of being
                                closed and recreated from the ticket. *@
                             @* The failure card already carries Try again when that is its action — don't show it twice. *@
