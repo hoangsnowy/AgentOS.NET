@@ -1367,8 +1367,10 @@ else if (_tab == Tab.Sessions)
     private bool IsApproverOn(Guid boardId) =>
         (_access?.RolesOn(boardId) ?? _roles).Contains(UserRoles.Approver, StringComparer.Ordinal);
 
+    // A check whose task isn't in this person's task list (only admins see those — DesignChecks lists a non-admin
+    // only their visible tasks' checks; the standalone desktop's seeded sample has no task at all) is an admin's call.
     private bool CanDecideFor(Guid sessionId) =>
-        (_sessions ?? []).FirstOrDefault(x => x.Id == sessionId) is { } s && CanDecide(s);
+        (_sessions ?? []).FirstOrDefault(x => x.Id == sessionId) is { } s ? CanDecide(s) : _isAdmin;
 
     private bool Refuse(bool allowed, string what)
     {
