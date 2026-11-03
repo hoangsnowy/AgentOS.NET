@@ -54,8 +54,10 @@ working). **Stage 2 (2026-11-03)** closes that escape. The mechanism, as it stan
      audit trail stays append-only even here. Uses: `autopilot-scan` (`WorkspaceRepository.ListAutopilotAsync`),
      `scheduler` (`EfScheduledRunStore.ClaimDueAsync`), `runner-handshake` (`EfRunnerDirectory.FindForPairingAsync`
      — the token is verified against the returned hash afterwards), `runner-revalidation`
-     (`EfRunnerDirectory.FindStatusesAsync`), `platform-settings` (`SettingsService.SetAsync` with platform scope),
-     `audit-platform` (the `_platform` audit chain);
+     (`EfRunnerDirectory.FindStatusesAsync`), `platform-settings` (the desktop's `SettingsFields` around a
+     platform-scope write, after re-checking the signed-in principal's `platform-admin` role — `SettingsService`
+     never enters the scope itself and refuses a platform write outside one), `audit-platform` (the `_platform`
+     audit chain);
    - `RowLevelSecurity.TenantScope(tenant)` — binds the flow to a tenant it learned from a trusted source other than
      the caller: a signed invitation token (sign-up is anonymous), a verified runner row (the rest of the hub
      handshake), an audit entry's own tenant (the audit writer), a tenant export / purge;

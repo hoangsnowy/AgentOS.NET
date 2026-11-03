@@ -10,6 +10,7 @@ using AgentOs.Domain.Llm;
 using AgentOs.Modules.Llm;
 using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
@@ -85,6 +86,7 @@ public sealed class LlmClientFactoryLiveSettingsTests
         using var _ = AmbientIdentity.Push("acme", "u");
         IsChain(factory.Create("Claude")).ShouldBeFalse();
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await settings.SetAsync(LlmSettings.OfflineFallback, "true", SettingScope.Platform, null, "root")).Ok.ShouldBeTrue();
         IsChain(factory.Create("Claude")).ShouldBeTrue();   // Offline appended to the failover chain
 

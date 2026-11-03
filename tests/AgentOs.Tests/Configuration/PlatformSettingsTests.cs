@@ -13,6 +13,7 @@ using AgentOs.Modules.Tools;
 using AgentOs.Modules.Tools.Policy;
 using AgentOs.Modules.Workspaces;
 using AgentOs.Modules.Workspaces.Security;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -45,6 +46,7 @@ public sealed class PlatformSettingsTests
 
         (await policy.EvaluateAsync(Call())).Allowed.ShouldBeTrue();      // permissive default
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await settings.SetAsync(ToolsSettings.EnforceByDefault, "true", SettingScope.Platform, null, "root")).Ok.ShouldBeTrue();
         var decision = await policy.EvaluateAsync(Call());                  // same instance — no restart
         decision.Allowed.ShouldBeFalse();                                   // fail-closed: no allowlist
@@ -69,6 +71,7 @@ public sealed class PlatformSettingsTests
 
         (await approver.ApproveAsync(req)).ShouldBeFalse();
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         await settings.SetAsync(ConfigGatedRemoteExecApprover.AutoApproveKey, "true", SettingScope.Platform, null, "root");
         (await approver.ApproveAsync(req)).ShouldBeTrue();
     }
@@ -82,6 +85,7 @@ public sealed class PlatformSettingsTests
         var approver = new ConfigGatedRemoteExecApprover(env, new ConfigurationBuilder().Build(),
             NullLogger<ConfigGatedRemoteExecApprover>.Instance, settings);
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await settings.SetAsync(ConfigGatedRemoteExecApprover.AutoApproveKey, "true", SettingScope.Platform, null, "root")).Ok.ShouldBeFalse();
         (await approver.ApproveAsync(new RemoteExecRequest("r1", "s", "u", "m"))).ShouldBeFalse();
     }
@@ -94,6 +98,7 @@ public sealed class PlatformSettingsTests
 
         policy.IsAllowed("https://github.mycorp.com").ShouldBeFalse();
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await settings.SetAsync(WorkspaceHostPolicy.SettingKey, "github.mycorp.com, ado.mycorp.com", SettingScope.Platform, null, "root")).Ok.ShouldBeTrue();
 
         policy.IsAllowed("https://github.mycorp.com/api/v3").ShouldBeTrue();
@@ -106,6 +111,7 @@ public sealed class PlatformSettingsTests
     public async Task HostPolicy_InvalidEntry_IsRejectedAtSave()
     {
         var (settings, _) = Build();
+        using var platform = RowLevelSecurity.PlatformScope("test");
         var r = await settings.SetAsync(WorkspaceHostPolicy.SettingKey, "github.mycorp.com, http://", SettingScope.Platform, null, "root");
         r.Ok.ShouldBeFalse();
     }

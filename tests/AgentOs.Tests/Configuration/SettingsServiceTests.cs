@@ -12,6 +12,7 @@ using AgentOs.Modules.AppConfig;
 using AgentOs.Modules.AppConfig.Settings;
 using AgentOs.Modules.Llm;
 using AgentOs.Modules.Pipeline.Agents;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
@@ -72,6 +73,7 @@ public sealed class SettingsServiceTests
         var (svc, _) = Build(config);
         (await svc.GetAsync(Model, "acme")).Source.ShouldBe(SettingSource.Seed);
 
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await svc.SetAsync(Model, "platform-model", SettingScope.Platform, null, "root")).Ok.ShouldBeTrue();
         (await svc.GetAsync(Model, "acme")).ShouldBe(new SettingValue("platform-model", SettingSource.Platform));
 
@@ -87,6 +89,7 @@ public sealed class SettingsServiceTests
     public async Task Set_LockedKey_IsRefused()
     {
         var (svc, _) = Build(new Dictionary<string, string?> { [$"{SettingsService.LocksSection}:{Model}"] = "x" });
+        using var platform = RowLevelSecurity.PlatformScope("test");
         var r = await svc.SetAsync(Model, "claude-opus-5-5", SettingScope.Platform, null, "root");
         r.Ok.ShouldBeFalse();
         r.Error!.ShouldContain("locked");
@@ -97,6 +100,7 @@ public sealed class SettingsServiceTests
     {
         var (svc, _) = Build();
         (await svc.SetAsync(PlatformOnly, "true", SettingScope.Tenant, "acme", "admin")).Ok.ShouldBeFalse();
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await svc.SetAsync(PlatformOnly, "true", SettingScope.Platform, null, "root")).Ok.ShouldBeTrue();
     }
 
@@ -167,6 +171,7 @@ public sealed class SettingsServiceTests
     public async Task Set_UndeclaredKey_IsRejected()
     {
         var (svc, _) = Build();
+        using var platform = RowLevelSecurity.PlatformScope("test");
         (await svc.SetAsync("Nope:Key", "x", SettingScope.Platform, null, "root")).Ok.ShouldBeFalse();
     }
 

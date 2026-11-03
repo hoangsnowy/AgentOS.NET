@@ -20,6 +20,7 @@ using AgentOs.Modules.AppConfig;
 using AgentOs.Modules.AppConfig.Settings;
 using AgentOs.Modules.Tools;
 using AgentOs.Modules.Tools.Evidence;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
@@ -740,7 +741,10 @@ public sealed class ToolOutputShaperTests
     [InlineData("50001", false)]
     [InlineData("lots", false)]
     public async Task Setting_WritesOutsideTheRange_AreRejected(string value, bool ok)
-        => (await Settings().SetAsync(ToolsSettings.MaxOutputTokens, value, SettingScope.Platform, null, "root")).Ok.ShouldBe(ok);
+    {
+        using var platform = RowLevelSecurity.PlatformScope("test");
+        (await Settings().SetAsync(ToolsSettings.MaxOutputTokens, value, SettingScope.Platform, null, "root")).Ok.ShouldBe(ok);
+    }
 
     // --- helpers ---------------------------------------------------------------------------------------------
 

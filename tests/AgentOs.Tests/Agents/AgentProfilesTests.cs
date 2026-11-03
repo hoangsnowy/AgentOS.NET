@@ -14,6 +14,7 @@ using AgentOs.Modules.AppConfig.Settings;
 using AgentOs.Modules.Llm;
 using AgentOs.Modules.Pipeline.Agents;
 using AgentOs.SharedKernel.Identity;
+using AgentOs.SharedKernel.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -104,6 +105,7 @@ public sealed class AgentProfilesTests
     public async Task Agent_PlatformValue_AppliesToEveryTenantWithoutOverride()
     {
         var settings = Settings();
+        using var platform = RowLevelSecurity.PlatformScope("test");
         await settings.SetAsync(RequirementModel, "claude-haiku-5-5", SettingScope.Platform, null, "root");
         var (factory, calls) = RecordingFactory();
 
