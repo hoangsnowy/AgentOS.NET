@@ -80,8 +80,10 @@ public sealed partial class PublicLinkTests
         await using var app = await StartAsync(services =>
         {
             var signup = Substitute.For<ITenantSignupService>();
-            signup.CreateInvitation("acme", "member", null, Arg.Any<TimeSpan>())
-                .Returns(new InvitationToken("tok/1", DateTimeOffset.UtcNow.AddHours(1)));
+            // GAP-11: an invitation is single-use and bound to the address it is sent to — the service mints it
+            // for that email and audits it with the caller as actor.
+            signup.CreateInvitationAsync("acme", "member", "bob@acme.test", Arg.Any<TimeSpan>(), Arg.Any<AuditActor>(), Arg.Any<CancellationToken>())
+                .Returns(new InvitationToken(Guid.NewGuid(), "tok/1", DateTimeOffset.UtcNow.AddHours(1)));
             services.AddSingleton(signup);
             services.AddSingleton(Substitute.For<IAuditLog>());
             services.AddSingleton(Substitute.For<IEmailSender>());
@@ -91,7 +93,7 @@ public sealed partial class PublicLinkTests
         }, app => app.MapTenantEndpoints());
         using var client = Client(app, "admin");
 
-        using var response = await client.PostAsJsonAsync("/tenants/acme/invitations", new { }, TestContext.Current.CancellationToken);
+        using var response = await client.PostAsJsonAsync("/tenants/acme/invitations", new { email = "bob@acme.test" }, TestContext.Current.CancellationToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>(TestContext.Current.CancellationToken);
