@@ -38,6 +38,7 @@ public sealed class ScopedAutonomyTests
         args.ShouldNotContain("Bash(cat *)");
         args.ShouldNotContain("Bash(node *)");
         args.ShouldContain("Bash(node tools/*)");
+        args.ShouldContain("Bash(node .claude/skills/*)");   // a skill's own script (a design lint a ticket asks for)
         args.ShouldContain("PowerShell(git clone *)");      // Windows: claude's PowerShell tool gets the same rules
         args.ShouldContain("PowerShell(git push --force*)");   // the repo's own scripts (a reference decoder) — not node -e
         // Deny list comes after the allow list so the variadic --allowedTools ends at --disallowedTools.
