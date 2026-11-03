@@ -201,6 +201,7 @@ pass / call, so a change applies within a minute, no restart. The Board's Autopi
 | `Preview:IdleMinutes` | `120` | 10–1440 | *Try the app* panel. A preview nobody has had open (no connection to its port) for this long is stopped by the computer. Sent with each start; a preview keeps its value across a runner restart. |
 | `Autopilot:RecoverMissingReply` | `true` | on / off | *Ask again for a missing reply* — a Coding, Reviewer or Testing run that ends without its JSON reply is asked once for it instead of discarded (below). |
 | `Autopilot:TicketDiscussionComments` | `20` | 0–50 | *The ticket's discussion* panel. How many of a ticket's newest comments written by people the Coding, Reviewer, Testing and Designer agents read with its description (below). `0` = the description only. |
+| `Autopilot:ResumeOnTicketAnswer` | `true` | on / off | *The ticket's discussion* panel. A task waiting for a person (Blocked) resumes when a maintainer answers on its ticket (below). |
 | `TicketFiles:MaxFileMegabytes` | `10` | 1–100 | *Files for the AI* — the largest single file a person can attach to a ticket ([ADR-0015](adr/0015-ticket-files.md)). |
 | `TicketFiles:MaxTotalMegabytes` | `50` | 1–500 | All files of one ticket together. They are copied to the computer for every run of the ticket. |
 | `TicketFiles:MaxFiles` | `500` | 1–2000 | Files per ticket (an uploaded folder counts each file in it). |
@@ -235,6 +236,24 @@ outside the fence; each is clipped at 3,000 characters and all of them at ≈12,
 then oldest decisions). The task's feed says what was read (`… 3 comment(s) … (2 by maintainers …; ≈840 tokens)`, an
 estimate) or why comments couldn't be read (Azure DevOps work items: not read yet). The Thorough engine's story and the
 Orchestrator agent's epics get the maintainer decisions only. ([threat model](security/threat-model.md))
+
+**A maintainer's answer resumes a blocked task** (`Autopilot:ResumeOnTicketAnswer`, on by default). When Autopilot
+uses up a task's automatic fix rounds (`… after 3 automatic fixes — needs a person.`) the task is *Blocked*, and Board ›
+Tasks shows *The AI needs your decision* with **Tell the AI what to do** (it opens the task's *Ask for changes* box)
+instead of a generic "Try again". A product owner usually answers on the ticket instead, so on every pass, for each
+Blocked task of a board in *Build* / *Build and merge* whose ticket is open, that isn't running, has a pull request to
+continue and fits a free task slot, Autopilot reads the ticket's newest comments (one GraphQL call per such task — no
+other ticket is read). A comment counts as an **answer** when it is a maintainer's (`OWNER` / `MEMBER` / `COLLABORATOR`;
+AgentOS.NET's own signed comments and bots never — the same rules as above) and was written after the task became
+Blocked (`sessions.sessions.BlockedAtUtc`, stamped by the status roll-up on the transition; a task blocked before that
+column existed falls back to its start) and after the last answer acted on (`TicketAnswerAtUtc`). The task is then sent
+back to the Coding agent exactly as *Ask for changes* does — same branch and pull request, one more fix round counted,
+no new automatic rounds granted — with *"The project's maintainer answered on the ticket: …"* (the comments newest last,
+≈8k characters at most, fenced as untrusted text like any requested change), and the Autopilot activity says so. The
+answer's time is stored **before** the run starts, so each answer resumes a task at most once, across restarts. Nothing
+is posted to GitHub — except when the answer replies to a question the Orchestrator agent asked: while that agent
+decides, it acts on such a reply itself (it may close the ticket instead); with the fixed rules the reply resumes the task
+and gets the same signed acknowledgement the agent posts, so it is never read as a fresh answer again.
 
 **A run that ends without its reply** (`Autopilot:RecoverMissingReply`, on by default). A Board agent run on a member's
 computer sometimes ends without the JSON its prompt asks for — the CLI ran out of turns or context after doing real

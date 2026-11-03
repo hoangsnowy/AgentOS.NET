@@ -34,6 +34,44 @@ public sealed class TaskFailureTests
         info.ActionLabel.ShouldNotBeNullOrWhiteSpace();
     }
 
+    // Autopilot used up its automatic fixes (lab, 2026-11): these showed the Unknown card — "The AI couldn't finish this
+    // task … Trying again often works." with Try again — although nothing broke and a decision was missing.
+    [Theory]
+    // The rules (AutopilotPlanner).
+    [InlineData("Still conflicts with its base after automatic fixes — needs a person.", "needs-decision-conflicts")]
+    [InlineData("Checks still fail after 3 automatic fixes — needs a person.", "needs-decision-checks")]
+    [InlineData("Code review still asks for changes after 3 automatic fixes — needs a person.", "needs-decision-review")]
+    [InlineData("Acceptance testing still fails after 3 automatic fixes — needs a person.", "needs-decision-acceptance")]
+    [InlineData("Design review still asks for changes after 3 automatic fixes — needs a person.", "needs-decision-design")]
+    // A ticket's MAF workflow (TicketFlow.SendBack / the Design gate).
+    [InlineData("Conflicts with its base after 3 automatic fixes — needs a person.", "needs-decision-conflicts")]
+    [InlineData("Checks failed after 3 automatic fixes — needs a person.", "needs-decision-checks")]
+    [InlineData("Code review asked for changes after 3 automatic fixes — needs a person.", "needs-decision-review")]
+    [InlineData("Acceptance testing failed after 3 automatic fixes — needs a person.", "needs-decision-acceptance")]
+    [InlineData("Design review asked for changes after 3 automatic fixes — needs a person.", "needs-decision-design")]
+    [InlineData("The design needs a person's eye — approve it or ask for changes on Board › Tasks. The colours are off.", "needs-decision-design-eye")]
+    [InlineData("Something else after 3 automatic fixes — needs a person.", "needs-decision")]
+    public void Explain_NeedsAPerson_AsksForTheMembersDecision(string error, string kind)
+    {
+        var info = TaskFailure.Explain(error)!;
+
+        info.Kind.ShouldBe(kind);
+        info.Action.ShouldBe(TaskFailureAction.AskForChanges);
+        info.Headline.ShouldBe("The AI needs your decision");
+        info.ActionLabel.ShouldBe("Tell the AI what to do");
+        info.Advice.ShouldContain("answer on the ticket and Autopilot picks it up");
+        info.Advice.ShouldNotContain("Trying again");
+    }
+
+    // The needs-a-person rules must not take over other failures (first match wins).
+    [Theory]
+    [InlineData("Test run failed: 2 of 10", "tests")]
+    [InlineData("Build FAILED.", "build")]
+    [InlineData("Remote agent timed out after 1200s.", "timeout")]
+    [InlineData("Stopped by you", "stopped")]
+    public void Explain_OtherFailures_KeepTheirCard(string error, string kind) =>
+        TaskFailure.Explain(error)!.Kind.ShouldBe(kind);
+
     [Theory]
     [InlineData(null)]
     [InlineData("  ")]
@@ -44,6 +82,8 @@ public sealed class TaskFailureTests
     [InlineData("No paired runner connected for member 'abc' in tenant 'default'.")]
     [InlineData("GitHub rejected the PAT for o/r.")]
     [InlineData("exit -1: ")]
+    [InlineData("Code review still asks for changes after 3 automatic fixes — needs a person.")]
+    [InlineData("The design needs a person's eye — approve it or ask for changes on Board › Tasks.")]
     public void Explain_Copy_HasNoJargon(string error)
     {
         var info = TaskFailure.Explain(error)!;

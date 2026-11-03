@@ -391,6 +391,10 @@ in the desktop and applies on the next call:
   criterion, and the newest one wins over the description (so a scope change written as a comment is what the Reviewer
   and Testing agents judge against); anyone else's comment is context only. Each comment is fenced as untrusted text and
   bounded (`Autopilot:TicketDiscussionComments`, 20 by default; ≈12k characters in all).
+  When a task **needs a person** (its automatic fixes are used up), Board › Tasks says so in plain words — *The AI needs
+  your decision*, with *Tell the AI what to do* opening its Ask-for-changes box — and a maintainer can simply **answer on
+  the ticket**: Autopilot sends the task back to the AI with that comment, on the same branch and pull request, once per
+  answer (`Autopilot:ResumeOnTicketAnswer`, on by default).
 - **Workflow › Ticket flow** — the steps Autopilot runs for every ticket (Code → Checks → Review → Test → Merge by
   default), drawn as a graph with a table view: an admin turns Review or Test off, picks the agent per step and skips a
   step for tickets with a label (e.g. no Review for `type:chore`); per tenant with an optional per-project flow,

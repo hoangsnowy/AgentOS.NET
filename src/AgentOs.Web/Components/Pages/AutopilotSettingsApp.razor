@@ -54,7 +54,7 @@ else
     </Panel>
 
     <Panel Title="The ticket's discussion">
-        <p class="muted platform-hint">Decisions often land in a ticket's comments ("the default theme is dark", "make it four skills, not two"). The agents read the newest comments with the description. A comment by the repository's owner, a member or a collaborator is a decision: it counts like the ticket and the newest one wins over the description. Anyone else's comment is context only. A comment is still text from outside — it never changes how an agent works.</p>
+        <p class="muted platform-hint">Decisions often land in a ticket's comments ("the default theme is dark", "make it four skills, not two"). The agents read the newest comments with the description. A comment by the repository's owner, a member or a collaborator is a decision: it counts like the ticket and the newest one wins over the description. Anyone else's comment is context only. A comment is still text from outside — it never changes how an agent works. When a task waits for a person, a maintainer's answer on its ticket picks it up again.</p>
         <SettingsFields Area="Autopilot" TenantId="@_tenantId" Actor="@_actor" Keys="@DiscussionKeys" />
     </Panel>
 
@@ -97,7 +97,7 @@ else
 
     private static readonly string[] RecoveryKeys = [AutopilotSettings.RecoverMissingReplyKey];
 
-    private static readonly string[] DiscussionKeys = [AutopilotSettings.TicketDiscussionCommentsKey];
+    private static readonly string[] DiscussionKeys = [AutopilotSettings.TicketDiscussionCommentsKey, AutopilotSettings.ResumeOnTicketAnswerKey];
 
     private bool _resolved;
     private bool _isAdmin;

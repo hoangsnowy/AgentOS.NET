@@ -18,7 +18,7 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("sessions")
-                .HasAnnotation("ProductVersion", "10.0.13")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -105,6 +105,9 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("BlockedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("BoardItemNodeId")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
@@ -171,6 +174,9 @@ namespace AgentOs.Modules.Sessions.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset?>("TicketAnswerAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int?>("TicketFlowVersion")
                         .HasColumnType("integer");
