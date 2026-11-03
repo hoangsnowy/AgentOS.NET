@@ -209,6 +209,41 @@ public sealed class MemberRemovalTests
         return ctx;
     }
 
+    // E1.3: a personal API token acts as its owner, so it is revoked with the computers — before the account is deleted.
+    [Fact]
+    public async Task RemoveAsync_RevokesPersonalApiTokens_BeforeTheDelete_AndAuditsTheCount()
+    {
+        var tokens = Substitute.For<AgentOs.Modules.Tenants.ApiTokens.IApiTokenService>();
+        tokens.RevokeForOwnerAsync("t1", "leaver", "admin", Arg.Any<CancellationToken>()).Returns(_ =>
+        {
+            _steps.Add("tokens");
+            return Task.FromResult(2);
+        });
+
+        var result = await MemberRemoval.RemoveAsync("t1", "leaver", new MemberRemovalActor("admin"),
+            _kc, _log, new OrderedDirectory(_steps), new Disconnector(), tokens, ct: TestContext.Current.CancellationToken);
+
+        result.Removed.ShouldBeTrue();
+        _steps.ShouldBe(["revoke", "tokens", "delete", "revoke"]);
+        _audit.ShouldHaveSingleItem().Target.ShouldBe("user=leaver,apiTokensRevoked=2");
+    }
+
+    [Fact]
+    public async Task RemoveAsync_TokenRevokeFails_RemovesNothing()
+    {
+        var tokens = Substitute.For<AgentOs.Modules.Tenants.ApiTokens.IApiTokenService>();
+        tokens.RevokeForOwnerAsync("t1", "leaver", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("database unavailable"));
+
+        var result = await MemberRemoval.RemoveAsync("t1", "leaver", new MemberRemovalActor("admin"),
+            _kc, _log, new OrderedDirectory(_steps), new Disconnector(), tokens, ct: TestContext.Current.CancellationToken);
+
+        result.Outcome.ShouldBe(MemberRemovalOutcome.TokensNotRevoked);
+        result.Error.ShouldNotBeNull().ShouldContain("API tokens");
+        await _kc.DidNotReceiveWithAnyArgs().DeleteUserAsync(default!, default);
+        _audit.ShouldBeEmpty();
+    }
+
     // Revokes the member's runners, recording each sweep in the shared step list; can fail on a given sweep (1-based).
     private sealed class OrderedDirectory(List<string> steps) : IRunnerDirectory
     {

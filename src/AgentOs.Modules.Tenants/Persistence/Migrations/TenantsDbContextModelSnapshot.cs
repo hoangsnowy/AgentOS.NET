@@ -18,7 +18,7 @@ namespace AgentOs.Modules.Tenants.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("tenants")
-                .HasAnnotation("ProductVersion", "10.0.13")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -40,11 +40,22 @@ namespace AgentOs.Modules.Tenants.Persistence.Migrations
                     b.Property<DateTimeOffset>("ExpiresAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("service");
+
                     b.Property<DateTimeOffset?>("LastUsedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Name")
                         .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("OwnerUserId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
@@ -60,6 +71,20 @@ namespace AgentOs.Modules.Tenants.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Salt")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Scopes")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasDefaultValue("");
 
                     b.Property<string>("TenantId")
                         .IsRequired()
@@ -77,6 +102,8 @@ namespace AgentOs.Modules.Tenants.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "OwnerUserId");
 
                     b.ToTable("api_tokens", "tenants");
                 });

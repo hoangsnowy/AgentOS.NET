@@ -46,6 +46,12 @@ public static class AuditActions
     public const string TenantExported = "tenant.exported";
     public const string ApiTokenCreated = "apitoken.created";
     public const string ApiTokenRevoked = "apitoken.revoked";
+
+    /// <summary>An API token authenticated a request (at most one row per token per 5 minutes; every use is logged).</summary>
+    public const string ApiTokenUsed = "apitoken.used";
+
+    /// <summary>A revoked / expired / wrong-secret token was presented (at most one row per token per 5 minutes).</summary>
+    public const string ApiTokenRefused = "apitoken.refused";
     public const string TicketFlowChanged = "ticketflow.changed";
 
     /// <summary>The owner approved a design, or asked for design changes (Board › Tasks, ADR-0016).</summary>

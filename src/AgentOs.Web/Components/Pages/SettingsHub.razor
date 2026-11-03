@@ -89,7 +89,7 @@
         new("audit",       "Governance",    "Activity log",   "clock-counter",    Access.Admin),
         new("evidence",    "Governance",    "Tool calls",     "scroll",           Access.Admin, Hidden: true),   // a view of Activity log
         new("users",       "People & data", "Users",          "user",             Access.Admin),
-        new("tokens",      "People & data", "API tokens",     "tag",              Access.Admin),
+        new("tokens",      "People & data", "API tokens",     "tag",              Access.Everyone),   // personal tokens for all; service accounts admin-only
         new("data",        "People & data", "Data",           "floppy-disk",      Access.Admin),
         new("general",     "Personal",      "General",        "gear",             Access.Everyone, Host: true),
         new("appearance",  "Personal",      "Appearance",     "palette",          Access.Everyone, Host: true),

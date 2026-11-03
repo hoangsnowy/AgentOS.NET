@@ -263,7 +263,8 @@ else
                 var services = scope.ServiceProvider;
                 var result = await MemberRemoval.RemoveAsync(_tenantId, m.Id, new MemberRemovalActor(_myUserId),
                     Kc, services.GetRequiredService<IAuditLog>(), services.GetService<AgentOs.Domain.Sessions.IRunnerDirectory>(),
-                    RunnerDisconnector, Loggers.CreateLogger(typeof(MemberRemoval).FullName!));
+                    RunnerDisconnector, services.GetService<AgentOs.Modules.Tenants.ApiTokens.IApiTokenService>(),
+                    Loggers.CreateLogger(typeof(MemberRemoval).FullName!));
                 ShowRemoval(m, result);
                 await LoadMembersAsync();
             },

@@ -56,6 +56,31 @@ public static class ModuleLoader
         return app;
     }
 
+    /// <summary>
+    /// Map every module's endpoints behind the versioned REST contract (E1.3): REST modules under <c>/v1</c> plus their
+    /// deprecated unversioned twins (<see cref="Http.ApiVersioning.MapVersioned"/>); <see cref="IProtocolEndpointModule"/>s
+    /// once at their own path. <paramref name="hostRoutes"/> adds the host's own REST routes to the same contract.
+    /// </summary>
+    public static IEndpointRouteBuilder MapVersionedModuleEndpoints(this WebApplication app, Action<IEndpointRouteBuilder>? hostRoutes = null)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        var modules = app.Services.GetServices<IModule>().OfType<IEndpointModule>().ToArray();
+        foreach (var protocol in modules.OfType<IProtocolEndpointModule>())
+        {
+            protocol.MapEndpoints(app);
+        }
+        Http.ApiVersioning.MapVersioned(app, group =>
+        {
+            foreach (var module in modules.Where(m => m is not IProtocolEndpointModule))
+            {
+                module.MapEndpoints(group);
+            }
+            hostRoutes?.Invoke(group);
+        });
+        return app;
+    }
+
     /// <summary>Resolve every registered <see cref="IInitializableModule"/> and await InitializeAsync
     /// sequentially.</summary>
     public static async Task InitializeModulesAsync(this IServiceProvider services, CancellationToken ct = default)

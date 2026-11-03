@@ -1,7 +1,9 @@
-@* ApiTokensApp — Settings → API tokens (enterprise review E1.3). Tenant admins create service-account tokens for
-   CI pipelines, scripts and MCP clients calling the Api (Authorization: Bearer aos_…). A token has a name, a role
-   (member | admin — never platform-admin) and an expiry; its secret is shown ONCE at creation (only a SHA-256 is
-   stored). Revoke takes effect on the next request. Create / revoke are audited. *@
+@* ApiTokensApp — Settings → API tokens (enterprise review E1.3). Every member creates PERSONAL tokens (they act as the
+   member, e.g. for the VS Code extension or a script); tenant admins also create SERVICE ACCOUNTS (a workspace identity
+   for CI). A token has a name, a scope (read · run · admin — admin only for admins, never platform-admin) and an expiry
+   capped by the platform setting Tenants:ApiTokens:MaxLifetimeDays. Its secret is shown ONCE at creation (only a salted
+   HMAC is stored). Revoke takes effect on the next request. Create / use / revoke are audited. Admins see and revoke
+   every token in the workspace; members see their own. *@
 
 @using Microsoft.AspNetCore.Components.Authorization
 @using AgentOs.Modules.Tenants.ApiTokens
@@ -13,16 +15,12 @@
 {
     <Spinner />
 }
-else if (!_isAdmin)
-{
-    <div class="login-error">Admin role required to manage API tokens.</div>
-}
 else
 {
     <header class="page-head">
         <div>
             <h1 class="page-title">API tokens · <code>@_tenantId</code></h1>
-            <p class="page-sub">Service-account tokens for CI, scripts and MCP clients: <code>Authorization: Bearer aos_…</code> on the Api.</p>
+            <p class="page-sub">For scripts, CI, the VS Code extension and MCP clients: <code>Authorization: Bearer aos_…</code> on the Api's <code>/v1</code> routes.</p>
         </div>
     </header>
 
@@ -31,18 +29,31 @@ else
             <Field Label="Name">
                 <input @bind="_name" @bind:event="oninput" placeholder="github-actions-deploy" maxlength="128" />
             </Field>
-            <Field Label="Role">
-                <select class="prefs-select" @bind="_role">
-                    <option value="member">Member — run pipelines, read results</option>
-                    <option value="admin">Admin — also manage this workspace</option>
+            <Field Label="Type">
+                <select class="prefs-select" @bind="_kind">
+                    <option value="@ApiTokenKind.Personal">Personal — acts as you</option>
+                    @if (_isAdmin)
+                    {
+                        <option value="@ApiTokenKind.Service">Service account — for CI</option>
+                    }
                 </select>
             </Field>
-            <Field Label="Expires in">
+            <Field Label="Scope">
+                <select class="prefs-select" @bind="_scope">
+                    <option value="@ApiTokenScopes.Read">Read — view only</option>
+                    <option value="@ApiTokenScopes.Run">Run — also start runs</option>
+                    @if (_isAdmin)
+                    {
+                        <option value="@ApiTokenScopes.Admin">Admin — also manage</option>
+                    }
+                </select>
+            </Field>
+            <Field Label="Expires in" Hint="@($"At most {_maxDays} days (platform setting). Read = GET only; run = also POST/PUT/DELETE; admin = workspace-admin routes.")">
                 <select class="prefs-select" @bind="_days">
-                    <option value="30">30 days</option>
-                    <option value="90">90 days</option>
-                    <option value="180">180 days</option>
-                    <option value="365">1 year</option>
+                    @foreach (var d in ExpiryChoices())
+                    {
+                        <option value="@d">@ExpiryLabel(d)</option>
+                    }
                 </select>
             </Field>
         </div>
@@ -62,32 +73,32 @@ else
         }
     </Panel>
 
-    <Panel Title="Tokens">
+    <Panel Title="@(_isAdmin ? "Tokens in this workspace" : "Your tokens")">
         @if (_rows is null) { <Spinner /> }
         else if (_rows.Count == 0)
         {
-            <EmptyState Icon="tag" Title="No tokens yet" Hint="Create one above for a pipeline or a script." />
+            <EmptyState Icon="tag" Title="No tokens yet" Hint="Create one above for a script, a pipeline or the VS Code extension." />
         }
         else
         {
             <table class="data-table">
-                <thead><tr><th>Name</th><th>Token</th><th>Role</th><th>Created</th><th>Expires</th><th>Last used</th><th>Status</th><th class="actions"></th></tr></thead>
+                <thead><tr><th>Name</th><th>Type</th><th>Token</th><th>Scope</th><th>Expires</th><th>Last used</th><th>Status</th><th class="actions"></th></tr></thead>
                 <tbody>
                     @foreach (var t in _rows)
                     {
                         var active = t.IsActive(DateTimeOffset.UtcNow);
                         <tr>
-                            <td><strong>@t.Name</strong><br /><span class="muted">by @t.CreatedBy</span></td>
+                            <td><strong>@t.Name</strong><br /><span class="muted">by @t.CreatedBy · @t.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd")</span></td>
+                            <td>@(t.Kind == ApiTokenKind.Service ? "Service account" : "Personal")</td>
                             <td><code>aos_@(t.Prefix)_…</code></td>
-                            <td>@t.Role</td>
-                            <td>@t.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd")</td>
+                            <td>@ApiTokenScopes.Highest(t.Scopes)</td>
                             <td>@t.ExpiresAtUtc.ToLocalTime().ToString("yyyy-MM-dd")</td>
                             <td>@(t.LastUsedAtUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</td>
                             <td><span class="badge @(active ? "ok" : t.RevokedAtUtc is not null ? "err" : "warn")">@(active ? "active" : t.RevokedAtUtc is not null ? "revoked" : "expired")</span></td>
                             <td class="actions">
                                 @if (t.RevokedAtUtc is null)
                                 {
-                                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="() => RevokeAsync(t)" Disabled="_busy">Revoke</Btn>
+                                    <Btn Size="Btn.ButtonSize.Sm" Variant="Btn.ButtonVariant.Danger" OnClick="() => RevokeAsync(t)" Disabled="_busy" Title="@($"Revoke {t.Name}")">Revoke</Btn>
                                 }
                             </td>
                         </tr>
@@ -99,16 +110,20 @@ else
 }
 
 @code {
+    private static readonly int[] StandardDays = [7, 30, 90, 180, 365];
+
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private bool _resolved;
     private bool _isAdmin;
     private bool _busy;
     private string _tenantId = "default";
-    private string _actor = "admin";
+    private ApiTokenActor _actor = new("member", null, false);
     private string _name = string.Empty;
-    private string _role = "member";
+    private string _kind = ApiTokenKind.Personal;
+    private string _scope = ApiTokenScopes.Read;
     private int _days = 90;
+    private int _maxDays = ApiTokenFormat.DefaultMaxLifetimeDays;
     private string? _newToken;
     private IReadOnlyList<ApiTokenInfo>? _rows;
 
@@ -119,21 +134,40 @@ else
             var state = await AuthState;
             _isAdmin = state.User.IsAdmin();
             _tenantId = state.User.GetTenantId() ?? "default";
-            _actor = state.User.Identity?.Name ?? "admin";
+            _actor = new ApiTokenActor(state.User.Identity?.Name ?? "member", state.User.GetUserId(), _isAdmin);
         }
+        // Admins mostly create CI identities; members can only create personal tokens.
+        _kind = _isAdmin ? ApiTokenKind.Service : ApiTokenKind.Personal;
+        _scope = _isAdmin ? ApiTokenScopes.Run : ApiTokenScopes.Read;
+        _maxDays = await Tokens.MaxLifetimeDaysAsync(_tenantId);
+        _days = Math.Min(_days, _maxDays);
         _resolved = true;
-        if (_isAdmin) { _rows = await Tokens.ListAsync(_tenantId); }
+        _rows = await Tokens.ListAsync(_tenantId, _actor);
     }
+
+    private IEnumerable<int> ExpiryChoices()
+    {
+        var choices = StandardDays.Where(d => d < _maxDays).ToList();
+        choices.Add(_maxDays);
+        return choices;
+    }
+
+    private static string ExpiryLabel(int days) => days switch
+    {
+        1 => "1 day",
+        365 => "1 year",
+        _ => $"{days} days",
+    };
 
     private async Task CreateAsync()
     {
         _busy = true;
         try
         {
-            var (_, token) = await Tokens.CreateAsync(_tenantId, _name, _role, _days, _actor);
+            var (_, token) = await Tokens.CreateAsync(new ApiTokenRequest(_tenantId, _name, _kind, [_scope], _days, _actor));
             _newToken = token;
             _name = string.Empty;
-            _rows = await Tokens.ListAsync(_tenantId);
+            _rows = await Tokens.ListAsync(_tenantId, _actor);
         }
         catch (InvalidOperationException ex)
         {
@@ -151,7 +185,7 @@ else
         try
         {
             if (await Tokens.RevokeAsync(_tenantId, token.Id, _actor)) { Toasts.Show("API tokens", $"{token.Name} revoked.", ToastKind.Ok); }
-            _rows = await Tokens.ListAsync(_tenantId);
+            _rows = await Tokens.ListAsync(_tenantId, _actor);
         }
         finally
         {

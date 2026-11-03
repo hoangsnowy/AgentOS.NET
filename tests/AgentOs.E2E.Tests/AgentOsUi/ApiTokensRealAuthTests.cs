@@ -1,6 +1,7 @@
-// REAL-AUTH E2E — E1.3 on the full stack: a tenant admin creates an API token in Settings → API tokens, a machine
-// calls the real Api with `Authorization: Bearer aos_…` and is authenticated as that tenant with the token's role;
-// after Revoke in the UI the same call is refused. Cleanup removes the token row and its audit rows.
+// REAL-AUTH E2E — E1.3 on the full stack: a tenant admin creates a service-account token (scope "run") in Settings →
+// API tokens, a machine calls the real Api's /v1 routes with `Authorization: Bearer aos_…` and is authenticated as that
+// tenant with the token's scopes; the unversioned route still answers, with a Deprecation header; after Revoke in the UI
+// the same call is refused. Cleanup removes the token row and its audit rows.
 //   - Gates: RUN_AGENTOS_E2E_REAL=true; Api at AGENTOS_API_URL (default https://localhost:5080); AGENTOS_PG_CONN for cleanup.
 
 using System;
@@ -47,19 +48,26 @@ public sealed class ApiTokensRealAuthTests : IClassFixture<AgentOsRealAuthFixtur
             using var http = new HttpClient(handler);
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using (var me = await http.GetAsync($"{ApiUrl}/tenants/me"))
+            using (var me = await http.GetAsync($"{ApiUrl}/v1/tenants/me"))
             {
                 Assert.Equal(HttpStatusCode.OK, me.StatusCode);
                 var body = await me.Content.ReadAsStringAsync();
                 Assert.Contains("\"default\"", body, StringComparison.Ordinal);   // the operator's tenant
-                Assert.Contains($"token:{name}", body, StringComparison.Ordinal);
+                Assert.Contains($"service:{name}", body, StringComparison.Ordinal);
+                Assert.Contains("\"api_token\"", body, StringComparison.Ordinal);
+                Assert.False(me.Headers.Contains("Deprecation"));
+            }
+            using (var legacy = await http.GetAsync($"{ApiUrl}/tenants/me"))
+            {
+                Assert.Equal(HttpStatusCode.OK, legacy.StatusCode);
+                Assert.True(legacy.Headers.Contains("Deprecation"));
             }
 
             var row = win.Locator("tr", new() { HasTextString = name });
             await row.GetByRole(AriaRole.Button, new() { Name = "Revoke" }).ClickAsync();
             await Assertions.Expect(row.Locator(".badge")).ToHaveTextAsync("revoked", new() { Timeout = 15_000 });
 
-            using var after = await http.GetAsync($"{ApiUrl}/tenants/me");
+            using var after = await http.GetAsync($"{ApiUrl}/v1/tenants/me");
             Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);
         }
         finally

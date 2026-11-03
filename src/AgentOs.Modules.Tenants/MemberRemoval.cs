@@ -1,6 +1,6 @@
 // GAP-04 — removing a member from a tenant, in the one order that can't leave their computers paired:
-//   1. revoke (and disconnect) every runner they own in the tenant — idempotent, so a failure here removes nothing and a
-//      retry starts over;
+//   1. revoke (and disconnect) every runner they own in the tenant, and every personal API token they hold (E1.3) —
+//      idempotent, so a failure here removes nothing and a retry starts over;
 //   2. delete their Keycloak account;
 //   3. once the delete is committed, finish with CancellationToken.None: a second revoke sweep (a computer paired between
 //      1 and 2) and the member.removed audit row. A failure there is logged and recorded in the audit row, never thrown —
@@ -24,6 +24,9 @@ public enum MemberRemovalOutcome
 {
     /// <summary>The account was deleted (and the audit row written). Check <see cref="MemberRemovalResult.Warning"/>.</summary>
     Removed,
+
+    /// <summary>Their personal API tokens could not be revoked, so nothing was removed. Safe to retry.</summary>
+    TokensNotRevoked,
 
     /// <summary>Their computers could not be revoked, so nothing was removed. Safe to retry.</summary>
     ComputersNotRevoked,
@@ -58,7 +61,7 @@ public static partial class MemberRemoval
     public static async Task<MemberRemovalResult> RemoveAsync(
         string tenantId, string userId, MemberRemovalActor actor,
         IKeycloakAdminClient keycloak, IAuditLog audit, IRunnerDirectory? runners, IRunnerDisconnector? disconnector,
-        ILogger? logger = null, CancellationToken ct = default)
+        ApiTokens.IApiTokenService? apiTokens = null, ILogger? logger = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
@@ -77,6 +80,19 @@ public static partial class MemberRemoval
             if (logger is not null) { LogRevokeFailed(logger, ex, LogSafe.Scrub(tenantId), LogSafe.Scrub(userId)); }
             return new MemberRemovalResult(MemberRemovalOutcome.ComputersNotRevoked, 0,
                 $"Couldn't disconnect their paired computers, so nothing was removed: {ex.Message}");
+        }
+
+        // 1b. Their personal API tokens act as them — revoke them before the account goes, for the same reason.
+        int tokensRevoked;
+        try
+        {
+            tokensRevoked = apiTokens is null ? 0 : await apiTokens.RevokeForOwnerAsync(tenantId, userId, actor.UserId ?? "admin", ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (logger is not null) { LogTokensFailed(logger, ex, LogSafe.Scrub(tenantId), LogSafe.Scrub(userId)); }
+            return new MemberRemovalResult(MemberRemovalOutcome.TokensNotRevoked, revoked.Count,
+                $"Couldn't revoke their API tokens, so nothing was removed: {ex.Message}");
         }
 
         // 2. The account.
@@ -107,6 +123,7 @@ public static partial class MemberRemoval
         }
         var target = count == 0 ? $"user={userId}" : $"user={userId},runnersRevoked={count}";
         if (warning is not null) { target += ",runnerRevokeFailed=true"; }
+        if (tokensRevoked > 0) { target += $",apiTokensRevoked={tokensRevoked}"; }
         await audit.WriteAsync(new AuditEntry(
             Guid.NewGuid(), tenantId, actor.UserId, AuditActions.MemberRemoved, target,
             actor.IpAddress, actor.UserAgent, DateTimeOffset.UtcNow), CancellationToken.None).ConfigureAwait(false);
@@ -115,6 +132,9 @@ public static partial class MemberRemoval
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Revoking the computers of member {UserId} in tenant {TenantId} failed.")]
     private static partial void LogRevokeFailed(ILogger logger, Exception ex, string tenantId, string userId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Revoking the API tokens of member {UserId} in tenant {TenantId} failed.")]
+    private static partial void LogTokensFailed(ILogger logger, Exception ex, string tenantId, string userId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting member {UserId} of tenant {TenantId} failed; their computers are already revoked.")]
     private static partial void LogDeleteFailed(ILogger logger, Exception ex, string tenantId, string userId);

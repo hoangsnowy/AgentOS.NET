@@ -12,7 +12,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AgentOs.Modules.RemoteAgent;
 
-public sealed class RemoteAgentModule : IModule, IEndpointModule
+public sealed class RemoteAgentModule : IModule, IProtocolEndpointModule
 {
     public void AddServices(IServiceCollection services, IConfiguration configuration)
     {

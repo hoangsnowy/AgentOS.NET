@@ -47,6 +47,7 @@ real services:
 | E0.6 per-tenant run admission | #200 | Concurrency + burst tests; Settings → Platform → Run limits |
 | E0.7 repo instruction files | #197 | Real GitHub: the sandbox's `AGENTS.md` read back on the lab |
 | E0.8 OpenAI-compatible provider | #198, #202 | Wire test against a real OpenAI-protocol server |
+| E1.3 API tokens + service accounts + `/v1` 🟡 | this PR, [API.md](../API.md) | Integration tests on the real Api host (token auth next to JWT, scope per method, admin scope → Admin policy, revoked/expired → 401, `/v1` + deprecated twins with headers, OpenAPI = committed copy); lifecycle unit tests. Acceptance still to do on the lab: a CI pipeline triggers a run with a service-account token |
 | E1.4 tenant export + purge | #208 | Real-auth: export (no secrets) → UI purge → zero rows, users gone, audited |
 | E1.6 workspace rules + versioned prompts | #206 | Agent prompt carries the rules; versions + restore |
 | E1.10 dashboards, alerts, SLOs | #302, [OPERATIONS.md](../OPERATIONS.md) | Real code → OTLP → Prometheus 3.7: every dashboard series present, 3 Grafana dashboards render (light + dark), `AgentOsBudgetBlockingRuns` fired + `AgentOsBudgetOverCap` pending on an over-cap tenant; `promtool test rules` green. Lab over-cap run + Azure deploy still to do |
@@ -60,7 +61,7 @@ Live agent runs without an API key: `lab.ps1 pair` routes the lab to this machin
 5-agent pipeline completed live.
 
 **Next:**
-- E1.1 SSO brokering, E1.2 RBAC v2, E1.3 API tokens + `/v1`, E1.5 approval policies;
+- E1.1 SSO brokering, E1.2 RBAC v2, E1.5 approval policies; E1.3 lab acceptance (CI run with a service-account token);
 - E1.7 skills, E1.8 ADO boards + Jira;
 - E1.10 ops; tag the first release (E1.11/E1.13 acceptance: `cosign verify` on it);
 - the open gaps ranked in [threat-model.md § 15](../security/threat-model.md#15-top-gaps-prioritised).
@@ -74,8 +75,8 @@ Status: ✅ shipped + verified · 🟡 partial · ❌ absent. "Where" cites the 
 | 1 | SSO | Entra ID / Okta / ADFS / Google via OIDC or SAML, MFA policy, JIT provisioning | ❌ Keycloak local users only | realm has no `identityProviders` | **E1.1** |
 | 2 | Provisioning | SCIM 2.0 create/update/**deprovision** → sessions revoked | ❌ | — | **E2.1** |
 | 3 | RBAC | viewer · developer · approver · admin · auditor; per-workspace scope; custom roles later | 🟡 3 roles | `IdentityModule.cs:23-25` | **E1.2** |
-| 4 | Machine access | API tokens / service accounts, scoped + expiring, for CI and the CLI | ❌ JWT only | — | **E1.3** |
-| 5 | API contract | versioned REST (`/v1`), published OpenAPI, deprecation policy | 🟡 unversioned | Scalar UI on Api | **E1.3** |
+| 4 | Machine access | API tokens / service accounts, scoped + expiring, for CI and the CLI | 🟡 shipped, lab CI run pending | personal tokens + service accounts, salted HMAC, scopes read/run/admin, max-lifetime setting, audited (`ApiTokens/*`, `ApiTokenTests`, `ApiV1IntegrationTests`); VS Code extension uses them | **E1.3** |
+| 5 | API contract | versioned REST (`/v1`), published OpenAPI, deprecation policy | ✅ | `/v1` + deprecated unversioned twins with `Deprecation`/`Sunset` (`ApiVersioning.cs`); [`openapi-v1.json`](../api/openapi-v1.json) gated by a test; [API.md § Deprecation policy](../API.md#deprecation-policy) | **E1.3** |
 | 6 | Tenant isolation | DB-enforced, proven by test | 🟡 EF filters + E2E (#192), no RLS | plan 0.9 | **E0.1** |
 | 7 | Key management | DataProtection ring wrapped by KMS (Key Vault / HSM / cert), rotation | 🟡 ring in Postgres, unwrapped | `DataProtectionExtensions.cs` | **E0.2** |
 | 8 | Data lifecycle | retention per data class, tenant export, purge (GDPR), legal hold | ❌ | — | **E1.4** |

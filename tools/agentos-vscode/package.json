@@ -14,7 +14,11 @@
     "commands": [
       { "command": "agentos.connect", "title": "AgentOS.NET: Connect this machine" },
       { "command": "agentos.disconnect", "title": "AgentOS.NET: Disconnect" },
-      { "command": "agentos.showLogs", "title": "AgentOS.NET: Show runner logs" }
+      { "command": "agentos.showLogs", "title": "AgentOS.NET: Show runner logs" },
+      { "command": "agentos.setApiToken", "title": "AgentOS.NET: Set API token" },
+      { "command": "agentos.checkApiToken", "title": "AgentOS.NET: Check API token" },
+      { "command": "agentos.clearApiToken", "title": "AgentOS.NET: Clear API token" },
+      { "command": "agentos.runPipeline", "title": "AgentOS.NET: Run the pipeline on a user story" }
     ],
     "configuration": {
       "title": "AgentOS.NET",
@@ -23,6 +27,11 @@
           "type": "string",
           "default": "https://localhost:5180",
           "description": "AgentOS.NET server base URL (the Web host)."
+        },
+        "agentos.apiUrl": {
+          "type": "string",
+          "default": "https://localhost:5080",
+          "description": "AgentOS.NET Api base URL, called with your API token (Set API token) on its /v1 routes."
         },
         "agentos.runOnMyMachine": {
           "type": "boolean",

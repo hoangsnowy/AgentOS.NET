@@ -31,6 +31,8 @@
     <ProjectReference Include="..\..\src\AgentOs.ServiceDefaults\AgentOs.ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.Web\AgentOs.Web.csproj" />
     <ProjectReference Include="..\..\src\AgentOs.Modules.Memory\AgentOs.Modules.Memory.csproj" />
+    <!-- E1.3: the Api host, booted in-process by WebApplicationFactory (auth handler, /v1 routes, OpenAPI). -->
+    <ProjectReference Include="..\..\src\AgentOs.Api\AgentOs.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -46,6 +48,7 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <!-- MTP reporting/coverage extensions (xunit.v3 4.0.0 runs on Microsoft.Testing.Platform).
          Every test project in a solution-wide run must understand the coverage / trx-report args,

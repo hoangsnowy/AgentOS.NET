@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using AgentOs.Modules.Tenants.ApiTokens;
 using AgentOs.Modules.Tenants.Email;
 using AgentOs.Modules.Tenants.Keycloak;
 using AgentOs.SharedKernel.Identity;
@@ -22,15 +23,17 @@ internal static class TenantEndpoints
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        app.MapGet("/tenants/me", (ITenantContext tenant) => Results.Ok(new TenantMeResponse(
+        app.MapGet("/tenants/me", (ITenantContext tenant, HttpContext http) => Results.Ok(new TenantMeResponse(
             tenant.TenantId,
             tenant.UserId,
             tenant.UserName,
             tenant.Roles,
             tenant.IsAuthenticated,
-            tenant.IsAdmin)))
+            tenant.IsAdmin,
+            http.User.IsApiToken() ? ApiTokenAuthentication.AuthMethod : "jwt",
+            ApiTokenScopes.Parse(http.User.FindFirst(ApiTokenScopes.ClaimType)?.Value))))
         .WithName("TenantMe")
-        .WithSummary("Resolved tenant + user + roles for the current request")
+        .WithSummary("Resolved tenant + user + roles (and, for an API token, its scopes) for the current request")
         .WithTags("Tenants")
         .RequireAuthorization();
 
@@ -424,7 +427,8 @@ internal static class TenantEndpoints
         CancellationToken ct,
         [Microsoft.AspNetCore.Mvc.FromServices] AgentOs.Domain.Sessions.IRunnerDirectory? runners = null,
         [Microsoft.AspNetCore.Mvc.FromServices] AgentOs.Domain.Sessions.IRunnerDisconnector? disconnector = null,
-        [Microsoft.AspNetCore.Mvc.FromServices] Microsoft.Extensions.Logging.ILoggerFactory? loggers = null)
+        [Microsoft.AspNetCore.Mvc.FromServices] Microsoft.Extensions.Logging.ILoggerFactory? loggers = null,
+        [Microsoft.AspNetCore.Mvc.FromServices] IApiTokenService? apiTokens = null)
     {
         ArgumentNullException.ThrowIfNull(kc);
         ArgumentNullException.ThrowIfNull(ctx);
@@ -451,9 +455,11 @@ internal static class TenantEndpoints
 
         var result = await MemberRemoval.RemoveAsync(tenantId, userId,
             new MemberRemovalActor(ctx.UserId, http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString()),
-            kc, audit, runners, disconnector, loggers?.CreateLogger(typeof(MemberRemoval).FullName!), ct).ConfigureAwait(false);
+            kc, audit, runners, disconnector, apiTokens, loggers?.CreateLogger(typeof(MemberRemoval).FullName!), ct).ConfigureAwait(false);
         return result.Outcome switch
         {
+            MemberRemovalOutcome.TokensNotRevoked => Results.Problem(
+                title: "Couldn't revoke the member's API tokens", detail: result.Error, statusCode: StatusCodes.Status503ServiceUnavailable),
             MemberRemovalOutcome.ComputersNotRevoked => Results.Problem(
                 title: "Couldn't disconnect the member's computers", detail: result.Error, statusCode: StatusCodes.Status503ServiceUnavailable),
             MemberRemovalOutcome.AccountNotDeleted => Results.Problem(
@@ -475,14 +481,17 @@ internal static class TenantEndpoints
     }
 }
 
-/// <summary>Response shape for GET /tenants/me.</summary>
+/// <summary>Response shape for GET /tenants/me. <c>AuthMethod</c> is <c>jwt</c> or <c>api_token</c>; <c>Scopes</c> is
+/// empty for a Keycloak (JWT) caller.</summary>
 public sealed record TenantMeResponse(
     string TenantId,
     string? UserId,
     string? UserName,
     IReadOnlyList<string> Roles,
     bool IsAuthenticated,
-    bool IsAdmin);
+    bool IsAdmin,
+    string AuthMethod,
+    IReadOnlyList<string> Scopes);
 
 /// <summary>Body for POST /tenants.</summary>
 public sealed record CreateTenantRequest(string Id, string? Name, string AdminUsername, string? AdminEmail);

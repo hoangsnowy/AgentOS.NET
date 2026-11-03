@@ -14,9 +14,11 @@ using AgentOs.Modules.Pipeline;
 using AgentOs.Modules.RemoteAgent;
 using AgentOs.Modules.Sessions;
 using AgentOs.Modules.Tenants;
+using AgentOs.Modules.Tenants.ApiTokens;
 using AgentOs.Modules.Tools;
 using AgentOs.Modules.Workspaces;
 using AgentOs.ServiceDefaults;
+using AgentOs.SharedKernel.Http;
 using AgentOs.SharedKernel.Identity;
 using AgentOs.SharedKernel.Modularity;
 using AgentOs.SharedKernel.Plugins;
@@ -36,7 +38,9 @@ AgentOs.SharedKernel.Security.DevSecretGuard.EnsureNoDevDefaults(builder.Configu
 // Console format + per-request tenant/traceId scopes come from ServiceDefaults (AddAgentOsLogging):
 // JSON console in Production, human-readable elsewhere.
 
-builder.Services.AddOpenApi();
+// E1.3: one OpenAPI document per REST version — "v1" documents the /v1 routes (the deprecated unversioned twins are
+// excluded), served at /openapi/v1.json outside Production and committed as docs/api/openapi-v1.json.
+builder.Services.AddOpenApi(AgentOs.SharedKernel.Http.ApiVersions.V1, o => o.AddDocumentTransformer<AgentOs.Api.ApiDocumentV1>());
 // RFC 7807 error contract: unhandled endpoint exceptions become application/problem+json (status,
 // title, traceId) instead of a bare 500 — no stack traces leave the process outside Development.
 builder.Services.AddProblemDetails();
@@ -95,13 +99,10 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["APPLICATIONINSIGHTS_CONNEC
 
 // Auth scheme is host-specific: API hosts Keycloak JWT bearer (Web does cookie + OIDC).
 builder.Services.AddJwtAuth(builder.Configuration);
-// E1.3: API tokens (service accounts) next to Keycloak JWTs — "Bearer aos_…" is forwarded to the token scheme.
-builder.Services.AddAuthentication()
-    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, AgentOs.Modules.Tenants.ApiTokens.ApiTokenAuthenticationHandler>(
-        AgentOs.Modules.Tenants.ApiTokens.ApiTokenAuthentication.Scheme, null);
-builder.Services.PostConfigure<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>(
-    Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme,
-    o => o.ForwardDefaultSelector = AgentOs.Modules.Tenants.ApiTokens.ApiTokenAuthentication.ForwardSelector);
+// E1.3: personal API tokens + service accounts next to Keycloak JWTs — "Bearer aos_…" is forwarded to the token scheme.
+// Self-contained: adds a scheme + chains the JWT forward selector; no default scheme or authorization policy changes.
+builder.Services.AddApiTokenAuthentication<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>(
+    Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme);
 
 // Module discovery: each .Assembly contributes one IModule.
 builder.Services.AddModulesFromAssemblies(builder.Configuration,
@@ -162,7 +163,13 @@ if (!app.Environment.IsDevelopment())
 
 app.UseResponseCompression();
 
+// E1.3: unversioned module routes still work but announce Deprecation / Sunset / successor Link headers — before auth,
+// so a 401 / 403 / 429 on a deprecated route says so too.
+app.UseApiDeprecationHeaders();
+
 app.UseAuthentication();
+// E1.3: an API token's scope (read | run | admin) gates the HTTP method; JWT callers pass through.
+app.UseApiTokenScopes();
 app.UseAuthorization();
 
 // After auth so the per-tenant partition can read the tenant claim (S2).
@@ -231,7 +238,12 @@ app.MapGet("/health/llm", (IOptions<LlmOptions> llm) =>
    .WithSummary("LLM provider configuration readiness (not a pod-recycle signal)")
    .WithTags("Meta");
 
-app.MapModuleEndpoints();
+// E1.3: every module REST route under /v1 (+ its deprecated unversioned twin); SignalR hubs stay at their own path.
+app.MapVersionedModuleEndpoints(routes => routes.MapPost("/llm/test", LlmTestAsync)
+   .WithName("LlmTest")
+   .WithSummary("Probe the configured LLM provider with a minimal call")
+   .WithTags("Settings")
+   .RequireAuthorization());
 
 // Epic E4 — MCP HTTP endpoint at /mcp. Streamable HTTP per spec. RequireAuthorization so an
 // anonymous caller can't drive the full 5-agent LLM pipeline (uncapped spend) or read another
@@ -240,9 +252,11 @@ app.MapMcp("/mcp").RequireAuthorization();
 
 // Settings "Test" — probe one provider (?provider=, from the Model keys cards; allow-listed by LlmProbe) or, with
 // none named, the Orchestrator's configured provider, with a minimal call.
-app.MapPost("/llm/test", async ([Microsoft.AspNetCore.Mvc.FromQuery(Name = "provider")] string? requested,
+app.Run();
+
+static async Task<IResult> LlmTestAsync([Microsoft.AspNetCore.Mvc.FromQuery(Name = "provider")] string? requested,
     ILlmClientFactory factory, IConfiguration cfg, ITenantContext tenant,
-    Microsoft.Extensions.Options.IOptions<LlmOptions> llmOptions, IServiceProvider services, CancellationToken ct) =>
+    Microsoft.Extensions.Options.IOptions<LlmOptions> llmOptions, IServiceProvider services, CancellationToken ct)
 {
     if (requested is not null && !LlmProbe.CanProbe(requested))
     {
@@ -307,10 +321,4 @@ app.MapPost("/llm/test", async ([Microsoft.AspNetCore.Mvc.FromQuery(Name = "prov
         return Results.Ok(new { ok = false, provider, model, error = ex.Message });
     }
 #pragma warning restore CA1031
-})
-   .WithName("LlmTest")
-   .WithSummary("Probe the configured LLM provider with a minimal call")
-   .WithTags("Settings")
-   .RequireAuthorization();
-
-app.Run();
+}

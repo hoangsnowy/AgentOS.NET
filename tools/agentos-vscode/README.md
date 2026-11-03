@@ -10,9 +10,22 @@ Pair this machine to an AgentOS.NET server and run AI coding sessions locally �
 
 The extension downloads the AgentOS.NET runner binary from your server and runs it for you — nothing to install by hand, no env vars, no token copy-paste.
 
+## API token
+
+Call the AgentOS.NET Api with a personal API token (create one in the desktop: **Settings → API tokens**; the `run`
+scope lets you start runs):
+
+1. **AgentOS.NET: Set API token** — paste the `aos_…` token. It is checked against `<apiUrl>/v1/tenants/me` and kept
+   in VS Code secret storage (never in `settings.json`).
+2. **AgentOS.NET: Run the pipeline on a user story** — sends the selection (or what you type) to `POST /v1/pipeline`;
+   the result lands in the output panel.
+3. **AgentOS.NET: Check API token** shows the workspace and scopes; **Clear API token** removes it from this machine
+   (revoke it in the desktop too).
+
 ## Settings
 
 - `agentos.serverUrl` — AgentOS.NET server base URL (default `https://localhost:5180`).
+- `agentos.apiUrl` — AgentOS.NET Api base URL for API-token calls (default `https://localhost:5080`).
 - `agentos.cliAgent` — the CLI agent the runner invokes: `claude` (default) or `codex`. Uses your own subscription, not metered API; the server can override it per session.
 - `agentos.runOnMyMachine` — run sessions autonomously with that CLI (appends `claude --dangerously-skip-permissions` / `codex --full-auto`; the CLI must be installed and logged in). Off by default.
 
