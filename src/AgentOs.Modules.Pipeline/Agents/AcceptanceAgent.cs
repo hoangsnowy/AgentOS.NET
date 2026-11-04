@@ -213,8 +213,10 @@ public sealed class AcceptanceAgent(ILlmClientFactory factory, ILogger<Acceptanc
            integration test, a data check, a measurement. When a criterion needs the running app, start the
            repository's documented local stack in the background (e.g. `dotnet run --project infra/<Name>.AppHost`),
            wait until its web endpoint answers, run the relevant end-to-end specs (`npx playwright test <spec>`),
-           then stop the stack gracefully (Ctrl+C) so it removes its own containers. Never delete Docker volumes,
-           images or any data outside this directory.
+           then stop the stack gracefully (Ctrl+C) so it removes its own containers. Docker runs on this computer and
+           the app host starts its own containers: never run the `docker` CLI (it is refused here) and never conclude
+           from that refusal that the app can't start. Never delete Docker volumes, images or any data outside this
+           directory.
         5. A criterion this computer cannot check — it needs Docker / `docker compose`, a shell script, a data set or
            secret that is not available, or an external service — may still be proven by the pull request's CI: run
            `gh pr checks {branch}`, open the workflow file (`.github/workflows/*.yml`) of a job that looks relevant and
