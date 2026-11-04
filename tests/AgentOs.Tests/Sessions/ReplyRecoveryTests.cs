@@ -341,7 +341,10 @@ public sealed class ReplyRecoveryTests
         // Unpushed work is pushed before the checkout is deleted — only the run's own branch, never forced.
         followUp.UserPrompt.ShouldContain("git push -u origin issue-102-ai-fix");
         followUp.UserPrompt.ShouldContain("never with --force");
-        followUp.UserPrompt.ShouldContain("do not commit anything new");
+        // A run stopped mid-work commits what it left uncommitted (VNChess #144 lost a finished fix that way).
+        followUp.UserPrompt.ShouldContain("git commit -m \"wip: unfinished work from the stopped run (#102)\"");
+        followUp.UserPrompt.ShouldContain("never force-add");
+        followUp.UserPrompt.ShouldContain("Do NOT redo, extend or");
         followUp.UserPrompt.ShouldContain("the end, no JSON.");                 // the tail of what it said
         followUp.SystemPrompt.ShouldStartWith("You are the Coding Agent of AgentOS.NET");
         followUp.SystemPrompt.ShouldContain(UntrustedText.SystemRule);

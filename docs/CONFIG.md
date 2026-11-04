@@ -275,7 +275,9 @@ resumes the same session (`claude -p --resume <session id>`) unless the context 
 a fresh short prompt with the scrubbed tail (1,500 characters, credentials masked) of what the run said, asking it
 to inspect the checkout (`git branch --show-current`, `git status -sb`, `git log`). If the Coding run's commits never
 reached origin, the follow-up pushes that one branch (`git push -u origin <branch>`, never forced, never another
-branch, nothing new committed) — the kept folder is deleted afterwards, and VNChess #124 lost two finished fix runs
+branch; work the stopped run never committed goes in first as one `wip:` commit, gitignored secrets excluded,
+so the next round continues from it — VNChess #144 lost a finished fix at the time limit) — the kept folder is
+deleted afterwards, and VNChess #124 lost two finished fix runs
 because the follow-up was told not to push. If the follow-up gives no summary either (it timed out, or still no JSON)
 but the run was a revision whose pull-request branch head moved since it started, the pushed work carries on to the
 checks, review and acceptance with the summary *"The run pushed its work but sent no summary"* and the pull request's

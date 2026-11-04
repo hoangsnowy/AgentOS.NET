@@ -78,6 +78,11 @@ internal static class IssueWorkPrompt
            - .NET: `dotnet test`
            - Node: `npm test`
            Only skip tests if there is no test infrastructure.
+           Docker runs on this computer: an app host (e.g. `dotnet run --project infra/<Name>.AppHost`) and test
+           containers start their own containers. Never run the `docker` CLI — it is refused here — and never conclude
+           from that refusal that the app or the tests can't run.
+           A run is stopped at its time limit and anything not pushed is lost: commit and push after each working step,
+           not only at the end.
 
         7. Commit:
            git add -A
@@ -134,6 +139,11 @@ internal static class IssueWorkPrompt
 
         6. Run the test suite if one exists (.NET: `dotnet test`; Node: `npm test`).
            Only skip tests if there is no test infrastructure.
+           Docker runs on this computer: an app host (e.g. `dotnet run --project infra/<Name>.AppHost`) and test
+           containers start their own containers. Never run the `docker` CLI — it is refused here — and never conclude
+           from that refusal that the app or the tests can't run.
+           A run is stopped at its time limit and anything not pushed is lost: commit and push after each working step,
+           not only at the end.
 
         7. Commit:
            git add -A
@@ -253,12 +263,17 @@ internal static class IssueWorkPrompt
         return string.Format(
             CultureInfo.InvariantCulture,
             """
-            Your previous run on {0}/{1} for ticket #{2} ended before you sent the JSON reply. Do NOT redo or change the
-            work, and do not commit anything new. Look at what you already did in the checkout you worked in (this
+            Your previous run on {0}/{1} for ticket #{2} ended before you sent the JSON reply. Do NOT redo, extend or
+            change the work. Look at what you already did in the checkout you worked in (this
             directory; if it holds no checkout, clone https://github.com/{0}/{1}.git . and run git fetch origin {3}):
                git branch --show-current
                git status -sb
                git log --oneline -10
+            If git status shows changes you never committed (the run was stopped mid-work), commit ALL of them as one
+            commit, exactly as they are, so the next round continues from them instead of starting over:
+               git add -A
+               git commit -m "wip: unfinished work from the stopped run (#{2})"
+            (.env and other secrets stay out: they are gitignored — never force-add anything.)
             If your commits are on {3} but not on origin yet (the branch is missing on origin, or git status shows it
             ahead of origin), push that branch now — this machine's checkout is deleted when the run ends, so unpushed
             work is lost:
