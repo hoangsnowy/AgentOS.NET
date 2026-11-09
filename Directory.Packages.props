@@ -26,9 +26,9 @@
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
 
     <!-- Microsoft Agent Framework (MAF) + Microsoft.Extensions.AI -->
-    <PackageVersion Include="Microsoft.Agents.AI" Version="1.27.0" />
-    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.27.0" />
-    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.27.0" />
+    <PackageVersion Include="Microsoft.Agents.AI" Version="1.28.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.28.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.28.0" />
 
     <!-- JSON schema validation. JsonSchema.Net 9 reworked the evaluation API: Evaluate runs on
          JsonElement (not JsonNode), EvaluationResults.HasErrors/HasDetails were removed, and
@@ -116,7 +116,7 @@
          here — the Release build is warning-clean under TreatWarningsAsErrors.
          Both packages MUST move in lockstep: ModelContextProtocol.AspNetCore pins the core package
          to its exact version (= x.y.z), so bumping one without the other trips NU1107. -->
-    <PackageVersion Include="ModelContextProtocol" Version="2.3.0" />
+    <PackageVersion Include="ModelContextProtocol" Version="2.4.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
 
     <!-- Benchmarks (tests/AgentOs.Benchmarks — not run by `dotnet test`; see .github/workflows/perf.yml).
@@ -130,7 +130,7 @@
          coverage + trx reporting come from MTP extensions instead of the VSTest data collectors:
          Microsoft.Testing.Extensions.CodeCoverage (cobertura) replaces coverlet.collector, and
          Microsoft.Testing.Extensions.TrxReport replaces the trx logger. -->
-    <PackageVersion Include="xunit.v3" Version="4.0.2" />
+    <PackageVersion Include="xunit.v3" Version="4.0.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageVersion Include="NSubstitute" Version="6.2.0" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
@@ -161,8 +161,8 @@
 
     <!-- OpenTelemetry (instrumentation pinned to 1.15.x line) -->
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.2" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" />
 
