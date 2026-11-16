@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="5.12.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
