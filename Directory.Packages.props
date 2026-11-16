@@ -153,7 +153,7 @@
     <PackageVersion Include="Aspire.Hosting.Azure.PostgreSQL" Version="13.5.4" />
     <PackageVersion Include="Aspire.Hosting.Keycloak" Version="13.3.5-preview.1.26270.6" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.5.4" />
-    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.11.0" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="11.0.0" />
     <!-- Transitive of Aspire.Hosting — its default 2.5.192 carries GHSA-hv8m-jj95-wg3x (NU1903).
          Promoted to a direct reference in AppHost + E2E.Tests to force the patched version. 3.0.0-3.1.8
          also carry GHSA-qhrr-8q5h-9q3h (NU1902, published 2026-10-15) — floor is 3.1.9. -->
